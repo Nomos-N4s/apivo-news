@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="ISO-8859-7"?>
+<rss version="2.0">
+  <channel>
+    <title>Legacy Encoding Feed</title>
+    <link>https://legacy.example.test/</link>
+    <description>Declared ISO-8859-7, single-byte Greek</description>
+    <item>
+      <title>Νέα</title>
+      <link>https://legacy.example.test/articles/nea</link>
+      <description>Ελλάδα</description>
+    </item>
+  </channel>
+</rss>
