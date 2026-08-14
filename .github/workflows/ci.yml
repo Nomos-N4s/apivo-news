@@ -1,0 +1,131 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Server-side belt and braces for the .githooks/commit-msg hook: hooks are
+  # per-clone opt-in, so the same rules are enforced here where they cannot
+  # be skipped. Runs on PRs and on pushes to main (merge-time messages such
+  # as squash commits never pass through PR CI).
+  commit-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Determine commit range
+        id: range
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "range=${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+          elif printf '%s' "${{ github.event.before }}" | grep -q -E '^0+$'; then
+            # First push to a new ref: no meaningful "before", check the head commit.
+            echo "range=${{ github.sha }} -1" >> "$GITHUB_OUTPUT"
+          else
+            echo "range=${{ github.event.before }}..${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Reject AI attribution trailers
+        run: |
+          # Materialized first so a git failure fails the step (no fail-open
+          # empty pipe), and merge commits are deliberately included.
+          git log --format='%H %B%n----' ${{ steps.range.outputs.range }} > /tmp/commits.txt
+          if grep -in -E '(co-authored-by:.*(noreply@anthropic\.com|claude)|generated with \[?claude|claude-session:)' /tmp/commits.txt; then
+            echo "::error::Commit messages must not carry AI attribution trailers."
+            exit 1
+          fi
+      - name: Require Conventional Commit subjects
+        run: |
+          git log --no-merges --format='%s' ${{ steps.range.outputs.range }} > /tmp/subjects.txt
+          BAD=0
+          while IFS= read -r subject; do
+            [ -z "$subject" ] && continue
+            if ! printf '%s' "$subject" | grep -q -E '^(feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert)(\([a-z0-9., /-]+\))?!?: .+'; then
+              echo "::error::Not a Conventional Commit subject: $subject"
+              BAD=1
+            fi
+          done < /tmp/subjects.txt
+          exit "$BAD"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+
+  go:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: apivo
+          POSTGRES_USER: apivo
+          POSTGRES_PASSWORD: apivo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apivo -d apivo"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build ./...
+      - name: Test (invariant tests run against the service Postgres)
+        run: go test -race -shuffle=on -covermode=atomic -coverprofile=coverage.out -coverpkg=./... ./...
+      - name: Coverage gate (90%)
+        run: sh scripts/coverage_gate.sh 90 coverage.out
+
+  sqlc-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Regenerate store from schema
+        run: docker run --rm -v "$PWD":/src -w /src sqlc/sqlc:1.31.1 generate
+      - name: Fail on drift between schema and committed generated code
+        run: |
+          # git add first so brand-new generated files count as drift too.
+          git add -A internal/content/store
+          git diff --cached --exit-code -- internal/content/store
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run check
+      - name: Build
+        run: npm run build
