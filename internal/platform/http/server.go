@@ -30,10 +30,21 @@ func New(log *slog.Logger, addr string, ready ReadinessCheck) *Server {
 	mux.HandleFunc("GET /readyz", s.handleReadyz(ready))
 	s.inner = &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           noindex(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	return s
+}
+
+// noindex stamps every response with a robots-blocking header. The API is
+// never a crawlable surface, whatever the deployment topology puts in
+// front of it - defence in depth behind the single frontend enforcement
+// point.
+func noindex(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Handler exposes the route table, primarily for tests.

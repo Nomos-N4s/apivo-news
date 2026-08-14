@@ -48,6 +48,9 @@ func TestHealthEndpoints(t *testing.T) {
 			if rec.Code != tt.wantCode {
 				t.Fatalf("%s %s = %d, want %d", tt.method, tt.path, rec.Code, tt.wantCode)
 			}
+			if got := rec.Header().Get("X-Robots-Tag"); got != "noindex, nofollow" {
+				t.Fatalf("X-Robots-Tag = %q, want %q on every response", got, "noindex, nofollow")
+			}
 		})
 	}
 }

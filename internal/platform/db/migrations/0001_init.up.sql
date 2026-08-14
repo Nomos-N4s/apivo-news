@@ -107,6 +107,7 @@ create table source_item (
     source_id uuid not null references source (id),
     source_url text not null
         constraint source_item_source_url_not_blank check (btrim(source_url) <> ''),
+    original_title text,
     original_author text,
     published_at timestamptz,
     retrieved_at timestamptz not null default now(),
@@ -134,6 +135,8 @@ comment on column source_item.permission_evidence_snapshot is
     'The permission evidence on record at retrieval, written by trigger; preserved even if the source row changes later.';
 comment on column source_item.content_hash is
     'SHA-256 hex digest of raw_body, computed by the database (generated column); deduplicates retrievals and fingerprints the evidence.';
+comment on column source_item.original_title is
+    'The item title exactly as the feed provided it (null when the feed omitted one). Part of the retrieval evidence.';
 
 create index source_item_source_id_idx on source_item (source_id);
 create index source_item_retrieved_at_idx on source_item (retrieved_at);
@@ -179,7 +182,12 @@ create table translation (
     prompt_version text not null
         constraint translation_prompt_version_not_blank check (btrim(prompt_version) <> ''),
     generated_at timestamptz not null default now(),
-    body text not null
+    -- Extract-and-link output: a translated headline and a short extract,
+    -- never a full-text translation.
+    headline text not null
+        constraint translation_headline_not_blank check (btrim(headline) <> ''),
+    extract text not null
+        constraint translation_extract_not_blank check (btrim(extract) <> '')
 );
 
 comment on table translation is
@@ -307,8 +315,14 @@ comment on column article.approved_by is
 comment on column article.attribution_block is
     'The attribution rendered with the article, pointing back to the original publisher.';
 
-create index article_translation_id_idx on article (translation_id);
-create index article_source_item_id_idx on article (source_item_id);
+-- One article per origin, enforced by the database: a concurrent
+-- double-approve cannot create two articles from the same translation or
+-- retrieved item. Corrections flow through a new translation (or a new
+-- retrieval), never a second article on the same origin.
+create unique index article_one_per_translation
+    on article (translation_id) where translation_id is not null;
+create unique index article_one_per_source_item
+    on article (source_item_id) where source_item_id is not null;
 create index article_approved_by_idx on article (approved_by);
 create index article_published_at_idx on article (published_at desc)
     where published_at is not null;

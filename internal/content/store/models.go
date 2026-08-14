@@ -117,9 +117,11 @@ type Source struct {
 
 // IMMUTABLE (I-3). Exactly what was retrieved, when, and under which licence terms (I-2, I-4). Legal evidence; never updated, never deleted.
 type SourceItem struct {
-	ID             pgtype.UUID
-	SourceID       pgtype.UUID
-	SourceUrl      string
+	ID        pgtype.UUID
+	SourceID  pgtype.UUID
+	SourceUrl string
+	// The item title exactly as the feed provided it (null when the feed omitted one). Part of the retrieval evidence.
+	OriginalTitle  pgtype.Text
 	OriginalAuthor pgtype.Text
 	PublishedAt    pgtype.Timestamptz
 	RetrievedAt    pgtype.Timestamptz
@@ -142,5 +144,6 @@ type Translation struct {
 	Model         string
 	PromptVersion string
 	GeneratedAt   pgtype.Timestamptz
-	Body          string
+	Headline      string
+	Extract       string
 }

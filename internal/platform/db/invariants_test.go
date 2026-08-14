@@ -156,9 +156,9 @@ func seed(t *testing.T, tx pgx.Tx) fixtures {
 	}
 
 	err = tx.QueryRow(ctx,
-		`insert into translation (source_item_id, target_locale, model, prompt_version, body)
-		 values ($1, 'de', 'test-model-1', 'prompt-v1', $2) returning id`,
-		f.sourceItemID, "Testinhalt "+suffix,
+		`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract)
+		 values ($1, 'de', 'test-model-1', 'prompt-v1', $2, $3) returning id`,
+		f.sourceItemID, "Testüberschrift "+suffix, "Testauszug "+suffix,
 	).Scan(&f.translationID)
 	if err != nil {
 		t.Fatalf("seed translation: %v", err)
@@ -360,6 +360,60 @@ func TestDatabaseRejectsIllegalWrites(t *testing.T) {
 				return err
 			},
 			wantCode: codeCheckViolation,
+		},
+		{
+			name:      "translation with blank headline",
+			invariant: "extract-and-link",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				_, err := tx.Exec(ctx,
+					`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract)
+					 values ($1, 'de', 'm', 'p', '   ', 'extract')`, f.sourceItemID)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name:      "translation with blank extract",
+			invariant: "extract-and-link",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				_, err := tx.Exec(ctx,
+					`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract)
+					 values ($1, 'de', 'm', 'p', 'headline', '')`, f.sourceItemID)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name:      "second article from the same translation",
+			invariant: "one-per-origin",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				if _, err := tx.Exec(ctx,
+					`insert into article (translation_id, approved_by, attribution_block)
+					 values ($1, $2, 'Quelle: Test Feed')`, f.translationID, f.accountID); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx,
+					`insert into article (translation_id, approved_by, attribution_block)
+					 values ($1, $2, 'Quelle: Test Feed again')`, f.translationID, f.accountID)
+				return err
+			},
+			wantCode: codeUniqueViolation,
+		},
+		{
+			name:      "second article from the same retrieved item",
+			invariant: "one-per-origin",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				if _, err := tx.Exec(ctx,
+					`insert into article (source_item_id, approved_by, attribution_block)
+					 values ($1, $2, 'Πηγή: Test Feed')`, f.sourceItemID, f.accountID); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx,
+					`insert into article (source_item_id, approved_by, attribution_block)
+					 values ($1, $2, 'Πηγή: Test Feed again')`, f.sourceItemID, f.accountID)
+				return err
+			},
+			wantCode: codeUniqueViolation,
 		},
 		{
 			name:      "second active consent for same purpose",
@@ -667,7 +721,8 @@ func TestTranslationIsImmutable(t *testing.T) {
 	}{
 		{name: "update model", stmt: `update translation set model = 'other-model' where id = $1`},
 		{name: "update prompt version", stmt: `update translation set prompt_version = 'prompt-v999' where id = $1`},
-		{name: "update body", stmt: `update translation set body = 'rewritten' where id = $1`},
+		{name: "update headline", stmt: `update translation set headline = 'rewritten' where id = $1`},
+		{name: "update extract", stmt: `update translation set extract = 'rewritten' where id = $1`},
 		{name: "delete row", stmt: `delete from translation where id = $1`},
 	}
 

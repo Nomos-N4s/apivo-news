@@ -75,9 +75,9 @@ func TestGeneratedStoreAgainstSchema(t *testing.T) {
 		t.Fatalf("seed source_item: %v", err)
 	}
 	if err := tx.QueryRow(ctx,
-		`insert into translation (source_item_id, target_locale, model, prompt_version, body)
-		 values ($1, 'de', 'test-model-1', 'prompt-v1', $2) returning id`,
-		sourceItemID, "Testinhalt "+suffix).Scan(&translationID); err != nil {
+		`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract)
+		 values ($1, 'de', 'test-model-1', 'prompt-v1', $2, $3) returning id`,
+		sourceItemID, "Testüberschrift "+suffix, "Testauszug "+suffix).Scan(&translationID); err != nil {
 		t.Fatalf("seed translation: %v", err)
 	}
 	if err := tx.QueryRow(ctx,
