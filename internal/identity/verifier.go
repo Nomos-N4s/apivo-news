@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/lestrrat-go/httprc/v3"
 	"github.com/lestrrat-go/jwx/v3/jwa"
@@ -12,6 +13,17 @@ import (
 	"github.com/lestrrat-go/jwx/v3/jws"
 	"github.com/lestrrat-go/jwx/v3/jwt"
 )
+
+// DefaultAcceptableSkew is the clock-drift tolerance applied to the time
+// claims (exp, iat, nbf) when VerifierConfig.AcceptableSkew is zero:
+// enough for ordinary NTP drift between this host and the token issuer,
+// far too little to matter against Supabase's one-hour token lifetime.
+const DefaultAcceptableSkew = 30 * time.Second
+
+// MaxAcceptableSkew bounds VerifierConfig.AcceptableSkew: a Verifier
+// refuses construction beyond it, so a bad config value cannot quietly
+// soften token expiry into meaninglessness.
+const MaxAcceptableSkew = 2 * time.Minute
 
 // ErrInvalidToken reports a bearer token that failed verification or
 // validation: malformed, unsigned, signed with an unaccepted algorithm or
@@ -35,6 +47,13 @@ type VerifierConfig struct {
 	// Optional; when nil the jwx default client (with timeout and redirect
 	// protections) is used. Tests point this at a local JWKS server.
 	HTTPClient *http.Client
+
+	// AcceptableSkew is the clock-drift tolerance applied when validating
+	// the time claims (exp, iat, nbf), so a few seconds of drift between
+	// this host and the token issuer does not intermittently reject
+	// legitimate tokens. Zero means DefaultAcceptableSkew; negative
+	// values and values above MaxAcceptableSkew fail construction.
+	AcceptableSkew time.Duration
 }
 
 // Verifier checks compact JWTs against a cached, auto-refreshing JWKS
@@ -45,6 +64,7 @@ type VerifierConfig struct {
 type Verifier struct {
 	jwksURL  string
 	audience string
+	skew     time.Duration
 	cache    *jwk.Cache
 }
 
@@ -56,6 +76,13 @@ type Verifier struct {
 func NewVerifier(ctx context.Context, cfg VerifierConfig) (*Verifier, error) {
 	if cfg.JWKSURL == "" {
 		return nil, errors.New("identity: JWKS URL is required")
+	}
+	skew := cfg.AcceptableSkew
+	if skew == 0 {
+		skew = DefaultAcceptableSkew
+	}
+	if skew < 0 || skew > MaxAcceptableSkew {
+		return nil, fmt.Errorf("identity: acceptable skew %s is outside (0, %s]", cfg.AcceptableSkew, MaxAcceptableSkew)
 	}
 	cache, err := jwk.NewCache(ctx, httprc.NewClient())
 	if err != nil {
@@ -77,7 +104,7 @@ func NewVerifier(ctx context.Context, cfg VerifierConfig) (*Verifier, error) {
 		_ = cache.Shutdown(ctx)
 		return nil, fmt.Errorf("identity: initial JWKS fetch from %q: %w", cfg.JWKSURL, err)
 	}
-	return &Verifier{jwksURL: cfg.JWKSURL, audience: cfg.Audience, cache: cache}, nil
+	return &Verifier{jwksURL: cfg.JWKSURL, audience: cfg.Audience, skew: skew, cache: cache}, nil
 }
 
 // Close stops the background JWKS refreshing. The Verifier must not be
@@ -88,7 +115,8 @@ func (v *Verifier) Close(ctx context.Context) error {
 
 // verify checks the compact serialization in raw and returns the parsed,
 // validated claims. Signature verification uses the cached key set; claim
-// validation covers exp, iat and nbf (and aud when configured).
+// validation covers exp, iat and nbf within the configured clock-skew
+// tolerance (and aud when configured).
 func (v *Verifier) verify(ctx context.Context, raw string) (jwt.Token, error) {
 	data := []byte(raw)
 	if err := checkAlgorithms(data); err != nil {
@@ -103,6 +131,7 @@ func (v *Verifier) verify(ctx context.Context, raw string) (jwt.Token, error) {
 		// the optional alg member still match. The header allowlist above
 		// caps what inference may accept.
 		jwt.WithKeySet(set, jws.WithInferAlgorithmFromKey(true)),
+		jwt.WithAcceptableSkew(v.skew),
 	}
 	if v.audience != "" {
 		opts = append(opts, jwt.WithAudience(v.audience))

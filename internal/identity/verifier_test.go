@@ -246,6 +246,39 @@ func TestAuthenticate(t *testing.T) {
 			wantErr: identity.ErrInvalidToken,
 		},
 		{
+			// exp one second in the past: within the default 30s skew, so
+			// ordinary clock drift does not intermittently reject tokens.
+			name:     "expired within the acceptable skew is accepted",
+			verifier: anyAudience,
+			token: mintToken(t, rsaKey, jwa.RS256(), tokenSpec{
+				sub: subject.String(), iat: now.Add(-time.Hour), exp: now.Add(-time.Second),
+			}),
+			db:   account,
+			want: identity.Identity{Subject: subject, Email: "row@example.test", DisplayName: "Row Name"},
+		},
+		{
+			// exp five minutes in the past: beyond even MaxAcceptableSkew,
+			// so the tolerance cannot be mistaken for ignoring expiry.
+			name:     "expired beyond the acceptable skew is rejected",
+			verifier: anyAudience,
+			token: mintToken(t, rsaKey, jwa.RS256(), tokenSpec{
+				sub: subject.String(), iat: now.Add(-time.Hour), exp: now.Add(-5 * time.Minute),
+			}),
+			db:      account,
+			wantErr: identity.ErrInvalidToken,
+		},
+		{
+			// iat fifteen seconds ahead: an issuer clock slightly ahead of
+			// ours stays within the default 30s skew.
+			name:     "future iat within the acceptable skew is accepted",
+			verifier: anyAudience,
+			token: mintToken(t, rsaKey, jwa.RS256(), tokenSpec{
+				sub: subject.String(), iat: now.Add(15 * time.Second), exp: now.Add(time.Hour),
+			}),
+			db:   account,
+			want: identity.Identity{Subject: subject, Email: "row@example.test", DisplayName: "Row Name"},
+		},
+		{
 			name:     "wrong key under a known kid",
 			verifier: anyAudience,
 			token:    mintToken(t, signingKey(t, strangerRaw, jwa.RS256(), "test-rsa"), jwa.RS256(), fresh),
@@ -391,6 +424,20 @@ func TestNewVerifierRequiresJWKSURL(t *testing.T) {
 	t.Parallel()
 	if _, err := identity.NewVerifier(t.Context(), identity.VerifierConfig{}); err == nil {
 		t.Fatal("NewVerifier accepted an empty JWKS URL")
+	}
+}
+
+func TestNewVerifierBoundsAcceptableSkew(t *testing.T) {
+	t.Parallel()
+	// Skew bounds are validated before any network use, so no JWKS server
+	// is needed here.
+	for _, skew := range []time.Duration{-time.Second, identity.MaxAcceptableSkew + time.Second} {
+		if _, err := identity.NewVerifier(t.Context(), identity.VerifierConfig{
+			JWKSURL:        "http://unused.example.test/jwks.json",
+			AcceptableSkew: skew,
+		}); err == nil {
+			t.Errorf("NewVerifier accepted acceptable skew %s", skew)
+		}
 	}
 }
 
