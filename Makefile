@@ -5,12 +5,19 @@ GOLANGCI_LINT_VERSION ?= v2.12.2
 # Must match the version pinned in .github/workflows/ci.yml (sqlc-drift job)
 # and the header of the committed generated files; bump them together.
 SQLC_VERSION ?= 1.31.1
+# Must match the versions pinned in .github/workflows/ci.yml (ts-types-drift
+# job); bump them together.
+SUPABASE_VERSION ?= 2.114.0
+MIGRATE_VERSION ?= v4.19.1
+# Docker network of the compose stack (docker compose names it after the
+# project directory); override when the checkout directory is named otherwise.
+COMPOSE_NETWORK ?= apivo-news_default
 DATABASE_URL_TEST ?= postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
 # The race detector needs cgo; on Windows without a C toolchain, run
 # `make test RACE=` and let CI cover the race detection.
 RACE ?= -race
 
-.PHONY: setup db-up db-down test test-unit cover vet lint sqlc web-install web-check web-build
+.PHONY: setup db-up db-down test test-unit cover vet lint sqlc ts-types web-install web-check web-build
 
 ## setup: one-time developer setup - route git hooks through .githooks
 setup:
@@ -48,6 +55,12 @@ lint:
 ## sqlc: regenerate Go types from the schema migrations
 sqlc:
 	docker run --rm -v "$(CURDIR)":/src -w /src sqlc/sqlc:$(SQLC_VERSION) generate
+
+## ts-types: regenerate TypeScript types from a freshly migrated scratch database
+ts-types: db-up
+	$(COMPOSE) exec postgres psql -U apivo -d postgres -c "drop database if exists apivo_types with (force)" -c "create database apivo_types"
+	docker run --rm -v "$(CURDIR)/internal/platform/db/migrations":/m --network $(COMPOSE_NETWORK) migrate/migrate:$(MIGRATE_VERSION) -path /m -database "postgres://apivo:apivo@postgres:5432/apivo_types?sslmode=disable" up
+	npx supabase@$(SUPABASE_VERSION) gen types typescript --db-url "postgres://apivo:apivo@localhost:5432/apivo_types?sslmode=disable" > web/src/lib/database.types.ts
 
 ## web-install: install frontend dependencies exactly as locked
 web-install:

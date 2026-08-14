@@ -121,6 +121,37 @@ jobs:
           ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
           -strict -summary -kubernetes-version 1.32.0 /manifests
 
+  ts-types-drift:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: apivo
+          POSTGRES_USER: apivo
+          POSTGRES_PASSWORD: apivo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apivo -d apivo"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Apply migrations to the service Postgres
+        run: docker run --rm -v "$PWD/internal/platform/db/migrations":/m --network host migrate/migrate:v4.19.1 -path /m -database "postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable" up
+      - name: Regenerate types from schema
+        run: npx supabase@2.114.0 gen types typescript --db-url "postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable" > web/src/lib/database.types.ts
+      - name: Fail on drift between schema and committed generated code
+        run: |
+          # git add first so brand-new generated files count as drift too.
+          git add -A web/src/lib
+          git diff --cached --exit-code -- web/src/lib
+
   # Validates the Cloudflare Containers configuration: full parse of
   # wrangler.jsonc plus Worker bundle and container/DO wiring checks.
   # --dry-run needs no Cloudflare credentials and uploads nothing;

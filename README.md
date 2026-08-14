@@ -89,6 +89,12 @@ the single source of truth for the schema. After changing them, run
 `make sqlc` and commit the regenerated `internal/content/store` (CI fails on
 drift).
 
+TypeScript types follow the same rule: `make ts-types` applies the
+migrations to a scratch database and regenerates
+[web/src/lib/database.types.ts](web/src/lib/database.types.ts) with the
+Supabase CLI. Run it alongside `make sqlc` after every migration change and
+commit the result (CI fails on drift here too).
+
 ## Cloudflare deployment
 
 [wrangler.jsonc](wrangler.jsonc) declares both images — the Go API
