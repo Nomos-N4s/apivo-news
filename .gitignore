@@ -9,6 +9,7 @@ coverage.html
 node_modules/
 web/dist/
 web/.astro/
+web/coverage/
 
 # Environment
 .env
