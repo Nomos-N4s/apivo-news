@@ -21,4 +21,7 @@ drop table language;
 
 drop function raise_immutable();
 
-drop extension if exists pgcrypto;
+-- pgcrypto is deliberately NOT dropped: extensions are database-wide and
+-- may predate this application or serve other consumers (Supabase
+-- pre-provisions it). Rollback removes what this migration created, never
+-- shared infrastructure it merely reused.
