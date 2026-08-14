@@ -43,8 +43,9 @@ caching with explicit cache headers; API p95 < 200 ms locally at alpha scale
 
 **Constraints**: invariants I-1..I-5 stay database-enforced; no scraping;
 extract-and-link only; translation halts at monthly cap (never overspends);
-all crawling blocked at one enforcement point; nothing platform-specific in
-application code
+all crawling blocked at the single frontend gate with the API
+non-publicly-routable and noindex-stamped (D6, pending founder sign-off of
+the placement); nothing platform-specific in application code
 
 **Scale/Scope**: alpha — a handful of feeds, ~100 items/day, hundreds of
 readers; no horizontal-scale work
@@ -132,12 +133,16 @@ threshold activated alongside the first real frontend logic.
 
 ### Phase B — Ingestion & provenance (M2)
 
-Migration 0002 (editor role + trigger, withdrawal columns, cost ledger,
+Opens with the identity module (D4: jwx JWKS validation, sub→account
+mapping, editor-role check) — it precedes the first authenticated
+endpoint, and its absence would otherwise be discovered mid-phase. Then:
+migration 0002 (editor role + trigger, withdrawal columns, cost ledger,
 place slugs + seeds, source.active) with invariant tests extended
 accordingly; the ingestion module: gofeed normalisation (D1), single-
-transaction provenance writes onto 0001's constraints, dedupe, conditional
-GET, poll loop (D2); `POST /editorial/sources` with contract tests; domain
-events for retrievals.
+transaction provenance writes onto 0001's constraints (title captured with
+the content), dedupe, conditional GET, poll loop (D2); `POST
+/editorial/sources` with contract tests incl. 401/403; domain events for
+retrievals.
 
 ### Phase C — Translation & editorial (M3)
 
@@ -157,10 +162,12 @@ cache headers for CDN; place seed hierarchy live; SC-007 measured.
 ### Phase E — Hardening (M5)
 
 The timed I-5 audit drill on randomly picked items (SC-002); provenance
-endpoint; consent grant/revoke endpoints (schema capability); registration
-UI only if time allows (first cut); load sanity pass; security review of
-auth paths; founder-blocked tracking issue kept current (retention
-schedule before public launch).
+endpoint; the SC-007 measurement (p75 LCP < 2 s, Lighthouse throttled 4G,
+recorded in the PR); consent capability verified at the schema level by
+DB integration tests — consent grant/revoke endpoints ship only together
+with the registration UI, which is first on the cut list; load sanity
+pass; security review of auth paths; founder-blocked tracking issue kept
+current (retention schedule before public launch).
 
 ## Founder decision needed at this review
 
@@ -168,8 +175,14 @@ schedule before public launch).
   [research.md](research.md) (D5). The adapter interface, caps and ledger
   land regardless; only the first `providers/<name>` implementation waits
   on this.
-- Cap values: per-article ceiling and monthly cap numbers (config values;
-  defaults proposed in research.md alongside the shortlist).
+- **Cap values**: per-article ceiling and monthly cap numbers (config
+  values; defaults proposed in research.md alongside the shortlist).
+- **Crawler gate placement (D6)**: your recorded decision says "at the
+  edge"; the plan implements one enforcement point that ships inside the
+  frontend artefact (portable to every deployment target), with the API
+  non-publicly-routable and noindex-stamped, and Cloudflare-level rules
+  as an additive fence. Approve this reading of "one place", or require a
+  literal CDN-edge rule (which would not travel to Kubernetes).
 
 ## Complexity Tracking
 

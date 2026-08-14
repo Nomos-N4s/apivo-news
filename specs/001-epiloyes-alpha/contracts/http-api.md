@@ -8,6 +8,16 @@ contract test asserting status codes, shape, and auth behaviour before its
 implementation lands (constitution: tests are part of the definition of
 each endpoint, and integration tests run against real Postgres).
 
+Topology
+
+The Go API is **not publicly routable**: in every deployment (compose,
+Cloudflare, Kubernetes) it listens on an internal network and the Astro
+server is the only public HTTP surface, sitting behind the single crawler
+gate (research D6). As defence in depth the API additionally stamps
+`X-Robots-Tag: noindex, nofollow` on every response (implemented in the
+platform HTTP server), so a misconfigured topology still exposes nothing
+indexable.
+
 Conventions
 
 - Base path `/api/v1`. JSON bodies, UTF-8.
@@ -28,9 +38,13 @@ Locale-scoped front page feed.
 - Query: `lang` (required, `el`|`de`), `place` (required, place slug;
   repeatable — diaspora readers follow two places), `limit`, `cursor`.
 - 200: items of published, non-withdrawn articles, newest first:
-  `{ id, headline, extract, lang, places: [slug], attribution, source_url, published_at }`
-  where `headline`/`extract` come from the translation when the article
-  originates from one, otherwise from the retrieved item (same-language).
+  `{ id, headline, extract, lang, places: [slug], attribution, source_url, published_at }`.
+  Column backing: for a translated origin, `headline` = `translation.headline`
+  and `extract` = `translation.extract`; for an untranslated (same-language)
+  origin, `headline` = `source_item.original_title` and `extract` is derived
+  deterministically from `source_item.raw_body` by the D9 extract rule.
+  Approval of an untranslated item whose feed provided no title is rejected
+  (400) — there would be nothing to render as a headline.
 - 400: unknown `lang` or `place`. Never 500 on empty results — empty list.
 
 ### GET /api/v1/articles/{id}
@@ -49,8 +63,10 @@ yet.
 
 - Query: `lang` (optional filter), `limit`, `cursor`.
 - 200: `{ items: [{ source_item_id, translation_id|null, source_name,
-  headline_original, headline_translated|null, extract_translated|null,
-  retrieved_at, licence_snapshot }] }`
+  headline_original|null, headline_translated|null, extract_translated|null,
+  retrieved_at, licence_snapshot }] }`. Column backing:
+  `headline_original` = `source_item.original_title`,
+  `headline_translated`/`extract_translated` = `translation.headline`/`.extract`.
 - 401 without token; 403 for non-editors.
 
 ### POST /api/v1/editorial/approvals
@@ -89,11 +105,15 @@ Withdrawal ends publication and preserves every record (FR-016).
 
 The five-minute audit, served from `article_provenance` (I-5).
 
-- 200: `{ article_id, source: { name, feed_url, jurisdiction, usage_rule },
-  source_item: { source_url, retrieved_at, content_hash, licence_snapshot,
+- 200: `{ article_id, source: { name, feed_url, jurisdiction },
+  source_item: { source_url, original_title|null, retrieved_at, content_hash,
+  licence_snapshot, usage_rule_snapshot, permission_evidence_snapshot|null,
   original_author|null }, translation: { model, prompt_version, target_locale,
   generated_at }|null, approval: { approver_name, approver_email, approved_at },
-  published_at|null, withdrawal: { withdrawn_at, withdrawn_by, reason }|null }`
+  published_at|null, withdrawal: { withdrawn_at, withdrawn_by, reason }|null }`.
+  The `source` object is identity only; the legal basis (usage rule,
+  licence, permission evidence) always comes from the retrieval-time
+  snapshots on `source_item`, matching the `article_provenance` view.
 - Works for withdrawn articles — audit sees full history.
 
 ## Operational endpoints (existing)
@@ -104,5 +124,6 @@ The five-minute audit, served from `article_provenance` (I-5).
 
 No search, no comments, no user-generated content, no image handling, no
 full-text bodies in any public payload (extract-and-link only). Reader
-registration endpoints ship only if the registration UI survives the cut
-line; the schema capability exists regardless.
+registration endpoints — and the consent grant/revoke endpoints that go
+with them — ship only if the registration UI survives the cut line; the
+schema capability exists and is integration-tested regardless.

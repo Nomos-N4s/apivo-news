@@ -231,7 +231,7 @@ flag anywhere.
   configured RSS/Atom feeds. No scraping of any kind.
 - **FR-002**: The system MUST record, in the same operation as the content
   itself: origin link, retrieval time, content fingerprint, full retrieved
-  text, licence terms as they applied at retrieval, and author and
+  text, licence terms as they applied at retrieval, and title, author and
   publication date when the feed provides them. A retrieved item without
   this evidence MUST be impossible to create.
 - **FR-003**: Retrieved items MUST be immutable: no update, no deletion,
@@ -316,8 +316,9 @@ flag anywhere.
   full text appears for any source without recorded written permission.
 - **SC-006**: Translation spend never exceeds the configured monthly cap;
   when the cap is reached the pipeline stops within one item.
-- **SC-007**: The front page renders readable content in under two seconds
-  on an ordinary connection.
+- **SC-007**: The `/el/munich` front page reaches a p75 Largest Contentful
+  Paint under two seconds, measured with Lighthouse's throttled 4G
+  profile during the hardening phase and recorded in that phase's PR.
 - **SC-008**: A visitor can reach any published article's original source
   in one click from the article page.
 

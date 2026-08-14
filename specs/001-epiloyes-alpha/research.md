@@ -50,7 +50,9 @@ constraints (stack, boundaries, invariants) are given and not revisited.
 
 - **Decision**: `translation.Translator` interface owned by the
   translation module: `Translate(ctx, req) (Result, error)` where
-  `Result` carries headline, extract, model id, prompt version and cost.
+  `Result` carries headline, extract, model id, prompt version and cost —
+  persisted as `translation.headline`, `translation.extract` and the
+  lineage/cost columns in the same transaction.
   Providers are adapters in `internal/translation/providers/<name>`,
   selected by config; swapping providers touches one package (well under
   the five-engineer-day bound). Cost control: per-article ceiling and
@@ -120,7 +122,12 @@ schema; hitting the monthly cap halts the pipeline (FR-006).
   middleware travels with the artefact.
 - **Trade named openly**: this is origin-level, not literally CDN-edge;
   crawlers that ignore robots and headers are only fully stopped by
-  CF-level managed rules, which we add as config where available.
+  CF-level managed rules, which we add as config where available. This
+  placement is an explicit founder-decision item at the plan review.
+- **API surface**: the Go API is not publicly routable in any deployment
+  (internal network only; the Astro server is the sole public surface),
+  and it stamps `X-Robots-Tag: noindex, nofollow` on every response as
+  defence in depth — already implemented in the platform HTTP server.
 
 ## D7 — Editorial UI: Astro pages, same frontend
 
@@ -148,8 +155,10 @@ schema; hitting the monthly cap halts the pipeline (FR-006).
 - **Decision**: prefer the feed's own summary; when absent, take the
   first sentences of the retrieved text up to 300 characters, cut at a
   sentence boundary, always suffixed by the source link. The rule lives
-  in one normalisation function with table-driven tests; editors see the
-  extract before approval.
+  in one deterministic function with table-driven tests; editors see the
+  extract before approval. It feeds two consumers: translation input, and
+  the read-time extract for untranslated (same-language) articles, whose
+  headline is `source_item.original_title`.
 - **Rationale**: extract-and-link must stay defensibly "extract", and
   a human signs off every item regardless (I-1).
 - **Rejected**: LLM-generated summaries of full text in the alpha
