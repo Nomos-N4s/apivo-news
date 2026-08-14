@@ -56,8 +56,9 @@ func TestGeneratedStoreAgainstSchema(t *testing.T) {
 	contentHash := hex.EncodeToString(hashSum[:])
 
 	var accountID, sourceID, sourceItemID, translationID, articleID string
+	// Approvers must hold the editor role (0002); the default is reader.
 	if err := tx.QueryRow(ctx,
-		`insert into account (email, display_name) values ($1, $2) returning id`,
+		`insert into account (email, display_name, role) values ($1, $2, 'editor') returning id`,
 		"editor-"+suffix+"@example.test", "Test Editor "+suffix).Scan(&accountID); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
@@ -74,9 +75,10 @@ func TestGeneratedStoreAgainstSchema(t *testing.T) {
 		sourceID, "https://example.test/articles/"+suffix, rawBody).Scan(&sourceItemID); err != nil {
 		t.Fatalf("seed source_item: %v", err)
 	}
+	// cost_microusd has no default (0002): the cost is always explicit.
 	if err := tx.QueryRow(ctx,
-		`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract)
-		 values ($1, 'de', 'test-model-1', 'prompt-v1', $2, $3) returning id`,
+		`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract, cost_microusd)
+		 values ($1, 'de', 'test-model-1', 'prompt-v1', $2, $3, 1500) returning id`,
 		sourceItemID, "Testüberschrift "+suffix, "Testauszug "+suffix).Scan(&translationID); err != nil {
 		t.Fatalf("seed translation: %v", err)
 	}
@@ -127,5 +129,25 @@ func TestGeneratedStoreAgainstSchema(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("published article %s missing from ListPublishedArticles", articleID)
+	}
+
+	// Withdrawal ends publication (FR-016): the article must vanish from
+	// the reader-facing listing while its row and provenance remain.
+	if _, err := tx.Exec(ctx,
+		`update article set withdrawn_at = now(), withdrawn_by = $2, withdrawal_reason = 'integration withdrawal'
+		 where id = $1`, articleID, accountID); err != nil {
+		t.Fatalf("withdraw article: %v", err)
+	}
+	articles, err = q.ListPublishedArticles(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListPublishedArticles after withdrawal: %v", err)
+	}
+	for _, a := range articles {
+		if a.ID == articleUUID {
+			t.Errorf("withdrawn article %s still listed by ListPublishedArticles", articleID)
+		}
+	}
+	if _, err := q.GetArticleProvenance(ctx, articleUUID); err != nil {
+		t.Errorf("withdrawn article lost its provenance record: %v", err)
 	}
 }

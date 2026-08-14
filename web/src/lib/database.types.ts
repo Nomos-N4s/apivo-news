@@ -15,18 +15,21 @@ export type Database = {
           display_name: string
           email: string
           id: string
+          role: string
         }
         Insert: {
           created_at?: string
           display_name: string
           email: string
           id?: string
+          role?: string
         }
         Update: {
           created_at?: string
           display_name?: string
           email?: string
           id?: string
+          role?: string
         }
         Relationships: []
       }
@@ -39,6 +42,9 @@ export type Database = {
           published_at: string | null
           source_item_id: string | null
           translation_id: string | null
+          withdrawal_reason: string | null
+          withdrawn_at: string | null
+          withdrawn_by: string | null
         }
         Insert: {
           approved_at?: string
@@ -48,6 +54,9 @@ export type Database = {
           published_at?: string | null
           source_item_id?: string | null
           translation_id?: string | null
+          withdrawal_reason?: string | null
+          withdrawn_at?: string | null
+          withdrawn_by?: string | null
         }
         Update: {
           approved_at?: string
@@ -57,6 +66,9 @@ export type Database = {
           published_at?: string | null
           source_item_id?: string | null
           translation_id?: string | null
+          withdrawal_reason?: string | null
+          withdrawn_at?: string | null
+          withdrawn_by?: string | null
         }
         Relationships: [
           {
@@ -100,6 +112,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "translation"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "article_withdrawn_by_fkey"
+            columns: ["withdrawn_by"]
+            isOneToOne: false
+            referencedRelation: "account"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "article_withdrawn_by_fkey"
+            columns: ["withdrawn_by"]
+            isOneToOne: false
+            referencedRelation: "article_provenance"
+            referencedColumns: ["approver_id"]
           },
         ]
       }
@@ -219,6 +245,7 @@ export type Database = {
           jurisdiction_override: string | null
           name: string
           parent_id: string | null
+          slug: string | null
         }
         Insert: {
           country: string
@@ -226,6 +253,7 @@ export type Database = {
           jurisdiction_override?: string | null
           name: string
           parent_id?: string | null
+          slug?: string | null
         }
         Update: {
           country?: string
@@ -233,6 +261,7 @@ export type Database = {
           jurisdiction_override?: string | null
           name?: string
           parent_id?: string | null
+          slug?: string | null
         }
         Relationships: [
           {
@@ -298,6 +327,7 @@ export type Database = {
       }
       source: {
         Row: {
+          active: boolean
           created_at: string
           id: string
           jurisdiction: string
@@ -309,6 +339,7 @@ export type Database = {
           usage_rule: string
         }
         Insert: {
+          active?: boolean
           created_at?: string
           id?: string
           jurisdiction: string
@@ -320,6 +351,7 @@ export type Database = {
           usage_rule?: string
         }
         Update: {
+          active?: boolean
           created_at?: string
           id?: string
           jurisdiction?: string
@@ -402,6 +434,7 @@ export type Database = {
       }
       translation: {
         Row: {
+          cost_microusd: number
           extract: string
           generated_at: string
           headline: string
@@ -412,6 +445,7 @@ export type Database = {
           target_locale: string
         }
         Insert: {
+          cost_microusd: number
           extract: string
           generated_at?: string
           headline: string
@@ -422,6 +456,7 @@ export type Database = {
           target_locale: string
         }
         Update: {
+          cost_microusd?: number
           extract?: string
           generated_at?: string
           headline?: string
@@ -455,6 +490,21 @@ export type Database = {
           },
         ]
       }
+      translation_spend: {
+        Row: {
+          month: string
+          spent_microusd: number
+        }
+        Insert: {
+          month: string
+          spent_microusd?: number
+        }
+        Update: {
+          month?: string
+          spent_microusd?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       article_provenance: {
@@ -484,8 +534,25 @@ export type Database = {
           target_locale: string | null
           translation_id: string | null
           usage_rule: string | null
+          withdrawal_reason: string | null
+          withdrawn_at: string | null
+          withdrawn_by: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "article_withdrawn_by_fkey"
+            columns: ["withdrawn_by"]
+            isOneToOne: false
+            referencedRelation: "account"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "article_withdrawn_by_fkey"
+            columns: ["withdrawn_by"]
+            isOneToOne: false
+            referencedRelation: "article_provenance"
+            referencedColumns: ["approver_id"]
+          },
           {
             foreignKeyName: "translation_target_locale_fkey"
             columns: ["target_locale"]
