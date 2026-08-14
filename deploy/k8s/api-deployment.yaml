@@ -1,0 +1,77 @@
+# Go API. Cluster-internal only — exposed by a ClusterIP Service
+# (api-service.yaml) and deliberately absent from the Ingress, per the
+# contract topology (specs/001-epiloyes-alpha/contracts/http-api.md).
+#
+# `spec.replicas` is intentionally omitted: the HPA (api-hpa.yaml) owns the
+# replica count, and omitting it here keeps `kubectl apply` from fighting the
+# autoscaler.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: apivo-news
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api
+      app.kubernetes.io/part-of: apivo-news
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api
+        app.kubernetes.io/part-of: apivo-news
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          # Placeholder until the container publish pipeline lands; real
+          # deployments pin an image digest.
+          image: ghcr.io/nomos-n4s/apivo-news/api:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          # Non-secret env (HTTP_ADDR, APP_ENV, LOG_LEVEL) — parity with
+          # .env.example, documented in configmap.yaml.
+          envFrom:
+            - configMapRef:
+                name: apivo-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: apivo-secrets
+                  key: DATABASE_URL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          # Health endpoints from the platform HTTP server:
+          # /healthz = liveness, /readyz = readiness (DB ping).
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

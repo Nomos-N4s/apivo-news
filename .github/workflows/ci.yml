@@ -111,6 +111,15 @@ jobs:
           git add -A internal/content/store
           git diff --cached --exit-code -- internal/content/store
 
+  kubeconform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate Kubernetes manifests (strict)
+        run: >-
+          docker run --rm -v "$PWD/deploy/k8s:/manifests"
+          ghcr.io/yannh/kubeconform:latest -strict -summary /manifests
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

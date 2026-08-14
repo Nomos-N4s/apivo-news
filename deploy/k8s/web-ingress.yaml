@@ -1,0 +1,31 @@
+# The single public entry point. Only the web Service is exposed; the api
+# has no Ingress by design (contract topology: the Astro server is the only
+# public HTTP surface, sitting behind the single crawler gate).
+#
+# Controller: Traefik (open-source, MIT) — rationale in README.md. Switching
+# controllers means changing only this file.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: apivo-news
+  annotations:
+    # Serve on both HTTP and HTTPS entry points; TLS material is attached at
+    # deploy time (cert-manager or a pre-provisioned secret), not stubbed here.
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+spec:
+  ingressClassName: traefik
+  rules:
+    # Placeholder host — replace with the real public hostname at deploy time.
+    - host: news.apivo.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
