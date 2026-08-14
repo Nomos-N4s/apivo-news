@@ -65,7 +65,14 @@ Prerequisites: Go ≥ 1.26, Node ≥ 22, Docker.
 # one-time: route git hooks (commit hygiene) through .githooks
 git config core.hooksPath .githooks
 
-# start local Postgres
+# full local stack: Postgres → Go API (migrates on start) → Astro frontend.
+# The web app is the only published HTTP surface — http://localhost:4321;
+# Postgres is also published on loopback (5432) for local tooling and tests.
+# The API has no host port and is reached by service name on the compose
+# network. All host bindings are loopback-only, so nothing listens on the LAN.
+docker compose up --build
+
+# or Postgres alone — enough for the tests and for iterating outside containers
 docker compose up -d --wait postgres
 
 # run everything, including the schema invariant tests
