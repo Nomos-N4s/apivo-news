@@ -1,15 +1,23 @@
 // Command apivo is the epiloYES backend: a single binary containing every
 // module of the modular monolith. It is also the composition root - the one
 // place where modules are wired together.
+//
+// With no arguments the binary serves HTTP. The single subcommand,
+// "apivo healthcheck", probes the serving process once over HTTP and exits
+// zero on success - it backs the container HEALTHCHECK, where the distroless
+// image offers no shell or curl.
 package main
 
 import (
 	"context"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -19,20 +27,37 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/platform/logging"
 )
 
+// healthcheckTimeout bounds the whole healthcheck probe. It stays below the
+// HEALTHCHECK --timeout in the Dockerfile so the probe fails with a precise
+// error before Docker gives up on it.
+const healthcheckTimeout = 3 * time.Second
+
 func main() {
-	if err := run(context.Background(), os.Getenv, os.Stdout); err != nil {
+	if err := run(context.Background(), os.Args[1:], os.Getenv, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "apivo:", err)
 		os.Exit(1)
 	}
 }
 
-// run wires the platform together and serves until ctx is cancelled or a
-// termination signal arrives. It is separated from main so the wiring is
-// testable; main only handles the exit code.
-func run(ctx context.Context, getenv func(string) string, stdout io.Writer) error {
+// run parses the arguments and dispatches: no arguments serves until ctx is
+// cancelled or a termination signal arrives; "healthcheck" probes the serving
+// process once and reports the verdict as its error. It is separated from
+// main so the wiring is testable; main only handles the exit code.
+func run(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if len(args) > 0 {
+		if args[0] == "healthcheck" {
+			return healthcheck(ctx, getenv)
+		}
+		return fmt.Errorf("unknown command %q", args[0])
+	}
+	return serve(ctx, getenv, stdout)
+}
+
+// serve wires the platform together and serves HTTP until ctx is cancelled.
+func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) error {
 	cfg, err := config.FromEnv(getenv)
 	if err != nil {
 		return err
@@ -51,6 +76,55 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	srv := platformhttp.New(log, cfg.HTTPAddr, readiness(pool))
 	log.InfoContext(ctx, "starting", "addr", cfg.HTTPAddr, "env", cfg.Env)
 	return srv.Run(ctx)
+}
+
+// healthcheck performs one HTTP GET against the local /healthz endpoint and
+// reports the outcome as an error. It reads only HTTP_ADDR - a liveness
+// probe must not demand the full serving configuration.
+func healthcheck(ctx context.Context, getenv func(string) string) error {
+	url, err := healthURL(probeAddr(getenv))
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, healthcheckTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("healthcheck: building request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("healthcheck: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthcheck: %s answered %s", url, resp.Status)
+	}
+	return nil
+}
+
+// probeAddr returns the configured listen address, applying the same :8080
+// default as config.FromEnv without requiring the rest of the configuration.
+func probeAddr(getenv func(string) string) string {
+	if addr := getenv("HTTP_ADDR"); addr != "" {
+		return addr
+	}
+	return ":8080"
+}
+
+// healthURL derives the probe URL from an HTTP listen address. An empty or
+// wildcard host means the server listens on every interface, so the probe
+// goes to localhost.
+func healthURL(addr string) (string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("healthcheck: invalid HTTP_ADDR %q: %w", addr, err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/healthz", nil
 }
 
 // readiness reports the process ready when the database answers a ping.

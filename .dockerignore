@@ -1,0 +1,24 @@
+# Keep the build context to what the Go build needs: go.mod/go.sum, cmd/,
+# internal/ (migrations are embedded from there) and nothing else.
+.git
+.githooks
+.github
+.claude
+.specify
+specs
+web
+scripts
+bin
+*.exe
+coverage.out*
+coverage.html
+docker-compose.yml
+Dockerfile
+Makefile
+README.md
+sqlc.yaml
+.golangci.yml
+.gitattributes
+.gitignore
+.env
+.env.*
