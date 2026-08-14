@@ -49,9 +49,9 @@ controllers later means changing only `web-ingress.yaml`.
 | Key | Local dev (`.env.example` / compose) | Kubernetes |
 |---|---|---|
 | `HTTP_ADDR` | `:8080` | `configmap.yaml` → api envFrom |
-| `APP_ENV` | `dev` | `configmap.yaml` (`production`) |
+| `APP_ENV` | `dev` | `configmap.yaml` (`prod` — the binary accepts exactly `dev` or `prod`) |
 | `LOG_LEVEL` | `info` | `configmap.yaml` |
-| `DATABASE_URL` | local Postgres from `docker-compose.yml` | `secret.yaml` stub → api `secretKeyRef`; real value points at Supabase (EU) and is created out of band |
+| `DATABASE_URL` | local Postgres from `docker-compose.yml` | api `secretKeyRef` → the `apivo-secrets` Secret, created out of band; structure documented in `examples/secret.example.yaml`, which a plain `kubectl apply -f deploy/k8s/` never touches (apply does not recurse into subdirectories) |
 | `HOST` / `PORT` (web) | Astro defaults | Set inline in `web-deployment.yaml` (`0.0.0.0:4321` so the Node adapter binds the pod interface) |
 
 ## Deploying
@@ -59,7 +59,9 @@ controllers later means changing only `web-ingress.yaml`.
 ```sh
 kubectl create namespace apivo   # once
 
-# Real secret is created out of band — never from a file in this repo:
+# Real secret is created out of band — never from a file in this repo.
+# The structure-only stub lives in examples/ precisely so this apply can
+# never overwrite a real credential with a placeholder:
 kubectl -n apivo create secret generic apivo-secrets \
   --from-literal=DATABASE_URL='<real Supabase connection string>'
 
@@ -81,5 +83,6 @@ CI runs kubeconform in strict mode over this directory. Locally:
 
 ```sh
 docker run --rm -v "$PWD/deploy/k8s:/manifests" \
-  ghcr.io/yannh/kubeconform:latest -strict -summary /manifests
+  ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e \
+  -strict -summary /manifests
 ```

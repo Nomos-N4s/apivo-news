@@ -118,7 +118,8 @@ jobs:
       - name: Validate Kubernetes manifests (strict)
         run: >-
           docker run --rm -v "$PWD/deploy/k8s:/manifests"
-          ghcr.io/yannh/kubeconform:latest -strict -summary /manifests
+          ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
+          -strict -summary /manifests
 
   frontend:
     runs-on: ubuntu-latest
