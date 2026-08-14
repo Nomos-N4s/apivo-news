@@ -24,10 +24,20 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
+        # Matches the `node` user baked into the web image.
+        runAsUser: 1000
+        runAsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      # Spread replicas across nodes so a single node failure or drain
+      # cannot take out both (HPA minReplicas is 2 for availability).
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: web
       containers:
         - name: web
           # Placeholder until the container publish pipeline lands; real
@@ -53,7 +63,9 @@ spec:
               cpu: 500m
               memory: 512Mi
           # The web has no dedicated health route yet, so both probes hit /.
-          # Point them at a dedicated route when one lands.
+          # Point them at a dedicated route when one lands — and that route
+          # must not depend on the api or the database, or web restarts
+          # become coupled to backend health.
           livenessProbe:
             httpGet:
               path: /

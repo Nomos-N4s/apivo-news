@@ -26,10 +26,20 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
+        # Matches the distroless nonroot user baked into the api image.
+        runAsUser: 65532
+        runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
+      # Spread replicas across nodes so a single node failure or drain
+      # cannot take out both (HPA minReplicas is 2 for availability).
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: api
       containers:
         - name: api
           # Placeholder until the container publish pipeline lands; real
@@ -58,18 +68,31 @@ spec:
               memory: 256Mi
           # Health endpoints from the platform HTTP server:
           # /healthz = liveness, /readyz = readiness (DB ping).
+          #
+          # The startup probe owns the boot window: the binary runs schema
+          # migrations before it listens, so liveness must not race them
+          # (up to ~60s allowed before the first liveness check).
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 5
             periodSeconds: 10
+          # The readiness check is a real round-trip to external Postgres
+          # (Supabase, cross-region): 1s default timeout would mark healthy
+          # pods unready on routine latency spikes.
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
-            initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

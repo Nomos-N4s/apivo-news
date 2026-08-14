@@ -56,6 +56,10 @@ controllers later means changing only `web-ingress.yaml`.
 
 ## Deploying
 
+Prerequisites: an ingress controller (Traefik — see above) and
+**metrics-server** (the CPU-based HPAs consume `metrics.k8s.io`; without
+it they never scale and report `<unknown>` targets).
+
 ```sh
 kubectl create namespace apivo   # once
 
