@@ -11,7 +11,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check",
-    "test": "vitest run",
+    "test": "vitest run --coverage",
     "sync": "astro sync"
   },
   "dependencies": {
