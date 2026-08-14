@@ -41,12 +41,17 @@ class ContainerHost extends DurableObject {
 		const port = this.ctx.container.getTcpPort(this.port);
 		// start() returns before the process accepts connections; retry
 		// briefly rather than failing the first request after a cold start.
+		// A request body is a one-shot stream, so every attempt holds a
+		// clone taken before fetching — a failed attempt never leaves the
+		// next one without an unconsumed body.
 		let lastError;
 		for (let attempt = 0; attempt < 10; attempt++) {
+			const reserve = request.clone();
 			try {
 				return await port.fetch(request);
 			} catch (error) {
 				lastError = error;
+				request = reserve;
 				await scheduler.wait(500);
 			}
 		}
@@ -59,6 +64,13 @@ export class ApiContainer extends ContainerHost {
 	port = 8080; // matches HTTP_ADDR below
 
 	containerEnv() {
+		// Fail fast with a named cause: the Go binary requires DATABASE_URL
+		// and would otherwise exit-loop behind opaque connection retries.
+		if (!this.env.DATABASE_URL) {
+			throw new Error(
+				"DATABASE_URL secret is not set; run `npx wrangler secret put DATABASE_URL`",
+			);
+		}
 		return {
 			DATABASE_URL: this.env.DATABASE_URL, // Cloudflare secret
 			HTTP_ADDR: ":8080",
