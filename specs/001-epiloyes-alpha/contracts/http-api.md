@@ -58,8 +58,10 @@ Locale-scoped front page feed.
 
 ### GET /api/v1/editorial/queue
 
-Review queue: retrieved items and their translations that have no article
-yet.
+Review queue: retrieved items and their translations that have no
+non-withdrawn article yet — origins whose only articles are withdrawn
+reappear here as correction candidates, flagged with their withdrawal
+history.
 
 - Query: `lang` (optional filter), `limit`, `cursor`.
 - 200: `{ items: [{ source_item_id, translation_id|null, source_name,
@@ -77,11 +79,30 @@ rule; this endpoint merely carries the intent.
 - Body: `{ "translation_id": uuid }` XOR `{ "source_item_id": uuid }`,
   plus `{ "attribution": string, "publish": bool }`.
 - 201: `{ article_id, approved_by, approved_at, published_at|null }`.
-- 400: both or neither origin supplied; blank attribution.
+- 400: both or neither origin supplied; blank attribution; untranslated
+  origin whose feed provided no title.
 - 403: token subject is not an editor (mirrors the DB trigger).
-- 409: origin already has an article.
+- 409: origin already has a **non-withdrawn** article. An origin whose
+  only articles are withdrawn may be approved again — that is the
+  documented correction flow — and the partial unique indexes (0002
+  shape) enforce exactly this at the database.
 - Side effect: `article.approved` (+ `article.published` when publish)
   domain events in the same transaction.
+
+### POST /api/v1/editorial/articles/{id}/publication
+
+Publishes an approved-but-unpublished article (the `publish: false`
+path); the database permits `published_at` to be set exactly once.
+
+- 200: `{ article_id, published_at }`.
+- 404: unknown article; 409: already published.
+- Side effect: `article.published` domain event.
+
+Lifecycle note: an approved article is either published (this endpoint or
+`publish: true` at approval) or remains permanently unpublished — a
+frozen record of an approval that was never released. Withdrawal applies
+only to published articles; there is deliberately no way to erase an
+approval (I-1, I-5).
 
 ### POST /api/v1/editorial/articles/{id}/withdrawal
 

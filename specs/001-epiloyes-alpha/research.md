@@ -110,12 +110,19 @@ schema; hitting the monthly cap halts the pipeline (FR-006).
 ## D6 — Indexing block: one middleware, portable
 
 - **Decision**: a single Astro server middleware is the enforcement
-  point: serves `robots.txt` (disallow all, including named AI-training
-  crawler agents) and stamps `X-Robots-Tag: noindex, nofollow` on every
-  response. It ships inside the frontend container, so the block holds
-  identically on Cloudflare and Kubernetes. Cloudflare zone settings may
-  add a second fence, but only as additive config — never the sole
-  enforcement.
+  point, and it **denies, not just advises**: (a) requests whose
+  User-Agent matches the maintained crawler/AI-training/archive signature
+  list receive `403` — an actual block, not a directive; (b) `robots.txt`
+  (disallow all) and `X-Robots-Tag: noindex, nofollow` on every response
+  cover the compliant-crawler and cached-copy cases. One deny list, one
+  place, shipped inside the frontend container so the block holds
+  identically on Cloudflare and Kubernetes. Cloudflare bot-management
+  rules add a second, heuristic fence against UA-spoofing crawlers, but
+  only as additive config — never the sole enforcement.
+- **Limit named openly**: a crawler that fully impersonates a browser
+  defeats origin-level UA blocking everywhere; only heuristic bot
+  management (CF-level) catches some of those. The founder decision at
+  plan review covers this residual risk alongside the placement.
 - **Rationale**: the founder decision says one place, never per-route;
   the constitution says nothing platform-specific in application code. A
   CF-only rule would silently vanish on the Kubernetes path — the

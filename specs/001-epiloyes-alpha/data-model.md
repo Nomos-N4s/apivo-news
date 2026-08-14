@@ -14,7 +14,7 @@ and how each functional requirement maps to enforcement.
 | `language` | BCP-47 primary subtags only (el, de, en) | CHECK rejects combined tags (`el-DE` unrepresentable) |
 | `place` | Self-referencing hierarchy, country (alpha-2 format check), jurisdiction override | name/country CHECKs; no self-parenting |
 | `source` | Licensed feed + usage rule + permission evidence | `usage_rule` defaults `extract_and_link`; `full_text` requires non-blank evidence; licence terms never blank (CHECKs) |
-| `source_item` | Immutable retrieval evidence, incl. the feed's original title | Snapshot trigger writes licence/usage-rule/permission-evidence from the source row in the same transaction (callers cannot record false terms); `content_hash` is a DB-computed generated column over the body; NOT NULL + not-blank columns; UPDATE/DELETE/TRUNCATE triggers (I-2, I-3, I-4); dedupe UNIQUE (source, content_hash) |
+| `source_item` | Immutable retrieval evidence. Columns: `id`, `source_id`, `source_url`, `original_title` (null when the feed omits one), `original_author` (null likewise), `published_at` (null likewise), `retrieved_at`, `content_hash`, `raw_body`, `licence_snapshot`, `usage_rule_snapshot`, `permission_evidence_snapshot` | Snapshot trigger writes licence/usage-rule/permission-evidence from the source row in the same transaction (callers cannot record false terms); `content_hash` is a DB-computed generated column over the body; NOT NULL + not-blank columns; UPDATE/DELETE/TRUNCATE triggers (I-2, I-3, I-4); dedupe UNIQUE (source, content_hash) |
 | `translation` | Immutable model/prompt lineage; output stored as separate non-blank `headline` + `extract` (the extract-and-link shape) | NOT NULL lineage columns; not-blank output CHECKs; UPDATE/DELETE/TRUNCATE triggers (I-5) |
 | `account` | Named people (approvers, readers) | display_name not blank; case-insensitive unique email |
 | `consent` | Per-purpose dated records, never a boolean | consent guard: append-only history — no deletes, identity/grant frozen, revocation one-way; one active row per purpose (partial unique); revoke-after-grant CHECK |
@@ -56,8 +56,12 @@ trigger or constraint.
      full history; reader queries exclude withdrawn).
 
 3. **Translation cost lineage** (FR-006)
-   - `translation.cost_microusd bigint NOT NULL DEFAULT 0` — cost recorded
-     at generation into the immutable row.
+   - `translation.cost_microusd bigint NOT NULL` — **no default**: the
+     translation module must record the provider-reported cost
+     explicitly, so a missing cost is a rejected insert, never silently
+     zero. An explicit 0 is valid only when the provider genuinely
+     charged nothing (e.g. included quota). DB-rejection test: insert
+     omitting the cost fails.
    - `translation_spend (month date PRIMARY KEY, spent_microusd bigint NOT NULL)`
      — monthly ledger updated in the same transaction as each translation
      insert. Caps themselves are configuration (per-article ceiling,
@@ -90,7 +94,7 @@ trigger or constraint.
 | FR-010 | `article_provenance` view (0001, extended 0002) |
 | FR-011 | `account`, `consent` (0001) |
 | FR-012 | `domain_event` append-only (0001); emitting events is a module obligation verified by tests |
-| FR-013 | one frontend middleware (robots + X-Robots-Tag); the Go API is non-publicly-routable and stamps `X-Robots-Tag` on every response (0001, platform http); no per-route logic anywhere |
+| FR-013 | one frontend middleware that 403s known crawler/AI/archive user agents and serves robots.txt + X-Robots-Tag for the compliant rest (D6); the Go API is non-publicly-routable and stamps `X-Robots-Tag` on every response (0001, platform http); no per-route logic anywhere |
 | FR-014 | UNIQUE (source_id, content_hash) (0001) |
 | FR-015 | route layer mounts only el and de, verified by frontend tests. (`language` seeds el, de and en — en exists for future use and is not reachable through any route) |
 | FR-016 | withdrawal columns + CHECKs + same-tx domain event (0002) |
