@@ -40,6 +40,7 @@ spec:
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: api
+              app.kubernetes.io/part-of: apivo-news
       containers:
         - name: api
           # Placeholder until the container publish pipeline lands; real
