@@ -139,3 +139,12 @@ jobs:
         run: npm run check
       - name: Build
         run: npm run build
+
+  # Proves the frontend container builds from a clean checkout. Build only —
+  # publishing is a deployment concern, not a CI gate.
+  web-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the frontend image (no push)
+        run: docker build -t apivo-web:ci web/
