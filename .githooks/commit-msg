@@ -1,0 +1,7 @@
+#!/bin/sh
+# Strip any AI attribution trailers. Portable across Git Bash, WSL, Linux and macOS.
+# Case-insensitive: blocklists must over-match, not under-match. The mv is not
+# gated on grep's status - grep exits 1 when nothing survives, and git itself
+# rejects an empty message with a clear error.
+grep -iv -E '^(co-authored-by:.*(noreply@anthropic\.com|claude)|.*generated with \[?claude|claude-session:)' "$1" > "$1.tmp"
+mv "$1.tmp" "$1"

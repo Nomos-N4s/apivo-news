@@ -1,0 +1,22 @@
+# Local development stack. The Go and Astro services join this file when the
+# deployment work lands; Postgres alone is enough to develop against and to
+# run the schema invariant tests.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: apivo
+      POSTGRES_USER: apivo
+      POSTGRES_PASSWORD: apivo
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apivo -d apivo"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

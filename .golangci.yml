@@ -1,0 +1,48 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errcheck
+    - errorlint
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - noctx
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        # Struct layout is optimised for readability, not memory packing.
+        - fieldalignment
+        # err shadowing in nested scopes is idiomatic Go.
+        - shadow
+  exclusions:
+    generated: lax
+    rules:
+      # Tests may use weak randomness, fixed credentials and ad-hoc requests.
+      - path: _test\.go
+        linters:
+          - gosec
+          - noctx
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
