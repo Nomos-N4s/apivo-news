@@ -37,30 +37,31 @@ type ArticlePlace struct {
 
 // I-5: for any article - source, licence snapshot at retrieval, model, prompt version and named approver, in a single query.
 type ArticleProvenance struct {
-	ArticleID         pgtype.UUID
-	PublishedAt       pgtype.Timestamptz
-	AttributionBlock  string
-	ApprovedAt        pgtype.Timestamptz
-	ApproverID        pgtype.UUID
-	ApproverName      string
-	ApproverEmail     string
-	TranslationID     pgtype.UUID
-	Model             pgtype.Text
-	PromptVersion     pgtype.Text
-	TargetLocale      pgtype.Text
-	GeneratedAt       pgtype.Timestamptz
-	SourceItemID      pgtype.UUID
-	SourceUrl         string
-	OriginalAuthor    pgtype.Text
-	SourcePublishedAt pgtype.Timestamptz
-	RetrievedAt       pgtype.Timestamptz
-	ContentHash       string
-	LicenceSnapshot   string
-	SourceID          pgtype.UUID
-	SourceName        string
-	SourceFeedUrl     string
-	Jurisdiction      string
-	UsageRule         string
+	ArticleID          pgtype.UUID
+	PublishedAt        pgtype.Timestamptz
+	AttributionBlock   string
+	ApprovedAt         pgtype.Timestamptz
+	ApproverID         pgtype.UUID
+	ApproverName       string
+	ApproverEmail      string
+	TranslationID      pgtype.UUID
+	Model              pgtype.Text
+	PromptVersion      pgtype.Text
+	TargetLocale       pgtype.Text
+	GeneratedAt        pgtype.Timestamptz
+	SourceItemID       pgtype.UUID
+	SourceUrl          string
+	OriginalAuthor     pgtype.Text
+	SourcePublishedAt  pgtype.Timestamptz
+	RetrievedAt        pgtype.Timestamptz
+	ContentHash        string
+	LicenceSnapshot    string
+	UsageRule          string
+	PermissionEvidence pgtype.Text
+	SourceID           pgtype.UUID
+	SourceName         string
+	SourceFeedUrl      string
+	Jurisdiction       string
 }
 
 // Per-purpose consent rows, never a boolean column. Revocation closes a row; a new grant opens a new row, preserving the full consent history.
@@ -122,11 +123,15 @@ type SourceItem struct {
 	OriginalAuthor pgtype.Text
 	PublishedAt    pgtype.Timestamptz
 	RetrievedAt    pgtype.Timestamptz
-	// SHA-256 hex digest of raw_body; deduplicates retrievals and fingerprints the evidence.
+	// SHA-256 hex digest of raw_body, computed by the database (generated column); deduplicates retrievals and fingerprints the evidence.
 	ContentHash string
 	RawBody     string
-	// The source's licence terms as they applied at retrieval time (I-4). The legal defence rests on this value, not on source.licence_terms today.
+	// The source's licence terms as they applied at retrieval time (I-4). Written by trigger from the source row in the same transaction - callers cannot record false terms. The legal defence rests on this value, not on source.licence_terms today.
 	LicenceSnapshot string
+	// The usage rule in force at retrieval, written by trigger. Later source edits never rewrite the legal basis of what was already retrieved.
+	UsageRuleSnapshot string
+	// The permission evidence on record at retrieval, written by trigger; preserved even if the source row changes later.
+	PermissionEvidenceSnapshot pgtype.Text
 }
 
 // IMMUTABLE machine translation lineage: which model, which prompt version, when, from which retrieved item (I-5). Corrections and re-translations create a new row; rewriting an old one would silently falsify the provenance of every article built on it.

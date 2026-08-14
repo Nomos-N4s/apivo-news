@@ -12,7 +12,7 @@ import (
 )
 
 const getArticleProvenance = `-- name: GetArticleProvenance :one
-select article_id, published_at, attribution_block, approved_at, approver_id, approver_name, approver_email, translation_id, model, prompt_version, target_locale, generated_at, source_item_id, source_url, original_author, source_published_at, retrieved_at, content_hash, licence_snapshot, source_id, source_name, source_feed_url, jurisdiction, usage_rule from article_provenance
+select article_id, published_at, attribution_block, approved_at, approver_id, approver_name, approver_email, translation_id, model, prompt_version, target_locale, generated_at, source_item_id, source_url, original_author, source_published_at, retrieved_at, content_hash, licence_snapshot, usage_rule, permission_evidence, source_id, source_name, source_feed_url, jurisdiction from article_provenance
 where article_id = $1
 `
 
@@ -41,11 +41,12 @@ func (q *Queries) GetArticleProvenance(ctx context.Context, articleID pgtype.UUI
 		&i.RetrievedAt,
 		&i.ContentHash,
 		&i.LicenceSnapshot,
+		&i.UsageRule,
+		&i.PermissionEvidence,
 		&i.SourceID,
 		&i.SourceName,
 		&i.SourceFeedUrl,
 		&i.Jurisdiction,
-		&i.UsageRule,
 	)
 	return i, err
 }

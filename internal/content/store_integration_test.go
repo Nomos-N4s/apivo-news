@@ -67,10 +67,11 @@ func TestGeneratedStoreAgainstSchema(t *testing.T) {
 		"Test Feed "+suffix, "https://example.test/feed/"+suffix, licence).Scan(&sourceID); err != nil {
 		t.Fatalf("seed source: %v", err)
 	}
+	// content_hash and the licence snapshot are written by the database.
 	if err := tx.QueryRow(ctx,
-		`insert into source_item (source_id, source_url, content_hash, raw_body, licence_snapshot)
-		 values ($1, $2, $3, $4, $5) returning id`,
-		sourceID, "https://example.test/articles/"+suffix, contentHash, rawBody, licence).Scan(&sourceItemID); err != nil {
+		`insert into source_item (source_id, source_url, raw_body)
+		 values ($1, $2, $3) returning id`,
+		sourceID, "https://example.test/articles/"+suffix, rawBody).Scan(&sourceItemID); err != nil {
 		t.Fatalf("seed source_item: %v", err)
 	}
 	if err := tx.QueryRow(ctx,

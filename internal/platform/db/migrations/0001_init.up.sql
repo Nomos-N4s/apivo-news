@@ -18,6 +18,10 @@
 -- Language and place are independent axes: a Greek speaker in Munich wants
 -- Munich news in Greek. There is deliberately no combined locale tag.
 
+-- digest() backs the database-computed content fingerprint. Present on
+-- Supabase and in the standard postgres images alike.
+create extension if not exists pgcrypto;
+
 ------------------------------------------------------------------------------
 -- Immutability guard, shared by source_item and domain_event.
 ------------------------------------------------------------------------------
@@ -53,8 +57,11 @@ create table place (
     parent_id uuid references place (id),
     name text not null
         constraint place_name_not_blank check (btrim(name) <> ''),
+    -- Format check only (two uppercase ASCII letters). Membership in the
+    -- actual ISO 3166-1 list is a reference-data concern, deliberately not
+    -- encoded as a constraint here.
     country text not null
-        constraint place_country_is_iso3166_alpha2 check (country ~ '^[A-Z]{2}$'),
+        constraint place_country_alpha2_format check (country ~ '^[A-Z]{2}$'),
     jurisdiction_override text,
     constraint place_not_own_parent check (parent_id is null or parent_id <> id)
 );
@@ -75,7 +82,8 @@ create table source (
     url text not null unique,
     language_code text not null references language (code),
     jurisdiction text not null,
-    licence_terms text not null,
+    licence_terms text not null
+        constraint source_licence_terms_not_blank check (btrim(licence_terms) <> ''),
     usage_rule text not null default 'extract_and_link'
         constraint source_usage_rule_known check (usage_rule in ('extract_and_link', 'full_text')),
     permission_evidence text,
@@ -102,23 +110,54 @@ create table source_item (
     original_author text,
     published_at timestamptz,
     retrieved_at timestamptz not null default now(),
-    content_hash text not null
-        constraint source_item_content_hash_is_sha256_hex check (content_hash ~ '^[0-9a-f]{64}$'),
+    -- Computed by the database from the stored body (UTF-8 database
+    -- encoding): a fingerprint that cannot disagree with the evidence it
+    -- fingerprints.
+    content_hash text not null generated always as (encode(digest(raw_body, 'sha256'), 'hex')) stored,
     raw_body text not null,
     licence_snapshot text not null
         constraint source_item_licence_snapshot_not_blank check (btrim(licence_snapshot) <> ''),
+    usage_rule_snapshot text not null
+        constraint source_item_usage_rule_snapshot_known
+            check (usage_rule_snapshot in ('extract_and_link', 'full_text')),
+    permission_evidence_snapshot text,
     constraint source_item_unique_per_source unique (source_id, content_hash)
 );
 
 comment on table source_item is
     'IMMUTABLE (I-3). Exactly what was retrieved, when, and under which licence terms (I-2, I-4). Legal evidence; never updated, never deleted.';
 comment on column source_item.licence_snapshot is
-    'The source''s licence terms as they applied at retrieval time (I-4). The legal defence rests on this value, not on source.licence_terms today.';
+    'The source''s licence terms as they applied at retrieval time (I-4). Written by trigger from the source row in the same transaction - callers cannot record false terms. The legal defence rests on this value, not on source.licence_terms today.';
+comment on column source_item.usage_rule_snapshot is
+    'The usage rule in force at retrieval, written by trigger. Later source edits never rewrite the legal basis of what was already retrieved.';
+comment on column source_item.permission_evidence_snapshot is
+    'The permission evidence on record at retrieval, written by trigger; preserved even if the source row changes later.';
 comment on column source_item.content_hash is
-    'SHA-256 hex digest of raw_body; deduplicates retrievals and fingerprints the evidence.';
+    'SHA-256 hex digest of raw_body, computed by the database (generated column); deduplicates retrievals and fingerprints the evidence.';
 
 create index source_item_source_id_idx on source_item (source_id);
 create index source_item_retrieved_at_idx on source_item (retrieved_at);
+
+-- I-4 authority: the snapshot columns are written from the source row in
+-- the same transaction as the content. Caller-supplied values are ignored.
+create function source_item_snapshot_terms() returns trigger
+language plpgsql
+as $$
+begin
+    select s.licence_terms, s.usage_rule, s.permission_evidence
+      into new.licence_snapshot, new.usage_rule_snapshot, new.permission_evidence_snapshot
+      from source s
+     where s.id = new.source_id;
+    return new;
+end;
+$$;
+
+comment on function source_item_snapshot_terms() is
+    'Copies licence terms, usage rule and permission evidence from the source row at insert (I-2, I-4). The database, not the caller, is the authority on what applied at retrieval.';
+
+create trigger source_item_snapshot
+    before insert on source_item
+    for each row execute function source_item_snapshot_terms();
 
 create trigger source_item_immutable
     before update or delete on source_item
@@ -192,6 +231,39 @@ create index consent_account_id_idx on consent (account_id);
 create unique index consent_one_active_per_purpose
     on consent (account_id, purpose) where revoked_at is null;
 
+-- Consent history is evidence of lawful processing: rows are never
+-- deleted or rewritten. The only permitted change is the one-way
+-- revocation transition; a re-grant is a new row.
+create function consent_guard() returns trigger
+language plpgsql
+as $$
+begin
+    if tg_op = 'DELETE' then
+        raise exception 'consent history is append-only: rows are never deleted, revocation closes them';
+    end if;
+    if new.id is distinct from old.id
+        or new.account_id is distinct from old.account_id
+        or new.purpose is distinct from old.purpose
+        or new.granted_at is distinct from old.granted_at then
+        raise exception 'consent identity and grant are frozen: a new grant is a new row';
+    end if;
+    if old.revoked_at is not null and new.revoked_at is distinct from old.revoked_at then
+        raise exception 'consent revocation is one-way and final';
+    end if;
+    return new;
+end;
+$$;
+
+comment on function consent_guard() is
+    'Protects consent history: no deletes, no rewriting of identity or grant, revocation only ever moves from null to a timestamp.';
+
+create trigger consent_guard
+    before update or delete on consent
+    for each row execute function consent_guard();
+create trigger consent_no_truncate
+    before truncate on consent
+    for each statement execute function raise_immutable();
+
 create function is_entitled(p_account_id uuid, p_action text) returns boolean
 language sql
 stable
@@ -240,6 +312,42 @@ create index article_source_item_id_idx on article (source_item_id);
 create index article_approved_by_idx on article (approved_by);
 create index article_published_at_idx on article (published_at desc)
     where published_at is not null;
+
+-- An article's identity, origin, approval and attribution are frozen at
+-- approval; the provenance the view reports for a published article can
+-- never be silently reassigned (I-1, I-5). The only permitted transition
+-- is publication itself: published_at may go from null to a value, once.
+create function article_guard() returns trigger
+language plpgsql
+as $$
+begin
+    if new.id is distinct from old.id
+        or new.translation_id is distinct from old.translation_id
+        or new.source_item_id is distinct from old.source_item_id
+        or new.approved_by is distinct from old.approved_by
+        or new.approved_at is distinct from old.approved_at
+        or new.attribution_block is distinct from old.attribution_block then
+        raise exception 'article identity, origin, approval and attribution are frozen (I-1, I-5): corrections publish a new article';
+    end if;
+    if old.published_at is not null and new.published_at is distinct from old.published_at then
+        raise exception 'article publication time is frozen once set (I-5): withdrawal is a separate, audited transition';
+    end if;
+    return new;
+end;
+$$;
+
+comment on function article_guard() is
+    'Freezes every provenance-bearing article column after approval; only the one-way publish transition is allowed.';
+
+create trigger article_guard
+    before update on article
+    for each row execute function article_guard();
+create trigger article_no_delete
+    before delete on article
+    for each row execute function raise_immutable();
+create trigger article_no_truncate
+    before truncate on article
+    for each statement execute function raise_immutable();
 
 create table article_place (
     article_id uuid not null references article (id),
@@ -313,11 +421,14 @@ select
     si.retrieved_at,
     si.content_hash,
     si.licence_snapshot,
+    -- Legal basis as it applied AT RETRIEVAL: read from the immutable
+    -- item snapshots, never from the mutable source row.
+    si.usage_rule_snapshot as usage_rule,
+    si.permission_evidence_snapshot as permission_evidence,
     s.id              as source_id,
     s.name            as source_name,
     s.url             as source_feed_url,
-    s.jurisdiction,
-    s.usage_rule
+    s.jurisdiction
 from article a
 join account approver on approver.id = a.approved_by
 left join translation t on t.id = a.translation_id
