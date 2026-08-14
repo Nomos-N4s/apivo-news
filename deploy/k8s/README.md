@@ -38,11 +38,12 @@ controllers later means changing only `web-ingress.yaml`.
 | File | Contents |
 |---|---|
 | `configmap.yaml` | Non-secret env for the api (`HTTP_ADDR`, `APP_ENV`, `LOG_LEVEL`) |
-| `secret.yaml` | **Structure-only stub** for `DATABASE_URL` — placeholder value, never a real credential |
+| `examples/secret.example.yaml` | **Structure-only stub** for `DATABASE_URL` — placeholder value, never a real credential, outside the applied set |
 | `api-deployment.yaml` / `api-service.yaml` | Go API, ClusterIP only |
 | `web-deployment.yaml` / `web-service.yaml` | Astro server, ClusterIP |
 | `web-ingress.yaml` | The single public entry point (web only) |
 | `api-hpa.yaml` / `web-hpa.yaml` | CPU-based autoscaling for both Deployments |
+| `api-pdb.yaml` / `web-pdb.yaml` | Disruption budgets keeping one replica through drains |
 
 ## Config/env parity with compose and `.env.example`
 
@@ -88,5 +89,5 @@ CI runs kubeconform in strict mode over this directory. Locally:
 ```sh
 docker run --rm -v "$PWD/deploy/k8s:/manifests" \
   ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e \
-  -strict -summary /manifests
+  -strict -summary -kubernetes-version 1.32.0 /manifests
 ```
