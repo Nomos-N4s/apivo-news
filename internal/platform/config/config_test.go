@@ -66,8 +66,46 @@ func TestFromEnv(t *testing.T) {
 			},
 		},
 		{
+			name: "JWKS URL and audience carried through",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://x",
+				"JWKS_URL":     "https://auth.example.test/jwks.json",
+				"JWT_AUDIENCE": "authenticated",
+			},
+			want: config.Config{
+				DatabaseURL: "postgres://x",
+				HTTPAddr:    ":8080",
+				Env:         config.EnvDev,
+				LogLevel:    slog.LevelInfo,
+				JWKSURL:     "https://auth.example.test/jwks.json",
+				JWTAudience: "authenticated",
+			},
+		},
+		{
+			name: "JWKS URL without audience is fine",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://x",
+				"JWKS_URL":     "https://auth.example.test/jwks.json",
+			},
+			want: config.Config{
+				DatabaseURL: "postgres://x",
+				HTTPAddr:    ":8080",
+				Env:         config.EnvDev,
+				LogLevel:    slog.LevelInfo,
+				JWKSURL:     "https://auth.example.test/jwks.json",
+			},
+		},
+		{
 			name:    "missing DATABASE_URL rejected",
 			env:     map[string]string{},
+			wantErr: true,
+		},
+		{
+			name: "audience without JWKS URL rejected",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://x",
+				"JWT_AUDIENCE": "authenticated",
+			},
 			wantErr: true,
 		},
 		{
