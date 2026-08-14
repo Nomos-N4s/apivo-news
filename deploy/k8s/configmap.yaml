@@ -1,0 +1,20 @@
+# Non-secret runtime configuration for the Go api.
+#
+# Parity with local development (.env.example / docker-compose.yml):
+#   HTTP_ADDR  — same key as .env.example; the api listens on :8080 here too.
+#   APP_ENV    — .env.example uses "dev"; the cluster runs "prod" (the
+#                binary accepts exactly "dev" or "prod").
+#   LOG_LEVEL  — same default as .env.example.
+#   DATABASE_URL is deliberately absent: it is a credential and lives in the
+#   Secret (see secret.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apivo-config
+  labels:
+    app.kubernetes.io/name: apivo-config
+    app.kubernetes.io/part-of: apivo-news
+data:
+  HTTP_ADDR: ":8080"
+  APP_ENV: "prod"
+  LOG_LEVEL: "info"

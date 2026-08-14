@@ -1,0 +1,16 @@
+# Keeps at least one web replica serving through voluntary disruptions
+# (node drains, cluster upgrades); pairs with the topology spread in the
+# Deployment so both replicas do not share a node in the first place.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: apivo-news
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web
+      app.kubernetes.io/part-of: apivo-news

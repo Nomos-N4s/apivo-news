@@ -1,0 +1,86 @@
+# Astro frontend (Node adapter, standalone mode) — the only public HTTP
+# surface, reached through web-service.yaml and web-ingress.yaml.
+#
+# `spec.replicas` is intentionally omitted: the HPA (web-hpa.yaml) owns the
+# replica count.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: apivo-news
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web
+      app.kubernetes.io/part-of: apivo-news
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: web
+        app.kubernetes.io/part-of: apivo-news
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # Matches the `node` user baked into the web image.
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread replicas across nodes so a single node failure or drain
+      # cannot take out both (HPA minReplicas is 2 for availability).
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: web
+              app.kubernetes.io/part-of: apivo-news
+      containers:
+        - name: web
+          # Placeholder until the container publish pipeline lands; real
+          # deployments pin an image digest.
+          image: ghcr.io/nomos-n4s/apivo-news/web:latest
+          ports:
+            - name: http
+              containerPort: 4321
+          env:
+            # The @astrojs/node standalone server reads HOST/PORT; HOST must
+            # be 0.0.0.0 to bind the pod interface (the default binds
+            # localhost only). Kept inline rather than in the ConfigMap
+            # because these are adapter mechanics, not app configuration.
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "4321"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # The web has no dedicated health route yet, so both probes hit /.
+          # Point them at a dedicated route when one lands — and that route
+          # must not depend on the api or the database, or web restarts
+          # become coupled to backend health.
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

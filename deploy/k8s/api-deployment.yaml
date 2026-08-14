@@ -1,0 +1,101 @@
+# Go API. Cluster-internal only — exposed by a ClusterIP Service
+# (api-service.yaml) and deliberately absent from the Ingress, per the
+# contract topology (specs/001-epiloyes-alpha/contracts/http-api.md).
+#
+# `spec.replicas` is intentionally omitted: the HPA (api-hpa.yaml) owns the
+# replica count, and omitting it here keeps `kubectl apply` from fighting the
+# autoscaler.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: apivo-news
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api
+      app.kubernetes.io/part-of: apivo-news
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api
+        app.kubernetes.io/part-of: apivo-news
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # Matches the distroless nonroot user baked into the api image.
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread replicas across nodes so a single node failure or drain
+      # cannot take out both (HPA minReplicas is 2 for availability).
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: api
+              app.kubernetes.io/part-of: apivo-news
+      containers:
+        - name: api
+          # Placeholder until the container publish pipeline lands; real
+          # deployments pin an image digest.
+          image: ghcr.io/nomos-n4s/apivo-news/api:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          # Non-secret env (HTTP_ADDR, APP_ENV, LOG_LEVEL) — parity with
+          # .env.example, documented in configmap.yaml.
+          envFrom:
+            - configMapRef:
+                name: apivo-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: apivo-secrets
+                  key: DATABASE_URL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          # Health endpoints from the platform HTTP server:
+          # /healthz = liveness, /readyz = readiness (DB ping).
+          #
+          # The startup probe owns the boot window: the binary runs schema
+          # migrations before it listens, so liveness must not race them
+          # (up to ~60s allowed before the first liveness check).
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          # The readiness check is a real round-trip to external Postgres
+          # (Supabase, cross-region): 1s default timeout would mark healthy
+          # pods unready on routine latency spikes.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

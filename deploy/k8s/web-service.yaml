@@ -1,0 +1,18 @@
+# ClusterIP for the Astro server; public traffic reaches it only through
+# the Ingress (web-ingress.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: apivo-news
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: apivo-news
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
