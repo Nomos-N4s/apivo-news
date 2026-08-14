@@ -89,6 +89,21 @@ the single source of truth for the schema. After changing them, run
 `make sqlc` and commit the regenerated `internal/content/store` (CI fails on
 drift).
 
+## Cloudflare deployment
+
+[wrangler.jsonc](wrangler.jsonc) declares both images — the Go API
+(`Dockerfile`) and the Astro frontend (`web/Dockerfile`) — as Cloudflare
+Containers pinned to `jurisdiction: "eu"` for GDPR residency. The
+containers are the artefact; the only Cloudflare-specific glue is the
+Worker shim in [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js),
+which routes all public traffic to the web container. The Go API has no
+public route. Secrets (`DATABASE_URL`, later provider keys) are set with
+`npx wrangler secret put <NAME>` and are never committed. CI validates the
+configuration on every PR with
+`wrangler deploy --dry-run --containers-rollout none` — a full parse and
+Worker bundle needing no Cloudflare credentials; images build at deploy
+time (`npx wrangler deploy`).
+
 ## Quality gates (CI-enforced)
 
 - Go: `golangci-lint` (strict config), `go vet`, tests with `-race`,

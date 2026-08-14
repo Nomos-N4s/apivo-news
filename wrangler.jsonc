@@ -1,0 +1,66 @@
+// Cloudflare Containers configuration (plan Phase A, issue #8).
+//
+// The containers are the deployment artefact: the same images that run under
+// compose and Kubernetes run here, unchanged. Nothing Cloudflare-specific
+// enters application code — the one piece of glue the platform requires (a
+// Worker whose Durable Object classes host the containers) lives in
+// deploy/cloudflare/worker.js, next to the other deployment artefacts.
+//
+// Topology (specs/001-epiloyes-alpha/contracts/http-api.md): the Astro web
+// container is the only public HTTP surface. The Go API container is never
+// routed from the Worker's public fetch handler — it is addressable solely
+// through its Durable Object binding, i.e. from Worker code, not from the
+// internet.
+//
+// Secrets — set with `npx wrangler secret put <NAME>`, delivered to the
+// Worker environment and handed to the container at start (see
+// deploy/cloudflare/worker.js). No secret value is ever committed.
+//
+//   DATABASE_URL   Supabase (EU region) Postgres connection string for the
+//                  Go API.
+//
+// Later phases add, through the same mechanism with no config change: the
+// translation-provider API key and the Supabase Auth keys for the web SSR.
+{
+	"name": "apivo-news",
+	"main": "deploy/cloudflare/worker.js",
+	"compatibility_date": "2026-08-01",
+	"containers": [
+		{
+			// Go API, built from the repo-root Dockerfile (T001). Internal
+			// only: no public route exists to this container.
+			"name": "apivo-api",
+			"class_name": "ApiContainer",
+			"image": "./Dockerfile",
+			"instance_type": "basic",
+			// Alpha scale (hundreds of readers): one instance each, exactly
+			// like compose. No horizontal-scale work in alpha.
+			"max_instances": 1,
+			// GDPR residency: run only in EU regions (EEUR/WEUR).
+			"constraints": {
+				"jurisdiction": "eu"
+			}
+		},
+		{
+			// Astro web frontend (T002) — the single public surface, carrying
+			// the D6 crawler gate inside the artefact.
+			"name": "apivo-web",
+			"class_name": "WebContainer",
+			"image": "./web/Dockerfile",
+			"instance_type": "basic",
+			"max_instances": 1,
+			"constraints": {
+				"jurisdiction": "eu"
+			}
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "API", "class_name": "ApiContainer" },
+			{ "name": "WEB", "class_name": "WebContainer" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["ApiContainer", "WebContainer"] }
+	]
+}

@@ -121,6 +121,24 @@ jobs:
           ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
           -strict -summary -kubernetes-version 1.32.0 /manifests
 
+  # Validates the Cloudflare Containers configuration: full parse of
+  # wrangler.jsonc plus Worker bundle and container/DO wiring checks.
+  # --dry-run needs no Cloudflare credentials and uploads nothing;
+  # --containers-rollout none skips the Docker image builds, which have
+  # their own jobs. Config validation checks the referenced Dockerfile
+  # paths exist, so the Go Dockerfile gets a stand-in until T001 lands.
+  wrangler:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Validate Cloudflare configuration (dry run, no credentials)
+        run: |
+          [ -f Dockerfile ] || touch Dockerfile
+          npx --yes wrangler@4 deploy --dry-run --containers-rollout none
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
