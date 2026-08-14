@@ -102,10 +102,49 @@ Caveats that matter for the decision:
   longer appear on official pages and are reportedly closed to new
   customers; only Growth is assumed available.
 
-**Proposed cap defaults (founder-approvable config values)**: per-article
-ceiling $0.02 (≈10× the expected LLM cost per item), monthly cap $25
-(≈4–8× the estimated LLM monthly spend). Both are configuration, not
-schema; hitting the monthly cap halts the pipeline (FR-006).
+**Cap values (founder-approved 2026-08-14)**: per-article ceiling $0.02,
+monthly cap $25. Both are configuration, not schema; hitting the monthly
+cap halts the pipeline (FR-006).
+
+### Founder direction (2026-08-14): OpenAI-compatible budget inference
+
+The founder directed the shortlist toward cheap OpenAI-API-compatible
+hosts (Groq-class) or self-hosting rather than premium first-party APIs.
+Consequences:
+
+- The first adapter is a single **OpenAI-compatible** implementation
+  with configurable base URL, model and key — it covers Groq, Together,
+  DeepInfra, a self-hosted vLLM server and OpenAI itself, switchable by
+  config alone.
+- Self-hosting proper is uneconomical at alpha volume (any capable GPU
+  host exceeds every API option's monthly cost); managed budget
+  inference is the operative form of the idea.
+- The production model is picked by the founder from the pilot
+  evaluation report (T016) — Greek quality is the binding constraint,
+  not price.
+
+Verified budget options (official pages, 2026-08-14; monthly = 0.63M in
++ 0.504M out tokens):
+
+| Host | Model | $/1M in / out | Est./month | Notes |
+|---|---|---|---|---|
+| DeepInfra | gpt-oss-120b | 0.037 / 0.17 | **$0.11** | GDPR "in progress" on their trust page; no processing-location statement |
+| DeepInfra | Llama 3.3 70B Turbo | 0.10 / 0.32 | **$0.22** | — |
+| Together | Qwen3.5 9B | 0.17 / 0.25 | **$0.23** | no EU-processing statement found |
+| Groq | gpt-oss-120b | 0.15 / 0.60 | **$0.40** | Helsinki EU DC exists, but standard API not guaranteed EU-routed — written confirmation needed if it matters |
+| Groq | llama-3.3-70b-versatile | 0.59 / 0.79 | **$0.77** | free rate-limited tier available |
+
+Greek-quality caveats that make the pilot mandatory: Llama 3.3 officially
+supports German but **not Greek**; gpt-oss models are English-dominant
+with no Greek claim; Qwen/Gemma lines claim the broadest language
+coverage among budget options. Translated public news text — never
+reader personal data — is what leaves the system, which bounds the GDPR
+exposure of a non-EU host; the founder decides whether that bound
+suffices or an EU-routed option is required.
+
+Endpoints (all OpenAI-compatible): `api.groq.com/openai/v1`,
+`api.together.ai/v1`, `api.deepinfra.com/v1/openai`. Prices are
+2026-08-14 snapshots; these hosts reprice frequently — recheck at T016.
 
 ## D6 — Indexing block: one middleware, portable
 
