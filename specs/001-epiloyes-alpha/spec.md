@@ -8,6 +8,26 @@
 
 **Input**: User description: "v1.0.0-alpha of epiloYES: Greek and German; Munich as reader locale; Greek national and Munich local RSS/Atom feeds as sources; no scraping; text only; translated headline and extract linking back to the source, not full-text translation; human approval on every item before publish; full provenance per the constitution's invariants; reader front page and article pages, locale-scoped, attribution rendered; registration and consent capture in the schema, UI only if time allows."
 
+## Clarifications
+
+### Session 2026-08-14
+
+- Q: Indexing posture (§9.1) — how should the alpha treat crawlers? →
+  A: Keep blocking everything (search engines, AI-training crawlers,
+  archives) at one edge enforcement point for the whole alpha. Founder
+  decision; revisiting it is a new founder decision, not a default.
+- Q: Data retention periods (§9.2)? → A: Deferred by the founder; no
+  automated deletion ships in the alpha. A retention schedule must be
+  decided before public launch — carried as a founder-blocked backlog
+  item.
+- Q: LLM translation provider (§9.3)? → A: The plan carries the adapter
+  interface, cost controls, and a priced shortlist of 2–3 candidates;
+  the founder picks at plan review. No provider is wired until then.
+- Q: Withdrawal semantics for a published article? → A: Unpublish keeps
+  the record: withdrawal ends publication, while the article row, the
+  approval record and the retrieved evidence remain; an audit event
+  records who withdrew it and why. Nothing is ever deleted.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Munich reader, in Greek (Priority: P1)
@@ -128,6 +148,10 @@ and verify the article records that identity.
    **Then** the system rejects it outright.
 3. **Given** an item the editor rejects, **Then** no article is created
    and the retrieved item remains untouched as evidence.
+4. **Given** a published article that must be withdrawn, **When** an
+   editor withdraws it, **Then** it stops appearing on the site while
+   the article, its approval record and the retrieved evidence remain,
+   and an audit event records who withdrew it and why.
 
 ---
 
@@ -194,8 +218,8 @@ flag anywhere.
   without the editor seeing what state it is in.
 - Same story on two feeds: each retrieval is separate evidence with its
   own source and licence; deduplication applies within a source only.
-- An approved article needs to be withdrawn: publication state can end,
-  but the retrieved item and the approval record remain as history.
+- An approved article needs to be withdrawn: see FR-016 — publication
+  ends, every record remains, and the withdrawal itself is audited.
 - A reader in Munich also follows a place in Greece: both feeds of content
   appear; place following is many-to-many by design.
 
@@ -238,14 +262,19 @@ flag anywhere.
   grant/revoke history — never a boolean flag.
 - **FR-012**: Significant domain events (retrieval, translation, approval,
   publication) MUST be recorded in an append-only audit stream.
-- **FR-013**: Until the founder decides the indexing posture, the site
-  MUST block all automated crawling and indexing, enforced in one place at
-  the edge — never per-route.
+- **FR-013**: For the whole alpha, the site MUST block all automated
+  crawling and indexing (search engines, AI-training crawlers, archives),
+  enforced in one place at the edge — never per-route. (Founder decision,
+  2026-08-14; revisiting it is a new founder decision.)
 - **FR-014**: Repeated retrieval of identical content from the same source
   MUST NOT create duplicate records.
 - **FR-015**: All reader-facing pages MUST be served with content
   negotiation limited to the alpha languages (Greek, German) and MUST
   render correctly in both.
+- **FR-016**: An editor MUST be able to withdraw a published article:
+  withdrawal ends publication while preserving the article, its approval
+  record and the retrieved evidence, and records who withdrew it and why
+  in the append-only audit stream. Deletion is never part of withdrawal.
 
 ### Key Entities
 
@@ -294,12 +323,12 @@ flag anywhere.
 
 ## Assumptions
 
-- Founder-level decisions remain open and are NOT resolved by this spec
-  (per the constitution's governance): indexing/crawler posture (recorded
-  default: block everything, one enforcement point), data retention
-  periods (no automated deletion until decided), translation provider
-  (must stay swappable), and per-source usage rules (conservative default
-  recorded).
+- Founder decisions recorded in Clarifications (2026-08-14): crawler
+  blocking is the decided alpha posture; retention periods are explicitly
+  deferred (no automated deletion in the alpha, decision required before
+  public launch); the translation provider is chosen at plan review from
+  a priced shortlist. Per-source usage rules keep their conservative
+  default (extract-and-link until founder review).
 - Licensed feeds exist for Greek national and Munich local news with
   usable headlines and summaries; where summaries are absent, the extract
   derives from the retrieved text within the extract-and-link rule.
