@@ -232,3 +232,51 @@ describe('X-Robots-Tag advisory header', () => {
     expect(await response.text()).toBe('<html>page</html>');
   });
 });
+
+describe('Vary: User-Agent cache safety', () => {
+  it('is stamped on an ordinary page response', async () => {
+    const { response } = await run({ path: '/' });
+    expect(response.headers.get('vary')).toBe('User-Agent');
+  });
+
+  it('is stamped on the 403 so caches never reuse it for browsers', async () => {
+    const { response } = await run({ userAgent: 'GPTBot/1.1' });
+    expect(response.status).toBe(403);
+    expect(response.headers.get('vary')).toBe('User-Agent');
+  });
+
+  it('is stamped on robots.txt', async () => {
+    const { response } = await run({ path: '/robots.txt' });
+    expect(response.headers.get('vary')).toBe('User-Agent');
+  });
+
+  it('merges with an existing Vary value instead of clobbering it', async () => {
+    const next: MiddlewareNext = () =>
+      Promise.resolve(new Response('page', { headers: { Vary: 'Accept-Language' } }));
+    const result = await onRequest(makeContext({}), next);
+    expect(result).toBeInstanceOf(Response);
+    if (result instanceof Response) {
+      expect(result.headers.get('vary')).toBe('Accept-Language, User-Agent');
+    }
+  });
+
+  it('does not duplicate an already-present User-Agent field', async () => {
+    const next: MiddlewareNext = () =>
+      Promise.resolve(new Response('page', { headers: { Vary: 'user-agent' } }));
+    const result = await onRequest(makeContext({}), next);
+    expect(result).toBeInstanceOf(Response);
+    if (result instanceof Response) {
+      expect(result.headers.get('vary')).toBe('user-agent');
+    }
+  });
+
+  it('leaves a wildcard Vary alone', async () => {
+    const next: MiddlewareNext = () =>
+      Promise.resolve(new Response('page', { headers: { Vary: '*' } }));
+    const result = await onRequest(makeContext({}), next);
+    expect(result).toBeInstanceOf(Response);
+    if (result instanceof Response) {
+      expect(result.headers.get('vary')).toBe('*');
+    }
+  });
+});

@@ -6,7 +6,8 @@ import { defineMiddleware, sequence } from 'astro:middleware';
 //   1. deny  — requests whose User-Agent matches the signature list get 403;
 //   2. advise — /robots.txt is served disallow-all for every agent;
 //   3. advise — every response carries `X-Robots-Tag: noindex, nofollow`,
-//      covering compliant crawlers and cached copies.
+//      covering compliant crawlers and cached copies, plus `Vary:
+//      User-Agent` so shared caches never mix the 403 and page variants.
 //
 // The middleware ships inside the frontend container, so the block holds
 // identically on Cloudflare Containers and Kubernetes. Platform-level bot
@@ -86,12 +87,33 @@ const serveRobotsTxt = defineMiddleware((context, next) => {
 });
 
 /**
- * Fence 3 — advise: stamp `X-Robots-Tag` on every response. Runs first in
- * the sequence so the header also lands on the 403s and on `robots.txt`.
+ * Appends `User-Agent` to the response's `Vary` header without clobbering
+ * an existing value. Responses at the same URL differ by User-Agent (403
+ * versus the page), so a shared cache must never serve one variant to the
+ * other audience.
+ */
+function appendVaryUserAgent(headers: Headers): void {
+  const existing = headers.get('vary');
+  if (existing === null || existing.trim() === '') {
+    headers.set('Vary', 'User-Agent');
+    return;
+  }
+  const fields = existing.split(',').map((field) => field.trim().toLowerCase());
+  if (fields.includes('*') || fields.includes('user-agent')) {
+    return;
+  }
+  headers.set('Vary', `${existing}, User-Agent`);
+}
+
+/**
+ * Fence 3 — advise: stamp `X-Robots-Tag` and `Vary: User-Agent` on every
+ * response. Runs first in the sequence so the headers also land on the 403s
+ * and on `robots.txt`.
  */
 const stampAdvisoryHeader = defineMiddleware(async (_context, next) => {
   const response = await next();
   response.headers.set('X-Robots-Tag', X_ROBOTS_TAG_VALUE);
+  appendVaryUserAgent(response.headers);
   return response;
 });
 
