@@ -145,7 +145,7 @@ jobs:
       - name: Apply migrations to the service Postgres
         run: docker run --rm -v "$PWD/internal/platform/db/migrations":/m --network host migrate/migrate:v4.19.1 -path /m -database "postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable" up
       - name: Regenerate types from schema
-        run: npx supabase@2.114.0 gen types typescript --db-url "postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable" > web/src/lib/database.types.ts
+        run: npx --yes supabase@2.114.0 gen types typescript --db-url "postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable" > web/src/lib/database.types.ts
       - name: Fail on drift between schema and committed generated code
         run: |
           # git add first so brand-new generated files count as drift too.

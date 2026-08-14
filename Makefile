@@ -9,9 +9,6 @@ SQLC_VERSION ?= 1.31.1
 # job); bump them together.
 SUPABASE_VERSION ?= 2.114.0
 MIGRATE_VERSION ?= v4.19.1
-# Docker network of the compose stack (docker compose names it after the
-# project directory); override when the checkout directory is named otherwise.
-COMPOSE_NETWORK ?= apivo-news_default
 DATABASE_URL_TEST ?= postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
 # The race detector needs cgo; on Windows without a C toolchain, run
 # `make test RACE=` and let CI cover the race detection.
@@ -57,10 +54,12 @@ sqlc:
 	docker run --rm -v "$(CURDIR)":/src -w /src sqlc/sqlc:$(SQLC_VERSION) generate
 
 ## ts-types: regenerate TypeScript types from a freshly migrated scratch database
+# The migrate container joins whatever network the compose project put
+# postgres on, so the target works whatever the checkout directory is named.
 ts-types: db-up
 	$(COMPOSE) exec postgres psql -U apivo -d postgres -c "drop database if exists apivo_types with (force)" -c "create database apivo_types"
-	docker run --rm -v "$(CURDIR)/internal/platform/db/migrations":/m --network $(COMPOSE_NETWORK) migrate/migrate:$(MIGRATE_VERSION) -path /m -database "postgres://apivo:apivo@postgres:5432/apivo_types?sslmode=disable" up
-	npx supabase@$(SUPABASE_VERSION) gen types typescript --db-url "postgres://apivo:apivo@localhost:5432/apivo_types?sslmode=disable" > web/src/lib/database.types.ts
+	docker run --rm -v "$(CURDIR)/internal/platform/db/migrations":/m --network "$$(docker inspect -f '{{range $$k, $$v := .NetworkSettings.Networks}}{{$$k}}{{end}}' "$$($(COMPOSE) ps -q postgres)")" migrate/migrate:$(MIGRATE_VERSION) -path /m -database "postgres://apivo:apivo@postgres:5432/apivo_types?sslmode=disable" up
+	npx --yes supabase@$(SUPABASE_VERSION) gen types typescript --db-url "postgres://apivo:apivo@localhost:5432/apivo_types?sslmode=disable" > web/src/lib/database.types.ts
 
 ## web-install: install frontend dependencies exactly as locked
 web-install:
