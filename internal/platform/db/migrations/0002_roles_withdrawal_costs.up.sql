@@ -84,13 +84,27 @@ comment on column article.withdrawal_reason is
 create function article_insert_guard() returns trigger
 language plpgsql
 as $$
+declare
+    approver_role text;
 begin
-    if exists (
-        select 1
-          from account a
-         where a.id = new.approved_by
-           and a.role <> 'editor'
-    ) then
+    -- The role is read WITH A ROW LOCK (FOR SHARE), not with a plain
+    -- snapshot read. Foreign-key locks cover only key columns, so a
+    -- concurrent demotion of this very account could otherwise commit
+    -- unseen and this trigger would approve against a stale role. FOR
+    -- SHARE conflicts with the demotion UPDATE's row lock, so the two
+    -- transactions serialize in either order, and under READ COMMITTED a
+    -- locking read sees the latest committed version of the row:
+    -- whichever side commits second sees the other's write and raises
+    -- (here, or in account_role_guard). A reader can never be recorded
+    -- as the approver.
+    select a.role
+      into approver_role
+      from account a
+     where a.id = new.approved_by
+       for share;
+    -- No row means null or nonexistent approver; fall through so those
+    -- keep their natural SQLSTATEs (see rule 1 above).
+    if approver_role is not null and approver_role <> 'editor' then
         raise exception 'article.approved_by must hold the editor role (I-1): approval authority belongs to named editors';
     end if;
     if num_nonnulls(new.withdrawn_at, new.withdrawn_by, new.withdrawal_reason) <> 0 then
@@ -113,6 +127,8 @@ create trigger article_insert_guard
 create or replace function article_guard() returns trigger
 language plpgsql
 as $$
+declare
+    withdrawer_role text;
 begin
     if new.id is distinct from old.id
         or new.translation_id is distinct from old.translation_id
@@ -126,18 +142,23 @@ begin
         raise exception 'article publication time is frozen once set (I-5): withdrawal is a separate, audited transition';
     end if;
     -- Withdrawal is an editorial decision, symmetric with approval: on
-    -- the transition the withdrawer must hold the editor role. Only the
-    -- role rule lives here - a null withdrawn_by falls through to the
-    -- all-or-none CHECK (23514) and a nonexistent account to the foreign
+    -- the transition the withdrawer must hold the editor role. The role
+    -- is read WITH A ROW LOCK (FOR SHARE) for the same reason as in
+    -- article_insert_guard: it serializes against a concurrent demotion
+    -- of the withdrawer, so whichever transaction commits second sees
+    -- the other's write and raises. Only the role rule lives here - a
+    -- null withdrawn_by locks nothing and falls through to the
+    -- all-or-none CHECK (23514), a nonexistent account to the foreign
     -- key (23503).
-    if old.withdrawn_at is null and new.withdrawn_at is not null
-        and exists (
-            select 1
-              from account a
-             where a.id = new.withdrawn_by
-               and a.role <> 'editor'
-        ) then
-        raise exception 'article.withdrawn_by must hold the editor role: withdrawal is an editorial decision';
+    if old.withdrawn_at is null and new.withdrawn_at is not null then
+        select a.role
+          into withdrawer_role
+          from account a
+         where a.id = new.withdrawn_by
+           for share;
+        if withdrawer_role is not null and withdrawer_role <> 'editor' then
+            raise exception 'article.withdrawn_by must hold the editor role: withdrawal is an editorial decision';
+        end if;
     end if;
     if old.withdrawn_at is not null
         and (new.withdrawn_at is distinct from old.withdrawn_at
@@ -183,9 +204,12 @@ create trigger article_withdrawal_event
 -- I-1 stays provable over history: while an editor's approvals or
 -- withdrawals are on record, the role that authorised them cannot be
 -- taken away - otherwise the provenance chain would point at an account
--- whose editorship is no longer demonstrable. Offboarding semantics
--- (for example a terminal former_editor role) are a founder-level
--- decision for a later migration.
+-- whose editorship is no longer demonstrable. Concurrency is covered by
+-- the FOR SHARE reads in the article triggers: an in-flight approval or
+-- withdrawal holds a share lock on the account row, so this demotion
+-- UPDATE waits for it and then re-checks against the committed article.
+-- Offboarding semantics (for example a terminal former_editor role) are
+-- a founder-level decision for a later migration.
 create function account_role_guard() returns trigger
 language plpgsql
 as $$
@@ -324,64 +348,32 @@ comment on column place.slug is
 -- el Γερμανία), Bavaria (de Bayern, el Βαυαρία), Munich (de München,
 -- el Μόναχο), Greece (de Griechenland, el Ελλάδα).
 --
--- Seeding is conflict-safe against populated deployments: a place that
--- already exists under the same name and country is adopted - given the
--- slug if it has none - rather than duplicated as a slugged twin. A
--- pre-existing row that carries a different slug keeps it; that was an
--- explicit choice this migration does not overrule. On an empty database
--- this reduces to the four plain inserts.
+-- Seeding fails fast on conflict rather than guessing: whether a
+-- pre-existing row of the same name IS the reference place - and with
+-- which parent chain - is not decidable by a migration, so an operator
+-- must reconcile reference places manually before upgrading. Pre-release
+-- every database is empty and this never fires. (The slug arm is
+-- belt-and-braces: the column was created above, so no row can carry a
+-- seed slug yet; it protects against future reordering.)
 do $$
-declare
-    v_germany uuid;
-    v_bavaria uuid;
-    v_munich  uuid;
-    v_greece  uuid;
 begin
-    select id into v_germany from place
-     where slug = 'germany' or (name = 'Germany' and country = 'DE' and parent_id is null)
-     limit 1;
-    if v_germany is null then
-        insert into place (name, country, slug)
-        values ('Germany', 'DE', 'germany')
-        returning id into v_germany;
-    else
-        update place set slug = 'germany' where id = v_germany and slug is null;
-    end if;
-
-    select id into v_bavaria from place
-     where slug = 'bavaria' or (name = 'Bavaria' and country = 'DE')
-     limit 1;
-    if v_bavaria is null then
-        insert into place (parent_id, name, country, slug)
-        values (v_germany, 'Bavaria', 'DE', 'bavaria')
-        returning id into v_bavaria;
-    else
-        update place set slug = 'bavaria' where id = v_bavaria and slug is null;
-    end if;
-
-    select id into v_munich from place
-     where slug = 'munich' or (name = 'Munich' and country = 'DE')
-     limit 1;
-    if v_munich is null then
-        insert into place (parent_id, name, country, slug)
-        values (v_bavaria, 'Munich', 'DE', 'munich')
-        returning id into v_munich;
-    else
-        update place set slug = 'munich' where id = v_munich and slug is null;
-    end if;
-
-    select id into v_greece from place
-     where slug = 'greece' or (name = 'Greece' and country = 'GR' and parent_id is null)
-     limit 1;
-    if v_greece is null then
-        insert into place (name, country, slug)
-        values ('Greece', 'GR', 'greece')
-        returning id into v_greece;
-    else
-        update place set slug = 'greece' where id = v_greece and slug is null;
+    if exists (
+        select 1
+          from place
+         where slug in ('germany', 'bavaria', 'munich', 'greece')
+            or (name, country) in (('Germany', 'DE'), ('Bavaria', 'DE'), ('Munich', 'DE'), ('Greece', 'GR'))
+    ) then
+        raise exception 'reference places already exist: reconcile Germany/Bavaria/Munich (DE) and Greece (GR) with the 0002 seed hierarchy manually before applying this migration - it will not guess which existing row is the reference place';
     end if;
 end;
 $$;
+
+insert into place (name, country, slug) values ('Germany', 'DE', 'germany');
+insert into place (parent_id, name, country, slug)
+select id, 'Bavaria', 'DE', 'bavaria' from place where slug = 'germany';
+insert into place (parent_id, name, country, slug)
+select id, 'Munich', 'DE', 'munich' from place where slug = 'bavaria';
+insert into place (name, country, slug) values ('Greece', 'GR', 'greece');
 
 ------------------------------------------------------------------------------
 -- Source operations (US2): pause a feed without deleting anything.

@@ -24,10 +24,13 @@ alter table source drop column active;
 
 -- The seeded reference places are removed only while nothing references
 -- them: a place attached to articles or readers is real data and simply
--- loses its slug with the column drop below. Each pass removes seeds that
--- are unreferenced and currently childless, so the three-level hierarchy
--- falls leaf-first; a surviving child keeps its ancestors alive (the
--- parent_id foreign key would block their deletion anyway).
+-- loses its slug with the column drop below. Deleting by seed slug is
+-- unambiguous - the up migration refuses to run when lookalike places
+-- pre-exist, so only migration-inserted rows can carry these slugs. Each
+-- pass removes seeds that are unreferenced and currently childless, so
+-- the three-level hierarchy falls leaf-first; a surviving child keeps its
+-- ancestors alive (the parent_id foreign key would block their deletion
+-- anyway).
 do $$
 declare
     n integer;

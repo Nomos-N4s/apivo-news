@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -1069,6 +1070,144 @@ func TestEditorRoleFrozenWhileReferenced(t *testing.T) {
 		}
 		if role != "reader" {
 			t.Fatalf("role after demotion = %q, want reader", role)
+		}
+	})
+}
+
+// TestEditorDemotionRaceIsSerialized asserts the concurrency story behind
+// the role checks: the article triggers read the actor's role with a row
+// lock (FOR SHARE), so an in-flight approval and a concurrent demotion of
+// the same editor serialize instead of racing - whichever transaction
+// commits second sees the other's write and raises. Without the locking
+// read, both sides could pass their own trigger against the prior state
+// and both commit, recording a reader as the editorial actor.
+//
+// The race needs two real sessions and real commits; row locks are
+// invisible inside a single rolled-back transaction. The committed rows
+// stay in the test database on purpose: source_item and article are
+// immutable by design, and random suffixes keep runs independent.
+func TestEditorDemotionRaceIsSerialized(t *testing.T) {
+	t.Parallel()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set DATABASE_URL to exercise schema invariants")
+	}
+	ctx := context.Background()
+
+	connA, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect session A: %v", err)
+	}
+	defer func() { _ = connA.Close(ctx) }()
+	connB, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect session B: %v", err)
+	}
+	defer func() { _ = connB.Close(ctx) }()
+
+	// seedCommitted writes (and commits) an editor and a retrievable origin.
+	seedCommitted := func(t *testing.T) (editorID, sourceItemID string) {
+		t.Helper()
+		suffix := randomSuffix(t)
+		if err := connA.QueryRow(ctx,
+			`insert into account (email, display_name, role) values ($1, 'Race Editor', 'editor') returning id`,
+			"race-"+suffix+"@example.test").Scan(&editorID); err != nil {
+			t.Fatalf("seed editor: %v", err)
+		}
+		var sourceID string
+		if err := connA.QueryRow(ctx,
+			`insert into source (name, url, language_code, jurisdiction, licence_terms)
+			 values ($1, $2, 'el', 'GR', 'terms') returning id`,
+			"Race Feed "+suffix, "https://example.test/race/"+suffix).Scan(&sourceID); err != nil {
+			t.Fatalf("seed source: %v", err)
+		}
+		if err := connA.QueryRow(ctx,
+			`insert into source_item (source_id, source_url, raw_body)
+			 values ($1, $2, $3) returning id`,
+			sourceID, "https://example.test/race/"+suffix+"/a", "race body "+suffix).Scan(&sourceItemID); err != nil {
+			t.Fatalf("seed source_item: %v", err)
+		}
+		return editorID, sourceItemID
+	}
+
+	t.Run("demotion waits for an in-flight approval, then raises", func(t *testing.T) {
+		editorID, sourceItemID := seedCommitted(t)
+
+		txA, err := connA.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin approval tx: %v", err)
+		}
+		defer func() { _ = txA.Rollback(ctx) }()
+		// The insert trigger takes FOR SHARE on the editor's account row.
+		if _, err := txA.Exec(ctx,
+			`insert into article (source_item_id, approved_by, attribution_block)
+			 values ($1, $2, 'Quelle: Race Feed')`, sourceItemID, editorID); err != nil {
+			t.Fatalf("approval insert: %v", err)
+		}
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := connB.Exec(ctx,
+				`update account set role = 'reader' where id = $1`, editorID)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			t.Fatalf("demotion finished during the uncommitted approval (err=%v): the role read did not serialize", err)
+		case <-time.After(300 * time.Millisecond):
+			// Blocked on the share lock, as required.
+		}
+		if err := txA.Commit(ctx); err != nil {
+			t.Fatalf("commit approval: %v", err)
+		}
+		select {
+		case err := <-done:
+			// Resuming after the commit, account_role_guard re-checks
+			// against a fresh snapshot, sees the approval, and raises.
+			wantPgCode(t, err, codeRaiseException)
+		case <-time.After(10 * time.Second):
+			t.Fatal("demotion still blocked after the approval committed")
+		}
+	})
+
+	t.Run("approval waits for an in-flight demotion, then raises", func(t *testing.T) {
+		editorID, sourceItemID := seedCommitted(t)
+
+		txB, err := connB.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin demotion tx: %v", err)
+		}
+		defer func() { _ = txB.Rollback(ctx) }()
+		// No approvals on record yet: the demotion passes its guard and
+		// holds the account row lock uncommitted.
+		if _, err := txB.Exec(ctx,
+			`update account set role = 'reader' where id = $1`, editorID); err != nil {
+			t.Fatalf("demotion update: %v", err)
+		}
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := connA.Exec(ctx,
+				`insert into article (source_item_id, approved_by, attribution_block)
+				 values ($1, $2, 'Quelle: Race Feed')`, sourceItemID, editorID)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			t.Fatalf("approval finished during the uncommitted demotion (err=%v): the role read did not serialize", err)
+		case <-time.After(300 * time.Millisecond):
+			// Blocked on the demotion's row lock, as required.
+		}
+		if err := txB.Commit(ctx); err != nil {
+			t.Fatalf("commit demotion: %v", err)
+		}
+		select {
+		case err := <-done:
+			// The FOR SHARE read resumes on the latest committed row,
+			// sees role = reader, and the insert trigger raises.
+			wantPgCode(t, err, codeRaiseException)
+		case <-time.After(10 * time.Second):
+			t.Fatal("approval still blocked after the demotion committed")
 		}
 	})
 }
