@@ -164,8 +164,7 @@ jobs:
   # wrangler.jsonc plus Worker bundle and container/DO wiring checks.
   # --dry-run needs no Cloudflare credentials and uploads nothing;
   # --containers-rollout none skips the Docker image builds, which have
-  # their own jobs. Config validation checks the referenced Dockerfile
-  # paths exist, so the Go Dockerfile gets a stand-in until T001 lands.
+  # their own jobs; config validation runs against the real Dockerfiles.
   wrangler:
     runs-on: ubuntu-latest
     steps:
@@ -174,9 +173,7 @@ jobs:
         with:
           node-version: 24
       - name: Validate Cloudflare configuration (dry run, no credentials)
-        run: |
-          [ -f Dockerfile ] || touch Dockerfile
-          npx --yes wrangler@4 deploy --dry-run --containers-rollout none
+        run: npx --yes wrangler@4 deploy --dry-run --containers-rollout none
 
   frontend:
     runs-on: ubuntu-latest
