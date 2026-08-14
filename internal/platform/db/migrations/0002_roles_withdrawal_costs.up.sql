@@ -8,8 +8,9 @@
 --                  -> account.role + BEFORE INSERT trigger on article.
 --   I-5 extended   withdrawal ends publication while preserving the whole
 --                  record -> all-or-none withdrawal columns, article guard
---                  v2 allowing exactly one more one-way transition, the
---                  provenance view carrying the withdrawal record.
+--                  v2 allowing exactly one more one-way transition, an
+--                  audit event written by trigger in the same transaction,
+--                  the provenance view carrying the withdrawal record.
 --   FR-006         every translation records its cost explicitly; a
 --                  monthly ledger backs the spend cap.
 --   FR-009         places gain stable slugs + the alpha reference places.
@@ -23,33 +24,20 @@ alter table account
         constraint account_role_known check (role in ('reader', 'editor'));
 
 comment on column account.role is
-    'What this person may do: readers read, editors approve. Approval authority is checked by the database (article_require_editor_approver, is_entitled), never by application code alone.';
+    'What this person may do: readers read, editors approve. Approval authority is checked by the database (article_insert_guard, is_entitled), never by application code alone.';
 
--- Only the role rule lives in this trigger: a missing approver stays a
--- NOT NULL violation (23502) and a nonexistent one a foreign-key
--- violation (23503), so every failure keeps its natural SQLSTATE.
-create function article_require_editor_approver() returns trigger
-language plpgsql
-as $$
-begin
-    if exists (
-        select 1
-          from account a
-         where a.id = new.approved_by
-           and a.role <> 'editor'
-    ) then
-        raise exception 'article.approved_by must hold the editor role (I-1): approval authority belongs to named editors';
-    end if;
-    return new;
-end;
-$$;
+-- Legacy-approver promotion: any account that already approved an article
+-- under 0001 semantics was the named human approver of record, so it holds
+-- exactly the authority the editor role now names. Promote those accounts
+-- before the tightened invariant starts relying on the role, so history
+-- stays consistent with it. Pre-release every environment is empty and
+-- this is a no-op.
+update account
+   set role = 'editor'
+ where id in (select approved_by from article);
 
-comment on function article_require_editor_approver() is
-    'I-1 tightened: the named human approver must hold the editor role at approval time. approved_by itself stays frozen afterwards (article_guard).';
-
-create trigger article_require_editor
-    before insert on article
-    for each row execute function article_require_editor_approver();
+-- The BEFORE INSERT trigger enforcing the role (and the born-active rule)
+-- is created below, once the withdrawal columns it also guards exist.
 
 ------------------------------------------------------------------------------
 -- Withdrawal: publication can end, the record cannot (I-5, FR-016).
@@ -82,6 +70,43 @@ comment on column article.withdrawn_by is
 comment on column article.withdrawal_reason is
     'Why the article was withdrawn. Part of the audit record; never blank when set.';
 
+-- The single BEFORE INSERT guard, two rules:
+--
+--   1. I-1 tightened: the approver must hold the editor role. Only the
+--      role rule lives here - a missing approver stays a NOT NULL
+--      violation (23502) and a nonexistent one a foreign-key violation
+--      (23503), so every failure keeps its natural SQLSTATE.
+--   2. An article is born active: withdrawal is a lifecycle transition
+--      (article_guard), never an initial state. Without this rule an
+--      INSERT could arrive pre-withdrawn - skipping the guarded
+--      transition and, because the one-per-origin indexes cover active
+--      rows only, slipping a second article past them.
+create function article_insert_guard() returns trigger
+language plpgsql
+as $$
+begin
+    if exists (
+        select 1
+          from account a
+         where a.id = new.approved_by
+           and a.role <> 'editor'
+    ) then
+        raise exception 'article.approved_by must hold the editor role (I-1): approval authority belongs to named editors';
+    end if;
+    if num_nonnulls(new.withdrawn_at, new.withdrawn_by, new.withdrawal_reason) <> 0 then
+        raise exception 'an article cannot be created already withdrawn (I-5): withdrawal is a one-way transition after publication';
+    end if;
+    return new;
+end;
+$$;
+
+comment on function article_insert_guard() is
+    'BEFORE INSERT guard: the approver must hold the editor role at approval time (I-1 tightened), and no withdrawal column may be pre-set - articles are born active.';
+
+create trigger article_insert_guard
+    before insert on article
+    for each row execute function article_insert_guard();
+
 -- Guard v2: everything 0001 froze stays frozen. The single new legal
 -- transition is withdrawal - the three withdrawal columns moving from
 -- null to set, together, once - and it is one-way and final.
@@ -100,6 +125,20 @@ begin
     if old.published_at is not null and new.published_at is distinct from old.published_at then
         raise exception 'article publication time is frozen once set (I-5): withdrawal is a separate, audited transition';
     end if;
+    -- Withdrawal is an editorial decision, symmetric with approval: on
+    -- the transition the withdrawer must hold the editor role. Only the
+    -- role rule lives here - a null withdrawn_by falls through to the
+    -- all-or-none CHECK (23514) and a nonexistent account to the foreign
+    -- key (23503).
+    if old.withdrawn_at is null and new.withdrawn_at is not null
+        and exists (
+            select 1
+              from account a
+             where a.id = new.withdrawn_by
+               and a.role <> 'editor'
+        ) then
+        raise exception 'article.withdrawn_by must hold the editor role: withdrawal is an editorial decision';
+    end if;
     if old.withdrawn_at is not null
         and (new.withdrawn_at is distinct from old.withdrawn_at
             or new.withdrawn_by is distinct from old.withdrawn_by
@@ -111,7 +150,66 @@ end;
 $$;
 
 comment on function article_guard() is
-    'Freezes every provenance-bearing article column after approval; the only legal transitions are the one-way publish and the one-way, all-at-once withdrawal.';
+    'Freezes every provenance-bearing article column after approval; the only legal transitions are the one-way publish and the one-way, all-at-once withdrawal by an editor.';
+
+-- The audit record is not left to application discipline (Principle
+-- VIII): the same transaction that withdraws an article writes the
+-- domain event, by trigger. The stream itself is append-only (0001), so
+-- the record of who withdrew what, and why, can never be quietly erased.
+create function article_record_withdrawal_event() returns trigger
+language plpgsql
+as $$
+begin
+    insert into domain_event (type, payload)
+    values ('article.withdrawn', jsonb_build_object(
+        'article_id', new.id,
+        'withdrawn_by', new.withdrawn_by,
+        'reason', new.withdrawal_reason,
+        'withdrawn_at', new.withdrawn_at
+    ));
+    return null;
+end;
+$$;
+
+comment on function article_record_withdrawal_event() is
+    'Writes the article.withdrawn domain event - which article, who, why - in the same transaction as the withdrawal itself (FR-016).';
+
+create trigger article_withdrawal_event
+    after update on article
+    for each row
+    when (old.withdrawn_at is null and new.withdrawn_at is not null)
+    execute function article_record_withdrawal_event();
+
+-- I-1 stays provable over history: while an editor's approvals or
+-- withdrawals are on record, the role that authorised them cannot be
+-- taken away - otherwise the provenance chain would point at an account
+-- whose editorship is no longer demonstrable. Offboarding semantics
+-- (for example a terminal former_editor role) are a founder-level
+-- decision for a later migration.
+create function account_role_guard() returns trigger
+language plpgsql
+as $$
+begin
+    if old.role = 'editor'
+        and new.role is distinct from old.role
+        and exists (
+            select 1
+              from article ar
+             where ar.approved_by = old.id
+                or ar.withdrawn_by = old.id
+        ) then
+        raise exception 'account role is frozen while editorial decisions reference it (I-1): recorded approvals and withdrawals require a demonstrable editor';
+    end if;
+    return new;
+end;
+$$;
+
+comment on function account_role_guard() is
+    'Blocks demoting an editor whose approvals or withdrawals are on record, keeping every recorded editorial decision attributable to a verifiable editor (I-1).';
+
+create trigger account_role_guard
+    before update on account
+    for each row execute function account_role_guard();
 
 -- One ACTIVE article per origin: a withdrawn article frees its origin for
 -- a corrected re-approval, while two active articles from the same origin
@@ -173,18 +271,25 @@ comment on view article_provenance is
 -- Translation cost lineage (FR-006).
 ------------------------------------------------------------------------------
 
--- The final shape has NO default: a translation whose cost was not
--- recorded is a rejected insert, never a silent zero. The column is added
--- with a temporary default only so the ALTER stays valid against a table
--- that already holds rows - no real environment should have any yet (the
--- translation module does not exist), but a migration must not gamble on
--- that - and the default is dropped immediately, in the same transaction.
-alter table translation
-    add column cost_microusd bigint not null default 0
-        constraint translation_cost_not_negative check (cost_microusd >= 0);
+-- The column has NO default: a translation whose cost was not recorded
+-- is a rejected insert, never a silent zero. That honesty extends to
+-- history: if translation rows already exist their real costs are
+-- unknown, and this migration refuses to invent them - a populated
+-- deployment must backfill provider-reported costs explicitly before
+-- applying 0002. Pre-release the table is empty in every environment
+-- and this guard never fires; it exists so the migration cannot gamble
+-- on that.
+do $$
+begin
+    if exists (select 1 from translation) then
+        raise exception 'translation rows exist with no recorded cost: backfill cost_microusd from provider records before applying 0002 - an unknown cost must never silently become 0';
+    end if;
+end;
+$$;
 
 alter table translation
-    alter column cost_microusd drop default;
+    add column cost_microusd bigint not null
+        constraint translation_cost_not_negative check (cost_microusd >= 0);
 
 comment on column translation.cost_microusd is
     'Provider-reported cost of this translation in micro-USD, recorded explicitly at insert (FR-006). No default: an omitted cost is an error. An explicit 0 is legal only when the provider genuinely charged nothing (e.g. included quota).';
@@ -218,12 +323,65 @@ comment on column place.slug is
 -- kept in English; the reader-locale exonyms: Germany (de Deutschland,
 -- el Γερμανία), Bavaria (de Bayern, el Βαυαρία), Munich (de München,
 -- el Μόναχο), Greece (de Griechenland, el Ελλάδα).
-insert into place (name, country, slug) values ('Germany', 'DE', 'germany');
-insert into place (parent_id, name, country, slug)
-select id, 'Bavaria', 'DE', 'bavaria' from place where slug = 'germany';
-insert into place (parent_id, name, country, slug)
-select id, 'Munich', 'DE', 'munich' from place where slug = 'bavaria';
-insert into place (name, country, slug) values ('Greece', 'GR', 'greece');
+--
+-- Seeding is conflict-safe against populated deployments: a place that
+-- already exists under the same name and country is adopted - given the
+-- slug if it has none - rather than duplicated as a slugged twin. A
+-- pre-existing row that carries a different slug keeps it; that was an
+-- explicit choice this migration does not overrule. On an empty database
+-- this reduces to the four plain inserts.
+do $$
+declare
+    v_germany uuid;
+    v_bavaria uuid;
+    v_munich  uuid;
+    v_greece  uuid;
+begin
+    select id into v_germany from place
+     where slug = 'germany' or (name = 'Germany' and country = 'DE' and parent_id is null)
+     limit 1;
+    if v_germany is null then
+        insert into place (name, country, slug)
+        values ('Germany', 'DE', 'germany')
+        returning id into v_germany;
+    else
+        update place set slug = 'germany' where id = v_germany and slug is null;
+    end if;
+
+    select id into v_bavaria from place
+     where slug = 'bavaria' or (name = 'Bavaria' and country = 'DE')
+     limit 1;
+    if v_bavaria is null then
+        insert into place (parent_id, name, country, slug)
+        values (v_germany, 'Bavaria', 'DE', 'bavaria')
+        returning id into v_bavaria;
+    else
+        update place set slug = 'bavaria' where id = v_bavaria and slug is null;
+    end if;
+
+    select id into v_munich from place
+     where slug = 'munich' or (name = 'Munich' and country = 'DE')
+     limit 1;
+    if v_munich is null then
+        insert into place (parent_id, name, country, slug)
+        values (v_bavaria, 'Munich', 'DE', 'munich')
+        returning id into v_munich;
+    else
+        update place set slug = 'munich' where id = v_munich and slug is null;
+    end if;
+
+    select id into v_greece from place
+     where slug = 'greece' or (name = 'Greece' and country = 'GR' and parent_id is null)
+     limit 1;
+    if v_greece is null then
+        insert into place (name, country, slug)
+        values ('Greece', 'GR', 'greece')
+        returning id into v_greece;
+    else
+        update place set slug = 'greece' where id = v_greece and slug is null;
+    end if;
+end;
+$$;
 
 ------------------------------------------------------------------------------
 -- Source operations (US2): pause a feed without deleting anything.

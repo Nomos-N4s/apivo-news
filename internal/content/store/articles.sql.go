@@ -56,11 +56,13 @@ func (q *Queries) GetArticleProvenance(ctx context.Context, articleID pgtype.UUI
 
 const listPublishedArticles = `-- name: ListPublishedArticles :many
 select id, translation_id, source_item_id, approved_by, approved_at, published_at, attribution_block, withdrawn_at, withdrawn_by, withdrawal_reason from article
-where published_at is not null
+where published_at is not null and withdrawn_at is null
 order by published_at desc
 limit $1
 `
 
+// Published-and-visible (FR-016): withdrawal ends publication, so
+// withdrawn articles never reach readers.
 func (q *Queries) ListPublishedArticles(ctx context.Context, limit int32) ([]Article, error) {
 	rows, err := q.db.Query(ctx, listPublishedArticles, limit)
 	if err != nil {

@@ -22,11 +22,28 @@ comment on function is_entitled(uuid, text) is
 
 alter table source drop column active;
 
--- The seeded reference places go with the slug column that addresses
--- them. Parents and children fall in one statement: the parent_id foreign
--- key is checked at statement end, so ordering inside the DELETE does not
--- matter.
-delete from place where slug in ('munich', 'bavaria', 'germany', 'greece');
+-- The seeded reference places are removed only while nothing references
+-- them: a place attached to articles or readers is real data and simply
+-- loses its slug with the column drop below. Each pass removes seeds that
+-- are unreferenced and currently childless, so the three-level hierarchy
+-- falls leaf-first; a surviving child keeps its ancestors alive (the
+-- parent_id foreign key would block their deletion anyway).
+do $$
+declare
+    n integer;
+begin
+    loop
+        delete from place p
+         where p.slug in ('munich', 'bavaria', 'germany', 'greece')
+           and not exists (select 1 from article_place ap where ap.place_id = p.id)
+           and not exists (select 1 from reader_place rp where rp.place_id = p.id)
+           and not exists (select 1 from place c where c.parent_id = p.id);
+        get diagnostics n = row_count;
+        exit when n = 0;
+    end loop;
+end;
+$$;
+
 alter table place drop column slug; -- drops place_slug_unique and place_slug_not_blank with it
 
 drop table translation_spend;
@@ -76,6 +93,28 @@ join source s on s.id = si.source_id;
 comment on view article_provenance is
     'I-5: for any article - source, licence snapshot at retrieval, model, prompt version and named approver, in a single query.';
 
+-- Data created under 0002 semantics may not fit 0001: once a withdrawn
+-- origin has been re-approved, two articles share that origin and the
+-- unpartialed 0001 unique indexes below cannot be built. Fail with the
+-- real story instead of a cryptic duplicate-key error.
+do $$
+begin
+    if exists (
+        select 1 from article
+         where translation_id is not null
+         group by translation_id
+        having count(*) > 1
+    ) or exists (
+        select 1 from article
+         where source_item_id is not null
+         group by source_item_id
+        having count(*) > 1
+    ) then
+        raise exception 'cannot restore the 0001 one-per-origin indexes: an origin carries more than one article because a withdrawn article was re-approved under 0002 semantics; this history does not fit the 0001 schema';
+    end if;
+end;
+$$;
+
 -- One-per-origin indexes back to their 0001 shape (covering withdrawn
 -- rows again).
 drop index article_one_per_translation;
@@ -109,13 +148,21 @@ $$;
 comment on function article_guard() is
     'Freezes every provenance-bearing article column after approval; only the one-way publish transition is allowed.';
 
+-- The withdrawal-event trigger's WHEN clause depends on withdrawn_at, so
+-- it must go before the columns do.
+drop trigger article_withdrawal_event on article;
+drop function article_record_withdrawal_event();
+
 -- Dropping the withdrawal columns drops every withdrawal CHECK with them.
 alter table article
     drop column withdrawn_at,
     drop column withdrawn_by,
     drop column withdrawal_reason;
 
-drop trigger article_require_editor on article;
-drop function article_require_editor_approver();
+drop trigger article_insert_guard on article;
+drop function article_insert_guard();
+
+drop trigger account_role_guard on account;
+drop function account_role_guard();
 
 alter table account drop column role;

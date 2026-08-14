@@ -14,7 +14,7 @@ type Account struct {
 	Email       string
 	DisplayName string
 	CreatedAt   pgtype.Timestamptz
-	// What this person may do: readers read, editors approve. Approval authority is checked by the database (article_require_editor_approver, is_entitled), never by application code alone.
+	// What this person may do: readers read, editors approve. Approval authority is checked by the database (article_insert_guard, is_entitled), never by application code alone.
 	Role string
 }
 

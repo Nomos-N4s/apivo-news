@@ -130,4 +130,24 @@ func TestGeneratedStoreAgainstSchema(t *testing.T) {
 	if !found {
 		t.Errorf("published article %s missing from ListPublishedArticles", articleID)
 	}
+
+	// Withdrawal ends publication (FR-016): the article must vanish from
+	// the reader-facing listing while its row and provenance remain.
+	if _, err := tx.Exec(ctx,
+		`update article set withdrawn_at = now(), withdrawn_by = $2, withdrawal_reason = 'integration withdrawal'
+		 where id = $1`, articleID, accountID); err != nil {
+		t.Fatalf("withdraw article: %v", err)
+	}
+	articles, err = q.ListPublishedArticles(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListPublishedArticles after withdrawal: %v", err)
+	}
+	for _, a := range articles {
+		if a.ID == articleUUID {
+			t.Errorf("withdrawn article %s still listed by ListPublishedArticles", articleID)
+		}
+	}
+	if _, err := q.GetArticleProvenance(ctx, articleUUID); err != nil {
+		t.Errorf("withdrawn article lost its provenance record: %v", err)
+	}
 }

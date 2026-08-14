@@ -545,6 +545,44 @@ func TestDatabaseRejectsIllegalWrites(t *testing.T) {
 			wantCode: codeCheckViolation,
 		},
 		{
+			name:      "article born withdrawn",
+			invariant: "I-5",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				// Insert-time withdrawal would skip the guarded transition
+				// and the active-only one-per-origin indexes.
+				_, err := tx.Exec(ctx,
+					`insert into article (translation_id, approved_by, published_at, attribution_block, withdrawn_at, withdrawn_by, withdrawal_reason)
+					 values ($1, $2, now(), 'Quelle: Test Feed', now(), $2, 'smuggled in')`,
+					f.translationID, f.accountID)
+				return err
+			},
+			wantCode: codeRaiseException,
+		},
+		{
+			name:      "withdrawal by a reader-role account",
+			invariant: "I-5",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				var articleID, readerID string
+				if err := tx.QueryRow(ctx,
+					`insert into article (translation_id, approved_by, published_at, attribution_block)
+					 values ($1, $2, now(), 'Quelle: Test Feed') returning id`,
+					f.translationID, f.accountID).Scan(&articleID); err != nil {
+					return err
+				}
+				if err := tx.QueryRow(ctx,
+					`insert into account (email, display_name) values ('reader-withdrawer@example.test', 'A Reader') returning id`).
+					Scan(&readerID); err != nil {
+					return err
+				}
+				// Withdrawal is an editorial decision, symmetric with approval.
+				_, err := tx.Exec(ctx,
+					`update article set withdrawn_at = now(), withdrawn_by = $2, withdrawal_reason = 'not my call'
+					 where id = $1`, articleID, readerID)
+				return err
+			},
+			wantCode: codeRaiseException,
+		},
+		{
 			name:      "withdrawal with a blank reason",
 			invariant: "I-5",
 			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
@@ -599,6 +637,16 @@ func TestDatabaseRejectsIllegalWrites(t *testing.T) {
 				return err
 			},
 			wantCode: codeUniqueViolation,
+		},
+		{
+			name:      "negative monthly spend",
+			invariant: "cost lineage",
+			write: func(ctx context.Context, tx pgx.Tx, _ fixtures) error {
+				_, err := tx.Exec(ctx,
+					`insert into translation_spend (month, spent_microusd) values (date '2026-08-01', -1)`)
+				return err
+			},
+			wantCode: codeCheckViolation,
 		},
 		{
 			name:      "spend ledger keyed on a mid-month date",
@@ -829,6 +877,26 @@ func TestArticleWithdrawalTransition(t *testing.T) {
 		t.Fatalf("withdrawing a published article must be allowed: %v", err)
 	}
 
+	// The audit event is written by trigger in the same transaction as
+	// the withdrawal itself, never left to application discipline.
+	var eventCount int
+	var evBy, evReason string
+	err = tx.QueryRow(ctx,
+		`select count(*), min(payload->>'withdrawn_by'), min(payload->>'reason')
+		 from domain_event
+		 where type = 'article.withdrawn' and payload->>'article_id' = $1`, articleID).
+		Scan(&eventCount, &evBy, &evReason)
+	if err != nil {
+		t.Fatalf("querying article.withdrawn domain event: %v", err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("article.withdrawn domain events = %d, want exactly 1 in the withdrawing transaction", eventCount)
+	}
+	if evBy != f.accountID || evReason != "source retraction" {
+		t.Errorf("article.withdrawn payload = by %q reason %q, want by %q reason %q",
+			evBy, evReason, f.accountID, "source retraction")
+	}
+
 	var otherEditorID string
 	if err := tx.QueryRow(ctx,
 		`insert into account (email, display_name, role) values ($1, 'Another Editor', 'editor') returning id`,
@@ -931,6 +999,78 @@ func TestWithdrawnOriginCanBeReapproved(t *testing.T) {
 			wantPgCode(t, err, codeUniqueViolation)
 		})
 	}
+}
+
+// TestEditorRoleFrozenWhileReferenced asserts that I-1 stays provable over
+// history: an editor whose approvals or withdrawals are on record cannot be
+// demoted, so every recorded editorial decision remains attributable to a
+// verifiable editor. An unreferenced editor can still be demoted.
+func TestEditorRoleFrozenWhileReferenced(t *testing.T) {
+	t.Parallel()
+
+	t.Run("demote an approver on record", func(t *testing.T) {
+		t.Parallel()
+		tx := beginTx(t)
+		ctx := context.Background()
+		f := seed(t, tx)
+
+		if _, err := tx.Exec(ctx,
+			`insert into article (translation_id, approved_by, attribution_block)
+			 values ($1, $2, 'Quelle: Test Feed')`, f.translationID, f.accountID); err != nil {
+			t.Fatalf("insert article: %v", err)
+		}
+		_, err := tx.Exec(ctx,
+			`update account set role = 'reader' where id = $1`, f.accountID)
+		wantPgCode(t, err, codeRaiseException)
+	})
+
+	t.Run("demote a withdrawer on record", func(t *testing.T) {
+		t.Parallel()
+		tx := beginTx(t)
+		ctx := context.Background()
+		f := seed(t, tx)
+
+		var withdrawerID, articleID string
+		if err := tx.QueryRow(ctx,
+			`insert into account (email, display_name, role) values ($1, 'Withdrawing Editor', 'editor') returning id`,
+			"withdrawer-"+randomSuffix(t)+"@example.test").Scan(&withdrawerID); err != nil {
+			t.Fatalf("insert withdrawing editor: %v", err)
+		}
+		if err := tx.QueryRow(ctx,
+			`insert into article (translation_id, approved_by, published_at, attribution_block)
+			 values ($1, $2, now(), 'Quelle: Test Feed') returning id`,
+			f.translationID, f.accountID).Scan(&articleID); err != nil {
+			t.Fatalf("insert article: %v", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`update article set withdrawn_at = now(), withdrawn_by = $2, withdrawal_reason = 'errata'
+			 where id = $1`, articleID, withdrawerID); err != nil {
+			t.Fatalf("withdraw article: %v", err)
+		}
+		_, err := tx.Exec(ctx,
+			`update account set role = 'reader' where id = $1`, withdrawerID)
+		wantPgCode(t, err, codeRaiseException)
+	})
+
+	t.Run("unreferenced editor can be demoted", func(t *testing.T) {
+		t.Parallel()
+		tx := beginTx(t)
+		ctx := context.Background()
+
+		var editorID, role string
+		if err := tx.QueryRow(ctx,
+			`insert into account (email, display_name, role) values ($1, 'Idle Editor', 'editor') returning id`,
+			"idle-"+randomSuffix(t)+"@example.test").Scan(&editorID); err != nil {
+			t.Fatalf("insert editor: %v", err)
+		}
+		if err := tx.QueryRow(ctx,
+			`update account set role = 'reader' where id = $1 returning role`, editorID).Scan(&role); err != nil {
+			t.Fatalf("demoting an unreferenced editor must be allowed: %v", err)
+		}
+		if role != "reader" {
+			t.Fatalf("role after demotion = %q, want reader", role)
+		}
+	})
 }
 
 // TestTranslationZeroCostIsAccepted is the positive control for the cost
@@ -1295,7 +1435,8 @@ func TestArticleProvenanceView(t *testing.T) {
 }
 
 // TestSourceDefaultsToExtractAndLink asserts §9.4: a new source is never
-// permissive by default.
+// permissive by default - and it is born active (0002), so pausing is an
+// explicit operator decision, never an accidental initial state.
 func TestSourceDefaultsToExtractAndLink(t *testing.T) {
 	t.Parallel()
 	tx := beginTx(t)
@@ -1303,15 +1444,19 @@ func TestSourceDefaultsToExtractAndLink(t *testing.T) {
 	suffix := randomSuffix(t)
 
 	var usageRule string
+	var active bool
 	err := tx.QueryRow(ctx,
 		`insert into source (name, url, language_code, jurisdiction, licence_terms)
-		 values ($1, $2, 'de', 'DE', 'terms') returning usage_rule`,
-		"Default Feed "+suffix, "https://example.test/default/"+suffix).Scan(&usageRule)
+		 values ($1, $2, 'de', 'DE', 'terms') returning usage_rule, active`,
+		"Default Feed "+suffix, "https://example.test/default/"+suffix).Scan(&usageRule, &active)
 	if err != nil {
 		t.Fatalf("insert source: %v", err)
 	}
 	if usageRule != "extract_and_link" {
 		t.Fatalf("default usage_rule = %q, want extract_and_link", usageRule)
+	}
+	if !active {
+		t.Fatal("default source.active = false, want true (a new source polls until explicitly paused)")
 	}
 }
 
