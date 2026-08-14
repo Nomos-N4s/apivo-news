@@ -14,6 +14,8 @@ type Account struct {
 	Email       string
 	DisplayName string
 	CreatedAt   pgtype.Timestamptz
+	// What this person may do: readers read, editors approve. Approval authority is checked by the database (article_require_editor_approver, is_entitled), never by application code alone.
+	Role string
 }
 
 // Only approved content. A row here IS the approval (I-1): approved_by is NOT NULL, so a draft or unapproved article is unrepresentable. The review queue operates on translations/source_items; approval creates the article.
@@ -27,6 +29,12 @@ type Article struct {
 	PublishedAt pgtype.Timestamptz
 	// The attribution rendered with the article, pointing back to the original publisher.
 	AttributionBlock string
+	// When publication ended (FR-016). Withdrawal keeps the row, the approval and the retrieved evidence; published-and-visible means published_at IS NOT NULL AND withdrawn_at IS NULL.
+	WithdrawnAt pgtype.Timestamptz
+	// The named human who withdrew this article. Set together with withdrawn_at and withdrawal_reason, once, and frozen from then on.
+	WithdrawnBy pgtype.UUID
+	// Why the article was withdrawn. Part of the audit record; never blank when set.
+	WithdrawalReason pgtype.Text
 }
 
 // Which places an article concerns. Many-to-many: language and place are independent axes.
@@ -35,7 +43,7 @@ type ArticlePlace struct {
 	PlaceID   pgtype.UUID
 }
 
-// I-5: for any article - source, licence snapshot at retrieval, model, prompt version and named approver, in a single query.
+// I-5: for any article - source, licence snapshot at retrieval, model, prompt version, named approver and any withdrawal - in a single query.
 type ArticleProvenance struct {
 	ArticleID          pgtype.UUID
 	PublishedAt        pgtype.Timestamptz
@@ -62,6 +70,9 @@ type ArticleProvenance struct {
 	SourceName         string
 	SourceFeedUrl      string
 	Jurisdiction       string
+	WithdrawnAt        pgtype.Timestamptz
+	WithdrawnBy        pgtype.UUID
+	WithdrawalReason   pgtype.Text
 }
 
 // Per-purpose consent rows, never a boolean column. Revocation closes a row; a new grant opens a new row, preserving the full consent history.
@@ -93,6 +104,8 @@ type Place struct {
 	Name                 string
 	Country              string
 	JurisdictionOverride pgtype.Text
+	// Stable, human-readable address for locale-scoped reader pages (e.g. /el/munich). Unique when present; places that are not reader destinations may have none.
+	Slug pgtype.Text
 }
 
 // Which places a reader follows. Many-to-many: diaspora readers follow two places at once.
@@ -113,6 +126,8 @@ type Source struct {
 	UsageRule          string
 	PermissionEvidence pgtype.Text
 	CreatedAt          pgtype.Timestamptz
+	// Whether the crawler currently polls this feed. Pausing flips this to false; the source row, its licence terms and every retrieved item stay untouched.
+	Active bool
 }
 
 // IMMUTABLE (I-3). Exactly what was retrieved, when, and under which licence terms (I-2, I-4). Legal evidence; never updated, never deleted.
@@ -146,4 +161,12 @@ type Translation struct {
 	GeneratedAt   pgtype.Timestamptz
 	Headline      string
 	Extract       string
+	// Provider-reported cost of this translation in micro-USD, recorded explicitly at insert (FR-006). No default: an omitted cost is an error. An explicit 0 is legal only when the provider genuinely charged nothing (e.g. included quota).
+	CostMicrousd int64
+}
+
+// Monthly translation spend ledger, updated in the same transaction as each translation insert. Caps (per-article ceiling, monthly cap) are configuration; the translation module refuses work once the ledger reaches the cap and emits a pipeline.halted domain event.
+type TranslationSpend struct {
+	Month         pgtype.Date
+	SpentMicrousd int64
 }

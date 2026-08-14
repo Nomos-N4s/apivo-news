@@ -5,10 +5,12 @@ package db_test
 // attempts an illegal state and requires Postgres itself to reject it.
 //
 //	I-1  an article cannot exist without a named human approver
+//	     (tightened in 0002: the approver must hold the editor role)
 //	I-2  provenance is captured at retrieval, with the content
 //	I-3  source_item and domain_event are immutable / append only
 //	I-4  licence terms are snapshotted at retrieval
 //	I-5  full provenance of any article is one query away
+//	     (extended in 0002: withdrawal ends publication, keeps the record)
 //
 // They run against a real Postgres, keyed on DATABASE_URL. Locally:
 // `docker compose up -d postgres` and export DATABASE_URL. In CI the
@@ -127,8 +129,9 @@ func seed(t *testing.T, tx pgx.Tx) fixtures {
 		licence: "Extract and link permitted per feed terms v1 (" + suffix + ")",
 	}
 
+	// Approvers must hold the editor role (0002); the default is reader.
 	err := tx.QueryRow(ctx,
-		`insert into account (email, display_name) values ($1, $2) returning id`,
+		`insert into account (email, display_name, role) values ($1, $2, 'editor') returning id`,
 		"editor-"+suffix+"@example.test", "Test Editor "+suffix,
 	).Scan(&f.accountID)
 	if err != nil {
@@ -155,9 +158,10 @@ func seed(t *testing.T, tx pgx.Tx) fixtures {
 		t.Fatalf("seed source_item: %v", err)
 	}
 
+	// cost_microusd has no default (0002): the cost is always explicit.
 	err = tx.QueryRow(ctx,
-		`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract)
-		 values ($1, 'de', 'test-model-1', 'prompt-v1', $2, $3) returning id`,
+		`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract, cost_microusd)
+		 values ($1, 'de', 'test-model-1', 'prompt-v1', $2, $3, 1500) returning id`,
 		f.sourceItemID, "Testüberschrift "+suffix, "Testauszug "+suffix,
 	).Scan(&f.translationID)
 	if err != nil {
@@ -366,8 +370,8 @@ func TestDatabaseRejectsIllegalWrites(t *testing.T) {
 			invariant: "extract-and-link",
 			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
 				_, err := tx.Exec(ctx,
-					`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract)
-					 values ($1, 'de', 'm', 'p', '   ', 'extract')`, f.sourceItemID)
+					`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract, cost_microusd)
+					 values ($1, 'de', 'm', 'p', '   ', 'extract', 0)`, f.sourceItemID)
 				return err
 			},
 			wantCode: codeCheckViolation,
@@ -377,8 +381,8 @@ func TestDatabaseRejectsIllegalWrites(t *testing.T) {
 			invariant: "extract-and-link",
 			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
 				_, err := tx.Exec(ctx,
-					`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract)
-					 values ($1, 'de', 'm', 'p', 'headline', '')`, f.sourceItemID)
+					`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract, cost_microusd)
+					 values ($1, 'de', 'm', 'p', 'headline', '', 0)`, f.sourceItemID)
 				return err
 			},
 			wantCode: codeCheckViolation,
@@ -452,6 +456,180 @@ func TestDatabaseRejectsIllegalWrites(t *testing.T) {
 				}
 				_, err := tx.Exec(ctx,
 					`insert into account (email, display_name) values ('dup@example.test', 'Two')`)
+				return err
+			},
+			wantCode: codeUniqueViolation,
+		},
+		{
+			name:      "account with unknown role",
+			invariant: "I-1",
+			write: func(ctx context.Context, tx pgx.Tx, _ fixtures) error {
+				_, err := tx.Exec(ctx,
+					`insert into account (email, display_name, role) values ('admin@example.test', 'Admin', 'admin')`)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name:      "article approved by a reader-role account",
+			invariant: "I-1",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				// The default role is reader; approval authority belongs
+				// to editors only.
+				var readerID string
+				if err := tx.QueryRow(ctx,
+					`insert into account (email, display_name) values ('reader-approver@example.test', 'A Reader') returning id`).
+					Scan(&readerID); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx,
+					`insert into article (translation_id, approved_by, attribution_block)
+					 values ($1, $2, 'Quelle: Test Feed')`, f.translationID, readerID)
+				return err
+			},
+			wantCode: codeRaiseException,
+		},
+		{
+			name:      "partial withdrawal write",
+			invariant: "I-5",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				var articleID string
+				if err := tx.QueryRow(ctx,
+					`insert into article (translation_id, approved_by, published_at, attribution_block)
+					 values ($1, $2, now(), 'Quelle: Test Feed') returning id`,
+					f.translationID, f.accountID).Scan(&articleID); err != nil {
+					return err
+				}
+				// Withdrawal is who, when and why together; a timestamp
+				// alone is a partial, unrepresentable withdrawal.
+				_, err := tx.Exec(ctx,
+					`update article set withdrawn_at = now() where id = $1`, articleID)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name:      "withdrawal of a never-published article",
+			invariant: "I-5",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				var articleID string
+				if err := tx.QueryRow(ctx,
+					`insert into article (translation_id, approved_by, attribution_block)
+					 values ($1, $2, 'Quelle: Test Feed') returning id`,
+					f.translationID, f.accountID).Scan(&articleID); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx,
+					`update article set withdrawn_at = now(), withdrawn_by = $2, withdrawal_reason = 'never ran'
+					 where id = $1`, articleID, f.accountID)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name:      "withdrawal timestamped before publication",
+			invariant: "I-5",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				var articleID string
+				if err := tx.QueryRow(ctx,
+					`insert into article (translation_id, approved_by, approved_at, published_at, attribution_block)
+					 values ($1, $2, now() - interval '2 hours', now() - interval '1 hour', 'Quelle: Test Feed') returning id`,
+					f.translationID, f.accountID).Scan(&articleID); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx,
+					`update article set withdrawn_at = now() - interval '90 minutes', withdrawn_by = $2, withdrawal_reason = 'time travel'
+					 where id = $1`, articleID, f.accountID)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name:      "withdrawal with a blank reason",
+			invariant: "I-5",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				var articleID string
+				if err := tx.QueryRow(ctx,
+					`insert into article (translation_id, approved_by, published_at, attribution_block)
+					 values ($1, $2, now(), 'Quelle: Test Feed') returning id`,
+					f.translationID, f.accountID).Scan(&articleID); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx,
+					`update article set withdrawn_at = now(), withdrawn_by = $2, withdrawal_reason = '   '
+					 where id = $1`, articleID, f.accountID)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name:      "translation omitting the cost",
+			invariant: "cost lineage",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				// cost_microusd has no default: an unrecorded cost is a
+				// rejected insert, never a silent zero.
+				_, err := tx.Exec(ctx,
+					`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract)
+					 values ($1, 'de', 'm', 'p', 'headline', 'extract')`, f.sourceItemID)
+				return err
+			},
+			wantCode: codeNotNullViolation,
+		},
+		{
+			name:      "translation with a negative cost",
+			invariant: "cost lineage",
+			write: func(ctx context.Context, tx pgx.Tx, f fixtures) error {
+				_, err := tx.Exec(ctx,
+					`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract, cost_microusd)
+					 values ($1, 'de', 'm', 'p', 'headline', 'extract', -1)`, f.sourceItemID)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name:      "second spend ledger row for the same month",
+			invariant: "cost lineage",
+			write: func(ctx context.Context, tx pgx.Tx, _ fixtures) error {
+				if _, err := tx.Exec(ctx,
+					`insert into translation_spend (month, spent_microusd) values (date '2026-08-01', 100)`); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx,
+					`insert into translation_spend (month, spent_microusd) values (date '2026-08-01', 200)`)
+				return err
+			},
+			wantCode: codeUniqueViolation,
+		},
+		{
+			name:      "spend ledger keyed on a mid-month date",
+			invariant: "cost lineage",
+			write: func(ctx context.Context, tx pgx.Tx, _ fixtures) error {
+				// The key is the first day of the month; otherwise two rows
+				// could silently describe the same month.
+				_, err := tx.Exec(ctx,
+					`insert into translation_spend (month, spent_microusd) values (date '2026-08-15', 100)`)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name:      "place with a blank slug",
+			invariant: "locale model",
+			write: func(ctx context.Context, tx pgx.Tx, _ fixtures) error {
+				_, err := tx.Exec(ctx,
+					`insert into place (name, country, slug) values ('Blankville', 'DE', '   ')`)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name:      "place with a duplicate slug",
+			invariant: "locale model",
+			write: func(ctx context.Context, tx pgx.Tx, _ fixtures) error {
+				// Collides with the seeded Munich row: slugs are addresses
+				// and addresses are unique.
+				_, err := tx.Exec(ctx,
+					`insert into place (name, country, slug) values ('Munich Clone', 'DE', 'munich')`)
 				return err
 			},
 			wantCode: codeUniqueViolation,
@@ -624,6 +802,209 @@ func TestArticlePublishTransition(t *testing.T) {
 	_, err = tx.Exec(ctx,
 		`update article set published_at = now() + interval '1 hour' where id = $1`, articleID)
 	wantPgCode(t, err, codeRaiseException)
+}
+
+// TestArticleWithdrawalTransition asserts the second legal article update
+// (0002): a published article may be withdrawn - who, when and why, all at
+// once - exactly once. The record then stays frozen: no edits, no
+// un-withdrawal, and the provenance view carries the full history (I-5).
+func TestArticleWithdrawalTransition(t *testing.T) {
+	t.Parallel()
+	tx := beginTx(t)
+	ctx := context.Background()
+	f := seed(t, tx)
+
+	var articleID string
+	err := tx.QueryRow(ctx,
+		`insert into article (translation_id, approved_by, published_at, attribution_block)
+		 values ($1, $2, now(), 'Quelle: Test Feed') returning id`,
+		f.translationID, f.accountID).Scan(&articleID)
+	if err != nil {
+		t.Fatalf("insert published article: %v", err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`update article set withdrawn_at = now(), withdrawn_by = $2, withdrawal_reason = 'source retraction'
+		 where id = $1`, articleID, f.accountID); err != nil {
+		t.Fatalf("withdrawing a published article must be allowed: %v", err)
+	}
+
+	var otherEditorID string
+	if err := tx.QueryRow(ctx,
+		`insert into account (email, display_name, role) values ($1, 'Another Editor', 'editor') returning id`,
+		"other-"+randomSuffix(t)+"@example.test").Scan(&otherEditorID); err != nil {
+		t.Fatalf("insert second editor: %v", err)
+	}
+
+	// The record is terminal: every further touch of the withdrawal
+	// columns is refused by the guard. Each attempt runs in a savepoint
+	// (nested transaction) so the raised exception does not abort the
+	// enclosing test transaction.
+	frozen := []struct {
+		name string
+		stmt string
+		args []any
+	}{
+		{name: "second withdrawal", stmt: `update article set withdrawn_at = now() + interval '1 hour' where id = $1`, args: []any{articleID}},
+		{name: "rewrite the reason", stmt: `update article set withdrawal_reason = 'a friendlier story' where id = $1`, args: []any{articleID}},
+		{name: "reassign who withdrew", stmt: `update article set withdrawn_by = $2 where id = $1`, args: []any{articleID, otherEditorID}},
+		{name: "un-withdraw", stmt: `update article set withdrawn_at = null, withdrawn_by = null, withdrawal_reason = null where id = $1`, args: []any{articleID}},
+	}
+	for _, tt := range frozen {
+		nested, err := tx.Begin(ctx)
+		if err != nil {
+			t.Fatalf("%s: begin savepoint: %v", tt.name, err)
+		}
+		_, execErr := nested.Exec(ctx, tt.stmt, tt.args...)
+		if err := nested.Rollback(ctx); err != nil {
+			t.Fatalf("%s: rollback savepoint: %v", tt.name, err)
+		}
+		if execErr == nil {
+			t.Fatalf("%s: want rejection, got success", tt.name)
+		}
+		wantPgCode(t, execErr, codeRaiseException)
+	}
+
+	// Audit reads the full history from the provenance view in one query.
+	var withdrawnBy, reason string
+	var withdrawnAt *string
+	err = tx.QueryRow(ctx,
+		`select withdrawn_at::text, withdrawn_by::text, withdrawal_reason
+		 from article_provenance where article_id = $1`, articleID).
+		Scan(&withdrawnAt, &withdrawnBy, &reason)
+	if err != nil {
+		t.Fatalf("querying withdrawal from article_provenance: %v", err)
+	}
+	if withdrawnAt == nil || withdrawnBy != f.accountID || reason != "source retraction" {
+		t.Errorf("provenance view lost the withdrawal record: at=%v by=%q reason=%q (I-5)",
+			withdrawnAt, withdrawnBy, reason)
+	}
+}
+
+// TestWithdrawnOriginCanBeReapproved asserts the correction flow: a
+// withdrawn article frees its origin for a fresh approval, while a second
+// ACTIVE article from the same origin remains impossible.
+func TestWithdrawnOriginCanBeReapproved(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		origin string // column name; the fixture supplies the value
+	}{
+		{name: "translation origin", origin: "translation_id"},
+		{name: "source item origin", origin: "source_item_id"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tx := beginTx(t)
+			ctx := context.Background()
+			f := seed(t, tx)
+
+			originID := f.translationID
+			if tt.origin == "source_item_id" {
+				originID = f.sourceItemID
+			}
+			insert := `insert into article (` + tt.origin + `, approved_by, published_at, attribution_block)
+			 values ($1, $2, now(), 'Quelle: Test Feed') returning id`
+
+			var firstID string
+			if err := tx.QueryRow(ctx, insert, originID, f.accountID).Scan(&firstID); err != nil {
+				t.Fatalf("insert first article: %v", err)
+			}
+			if _, err := tx.Exec(ctx,
+				`update article set withdrawn_at = now(), withdrawn_by = $2, withdrawal_reason = 'correction'
+				 where id = $1`, firstID, f.accountID); err != nil {
+				t.Fatalf("withdraw first article: %v", err)
+			}
+
+			// The origin is free again: the corrected article may be approved.
+			var secondID string
+			if err := tx.QueryRow(ctx, insert, originID, f.accountID).Scan(&secondID); err != nil {
+				t.Fatalf("re-approval after withdrawal must be allowed: %v", err)
+			}
+
+			// But never two ACTIVE articles from one origin.
+			var thirdID string
+			err := tx.QueryRow(ctx, insert, originID, f.accountID).Scan(&thirdID)
+			wantPgCode(t, err, codeUniqueViolation)
+		})
+	}
+}
+
+// TestTranslationZeroCostIsAccepted is the positive control for the cost
+// rule: an explicit zero (provider genuinely charged nothing) is legal;
+// only an OMITTED cost is rejected.
+func TestTranslationZeroCostIsAccepted(t *testing.T) {
+	t.Parallel()
+	tx := beginTx(t)
+	ctx := context.Background()
+	f := seed(t, tx)
+
+	var cost int64
+	err := tx.QueryRow(ctx,
+		`insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract, cost_microusd)
+		 values ($1, 'el', 'test-model-1', 'prompt-v1', 'Δωρεάν', 'Απόσπασμα', 0) returning cost_microusd`,
+		f.sourceItemID).Scan(&cost)
+	if err != nil {
+		t.Fatalf("translation with explicit zero cost rejected: %v", err)
+	}
+	if cost != 0 {
+		t.Fatalf("cost_microusd = %d, want 0", cost)
+	}
+}
+
+// TestPlaceSeeds asserts the alpha reference places shipped by 0002: the
+// Munich -> Bavaria -> Germany hierarchy and the national Greece row, each
+// addressable by slug.
+func TestPlaceSeeds(t *testing.T) {
+	t.Parallel()
+	tx := beginTx(t)
+	ctx := context.Background()
+
+	var munich, bavaria, germany struct {
+		name    string
+		country string
+	}
+	var germanyParent *string
+	err := tx.QueryRow(ctx,
+		`select m.name, m.country, b.name, b.country, g.name, g.country, g.parent_id::text
+		 from place m
+		 join place b on b.id = m.parent_id
+		 join place g on g.id = b.parent_id
+		 where m.slug = 'munich' and b.slug = 'bavaria' and g.slug = 'germany'`).
+		Scan(&munich.name, &munich.country, &bavaria.name, &bavaria.country,
+			&germany.name, &germany.country, &germanyParent)
+	if err != nil {
+		t.Fatalf("seeded Munich -> Bavaria -> Germany chain missing: %v", err)
+	}
+	if munich.name != "Munich" || munich.country != "DE" {
+		t.Errorf("munich seed = %q/%q, want Munich/DE", munich.name, munich.country)
+	}
+	if bavaria.name != "Bavaria" || bavaria.country != "DE" {
+		t.Errorf("bavaria seed = %q/%q, want Bavaria/DE", bavaria.name, bavaria.country)
+	}
+	if germany.name != "Germany" || germany.country != "DE" || germanyParent != nil {
+		t.Errorf("germany seed = %q/%q parent=%v, want Germany/DE at the top of the chain",
+			germany.name, germany.country, germanyParent)
+	}
+
+	var greece struct {
+		name    string
+		country string
+	}
+	var greeceParent *string
+	err = tx.QueryRow(ctx,
+		`select name, country, parent_id::text from place where slug = 'greece'`).
+		Scan(&greece.name, &greece.country, &greeceParent)
+	if err != nil {
+		t.Fatalf("seeded Greece missing: %v", err)
+	}
+	if greece.name != "Greece" || greece.country != "GR" || greeceParent != nil {
+		t.Errorf("greece seed = %q/%q parent=%v, want national Greece/GR",
+			greece.name, greece.country, greeceParent)
+	}
 }
 
 // TestConsentHistoryIsProtected asserts consent rows can be closed but
@@ -935,12 +1316,21 @@ func TestSourceDefaultsToExtractAndLink(t *testing.T) {
 }
 
 // TestIsEntitled asserts the single entitlement gate answers for existing
-// accounts and refuses unknown ones.
+// accounts, refuses unknown ones, and (0002) grants editorial.* actions to
+// editors only.
 func TestIsEntitled(t *testing.T) {
 	t.Parallel()
 	tx := beginTx(t)
 	ctx := context.Background()
-	f := seed(t, tx)
+	f := seed(t, tx) // f.accountID holds the editor role
+
+	var readerID string
+	err := tx.QueryRow(ctx,
+		`insert into account (email, display_name) values ($1, 'A Reader') returning id`,
+		"reader-"+randomSuffix(t)+"@example.test").Scan(&readerID)
+	if err != nil {
+		t.Fatalf("insert reader account: %v", err)
+	}
 
 	tests := []struct {
 		name  string
@@ -951,6 +1341,10 @@ func TestIsEntitled(t *testing.T) {
 		{name: "existing account is entitled", query: `select is_entitled($1, 'read')`, args: []any{f.accountID}, want: true},
 		{name: "unknown account is not", query: `select is_entitled(gen_random_uuid(), 'read')`, want: false},
 		{name: "null action is not an entitlement", query: `select is_entitled($1, null)`, args: []any{f.accountID}, want: false},
+		{name: "editor may take editorial actions", query: `select is_entitled($1, 'editorial.approve')`, args: []any{f.accountID}, want: true},
+		{name: "reader may not take editorial actions", query: `select is_entitled($1, 'editorial.approve')`, args: []any{readerID}, want: false},
+		{name: "reader keeps non-editorial entitlements", query: `select is_entitled($1, 'read')`, args: []any{readerID}, want: true},
+		{name: "unknown account gets no editorial entitlement", query: `select is_entitled(gen_random_uuid(), 'editorial.approve')`, want: false},
 	}
 
 	for _, tt := range tests {

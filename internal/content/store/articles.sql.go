@@ -12,7 +12,7 @@ import (
 )
 
 const getArticleProvenance = `-- name: GetArticleProvenance :one
-select article_id, published_at, attribution_block, approved_at, approver_id, approver_name, approver_email, translation_id, model, prompt_version, target_locale, generated_at, source_item_id, source_url, original_author, source_published_at, retrieved_at, content_hash, licence_snapshot, usage_rule, permission_evidence, source_id, source_name, source_feed_url, jurisdiction from article_provenance
+select article_id, published_at, attribution_block, approved_at, approver_id, approver_name, approver_email, translation_id, model, prompt_version, target_locale, generated_at, source_item_id, source_url, original_author, source_published_at, retrieved_at, content_hash, licence_snapshot, usage_rule, permission_evidence, source_id, source_name, source_feed_url, jurisdiction, withdrawn_at, withdrawn_by, withdrawal_reason from article_provenance
 where article_id = $1
 `
 
@@ -47,12 +47,15 @@ func (q *Queries) GetArticleProvenance(ctx context.Context, articleID pgtype.UUI
 		&i.SourceName,
 		&i.SourceFeedUrl,
 		&i.Jurisdiction,
+		&i.WithdrawnAt,
+		&i.WithdrawnBy,
+		&i.WithdrawalReason,
 	)
 	return i, err
 }
 
 const listPublishedArticles = `-- name: ListPublishedArticles :many
-select id, translation_id, source_item_id, approved_by, approved_at, published_at, attribution_block from article
+select id, translation_id, source_item_id, approved_by, approved_at, published_at, attribution_block, withdrawn_at, withdrawn_by, withdrawal_reason from article
 where published_at is not null
 order by published_at desc
 limit $1
@@ -75,6 +78,9 @@ func (q *Queries) ListPublishedArticles(ctx context.Context, limit int32) ([]Art
 			&i.ApprovedAt,
 			&i.PublishedAt,
 			&i.AttributionBlock,
+			&i.WithdrawnAt,
+			&i.WithdrawnBy,
+			&i.WithdrawalReason,
 		); err != nil {
 			return nil, err
 		}
