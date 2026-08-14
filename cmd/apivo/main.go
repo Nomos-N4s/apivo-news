@@ -47,13 +47,16 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if len(args) > 0 {
-		if args[0] == "healthcheck" {
-			return healthcheck(ctx, getenv)
-		}
+	switch {
+	case len(args) == 0:
+		return serve(ctx, getenv, stdout)
+	case args[0] != "healthcheck":
 		return fmt.Errorf("unknown command %q", args[0])
+	case len(args) > 1:
+		return fmt.Errorf("healthcheck takes no arguments, got %q", args[1:])
+	default:
+		return healthcheck(ctx, getenv)
 	}
-	return serve(ctx, getenv, stdout)
 }
 
 // serve wires the platform together and serves HTTP until ctx is cancelled.

@@ -70,11 +70,24 @@ func TestRunRejectsUnusableDatabase(t *testing.T) {
 	}
 }
 
-func TestRunRejectsUnknownCommand(t *testing.T) {
+func TestRunRejectsBadArguments(t *testing.T) {
 	t.Parallel()
-	err := run(context.Background(), []string{"frobnicate"}, envFrom(nil), io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "unknown command") {
-		t.Fatalf("run() with unknown command: want unknown command error, got %v", err)
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "unknown command", args: []string{"frobnicate"}, want: "unknown command"},
+		{name: "healthcheck with extra arguments", args: []string{"healthcheck", "extra"}, want: "takes no arguments"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := run(context.Background(), tt.args, envFrom(nil), io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("run() with args %q: want error containing %q, got %v", tt.args, tt.want, err)
+			}
+		})
 	}
 }
 
@@ -93,11 +106,6 @@ func TestRunHealthcheck(t *testing.T) {
 func TestHealthcheck(t *testing.T) {
 	t.Parallel()
 
-	// A closed server yields an address where nothing is listening.
-	closed := httptest.NewServer(http.NotFoundHandler())
-	closedAddr := strings.TrimPrefix(closed.URL, "http://")
-	closed.Close()
-
 	tests := []struct {
 		name    string
 		addr    string
@@ -105,7 +113,10 @@ func TestHealthcheck(t *testing.T) {
 	}{
 		{name: "healthy server", addr: healthzServer(t, http.StatusOK), wantErr: false},
 		{name: "unhealthy status", addr: healthzServer(t, http.StatusServiceUnavailable), wantErr: true},
-		{name: "nothing listening", addr: closedAddr, wantErr: true},
+		// Port 0 is never a valid destination, so the connection fails
+		// deterministically - unlike a freed ephemeral port, which a later
+		// parallel listener could be handed back.
+		{name: "nothing listening", addr: "127.0.0.1:0", wantErr: true},
 		{name: "invalid address", addr: "not an address", wantErr: true},
 	}
 	for _, tt := range tests {
