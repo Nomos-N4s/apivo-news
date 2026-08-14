@@ -99,6 +99,14 @@ jobs:
       - name: Coverage gate (90%)
         run: sh scripts/coverage_gate.sh 90 coverage.out
 
+  # Proves the Dockerfile builds; the image is never pushed from CI.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build image (no push)
+        run: docker build -t apivo:${{ github.sha }} .
+
   sqlc-drift:
     runs-on: ubuntu-latest
     steps:
