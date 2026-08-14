@@ -1,8 +1,10 @@
 # Local development stack: `docker compose up --build` starts Postgres, the
 # Go API (which migrates the schema on start) and the Astro frontend. Per
 # the HTTP contract's topology the API publishes no host port — it is
-# reachable only on the internal compose network, by service name; the web
-# service is the only public surface (http://localhost:4321).
+# reachable only on the internal compose network, by service name. The web
+# service is the only published HTTP surface (http://localhost:4321);
+# Postgres is also published, on loopback, for local tooling and tests.
+# Host bindings are loopback-only so the dev stack never listens on the LAN.
 services:
   postgres:
     image: postgres:17-alpine
@@ -11,7 +13,7 @@ services:
       POSTGRES_USER: apivo
       POSTGRES_PASSWORD: apivo
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U apivo -d apivo"]
       interval: 5s
@@ -33,14 +35,14 @@ services:
       postgres:
         condition: service_healthy
 
-  # Astro frontend — the only service published to the host.
+  # Astro frontend — the only published HTTP surface, loopback-only.
   web:
     build: ./web
     environment:
       HOST: 0.0.0.0
       PORT: "4321"
     ports:
-      - "4321:4321"
+      - "127.0.0.1:4321:4321"
     depends_on:
       api:
         condition: service_healthy
