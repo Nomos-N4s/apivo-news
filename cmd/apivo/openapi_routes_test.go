@@ -20,24 +20,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
 )
-
-// documentedButNotServedHere lists operations the document describes that a
-// binary built from this tree does not serve. There is exactly one reason
-// for an entry: the reader endpoints (internal/content/http.go) are merged
-// but not yet forward-integrated into main, while the frontend already
-// consumes them - so the document describes the implementation rather than
-// pretending they do not exist.
-//
-// Each entry is asserted to be genuinely absent below, so the day the
-// implementation arrives this test fails and the entry has to go. The list
-// can only shrink, and nothing can be parked in it to dodge the comparison.
-var documentedButNotServedHere = []string{
-	"GET /api/v1/front",
-	"GET /api/v1/articles/{id}",
-}
 
 // httpMethods are the path-item keys that denote an operation; anything else
 // in a path item (parameters, summary, servers) is not one.
@@ -112,7 +98,7 @@ func documentedOperations(t *testing.T, doc openAPIDocument) map[string]operatio
 // registeredPatterns is every route this binary mounts: the platform's own
 // plus each module's, reported by the same maps the routers are built from.
 func registeredPatterns() []string {
-	return slices.Concat(platformhttp.Patterns(), editorial.Patterns())
+	return slices.Concat(platformhttp.Patterns(), content.Patterns(), editorial.Patterns())
 }
 
 func TestOpenAPIDocumentDescribesEveryRegisteredRoute(t *testing.T) {
@@ -132,19 +118,10 @@ func TestOpenAPIDocumentDescribesNothingUnserved(t *testing.T) {
 	registered := registeredPatterns()
 
 	for pattern := range documented {
-		if slices.Contains(registered, pattern) || slices.Contains(documentedButNotServedHere, pattern) {
+		if slices.Contains(registered, pattern) {
 			continue
 		}
 		t.Errorf("the OpenAPI document describes %q, which no route serves; implement it or drop it from api/openapi.json", pattern)
-	}
-
-	for _, pattern := range documentedButNotServedHere {
-		if _, ok := documented[pattern]; !ok {
-			t.Errorf("documentedButNotServedHere names %q, which the document does not describe; drop the stale entry", pattern)
-		}
-		if slices.Contains(registered, pattern) {
-			t.Errorf("%q is served now, so remove it from documentedButNotServedHere - the document and the router agree about it", pattern)
-		}
 	}
 }
 
