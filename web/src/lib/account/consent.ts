@@ -48,7 +48,13 @@ export function isGranted(
 export function historyNewestFirst(
   history: readonly ConsentRecord[],
 ): readonly ConsentRecord[] {
-  return [...history].sort((a, b) => b.granted_at.localeCompare(a.granted_at));
+  // Compare instants, not strings: two records can describe the same
+  // moment as `Z` and `+00:00`, or sit in different offsets, and a
+  // lexicographic sort would then order a consent history wrongly — the
+  // one thing this list exists to get right.
+  return [...history].sort(
+    (a, b) => Date.parse(b.granted_at) - Date.parse(a.granted_at),
+  );
 }
 
 /**
