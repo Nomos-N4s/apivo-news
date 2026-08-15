@@ -53,6 +53,10 @@ func (s *queueStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editorial.A
 	return editorial.Article{}, errUnexpectedCall
 }
 
+func (s *queueStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) (editorial.Withdrawal, error) {
+	return editorial.Withdrawal{}, errUnexpectedCall
+}
+
 func (s *queueStore) ReviewQueue(_ context.Context, q editorial.QueueQuery) (editorial.QueuePage, error) {
 	s.got = q
 	return s.page, nil

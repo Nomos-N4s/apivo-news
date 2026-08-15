@@ -301,14 +301,21 @@ func approvalError(err error) error {
 		(pgErr.ConstraintName == "article_translation_id_fkey" ||
 			pgErr.ConstraintName == "article_source_item_id_fkey"):
 		return fmt.Errorf("%w: %s", ErrUnknownOrigin, pgErr.ConstraintName)
-	// article_insert_guard raises on a non-editor approver. Matching the
-	// rule's own wording rather than the bare SQLSTATE keeps a future rule
-	// in the same trigger from being reported as this one; an unmatched
-	// raise falls through to a 500, which is the safe direction.
-	case pgErr.Code == pgerrcode.RaiseException && strings.Contains(pgErr.Message, "editor role"):
+	case databaseRefusedEditor(pgErr):
 		return fmt.Errorf("%w: %s", ErrNotEditor, pgErr.Message)
 	}
 	return fmt.Errorf("editorial: approving article: %w", err)
+}
+
+// databaseRefusedEditor reports whether the database refused an editorial
+// decision because the account behind it does not hold the editor role -
+// article_insert_guard on approval, article_guard on withdrawal.
+//
+// Matching the rules' shared wording rather than the bare SQLSTATE keeps a
+// future rule in the same trigger from being reported as this one; an
+// unmatched raise falls through to a 500, which is the safe direction.
+func databaseRefusedEditor(pgErr *pgconn.PgError) bool {
+	return pgErr.Code == pgerrcode.RaiseException && strings.Contains(pgErr.Message, "editor role")
 }
 
 // recordEvent appends one domain event to the append-only audit stream,
