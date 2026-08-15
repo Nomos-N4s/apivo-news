@@ -1,7 +1,7 @@
 ---
 import Masthead from '../../components/Masthead.astro';
 import ReaderLayout from '../../layouts/ReaderLayout.astro';
-import { DEFAULT_FRONT_PAGE, isReadingLanguage } from '../../lib/reader/axes';
+import { frontPagePath, isReadingLanguage } from '../../lib/reader/axes';
 import { uiStrings } from '../../lib/reader/strings';
 
 // The about page (issue #92): what epiloYES is, how the pipeline works,
@@ -18,6 +18,12 @@ if (langSegment === undefined || !isReadingLanguage(langSegment)) {
 const lang = langSegment;
 const t = uiStrings(lang);
 
+// The page has no place axis, so the brand falls back to the flagship
+// places — but under the READER'S language. Hard-coding the default front
+// page would silently flip /de/about's language axis to Greek (FR-009:
+// chrome never changes an axis the reader didn't touch).
+const home = frontPagePath(lang, ['munich', 'greece']);
+
 const sections = [
   { heading: t.aboutPipelineHeading, paragraphs: t.aboutPipelineParagraphs },
   { heading: t.aboutTranslationHeading, paragraphs: t.aboutTranslationParagraphs },
@@ -26,8 +32,8 @@ const sections = [
 ];
 ---
 
-<ReaderLayout lang={lang} title={`epiloYES — ${t.aboutLabel}`} description={t.tagline}>
-  <Masthead homeHref={DEFAULT_FRONT_PAGE}>
+<ReaderLayout lang={lang} title={`epiloYES — ${t.aboutLabel}`} description={t.tagline} homeHref={home}>
+  <Masthead homeHref={home}>
     {/* The current language is state, not a destination (same rule as the
         axis bar); each label carries its own lang (WCAG 3.1.2). */}
     <div class="seg" role="group">
