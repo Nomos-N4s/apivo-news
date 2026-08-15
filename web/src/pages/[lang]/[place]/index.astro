@@ -81,7 +81,9 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
 ---
 
 <ReaderLayout lang={lang} title={title} description={t.tagline}>
-  <Masthead homeHref={homeHref} dateText={formatMastheadDate(lang, now)} />
+  <Masthead homeHref={homeHref} dateText={formatMastheadDate(lang, now)}>
+    <button class="btn btn-secondary sign-in" disabled title={t.signInPending}>{t.signIn}</button>
+  </Masthead>
 
   <section class="axes" aria-label={`${t.readingLanguage} · ${t.places}`}>
     <div class="axis axis-lang">
@@ -110,28 +112,37 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
     {
       lead !== undefined && (
         <article class="lead">
-          <div class="meta">
-            <span class="kicker">{kicker(lead)}</span>
-            <span class="meta-rule" aria-hidden="true" />
-            <span class="when">{formatRecency(lang, new Date(lead.published_at), now)}</span>
-          </div>
-          <h1>{lead.headline}</h1>
-          <p class="lead-extract">{lead.extract}</p>
-          <div class="lead-record">
-            <p class="attribution">
-              {lead.attribution}
-              {safeSourceUrl(lead.source_url) !== null ? (
-                <a class="source-link" href={safeSourceUrl(lead.source_url)} rel="external noopener">
-                  {sourceHost(lead.source_url)} ↗
-                </a>
-              ) : (
-                <span class="source-host">{sourceHost(lead.source_url)}</span>
-              )}
-            </p>
-            <ProvenanceDisclosure
-              label={t.provenance}
-              rows={recordRows(lead).slice(0, 2)}
-            />
+          {/* The mockup's lead-photograph slot, held as composition: the
+              alpha is text-only (no image handling in the contract), so
+              the reserved cell renders as a quiet typographic tile until
+              publisher imagery is ever licensed. */}
+          <figure class="lead-figure grayscale" aria-hidden="true">
+            <span>{kicker(lead).split(' · ').at(0)}</span>
+          </figure>
+          <div class="lead-text">
+            <div class="meta">
+              <span class="kicker">{kicker(lead)}</span>
+              <span class="meta-rule" aria-hidden="true" />
+              <span class="when">{formatRecency(lang, new Date(lead.published_at), now)}</span>
+            </div>
+            <h1>{lead.headline}</h1>
+            <p class="lead-extract">{lead.extract}</p>
+            <div class="lead-record">
+              <p class="attribution">
+                {lead.attribution}
+                {safeSourceUrl(lead.source_url) !== null ? (
+                  <a class="source-link" href={safeSourceUrl(lead.source_url)} rel="external noopener">
+                    {sourceHost(lead.source_url)} ↗
+                  </a>
+                ) : (
+                  <span class="source-host">{sourceHost(lead.source_url)}</span>
+                )}
+              </p>
+              <ProvenanceDisclosure
+                label={t.provenance}
+                rows={recordRows(lead).slice(0, 2)}
+              />
+            </div>
           </div>
         </article>
       )
@@ -212,11 +223,49 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
     flex: 1;
   }
 
-  /* — the lead: typographic (the alpha is text-only; the mockup's
-     photograph slot is out of scope — issue #51) — */
+  /* — the lead: the 1a two-cell composition, photograph slot left,
+     text right; the slot holds its place typographically until imagery
+     is ever licensed (issue #51) — */
   .lead {
-    padding: calc(var(--space-6) + var(--space-1));
+    display: grid;
+    grid-template-columns: 52fr 48fr;
     border-bottom: 2px solid var(--color-divider);
+  }
+  .lead-figure {
+    margin: 0;
+    padding: calc(var(--space-6) + var(--space-1));
+    border-right: 1px solid var(--color-divider);
+    display: flex;
+  }
+  .lead-figure span {
+    flex: 1;
+    min-height: 330px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-divider);
+    display: grid;
+    place-items: center;
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-text) 35%, transparent);
+  }
+  .lead-text {
+    padding: calc(var(--space-6) + var(--space-1));
+    display: flex;
+    flex-direction: column;
+  }
+  .lead-record {
+    margin-top: auto;
+  }
+  @media (max-width: 980px) {
+    .lead {
+      grid-template-columns: 1fr;
+    }
+    .lead-figure {
+      display: none;
+    }
   }
   .meta {
     display: flex;
@@ -242,7 +291,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
     color: color-mix(in srgb, var(--color-text) 50%, transparent);
   }
   .lead h1 {
-    font-size: clamp(28px, 4.5vw, 38px);
+    font-size: clamp(28px, 3vw, 38px);
     margin: 0 0 var(--space-3);
     max-width: 28ch;
     text-wrap: pretty;
@@ -257,6 +306,10 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
   .lead-record {
     padding-top: var(--space-4);
     border-top: 1px solid var(--color-divider);
+  }
+  .sign-in {
+    font-size: 12.5px;
+    padding: 6px var(--space-3);
   }
   .attribution {
     font-size: 12.5px;

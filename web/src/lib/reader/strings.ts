@@ -35,6 +35,9 @@ export interface UiStrings {
   /** Calm degraded state when the reader API cannot be reached (503). */
   readonly unavailableTitle: string;
   readonly unavailableBody: string;
+  /** Masthead sign-in (mockup 1a) — disabled until registration ships (T031). */
+  readonly signIn: string;
+  readonly signInPending: string;
 }
 
 const EL: UiStrings = {
@@ -58,6 +61,8 @@ const EL: UiStrings = {
   unavailableTitle: 'Η σελίδα δεν είναι διαθέσιμη αυτή τη στιγμή',
   unavailableBody:
     'Δοκιμάστε ξανά σε λίγο. Δεν χάθηκε τίποτα — τα άρθρα θα εμφανιστούν μόλις αποκατασταθεί η σύνδεση.',
+  signIn: 'Σύνδεση',
+  signInPending: 'Διαθέσιμο με την εγγραφή',
 };
 
 const DE: UiStrings = {
@@ -81,6 +86,8 @@ const DE: UiStrings = {
   unavailableTitle: 'Die Seite ist gerade nicht erreichbar',
   unavailableBody:
     'Versuchen Sie es gleich noch einmal. Nichts ist verloren — die Beiträge erscheinen, sobald die Verbindung wieder steht.',
+  signIn: 'Anmelden',
+  signInPending: 'Verfügbar mit der Registrierung',
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, UiStrings>> = { el: EL, de: DE };
