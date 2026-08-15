@@ -1,0 +1,418 @@
+---
+import { API_BASE_URL } from 'astro:env/server';
+import ReaderLayout from '../../../../layouts/ReaderLayout.astro';
+import {
+  createReaderApi,
+  type ArticleDetail,
+  type FrontItem,
+} from '../../../../lib/reader/api';
+import {
+  articlePath,
+  frontPagePath,
+  LANGUAGE_ENDONYMS,
+  parseAxes,
+  placeKicker,
+} from '../../../../lib/reader/axes';
+import {
+  extractParagraphs,
+  formatDateTime,
+  safeSourceUrl,
+  sourceHost,
+} from '../../../../lib/reader/format';
+import { uiStrings } from '../../../../lib/reader/strings';
+
+// The article page — mockup 1c: a reading view honest about being a
+// doorway (issue #52, toward T026 #29). The licence permits a headline and
+// an extract, so the extract-boundary block says so and the primary action
+// is the publisher (SC-008). The record rail renders the public payload's
+// fields; withdrawn or unpublished ids are a 404 by contract — the page
+// never learns a withdrawal happened, so it renders not-found, not a
+// withdrawn state.
+const axes = parseAxes(Astro.params['lang'], Astro.params['place']);
+const id = Astro.params['id'];
+if (axes === null || id === undefined || id === '') {
+  return Astro.rewrite('/404');
+}
+const { lang, places } = axes;
+const slugs = places.map((place) => place.slug);
+
+const api = createReaderApi(API_BASE_URL);
+let article: ArticleDetail | null;
+try {
+  article = await api.article(id);
+} catch {
+  // The reader API is away; the article may well exist. Say
+  // "unavailable", never "not found".
+  return Astro.rewrite('/503');
+}
+// An article exists on one language axis only; an id under the wrong
+// language is as absent as an unknown one. The place axis binds the same
+// way: the chrome, back-link and rail all claim the article belongs to
+// the URL's places, so an id under a place it does not relate to is a
+// 404 too — each article has one canonical set of addresses.
+const kickerSlug = article?.places.find((slug) => slugs.includes(slug));
+if (article === null || article.lang !== lang || kickerSlug === undefined) {
+  return Astro.rewrite('/404');
+}
+
+const t = uiStrings(lang);
+const host = sourceHost(article.source_url);
+// Feed URLs are external input: only http(s) may render as a link.
+const safeHref = safeSourceUrl(article.source_url);
+const paragraphs = extractParagraphs(article.extract);
+const backHref = frontPagePath(lang, slugs);
+const backPlace = places.at(0);
+
+// The kicker and the rail speak for the place that brought the reader
+// here — the article's place on the current axis.
+const kickerLabel = placeKicker([kickerSlug], t.scopeLabels);
+
+// "More from {place}": latest items for that place, self excluded. The
+// rail is optional — if its fetch fails, the article still reads.
+const railSlug = kickerSlug;
+const railPlaceName = placeKicker([railSlug], t.scopeLabels).split(' · ').at(0) ?? railSlug;
+let related: readonly FrontItem[] = [];
+try {
+  const { items: railCandidates } = await api.front({ lang, places: [railSlug], limit: 4 });
+  related = railCandidates.filter((item) => item.id !== article.id).slice(0, 3);
+} catch {
+  related = [];
+}
+
+const recordRows: { term: string; value: string; href?: string }[] = [
+  { term: t.source, value: host, ...(safeHref === null ? {} : { href: safeHref }) },
+  { term: t.approved, value: formatDateTime(lang, new Date(article.approved_at)) },
+  { term: t.published, value: formatDateTime(lang, new Date(article.published_at)) },
+];
+
+const title = `${article.headline} · epiloYES`;
+---
+
+<ReaderLayout lang={lang} title={title} description={t.tagline}>
+  <header class="head">
+    <a class="brand" href={backHref}>epilo<span class="brand-yes">YES</span></a>
+    <span class="head-rule" aria-hidden="true"></span>
+    {backPlace !== undefined && <a class="back" href={backHref}>← {backPlace.endonym}</a>}
+    <span class="head-axes">{LANGUAGE_ENDONYMS[lang]} · {places.map((place) => place.endonym).join(' · ')}</span>
+    <!-- The language axis, still one link away: an article exists on one
+         language axis only, so the other language leads to its front page
+         with the places untouched (FR-009). The current language is state
+         and renders as a span, not an href-less anchor. -->
+    <div class="seg head-seg" role="group">
+      {lang === 'el' ? (
+        <span class="seg-opt" aria-current="true">EL</span>
+      ) : (
+        <a class="seg-opt" href={frontPagePath('el', slugs)}>EL</a>
+      )}
+      {lang === 'de' ? (
+        <span class="seg-opt" aria-current="true">DE</span>
+      ) : (
+        <a class="seg-opt" href={frontPagePath('de', slugs)}>DE</a>
+      )}
+    </div>
+  </header>
+
+  <div class="body">
+    <article class="reading">
+      <div class="meta">
+        <span class="kicker">{kickerLabel}</span>
+        <span class="meta-rule" aria-hidden="true"></span>
+        <span class="when">
+          {t.approved} {formatDateTime(lang, new Date(article.approved_at))} · {t.published}{' '}
+          {formatDateTime(lang, new Date(article.published_at))}
+        </span>
+      </div>
+      <h1>{article.headline}</h1>
+      {paragraphs.map((paragraph) => <p class="para">{paragraph}</p>)}
+
+      <div class="boundary">
+        <h6>{t.wholeExtractTitle}</h6>
+        <p>{t.wholeExtractBody}</p>
+        <div class="boundary-action">
+          {
+            safeHref !== null && (
+              <a class="btn btn-primary" href={safeHref} rel="external noopener">
+                {t.continueAt(host)}
+              </a>
+            )
+          }
+          <span class="boundary-note">{t.extractNote}</span>
+        </div>
+      </div>
+
+      <div class="attribution">
+        <span class="attribution-term">{t.attribution}</span>
+        <p>{article.attribution}</p>
+      </div>
+    </article>
+
+    <aside class="rail">
+      <section class="record">
+        <h6>{t.record}</h6>
+        <dl>
+          {
+            recordRows.map((row) => (
+              <div class="record-row">
+                <dt>{row.term}</dt>
+                <dd>
+                  {row.href !== undefined ? (
+                    <a href={row.href} rel="external noopener">
+                      {row.value}
+                    </a>
+                  ) : (
+                    row.value
+                  )}
+                </dd>
+              </div>
+            ))
+          }
+        </dl>
+      </section>
+
+      {
+        related.length > 0 && (
+          <section class="more">
+            <h6>{t.moreFrom(railPlaceName)}</h6>
+            <div class="more-list">
+              {related.map((item) => (
+                <a class="more-item" href={articlePath(lang, slugs, item.id)}>
+                  <span class="more-title">{item.headline}</span>
+                  <span class="more-meta">{sourceHost(item.source_url)}</span>
+                </a>
+              ))}
+            </div>
+          </section>
+        )
+      }
+    </aside>
+  </div>
+</ReaderLayout>
+
+<style>
+  .head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-4) calc(var(--space-6) + var(--space-1));
+    border-bottom: 2px solid var(--color-divider);
+  }
+  .brand {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 22px;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  .brand-yes {
+    color: var(--color-accent);
+  }
+  .head-rule {
+    width: 1px;
+    height: 16px;
+    background: var(--color-divider);
+  }
+  .back {
+    font-size: 13px;
+    text-decoration: none;
+    color: var(--color-text);
+  }
+  .back:hover {
+    color: var(--color-accent);
+  }
+  .head-axes {
+    margin-left: auto;
+    font-size: 12px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .head-seg .seg-opt {
+    color: var(--color-text);
+    text-decoration: none;
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 12px;
+    padding: 5px 10px;
+  }
+  .head-seg .seg-opt[aria-current='true'] {
+    background: var(--color-accent);
+    color: var(--color-bg);
+  }
+  .head-seg a.seg-opt:not([aria-current='true']):hover {
+    background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  }
+
+  .body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 380px;
+  }
+  .reading {
+    padding: calc(var(--space-8) + 2px) calc(var(--space-8) + var(--space-2)) var(--space-8);
+    border-right: 1px solid var(--color-divider);
+  }
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+    flex-wrap: wrap;
+  }
+  .kicker {
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+  }
+  .meta-rule {
+    width: 1px;
+    height: 11px;
+    background: var(--color-divider);
+  }
+  .when {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  }
+  .reading h1 {
+    font-size: clamp(30px, 4.8vw, 46px);
+    line-height: 1.05;
+    margin: 0 0 var(--space-6);
+    max-width: 20ch;
+    text-wrap: pretty;
+  }
+  .para {
+    font-size: 19px;
+    line-height: 1.55;
+    margin: 0 0 var(--space-4);
+    max-width: 56ch;
+    text-wrap: pretty;
+  }
+
+  .boundary {
+    border-top: 2px solid var(--color-divider);
+    border-bottom: 2px solid var(--color-divider);
+    padding: var(--space-6) 0;
+    margin: var(--space-6) 0;
+  }
+  .boundary h6 {
+    margin: 0 0 var(--space-2);
+    color: var(--color-accent);
+  }
+  .boundary p {
+    font-size: 14.5px;
+    margin: 0 0 var(--space-4);
+    max-width: 60ch;
+    text-wrap: pretty;
+  }
+  .boundary-action {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+  }
+  .boundary-action .btn {
+    padding: var(--space-3) calc(var(--space-4) + 2px);
+  }
+  .boundary-note {
+    font-size: 12.5px;
+    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+    max-width: 34ch;
+  }
+
+  .attribution {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+    font-size: 13px;
+  }
+  .attribution-term {
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 10.5px;
+    line-height: 1.6;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+    flex: none;
+    width: 96px;
+  }
+  .attribution p {
+    margin: 0;
+    max-width: 62ch;
+    text-wrap: pretty;
+  }
+
+  .rail {
+    padding: var(--space-6) calc(var(--space-6) + 2px);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+  }
+  .record h6,
+  .more h6 {
+    margin: 0 0 var(--space-3);
+  }
+  .record dl {
+    margin: 0;
+    border-top: 1px solid var(--color-divider);
+  }
+  .record-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--color-divider);
+    font-size: 12px;
+  }
+  .record-row dt {
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    flex: none;
+  }
+  .record-row dd {
+    margin: 0;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+  .more-list {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--color-divider);
+  }
+  .more-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--color-divider);
+    text-decoration: none;
+    color: var(--color-text);
+  }
+  .more-item:hover .more-title {
+    color: var(--color-accent);
+  }
+  .more-title {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 15px;
+    line-height: 1.25;
+  }
+  .more-meta {
+    font-size: 11px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+
+  @media (max-width: 900px) {
+    .body {
+      grid-template-columns: 1fr;
+    }
+    .reading {
+      border-right: 0;
+      border-bottom: 2px solid var(--color-divider);
+    }
+    .head-axes {
+      display: none;
+    }
+  }
+</style>

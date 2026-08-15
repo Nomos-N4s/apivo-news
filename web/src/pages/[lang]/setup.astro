@@ -1,0 +1,339 @@
+---
+import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import {
+  frontPagePath,
+  isReadingLanguage,
+  parsePlacesParam,
+  PLACE_CATALOG,
+} from '../../lib/reader/axes';
+import { uiStrings } from '../../lib/reader/strings';
+
+// The setup dialog (mockup 1e, issue #53): the two axes side by side and
+// never crossed (FR-009). A plain GET form to /go — the page works with no
+// JavaScript; the only script below is progressive enhancement for the
+// live path preview the mockup shows.
+const langSegment = Astro.params['lang'];
+if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+  return Astro.rewrite('/404');
+}
+const lang = langSegment;
+const t = uiStrings(lang);
+
+// ?places=munich+greece preselects the follow list (the axis bar passes
+// the reader's current places); with nothing valid the flagship pair is
+// offered.
+const fromQuery = parsePlacesParam(Astro.url.searchParams.get('places'));
+const preselected = fromQuery.length > 0 ? fromQuery : parsePlacesParam('munich+greece');
+const preselectedSlugs = preselected.map((place) => place.slug);
+
+const selectable = PLACE_CATALOG.filter((place) => place.selectable);
+const contextRows = PLACE_CATALOG.filter((place) => !place.selectable).map((place) => {
+  const child = PLACE_CATALOG.find((candidate) => candidate.parents.at(0) === place.endonym);
+  return {
+    place,
+    note:
+      child === undefined
+        ? t.scopeLabels[place.scope]
+        : `${t.scopeLabels[place.scope]} · ${t.covers(child.endonym)}`,
+  };
+});
+
+const backHref = frontPagePath(lang, preselectedSlugs);
+const previewPath = frontPagePath(lang, preselectedSlugs);
+const title = `epiloYES — ${t.setupTitle}`;
+---
+
+<ReaderLayout lang={lang} title={title} description={t.tagline}>
+  <main class="ground">
+    <form class="panel" method="get" action="/go" data-setup>
+      <header class="panel-head">
+        <h3>{t.setupTitle}</h3>
+        <p>{t.setupSubtitle}</p>
+      </header>
+
+      <div class="panel-axes">
+        <fieldset class="axis-cell axis-one">
+          <legend>{t.axisOneLabel}</legend>
+          <label class="lang-opt">
+            <input type="radio" name="lang" value="el" checked={lang === 'el'} />
+            <span class="lang-name">Ελληνικά</span>
+            <span class="lang-sub">Greek — el</span>
+          </label>
+          <label class="lang-opt">
+            <input type="radio" name="lang" value="de" checked={lang === 'de'} />
+            <span class="lang-name">Deutsch</span>
+            <span class="lang-sub">German — de</span>
+          </label>
+          <p class="axis-note">{t.alphaLanguagesNote}</p>
+        </fieldset>
+
+        <fieldset class="axis-cell axis-two">
+          <legend>
+            {t.axisTwoLabel}
+            <span class="count" data-count>{t.selectedCount(preselected.length)}</span>
+          </legend>
+          <div class="place-list">
+            {
+              selectable.map((place) => (
+                <label class="place-row">
+                  <input
+                    type="checkbox"
+                    name="place"
+                    value={place.slug}
+                    checked={preselectedSlugs.includes(place.slug)}
+                  />
+                  <span class="box" aria-hidden="true" />
+                  <span class="place-name">{place.endonym}</span>
+                  <span class="place-sub">
+                    {place.parents.length > 0
+                      ? place.parents.join(' · ')
+                      : t.scopeLabels[place.scope]}
+                  </span>
+                </label>
+              ))
+            }
+            {
+              contextRows.map((row) => (
+                <div class="place-row place-row-context">
+                  <span class="box box-off" aria-hidden="true" />
+                  <span class="place-name">{row.place.endonym}</span>
+                  <span class="place-sub">{row.note}</span>
+                </div>
+              ))
+            }
+          </div>
+        </fieldset>
+      </div>
+
+      <footer class="panel-foot">
+        <span class="preview">
+          {t.frontPagePreviewLabel}
+          <code data-preview>{previewPath}</code>
+        </span>
+        <span class="independence">{t.independenceLine}</span>
+        <div class="actions">
+          <a class="btn btn-secondary" href={backHref}>{t.later}</a>
+          <button class="btn btn-primary" type="submit">{t.startReading}</button>
+        </div>
+      </footer>
+    </form>
+  </main>
+</ReaderLayout>
+
+<script>
+  // Progressive enhancement only: mirror the form's state into the path
+  // preview and the selected count, exactly as the URL will read. The
+  // form submits and the page navigates identically without this.
+  const form = document.querySelector<HTMLFormElement>('form[data-setup]');
+  const preview = document.querySelector<HTMLElement>('[data-preview]');
+  const count = document.querySelector<HTMLElement>('[data-count]');
+  if (form !== null && preview !== null && count !== null) {
+    const countTemplate = count.textContent ?? '';
+    const render = (): void => {
+      const lang =
+        form.querySelector<HTMLInputElement>('input[name="lang"]:checked')?.value ?? 'el';
+      const slugs = [...form.querySelectorAll<HTMLInputElement>('input[name="place"]:checked')]
+        .map((input) => input.value);
+      preview.textContent = slugs.length > 0 ? `/${lang}/${slugs.join('+')}` : `/${lang}/—`;
+      count.textContent = countTemplate.replace(/\d+/, String(slugs.length));
+    };
+    form.addEventListener('change', render);
+    render();
+  }
+</script>
+
+<style>
+  .ground {
+    flex: 1;
+    display: grid;
+    place-items: center;
+    padding: var(--space-8) var(--space-4);
+    background: color-mix(in srgb, var(--color-neutral-900) 45%, transparent);
+  }
+  .panel {
+    width: min(760px, 100%);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-lg);
+  }
+  .panel-head {
+    padding: var(--space-6) var(--space-6) var(--space-4);
+    border-bottom: 2px solid var(--color-divider);
+  }
+  .panel-head h3 {
+    margin: 0 0 var(--space-1);
+    font-size: 24px;
+  }
+  .panel-head p {
+    margin: 0;
+    font-size: 13px;
+    color: color-mix(in srgb, var(--color-text) 65%, transparent);
+  }
+
+  .panel-axes {
+    display: grid;
+    grid-template-columns: 270px 1fr;
+  }
+  .axis-cell {
+    margin: 0;
+    border: 0;
+    padding: var(--space-4) var(--space-6);
+  }
+  .axis-one {
+    border-right: 1px solid var(--color-divider);
+  }
+  legend {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0;
+    margin-bottom: var(--space-3);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    width: 100%;
+  }
+  .count {
+    font-family: var(--font-body);
+    font-weight: 400;
+    font-size: 11.5px;
+    letter-spacing: normal;
+    text-transform: none;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+
+  .lang-opt {
+    display: block;
+    cursor: pointer;
+    border: 1px solid var(--color-divider);
+    padding: var(--space-3) calc(var(--space-3) + 2px);
+    margin-bottom: var(--space-2);
+  }
+  .lang-opt input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .lang-name {
+    display: block;
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .lang-sub {
+    display: block;
+    font-size: 11.5px;
+    opacity: 0.75;
+    margin-top: 2px;
+  }
+  .lang-opt:has(input:checked) {
+    background: var(--color-accent);
+    color: var(--color-bg);
+    border-color: var(--color-accent);
+  }
+  .lang-opt:not(:has(input:checked)):hover {
+    background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  }
+  .lang-opt:has(input:focus-visible) {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  .axis-note {
+    margin: var(--space-4) 0 0;
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    text-wrap: pretty;
+  }
+
+  .place-list {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--color-divider);
+  }
+  .place-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--color-divider);
+    cursor: pointer;
+  }
+  .place-row input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .box {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    border: 1.5px solid var(--color-accent);
+  }
+  .place-row:has(input:checked) .box {
+    background: var(--color-accent);
+  }
+  .place-row:has(input:focus-visible) .box {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  .box-off {
+    border-color: var(--color-divider);
+  }
+  .place-name {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .place-sub {
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .place-row-context {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .panel-foot {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+    padding: var(--space-4) var(--space-6);
+    border-top: 2px solid var(--color-divider);
+  }
+  .preview {
+    font-size: 12px;
+    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  }
+  .preview code {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+  .independence {
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .actions {
+    margin-left: auto;
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  @media (max-width: 660px) {
+    .panel-axes {
+      grid-template-columns: 1fr;
+    }
+    .axis-one {
+      border-right: 0;
+      border-bottom: 1px solid var(--color-divider);
+    }
+    .actions {
+      margin-left: 0;
+    }
+  }
+</style>

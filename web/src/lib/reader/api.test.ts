@@ -10,8 +10,20 @@ import {
 import type { Place } from './axes';
 import { FRONT_FIXTURES } from './fixtures';
 
-const MUNICH: Place = { slug: 'munich', endonym: 'München', scope: 'city', selectable: true };
-const BAVARIA: Place = { slug: 'bavaria', endonym: 'Bayern', scope: 'region', selectable: false };
+const MUNICH: Place = {
+  slug: 'munich',
+  endonym: 'München',
+  scope: 'city',
+  selectable: true,
+  parents: ['Bayern', 'Deutschland'],
+};
+const BAVARIA: Place = {
+  slug: 'bavaria',
+  endonym: 'Bayern',
+  scope: 'region',
+  selectable: false,
+  parents: ['Deutschland'],
+};
 
 describe('the fixture client (no API_BASE_URL)', () => {
   const api = createReaderApi(undefined);
@@ -48,6 +60,17 @@ describe('the fixture client (no API_BASE_URL)', () => {
   it('treats an empty base URL like an absent one', async () => {
     const { items } = await createReaderApi('').front({ lang: 'de', places: ['munich'] });
     expect(items.length).toBeGreaterThan(0);
+  });
+
+  it('finds an article by id, with the approval time on the record', async () => {
+    const first = FRONT_FIXTURES[0];
+    const article = await api.article(first?.id ?? '');
+    expect(article?.headline).toBe(first?.headline);
+    expect(article?.approved_at).toBeTruthy();
+  });
+
+  it('answers null for an unknown id — the contract 404', async () => {
+    await expect(api.article('00000000-0000-4000-8000-000000000000')).resolves.toBeNull();
   });
 });
 
@@ -112,6 +135,48 @@ describe('the HTTP client (API_BASE_URL set)', () => {
       ReaderApiError,
     );
   });
+
+  it('fetches an article by id at the contract path', async () => {
+    const detail = FRONT_FIXTURES[0];
+    const { fetched, fetchImpl } = respondingWith(jsonResponse(detail));
+    const api = createReaderApi('http://api:8080', fetchImpl);
+    const article = await api.article(detail?.id ?? '');
+    expect(article?.id).toBe(detail?.id);
+    expect(fetched.at(0)?.pathname).toBe(`/api/v1/articles/${detail?.id ?? ''}`);
+  });
+
+  it('reads the contract 404 as null — withdrawn and unknown look identical', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
+    const api = createReaderApi('http://api:8080', fetchImpl);
+    await expect(api.article('anything')).resolves.toBeNull();
+  });
+
+  it('surfaces other article errors as ReaderApiError', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'boom' }, 500));
+    const api = createReaderApi('http://api:8080', fetchImpl);
+    await expect(api.article('anything')).rejects.toMatchObject({ status: 500 });
+  });
+
+  it('rejects an article body without an id', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ nonsense: true }));
+    const api = createReaderApi('http://api:8080', fetchImpl);
+    await expect(api.article('anything')).rejects.toBeInstanceOf(ReaderApiError);
+  });
+
+  it('rejects a half-shaped article — every contract field is checked at runtime', async () => {
+    const detail = FRONT_FIXTURES[0];
+    const mistyped = { ...detail, headline: 42 };
+    const { fetchImpl } = respondingWith(jsonResponse(mistyped));
+    await expect(
+      createReaderApi('http://api:8080', fetchImpl).article('x'),
+    ).rejects.toBeInstanceOf(ReaderApiError);
+
+    const { places: _places, ...withoutPlaces } = detail as NonNullable<typeof detail>;
+    const { fetchImpl: fetchImpl2 } = respondingWith(jsonResponse(withoutPlaces));
+    await expect(
+      createReaderApi('http://api:8080', fetchImpl2).article('x'),
+    ).rejects.toBeInstanceOf(ReaderApiError);
+  });
 });
 
 describe('probeEmptyPlaces', () => {
@@ -132,6 +197,7 @@ describe('probeEmptyPlaces', () => {
           items: query.places.includes('bavaria') ? [bavariaItem] : [],
           next_cursor: null,
         } as FrontPageData),
+      article: () => Promise.resolve(null),
     };
     const munichOnlyPage = (await createReaderApi(undefined).front({
       lang: 'el',
@@ -148,6 +214,7 @@ describe('probeEmptyPlaces', () => {
         probes += 1;
         return Promise.resolve({ items: [], next_cursor: null });
       },
+      article: () => Promise.resolve(null),
     };
     const page = (await createReaderApi(undefined).front({ lang: 'el', places: ['munich'] }))
       .items;
