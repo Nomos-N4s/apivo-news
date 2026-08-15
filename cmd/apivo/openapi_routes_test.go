@@ -288,3 +288,7 @@ type unreachableStore struct{}
 func (unreachableStore) CreateSource(context.Context, editorial.NewSource) (editorial.Source, error) {
 	return editorial.Source{}, errors.New("the route probe must not reach the store")
 }
+
+func (unreachableStore) ReviewQueue(context.Context, editorial.QueueQuery) (editorial.QueuePage, error) {
+	return editorial.QueuePage{}, errors.New("the route probe must not reach the store")
+}

@@ -7,7 +7,9 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
@@ -17,6 +19,18 @@ import (
 // payload is a source registration - licence terms included, far below
 // this - so the bound only cuts off abuse, never intent.
 const maxBodyBytes = 1 << 20
+
+// Pagination bounds from the contract's conventions: limit defaults to 20
+// and never exceeds 100, so no caller can ask for the whole queue at once.
+const (
+	defaultQueueLimit = 20
+	maxQueueLimit     = 100
+)
+
+// languageCode matches the shape the database accepts for a language code
+// (`language_code_is_bcp47_subtag`): a BCP-47 primary subtag, never a
+// combined locale tag - language and place are independent axes.
+var languageCode = regexp.MustCompile(`^[a-z]{2,3}$`)
 
 // Handler serves the editorial endpoints. Build it with NewHandler.
 type Handler struct {
@@ -44,6 +58,7 @@ func NewHandler(log *slog.Logger, store Store, auth EditorAuthenticator) http.Ha
 // checked against the routes rather than against someone's memory of them.
 func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
+		"GET /api/v1/editorial/queue":    h.reviewQueue,
 		"POST /api/v1/editorial/sources": h.createSource,
 	}
 }
@@ -54,6 +69,149 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 func Patterns() []string {
 	var h Handler
 	return slices.Sorted(maps.Keys(h.routes()))
+}
+
+// queueResponse is one page of the review queue.
+type queueResponse struct {
+	Items []queueItemResponse `json:"items"`
+	// NextCursor is null on the last page: an absent cursor always means
+	// the queue is exhausted, never "ask again and find out".
+	NextCursor *string `json:"next_cursor"`
+}
+
+// queueItemResponse is one origin awaiting a decision. translation_id and
+// the translated columns are null together, for an untranslated origin.
+type queueItemResponse struct {
+	SourceItemID       string  `json:"source_item_id"`
+	TranslationID      *string `json:"translation_id"`
+	SourceName         string  `json:"source_name"`
+	HeadlineOriginal   *string `json:"headline_original"`
+	HeadlineTranslated *string `json:"headline_translated"`
+	ExtractTranslated  *string `json:"extract_translated"`
+	RetrievedAt        string  `json:"retrieved_at"`
+	LicenceSnapshot    string  `json:"licence_snapshot"`
+	// CorrectionCandidate marks an origin whose only articles were
+	// withdrawn: it is back in the queue on purpose, and the editor is
+	// looking at a correction rather than a first approval.
+	CorrectionCandidate bool `json:"correction_candidate"`
+	// Withdrawals is the origin's withdrawal history, newest first, and
+	// empty (never null) for a fresh candidate.
+	Withdrawals []withdrawalResponse `json:"withdrawals"`
+}
+
+// withdrawalResponse is one ended publication in an origin's history.
+type withdrawalResponse struct {
+	ArticleID   string `json:"article_id"`
+	WithdrawnAt string `json:"withdrawn_at"`
+	WithdrawnBy string `json:"withdrawn_by"`
+	Reason      string `json:"reason"`
+}
+
+// reviewQueue implements GET /api/v1/editorial/queue.
+func (h *Handler) reviewQueue(w http.ResponseWriter, r *http.Request) {
+	query, detail, ok := parseQueueQuery(r.URL.Query())
+	if !ok {
+		platformhttp.Problem(w, http.StatusBadRequest, detail)
+		return
+	}
+
+	page, err := h.store.ReviewQueue(r.Context(), query)
+	if err != nil {
+		h.internalError(w, r, "listing review queue", err)
+		return
+	}
+
+	body := queueResponse{Items: make([]queueItemResponse, 0, len(page.Items))}
+	for _, item := range page.Items {
+		body.Items = append(body.Items, queueItem(item))
+	}
+	if page.NextCursor != nil {
+		next := encodeCursor(*page.NextCursor)
+		body.NextCursor = &next
+	}
+	h.writeJSON(w, r, http.StatusOK, body)
+}
+
+// queueItem renders one queue row for the wire.
+func queueItem(item QueueItem) queueItemResponse {
+	out := queueItemResponse{
+		SourceItemID:        item.SourceItemID.String(),
+		SourceName:          item.SourceName,
+		HeadlineOriginal:    item.HeadlineOriginal,
+		HeadlineTranslated:  item.HeadlineTranslated,
+		ExtractTranslated:   item.ExtractTranslated,
+		RetrievedAt:         item.RetrievedAt.Format(timeFormat),
+		LicenceSnapshot:     item.LicenceSnapshot,
+		CorrectionCandidate: item.CorrectionCandidate(),
+		Withdrawals:         make([]withdrawalResponse, 0, len(item.Withdrawals)),
+	}
+	if item.TranslationID != nil {
+		id := item.TranslationID.String()
+		out.TranslationID = &id
+	}
+	for _, wd := range item.Withdrawals {
+		out.Withdrawals = append(out.Withdrawals, withdrawalResponse{
+			ArticleID:   wd.ArticleID.String(),
+			WithdrawnAt: wd.WithdrawnAt.Format(timeFormat),
+			WithdrawnBy: wd.WithdrawnBy.String(),
+			Reason:      wd.Reason,
+		})
+	}
+	return out
+}
+
+// parseQueueQuery validates the query string and builds the store query,
+// reporting the 400 detail when it cannot.
+//
+// Unknown parameters are rejected for the same reason the JSON decoder
+// rejects unknown fields: a misspelled `language=de` that silently returned
+// the whole unfiltered queue would read as acceptance of the filter. A
+// repeated known parameter is rejected for that same reason - url.Values
+// keeps every value but Get returns only the first, so `?limit=10&limit=20`
+// would silently answer one of two contradictory requests.
+func parseQueueQuery(values url.Values) (query QueueQuery, detail string, ok bool) {
+	for name, supplied := range values {
+		switch name {
+		case "lang", "limit", "cursor":
+			if len(supplied) > 1 {
+				return QueueQuery{}, "query parameter " + strconv.Quote(name) + " was supplied " + strconv.Itoa(len(supplied)) + " times; supply it at most once", false
+			}
+		default:
+			return QueueQuery{}, "unknown query parameter " + strconv.Quote(name) + "; this endpoint accepts lang, limit and cursor", false
+		}
+	}
+
+	query.Limit = defaultQueueLimit
+	// Presence, not a non-empty value: `?limit=` is a supplied limit that
+	// happens to be unparseable, and answering it with the default page
+	// would read as acceptance of whatever the caller meant to send.
+	if values.Has("limit") {
+		// ParseInt with a 32-bit size, not Atoi: it refuses anything that
+		// would not fit the column type in the first place, so the bound
+		// check below is about the contract rather than about overflow.
+		limit, err := strconv.ParseInt(values.Get("limit"), 10, 32)
+		if err != nil || limit < 1 || limit > maxQueueLimit {
+			return QueueQuery{}, "limit must be a whole number between 1 and " + strconv.Itoa(maxQueueLimit), false
+		}
+		query.Limit = int32(limit)
+	}
+
+	if values.Has("lang") {
+		lang := values.Get("lang")
+		if !languageCode.MatchString(lang) {
+			return QueueQuery{}, "lang must be a language code such as el or de", false
+		}
+		query.Lang = lang
+	}
+
+	if values.Has("cursor") {
+		cursor, err := decodeCursor(values.Get("cursor"))
+		if err != nil {
+			return QueueQuery{}, "cursor is not one this endpoint issued; pass back the next_cursor from the previous page", false
+		}
+		query.Cursor = &cursor
+	}
+	return query, "", true
 }
 
 // sourceRequest is the source-registration payload. UsageRule is decoded

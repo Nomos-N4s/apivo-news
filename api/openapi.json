@@ -34,7 +34,9 @@
   "paths": {
     "/healthz": {
       "get": {
-        "tags": ["operations"],
+        "tags": [
+          "operations"
+        ],
         "operationId": "getHealthz",
         "summary": "Liveness",
         "description": "Answers 200 as long as the process is serving. It touches no dependency, so it never reports the database's state - that is what /readyz is for.",
@@ -43,9 +45,15 @@
             "description": "The process is alive.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Health" },
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                },
                 "examples": {
-                  "alive": { "value": { "status": "ok" } }
+                  "alive": {
+                    "value": {
+                      "status": "ok"
+                    }
+                  }
                 }
               }
             }
@@ -55,7 +63,9 @@
     },
     "/readyz": {
       "get": {
-        "tags": ["operations"],
+        "tags": [
+          "operations"
+        ],
         "operationId": "getReadyz",
         "summary": "Readiness",
         "description": "Pings the database. A failing ping answers 503 so an orchestrator stops routing traffic here without killing the process.",
@@ -64,9 +74,15 @@
             "description": "The database answered the ping.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Health" },
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                },
                 "examples": {
-                  "ready": { "value": { "status": "ok" } }
+                  "ready": {
+                    "value": {
+                      "status": "ok"
+                    }
+                  }
                 }
               }
             }
@@ -75,9 +91,15 @@
             "description": "The readiness check failed; the body is the same shape, not problem+json.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Health" },
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                },
                 "examples": {
-                  "unavailable": { "value": { "status": "unavailable" } }
+                  "unavailable": {
+                    "value": {
+                      "status": "unavailable"
+                    }
+                  }
                 }
               }
             }
@@ -87,7 +109,9 @@
     },
     "/api/v1/openapi.json": {
       "get": {
-        "tags": ["operations"],
+        "tags": [
+          "operations"
+        ],
         "operationId": "getOpenAPIDocument",
         "summary": "This document",
         "description": "Serves the committed `api/openapi.json` verbatim - the bytes are embedded into the binary at build time, so the served document and the validated file can never differ.",
@@ -108,22 +132,34 @@
     },
     "/api/v1/front": {
       "get": {
-        "tags": ["reader"],
+        "tags": [
+          "reader"
+        ],
         "operationId": "getFrontPage",
         "summary": "Front-page feed for one language and one or more places",
         "description": "Published, non-withdrawn articles, newest first, keyset-paginated on (published_at, id). Both axes are required: a reader always reads one language, and follows at least one place (repeat `place` to follow several - a diaspora reader follows two).\n\nAn article whose origin was translated renders the translation's headline and extract; an untranslated (same-language) origin renders the feed-provided title with an extract derived from the retrieved body at read time. Either way `lang` on every returned item equals the requested language.\n\nAn empty result is an empty `items` array with a 200, never an error.",
         "parameters": [
-          { "$ref": "#/components/parameters/Lang" },
-          { "$ref": "#/components/parameters/Place" },
-          { "$ref": "#/components/parameters/Limit" },
-          { "$ref": "#/components/parameters/Cursor" }
+          {
+            "$ref": "#/components/parameters/Lang"
+          },
+          {
+            "$ref": "#/components/parameters/Place"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
         ],
         "responses": {
           "200": {
             "description": "One page of the feed.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/FrontPage" }
+                "schema": {
+                  "$ref": "#/components/schemas/FrontPage"
+                }
               }
             }
           },
@@ -131,7 +167,9 @@
             "description": "Unknown `lang`, missing or unknown `place`, a `limit` outside 1-100 or a non-integer one, or a malformed `cursor`.",
             "content": {
               "application/problem+json": {
-                "schema": { "$ref": "#/components/schemas/Problem" },
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
                 "examples": {
                   "unknownLang": {
                     "summary": "Unknown language",
@@ -155,13 +193,17 @@
               }
             }
           },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
     "/api/v1/articles/{id}": {
       "get": {
-        "tags": ["reader"],
+        "tags": [
+          "reader"
+        ],
         "operationId": "getArticle",
         "summary": "One published article",
         "description": "The article page payload: the feed item shape plus `approved_at`.\n\nUnknown, unpublished, withdrawn and syntactically invalid ids are one indistinguishable 404 - the existence of unpublished work is not public, so a malformed id is not even answered with a 400.",
@@ -171,9 +213,14 @@
             "in": "path",
             "required": true,
             "description": "The article id. A value that is not a UUID answers 404, not 400.",
-            "schema": { "type": "string", "format": "uuid" },
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
             "examples": {
-              "id": { "value": "8f1b6c1e-1f5a-4a2f-9e1a-2b3c4d5e6f70" }
+              "id": {
+                "value": "8f1b6c1e-1f5a-4a2f-9e1a-2b3c4d5e6f70"
+              }
             }
           }
         ],
@@ -182,7 +229,9 @@
             "description": "The article.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Article" }
+                "schema": {
+                  "$ref": "#/components/schemas/Article"
+                }
               }
             }
           },
@@ -190,7 +239,9 @@
             "description": "No article is visible under this id.",
             "content": {
               "application/problem+json": {
-                "schema": { "$ref": "#/components/schemas/Problem" },
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
                 "examples": {
                   "notFound": {
                     "value": {
@@ -204,22 +255,32 @@
               }
             }
           },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
     "/api/v1/editorial/sources": {
       "post": {
-        "tags": ["editorial"],
+        "tags": [
+          "editorial"
+        ],
         "operationId": "createSource",
         "summary": "Register a licensed source",
         "description": "Registers a feed the crawler may poll. The usage rule is not an input: every new source is `extract_and_link`, and upgrades are a separate founder-gated flow outside alpha scope. Sending `usage_rule` - any value, `null` included - is a 400 rather than a silently ignored field, as is any other unknown field.\n\nThe whole `/api/v1/editorial/` prefix sits behind one auth gate, so a request without a usable token answers 401 whether or not the path exists. Behind the gate the router answers a wrong method with a `text/plain` 405 carrying `Allow: POST`, and an unknown path with a `text/plain` 404 - neither is problem+json.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/NewSource" },
+              "schema": {
+                "$ref": "#/components/schemas/NewSource"
+              },
               "examples": {
                 "greekWeekly": {
                   "value": {
@@ -239,7 +300,9 @@
             "description": "The source as the database recorded it.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Source" }
+                "schema": {
+                  "$ref": "#/components/schemas/Source"
+                }
               }
             }
           },
@@ -247,7 +310,9 @@
             "description": "Malformed JSON, an unknown field (`usage_rule` included), a blank required field, a `url` that is not an absolute http(s) URL with a host, or a language code the database does not know.",
             "content": {
               "application/problem+json": {
-                "schema": { "$ref": "#/components/schemas/Problem" },
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
                 "examples": {
                   "usageRuleRejected": {
                     "summary": "usage_rule supplied",
@@ -271,13 +336,19 @@
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/NotEditor" },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotEditor"
+          },
           "409": {
             "description": "A source with this feed URL is already registered.",
             "content": {
               "application/problem+json": {
-                "schema": { "$ref": "#/components/schemas/Problem" },
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
                 "examples": {
                   "duplicate": {
                     "value": {
@@ -291,7 +362,87 @@
               }
             }
           },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/editorial/queue": {
+      "get": {
+        "tags": [
+          "editorial"
+        ],
+        "operationId": "reviewQueue",
+        "summary": "List origins awaiting an editorial decision",
+        "description": "Retrieved items and their translations that have no non-withdrawn article. Origins whose only articles were withdrawn reappear here as correction candidates, carrying their withdrawal history.\n\nThe whole /api/v1/editorial/ prefix sits behind one auth gate, so a request without a usable token answers 401 whether or not the path exists.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "description": "Optional filter: only origins whose translation targets this language, plus untranslated origins in it.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "el",
+                "de"
+              ]
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the queue.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewQueue"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unparseable limit (outside 1-100), malformed lang, a cursor this endpoint did not issue, or an unrecognised query parameter.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No usable bearer token.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account is not an editor.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -311,7 +462,13 @@
         "in": "query",
         "required": true,
         "description": "The reading language.",
-        "schema": { "type": "string", "enum": ["el", "de"] }
+        "schema": {
+          "type": "string",
+          "enum": [
+            "el",
+            "de"
+          ]
+        }
       },
       "Place": {
         "name": "place",
@@ -323,7 +480,9 @@
         "schema": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
       "Limit": {
@@ -343,7 +502,10 @@
         "in": "query",
         "required": false,
         "description": "Opaque page cursor: pass back the `next_cursor` of the previous page. Its encoding is an implementation detail and may change; clients must treat it as bytes. Values over 256 characters, or ones that do not decode, are rejected with 400.",
-        "schema": { "type": "string", "maxLength": 256 }
+        "schema": {
+          "type": "string",
+          "maxLength": 256
+        }
       }
     },
     "responses": {
@@ -352,12 +514,16 @@
         "headers": {
           "WWW-Authenticate": {
             "description": "`Bearer realm=\"editorial\"`, with `error=\"invalid_token\"` appended when a token was supplied but rejected.",
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           }
         },
         "content": {
           "application/problem+json": {
-            "schema": { "$ref": "#/components/schemas/Problem" },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
             "examples": {
               "missingToken": {
                 "value": {
@@ -375,7 +541,9 @@
         "description": "The token authenticated, but the account behind it does not hold the editor role.",
         "content": {
           "application/problem+json": {
-            "schema": { "$ref": "#/components/schemas/Problem" },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
             "examples": {
               "notEditor": {
                 "value": {
@@ -393,7 +561,9 @@
         "description": "The request failed for a reason the caller cannot act on. Internals stay in the log: the body carries no database or stack detail, and `detail` may be absent entirely.",
         "content": {
           "application/problem+json": {
-            "schema": { "$ref": "#/components/schemas/Problem" },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
             "examples": {
               "opaque": {
                 "value": {
@@ -412,7 +582,11 @@
         "type": "object",
         "title": "Problem",
         "description": "RFC 9457 problem details, as every handler in this API writes them.",
-        "required": ["type", "title", "status"],
+        "required": [
+          "type",
+          "title",
+          "status"
+        ],
         "properties": {
           "type": {
             "type": "string",
@@ -423,14 +597,18 @@
           "title": {
             "type": "string",
             "description": "The HTTP status text, e.g. `Bad Request`.",
-            "examples": ["Bad Request"]
+            "examples": [
+              "Bad Request"
+            ]
           },
           "status": {
             "type": "integer",
             "description": "The HTTP status code, repeated in the body.",
             "minimum": 400,
             "maximum": 599,
-            "examples": [400]
+            "examples": [
+              400
+            ]
           },
           "detail": {
             "type": "string",
@@ -442,11 +620,16 @@
         "type": "object",
         "title": "Health",
         "description": "The probe body. Not problem+json, even on 503: the probes predate the API surface and answer their own shape.",
-        "required": ["status"],
+        "required": [
+          "status"
+        ],
         "properties": {
           "status": {
             "type": "string",
-            "enum": ["ok", "unavailable"]
+            "enum": [
+              "ok",
+              "unavailable"
+            ]
           }
         },
         "additionalProperties": false
@@ -482,12 +665,16 @@
           "lang": {
             "type": "string",
             "description": "Language of the rendered text: the translation's target locale, or the source's language for an untranslated origin. On the front page it always equals the requested `lang`.",
-            "examples": ["el"]
+            "examples": [
+              "el"
+            ]
           },
           "places": {
             "type": "array",
             "description": "Slugs of every place the article is tagged to, sorted; an untagged article carries an empty array rather than null.",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
           "attribution": {
             "type": "string",
@@ -502,7 +689,9 @@
             "type": "string",
             "format": "date-time",
             "description": "RFC 3339 in UTC, sub-second precision.",
-            "examples": ["2026-08-15T09:30:00Z"]
+            "examples": [
+              "2026-08-15T09:30:00Z"
+            ]
           }
         }
       },
@@ -510,16 +699,22 @@
         "title": "Article",
         "description": "The article page payload: a feed item plus the moment an editor approved it.",
         "allOf": [
-          { "$ref": "#/components/schemas/FeedItem" },
+          {
+            "$ref": "#/components/schemas/FeedItem"
+          },
           {
             "type": "object",
-            "required": ["approved_at"],
+            "required": [
+              "approved_at"
+            ],
             "properties": {
               "approved_at": {
                 "type": "string",
                 "format": "date-time",
                 "description": "RFC 3339 in UTC. Approval precedes publication and is never erased.",
-                "examples": ["2026-08-15T09:12:44Z"]
+                "examples": [
+                  "2026-08-15T09:12:44Z"
+                ]
               }
             }
           }
@@ -529,15 +724,23 @@
         "type": "object",
         "title": "FrontPage",
         "description": "One page of the feed. Both fields are always present.",
-        "required": ["items", "next_cursor"],
+        "required": [
+          "items",
+          "next_cursor"
+        ],
         "properties": {
           "items": {
             "type": "array",
             "description": "Newest first. Empty when nothing is published for the requested axes.",
-            "items": { "$ref": "#/components/schemas/FeedItem" }
+            "items": {
+              "$ref": "#/components/schemas/FeedItem"
+            }
           },
           "next_cursor": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Pass as `cursor` to fetch the next page. `null` on the last page."
           }
         }
@@ -546,7 +749,13 @@
         "type": "object",
         "title": "NewSource",
         "description": "A source registration. Unknown fields are rejected, so a misspelled key is a 400 rather than a silent omission.",
-        "required": ["name", "url", "language", "jurisdiction", "licence_terms"],
+        "required": [
+          "name",
+          "url",
+          "language",
+          "jurisdiction",
+          "licence_terms"
+        ],
         "additionalProperties": false,
         "properties": {
           "name": {
@@ -558,19 +767,25 @@
             "type": "string",
             "format": "uri",
             "description": "The feed URL the crawler polls. Must be an absolute http or https URL carrying a host; it is also the uniqueness key for a source.",
-            "examples": ["https://example.org/feed.xml"]
+            "examples": [
+              "https://example.org/feed.xml"
+            ]
           },
           "language": {
             "type": "string",
             "minLength": 1,
             "description": "The language the source publishes in; must exist in the language reference table.",
-            "examples": ["el"]
+            "examples": [
+              "el"
+            ]
           },
           "jurisdiction": {
             "type": "string",
             "minLength": 1,
             "description": "The legal jurisdiction the source publishes under.",
-            "examples": ["GR"]
+            "examples": [
+              "GR"
+            ]
           },
           "licence_terms": {
             "type": "string",
@@ -594,12 +809,32 @@
           "created_at"
         ],
         "properties": {
-          "id": { "type": "string", "format": "uuid" },
-          "name": { "type": "string" },
-          "url": { "type": "string", "format": "uri" },
-          "language": { "type": "string", "examples": ["el"] },
-          "jurisdiction": { "type": "string", "examples": ["GR"] },
-          "licence_terms": { "type": "string" },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "language": {
+            "type": "string",
+            "examples": [
+              "el"
+            ]
+          },
+          "jurisdiction": {
+            "type": "string",
+            "examples": [
+              "GR"
+            ]
+          },
+          "licence_terms": {
+            "type": "string"
+          },
           "usage_rule": {
             "type": "string",
             "description": "Always `extract_and_link` for a newly registered source - the endpoint does not accept any other value.",
@@ -609,7 +844,136 @@
             "type": "string",
             "format": "date-time",
             "description": "RFC 3339 in UTC, sub-second precision.",
-            "examples": ["2026-08-15T09:12:44.481203Z"]
+            "examples": [
+              "2026-08-15T09:12:44.481203Z"
+            ]
+          }
+        }
+      },
+      "Withdrawal": {
+        "type": "object",
+        "title": "Withdrawal",
+        "description": "One ended publication in an origin's history. Withdrawal preserves every record (FR-016), so the entry stays queryable for good.",
+        "required": [
+          "article_id",
+          "withdrawn_at",
+          "withdrawn_by",
+          "reason"
+        ],
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "withdrawn_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "withdrawn_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The editor who withdrew it."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Stated at withdrawal; never blank."
+          }
+        }
+      },
+      "QueueItem": {
+        "type": "object",
+        "title": "QueueItem",
+        "description": "One origin awaiting an editorial decision: a retrieved item, with its translation when one exists. translation_id and the translated fields are null together, for an untranslated origin.",
+        "required": [
+          "source_item_id",
+          "translation_id",
+          "source_name",
+          "headline_original",
+          "headline_translated",
+          "extract_translated",
+          "retrieved_at",
+          "licence_snapshot",
+          "correction_candidate",
+          "withdrawals"
+        ],
+        "properties": {
+          "source_item_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "translation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "headline_original": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "source_item.original_title - null when the feed provided none."
+          },
+          "headline_translated": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "translation.headline."
+          },
+          "extract_translated": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "translation.extract."
+          },
+          "retrieved_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "licence_snapshot": {
+            "type": "string",
+            "description": "The licence terms in force when this item was retrieved (I-4), not the source row today."
+          },
+          "correction_candidate": {
+            "type": "boolean",
+            "description": "True exactly when withdrawals is non-empty: the origin is back in the queue because its only articles were withdrawn, so the editor is looking at a correction rather than a first approval."
+          },
+          "withdrawals": {
+            "type": "array",
+            "description": "Newest first; [] (never null) for a fresh origin.",
+            "items": {
+              "$ref": "#/components/schemas/Withdrawal"
+            }
+          }
+        }
+      },
+      "ReviewQueue": {
+        "type": "object",
+        "title": "ReviewQueue",
+        "description": "One page of the review queue. Both fields are always present.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as cursor to fetch the next page. null on the last page - an absent cursor always means the queue is exhausted."
           }
         }
       }

@@ -8,3 +8,13 @@ sql:
         package: "store"
         out: "internal/content/store"
         sql_package: "pgx/v5"
+  # One generated package per module, so a module's queries live inside the
+  # module that owns them and no module reads another's internals.
+  - engine: "postgresql"
+    schema: "internal/platform/db/migrations"
+    queries: "internal/editorial/queries"
+    gen:
+      go:
+        package: "store"
+        out: "internal/editorial/store"
+        sql_package: "pgx/v5"

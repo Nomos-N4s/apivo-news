@@ -1,0 +1,124 @@
+-- Review-queue queries (T019).
+--
+-- The queue lists ORIGINS awaiting an editorial decision, and an origin is
+-- either a retrieved item or a translation of one - exactly the two things
+-- `article.article_exactly_one_origin` allows an article to be born from.
+-- Both are listed independently because both are independently approvable:
+-- a Greek item can be published untranslated for Greek readers while its
+-- German translation is approved separately, and the one-per-origin indexes
+-- are separate too.
+--
+-- "Awaiting a decision" means: no NON-withdrawn article on that origin.
+-- Withdrawal frees the origin (the 0002 partial indexes are on
+-- `withdrawn_at is null`), so a withdrawn origin reappears here as a
+-- correction candidate - which is the documented correction flow, not an
+-- accident. The withdrawal history that flags it is fetched by
+-- ListQueueWithdrawals for the page's rows only.
+--
+-- Column backing per the HTTP contract: `headline_original` =
+-- `source_item.original_title`, `headline_translated`/`extract_translated` =
+-- `translation.headline`/`.extract`, plus `source.name`,
+-- `source_item.licence_snapshot` and `source_item.retrieved_at`.
+
+-- name: ListReviewQueue :many
+-- One page of the queue: newest retrieval first, keyset-paginated on
+-- (retrieved_at, row_id) descending. Offset pagination is deliberately not
+-- used - the crawler keeps adding rows while an editor pages through them,
+-- and an offset would silently skip or repeat work.
+--
+-- row_id is the origin's own id: the translation id for a translated row,
+-- the source_item id for an untranslated one. Both are random uuids, so the
+-- pair (retrieved_at, row_id) is a total order over the union and the
+-- tie-break is stable - a translation and its own source item share a
+-- retrieved_at and still order deterministically.
+--
+-- The cursor is atomic: BOTH halves must be present for the keyset
+-- comparison to apply, because SQL row comparison against a NULL yields
+-- UNKNOWN and would filter every row out, handing the editor a silently
+-- empty queue. The endpoint rejects malformed cursors with 400 before
+-- reaching here; this arm is the last line of defence.
+--
+-- Language resolution mirrors the reader's: a translated row matches on the
+-- translation's target locale, an untranslated one on its source's language.
+with candidate as (
+    select
+        si.id           as source_item_id,
+        null::uuid      as translation_id,
+        si.id           as row_id,
+        si.retrieved_at as retrieved_at,
+        s.language_code as lang
+    from source_item si
+    join source s on s.id = si.source_id
+    where not exists (
+        select 1
+          from article a
+         where a.source_item_id = si.id
+           and a.withdrawn_at is null
+    )
+    union all
+    select
+        t.source_item_id as source_item_id,
+        t.id             as translation_id,
+        t.id             as row_id,
+        si.retrieved_at  as retrieved_at,
+        t.target_locale  as lang
+    from translation t
+    join source_item si on si.id = t.source_item_id
+    where not exists (
+        select 1
+          from article a
+         where a.translation_id = t.id
+           and a.withdrawn_at is null
+    )
+)
+select
+    c.source_item_id,
+    c.translation_id,
+    c.row_id,
+    c.retrieved_at,
+    s.name             as source_name,
+    si.original_title,
+    si.licence_snapshot,
+    t.headline         as translation_headline,
+    t.extract          as translation_extract
+from candidate c
+join source_item si on si.id = c.source_item_id
+join source s on s.id = si.source_id
+left join translation t on t.id = c.translation_id
+where (
+        sqlc.narg(lang)::text is null
+        or c.lang = sqlc.narg(lang)::text
+  )
+  and (
+        sqlc.narg(cursor_retrieved_at)::timestamptz is null
+        or sqlc.narg(cursor_row_id)::uuid is null
+        or (c.retrieved_at, c.row_id)
+            < (sqlc.narg(cursor_retrieved_at)::timestamptz, sqlc.narg(cursor_row_id)::uuid)
+  )
+order by c.retrieved_at desc, c.row_id desc
+limit sqlc.arg(row_limit);
+
+-- name: ListQueueWithdrawals :many
+-- The withdrawal history of the origins on one queue page: who ended the
+-- publication, when and why. Only withdrawn articles are returned, so an
+-- origin with no rows here is a fresh candidate rather than a correction.
+--
+-- The two id arrays are disjoint by construction - the caller passes
+-- translation ids for its translated rows and source_item ids for its
+-- untranslated ones - so an article matches on exactly the origin the row
+-- was listed under. Fetching per page rather than per row keeps this to one
+-- round trip whatever the page size.
+select
+    a.id as article_id,
+    a.translation_id,
+    a.source_item_id,
+    a.withdrawn_at,
+    a.withdrawn_by,
+    a.withdrawal_reason
+from article a
+where a.withdrawn_at is not null
+  and (
+        a.translation_id = any (sqlc.arg(translation_ids)::uuid[])
+     or a.source_item_id = any (sqlc.arg(source_item_ids)::uuid[])
+  )
+order by a.withdrawn_at desc, a.id desc;

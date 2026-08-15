@@ -116,8 +116,8 @@ jobs:
       - name: Fail on drift between schema and committed generated code
         run: |
           # git add first so brand-new generated files count as drift too.
-          git add -A internal/content/store
-          git diff --cached --exit-code -- internal/content/store
+          git add -A internal/content/store internal/editorial/store
+          git diff --cached --exit-code -- internal/content/store internal/editorial/store
 
   kubeconform:
     runs-on: ubuntu-latest
