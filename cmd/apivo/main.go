@@ -42,6 +42,13 @@ const healthcheckTimeout = 3 * time.Second
 // mounts the module whole - and unsetting JWKS_URL unmounts it whole.
 const editorialPrefix = "/api/v1/editorial/"
 
+// readerPrefix is where the content module's route table is mounted. It
+// covers the whole API namespace because the module also answers what nobody
+// routed under it, which is how every error below /api/v1 stays problem+json.
+// More specific patterns registered elsewhere - the OpenAPI document, the
+// editorial prefix - still win, as ServeMux precedence requires.
+const readerPrefix = "/api/v1/"
+
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Getenv, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "apivo:", err)
@@ -112,7 +119,7 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 	// The reader endpoints need no bearer token, so they mount
 	// unconditionally - a missing JWKS_URL costs the editorial routes, never
 	// the public site.
-	srv.Mount("/api/v1/", content.NewHandler(log, pool))
+	srv.Mount(readerPrefix, content.NewHandler(log, pool))
 	log.InfoContext(ctx, "starting", "addr", cfg.HTTPAddr, "env", cfg.Env)
 	return srv.Run(ctx)
 }

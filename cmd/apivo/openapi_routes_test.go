@@ -172,11 +172,81 @@ func requiresBearer(op operation) bool {
 	return false
 }
 
-// TestRegisteredPatternsAreReachable proves the pattern lists are not
-// bookkeeping that drifted from the muxes: every editorial pattern is
-// answered by a real handler (the platform's own are probed in its package),
-// and every one of them sits under the prefix the composition root mounts.
-func TestRegisteredPatternsAreReachable(t *testing.T) {
+// TestReaderPatternsAreReachable proves the content module's list is not
+// bookkeeping that drifted from its mux. The module answers anything under
+// /api/v1 it did not route with "no such endpoint", so a pattern that lost
+// its registration has to be caught by the detail rather than the status
+// code - the catch-all would otherwise dress the loss up as an ordinary 404.
+//
+// Each probe is refused before the handler reaches the database, which is
+// what makes a nil handle safe here.
+func TestReaderPatternsAreReachable(t *testing.T) {
+	t.Parallel()
+	h := content.NewHandler(discardLogger(), nil)
+
+	probes := map[string]string{
+		// No lang, so the handler itself refuses it; the catch-all would
+		// answer this path with a 405 instead.
+		"GET /api/v1/front": "/api/v1/front",
+		// An id that is not a UUID: refused as "no such article" before any
+		// query, where an unrouted path would be "no such endpoint".
+		"GET /api/v1/articles/{id}": "/api/v1/articles/not-a-uuid",
+	}
+
+	for _, pattern := range content.Patterns() {
+		t.Run(pattern, func(t *testing.T) {
+			t.Parallel()
+			method, _, ok := strings.Cut(pattern, " ")
+			if !ok {
+				t.Fatalf("pattern %q is not %q", pattern, "METHOD /path")
+			}
+			path, ok := probes[pattern]
+			if !ok {
+				t.Fatalf("no probe for %q; add one so the pattern is proved reachable", pattern)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+
+			var problem struct {
+				Detail string `json:"detail"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+				t.Fatalf("answer to %s %s is not problem+json: %v", method, path, err)
+			}
+			if strings.Contains(problem.Detail, "no such endpoint") {
+				t.Fatalf("%s is listed by Patterns() but the catch-all answered it: %q", pattern, problem.Detail)
+			}
+		})
+	}
+}
+
+// TestTheDocumentSurvivesTheReaderCatchAll pins a collision the router
+// resolves silently: the content module is mounted on the whole /api/v1/
+// namespace and answers everything under it that it did not route, while the
+// document lives at /api/v1/openapi.json. The more specific pattern wins -
+// but that is a property of ServeMux, not a decision recorded anywhere, so
+// it is asserted against a server wired the way the composition root wires
+// it.
+func TestTheDocumentSurvivesTheReaderCatchAll(t *testing.T) {
+	t.Parallel()
+	srv := platformhttp.New(discardLogger(), ":0", nil)
+	srv.Mount(readerPrefix, content.NewHandler(discardLogger(), nil))
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/openapi.json behind the reader catch-all = %d, want %d (body %q)",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json - the catch-all answered instead", ct)
+	}
+}
+
+// TestEditorialPatternsAreReachable proves the editorial list is not
+// bookkeeping either: every pattern is answered by a real handler, and every
+// one of them sits under the prefix the composition root mounts.
+func TestEditorialPatternsAreReachable(t *testing.T) {
 	t.Parallel()
 	h := editorial.NewHandler(discardLogger(), unreachableStore{}, alwaysEditor{})
 
