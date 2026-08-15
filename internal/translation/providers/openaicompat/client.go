@@ -159,6 +159,12 @@ func New(cfg Config) (*Client, error) {
 	if parsed.Host == "" {
 		return nil, fmt.Errorf("openaicompat: base URL %q has no host", cfg.BaseURL)
 	}
+	if parsed.Fragment != "" {
+		// A fragment is never sent to a server, so one in an API root is
+		// a mistake in the configuration. Dropping it silently would hide
+		// that mistake.
+		return nil, fmt.Errorf("openaicompat: base URL %q carries a fragment, which is never sent to a server", cfg.BaseURL)
+	}
 	if strings.TrimSpace(cfg.Model) == "" {
 		return nil, errors.New("openaicompat: model is required")
 	}
@@ -190,8 +196,13 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	return &Client{
-		cfg:      cfg,
-		endpoint: parsed.String() + completionsPath,
+		cfg: cfg,
+		// JoinPath, not concatenation: a base URL carrying a query - the
+		// api-version some gateways require - would otherwise have the
+		// path appended after the '?' and land on the wrong endpoint.
+		// Joining keeps the query where it belongs and escapes the path
+		// properly.
+		endpoint: parsed.JoinPath(completionsPath).String(),
 		http:     httpClient,
 		sleep:    sleepContext,
 	}, nil

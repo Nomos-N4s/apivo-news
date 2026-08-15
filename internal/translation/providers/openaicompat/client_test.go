@@ -1375,6 +1375,7 @@ func TestNewValidatesConfig(t *testing.T) {
 		{name: "base url with the wrong scheme", mutate: func(c *Config) { c.BaseURL = "ftp://api.groq.com/v1" }, wantErr: "must be http or https"},
 		{name: "base url without a host", mutate: func(c *Config) { c.BaseURL = "http:///v1" }, wantErr: "has no host"},
 		{name: "unparsable base url", mutate: func(c *Config) { c.BaseURL = "http://a b.example/v1" }, wantErr: "not a URL"},
+		{name: "base url with a fragment", mutate: func(c *Config) { c.BaseURL = "https://api.groq.com/openai/v1#docs" }, wantErr: "carries a fragment"},
 		{name: "missing model", mutate: func(c *Config) { c.Model = "" }, wantErr: "model is required"},
 		{name: "negative input price", mutate: func(c *Config) { c.InputPricePerMillionUSD = -0.1 }, wantErr: "input price"},
 		{name: "negative output price", mutate: func(c *Config) { c.OutputPricePerMillionUSD = -0.1 }, wantErr: "output price"},
@@ -1417,6 +1418,66 @@ func TestNewValidatesConfig(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("New() = %v, want it to mention %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestEndpointIsJoinedOntoTheBaseURL: the endpoint has to survive the
+// shapes a real base URL takes, including the query some gateways require
+// to select an API version.
+func TestEndpointIsJoinedOntoTheBaseURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		baseURL string
+		want    string
+	}{
+		{
+			name:    "plain api root",
+			baseURL: "https://api.groq.com/openai/v1",
+			want:    "https://api.groq.com/openai/v1/chat/completions",
+		},
+		{
+			name:    "trailing slash",
+			baseURL: "https://api.together.ai/v1/",
+			want:    "https://api.together.ai/v1/chat/completions",
+		},
+		{
+			name:    "self-hosted server on a port",
+			baseURL: "http://vllm.internal:8000/v1",
+			want:    "http://vllm.internal:8000/v1/chat/completions",
+		},
+		{
+			// Concatenation put the path after the '?' and sent the call
+			// to a URL the gateway does not serve.
+			name:    "gateway requiring an api version query",
+			baseURL: "https://gateway.example/openai/v1?api-version=2026-08-01",
+			want:    "https://gateway.example/openai/v1/chat/completions?api-version=2026-08-01",
+		},
+		{
+			name:    "no path at all",
+			baseURL: "https://gateway.example",
+			want:    "https://gateway.example/chat/completions",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client, err := New(Config{
+				BaseURL:                  tc.baseURL,
+				Model:                    "a-model",
+				InputPricePerMillionUSD:  0.15,
+				OutputPricePerMillionUSD: 0.60,
+			})
+			if err != nil {
+				t.Fatalf("New(%q): %v", tc.baseURL, err)
+			}
+			if client.endpoint != tc.want {
+				t.Errorf("endpoint = %q, want %q", client.endpoint, tc.want)
 			}
 		})
 	}
