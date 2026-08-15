@@ -87,13 +87,53 @@ func (q *Queries) ArticleLifecycle(ctx context.Context, articleID pgtype.UUID) (
 	return i, err
 }
 
+const lockActorRole = `-- name: LockActorRole :one
+select role
+from account
+where id = $1::uuid
+for share
+`
+
+// The acting account's role, read WITH A ROW LOCK (FOR SHARE) inside the
+// transaction that is about to write - the same technique, for the same
+// reason, as article_insert_guard and article_guard in migration 0002.
+//
+// Publication is the one editorial write the database cannot guard by
+// trigger: nothing on the article row records who released it, so the
+// schema has no way to know. That leaves the actor's authority to be
+// established here, and a plain snapshot read would not establish it - a
+// concurrent demotion of this very account could commit unseen and the
+// publication would proceed against a stale role. Foreign-key locks cover
+// key columns only, so FOR SHARE is what conflicts with the demotion
+// UPDATE's row lock: the two transactions serialize in either order, and
+// under READ COMMITTED a locking read sees the latest committed version of
+// the row. Whichever side commits second sees the other's write. A reader
+// can never be recorded as having released an article.
+func (q *Queries) LockActorRole(ctx context.Context, accountID pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, lockActorRole, accountID)
+	var role string
+	err := row.Scan(&role)
+	return role, err
+}
+
 const publishArticle = `-- name: PublishArticle :one
 update article
    set published_at = now()
  where id = $1::uuid
    and published_at is null
+   and exists (
+        select 1
+          from account
+         where id = $2::uuid
+           and role = 'editor'
+   )
 returning id, approved_by, approved_at, published_at
 `
+
+type PublishArticleParams struct {
+	ArticleID   pgtype.UUID
+	PublishedBy pgtype.UUID
+}
 
 type PublishArticleRow struct {
 	ID          pgtype.UUID
@@ -107,8 +147,14 @@ type PublishArticleRow struct {
 // rather than racing the article_guard trigger into a 500. Two concurrent
 // callers therefore produce exactly one 200 and one 409, decided by the
 // database.
-func (q *Queries) PublishArticle(ctx context.Context, articleID pgtype.UUID) (PublishArticleRow, error) {
-	row := q.db.QueryRow(ctx, publishArticle, articleID)
+//
+// The editor predicate is in the statement, not only in the Go that calls
+// it: the rule is an invariant, so the write itself must be incapable of
+// committing without it. Held together with the FOR SHARE read above -
+// which is what stops the role changing underneath - the row cannot be
+// published by an account that is not an editor at the moment of the write.
+func (q *Queries) PublishArticle(ctx context.Context, arg PublishArticleParams) (PublishArticleRow, error) {
+	row := q.db.QueryRow(ctx, publishArticle, arg.ArticleID, arg.PublishedBy)
 	var i PublishArticleRow
 	err := row.Scan(
 		&i.ID,
