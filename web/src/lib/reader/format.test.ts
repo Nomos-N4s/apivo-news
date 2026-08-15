@@ -70,6 +70,11 @@ describe('sourceHost', () => {
   it('returns a malformed value as-is rather than failing the page', () => {
     expect(sourceHost('not a url')).toBe('not a url');
   });
+
+  it('never shows a blank Source: hostless schemes display their raw value', () => {
+    expect(sourceHost('javascript:alert(1)')).toBe('javascript:alert(1)');
+    expect(sourceHost('mailto:x@example.com')).toBe('mailto:x@example.com');
+  });
 });
 
 describe('safeSourceUrl', () => {
