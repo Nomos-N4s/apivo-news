@@ -543,8 +543,15 @@ func parseContent(raw string) (translated, error) {
 			// Truncating here would publish a sentence the model never
 			// wrote and hide a prompt that has stopped working. What we
 			// publish is an extract beside a link (FR-004, FR-005), so an
-			// over-long answer is refused and the item stays untranslated.
-			return translated{}, fmt.Errorf("openaicompat: model returned a %d-character extract, over the %d-character limit: %w", n, translation.MaxExtractChars, translation.ErrInvalidResponse)
+			// over-long answer is refused.
+			//
+			// Refused, but not fatal to the whole response: this is one
+			// candidate among several, and an oversized example object in
+			// the model's preamble must not condemn the real translation
+			// that follows it. Every other check here treats a bad
+			// candidate the same way.
+			lastErr = fmt.Errorf("openaicompat: model returned a %d-character extract, over the %d-character limit: %w", n, translation.MaxExtractChars, translation.ErrInvalidResponse)
+			continue
 		}
 		return parsed, nil
 	}

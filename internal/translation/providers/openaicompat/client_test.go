@@ -360,7 +360,28 @@ func TestTranslate(t *testing.T) {
 			handler: func(_ int, w http.ResponseWriter, _ *http.Request) {
 				answerJSON(w, http.StatusOK, completion(translationJSON(wantHeadline, overLongExtract), 250, 400))
 			},
-			wantErr:   translation.ErrInvalidResponse,
+			wantErr:     translation.ErrInvalidResponse,
+			wantErrText: "over the 300-character limit",
+			wantCalls:   1,
+		},
+		{
+			// A model that shows the shape it is about to produce, with a
+			// filler extract that runs long, must not condemn the real
+			// translation printed underneath it.
+			name: "an oversized example object does not condemn the answer",
+			handler: func(_ int, w http.ResponseWriter, _ *http.Request) {
+				content := "For example:\n" + translationJSON("Beispiel", overLongExtract) +
+					"\n\nHere is the translation:\n" + translationJSON(wantHeadline, wantExtract)
+				answerJSON(w, http.StatusOK, completion(content, 240, 260))
+			},
+			want: translation.Result{
+				Headline:      wantHeadline,
+				Extract:       wantExtract,
+				Model:         hostModelID,
+				PromptVersion: translation.CurrentPromptVersion,
+				// 240 * 0.15 + 260 * 0.60 = 192.
+				Spend: translation.Spend{CostMicroUSD: 192},
+			},
 			wantCalls: 1,
 		},
 		{

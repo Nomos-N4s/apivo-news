@@ -13,6 +13,21 @@ import (
 // article (FR-004 extract-and-link, FR-005).
 const MaxExtractChars = 300
 
+// MaxHeadlineChars bounds the translated headline, counted in characters
+// (runes) for the same reason as MaxExtractChars.
+//
+// The extract bound alone does not make the translation an extract: a
+// model that ignores the prompt, or an item carrying an injection, can
+// put an entire translated article in the headline field instead, and it
+// would be accepted and published. Both fields carry translated source
+// text, so both are bounded - what leaves this module is a headline and
+// an extract beside a link, on every path (FR-004, FR-005).
+//
+// The value is generous next to real headlines, including German
+// compounds and Greek, and nowhere near enough to smuggle an article
+// through.
+const MaxHeadlineChars = 200
+
 // Prompt version identifiers. A released version's text is frozen: it is
 // recorded in translation.prompt_version and is the only record of how a
 // stored translation was produced (FR-005). Changing wording means adding
