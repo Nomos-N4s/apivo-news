@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Ελληνική Κοινότητα Στουτγάρδης — Ανακοινώσεις</title>
+    <link>https://feed.example.test/</link>
+    <description>The document the fetcher tests retrieve over HTTP</description>
+    <item>
+      <title>Συνέλευση της κοινότητας τον Σεπτέμβριο</title>
+      <link>https://feed.example.test/articles/synelefsi</link>
+      <dc:creator>Γιώργος Αντωνίου</dc:creator>
+      <pubDate>Thu, 07 Aug 2025 18:00:00 +0300</pubDate>
+      <description>Η ετήσια συνέλευση της κοινότητας ορίστηκε για τον Σεπτέμβριο.</description>
+    </item>
+    <item>
+      <title>Griechischer Sprachkurs startet im Herbst</title>
+      <link>https://feed.example.test/articles/sprachkurs</link>
+      <pubDate>Fri, 08 Aug 2025 09:00:00 +0200</pubDate>
+      <description>Der Sprachkurs beginnt im Herbst im Gemeindezentrum.</description>
+    </item>
+  </channel>
+</rss>
