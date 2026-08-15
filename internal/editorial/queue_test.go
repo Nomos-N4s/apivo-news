@@ -42,7 +42,15 @@ type queueStore struct {
 }
 
 func (s *queueStore) CreateSource(context.Context, editorial.NewSource) (editorial.Source, error) {
-	return editorial.Source{}, errors.New("source registration must not be reached")
+	return editorial.Source{}, errUnexpectedCall
+}
+
+func (s *queueStore) Approve(context.Context, editorial.NewApproval) (editorial.Article, error) {
+	return editorial.Article{}, errUnexpectedCall
+}
+
+func (s *queueStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editorial.Article, error) {
+	return editorial.Article{}, errUnexpectedCall
 }
 
 func (s *queueStore) ReviewQueue(_ context.Context, q editorial.QueueQuery) (editorial.QueuePage, error) {

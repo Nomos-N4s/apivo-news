@@ -77,6 +77,15 @@ func (h *Handler) requireEditor(next http.Handler) http.Handler {
 	})
 }
 
+// editorFrom returns the authenticated editor requireEditor stored in the
+// request context. Every route sits behind that middleware, so a handler
+// reached at all has an editor; the zero value would fail the database's
+// approver foreign key rather than pass unnoticed.
+func editorFrom(ctx context.Context) Editor {
+	editor, _ := ctx.Value(ctxKey{}).(Editor)
+	return editor
+}
+
 // bearerToken extracts the token from an "Authorization: Bearer <token>"
 // header. The scheme comparison is case-insensitive per RFC 9110.
 func bearerToken(r *http.Request) (string, bool) {

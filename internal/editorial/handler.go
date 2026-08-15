@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
+
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
 )
 
@@ -58,8 +60,10 @@ func NewHandler(log *slog.Logger, store Store, auth EditorAuthenticator) http.Ha
 // checked against the routes rather than against someone's memory of them.
 func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
-		"GET /api/v1/editorial/queue":    h.reviewQueue,
-		"POST /api/v1/editorial/sources": h.createSource,
+		"GET /api/v1/editorial/queue":                      h.reviewQueue,
+		"POST /api/v1/editorial/approvals":                 h.createApproval,
+		"POST /api/v1/editorial/articles/{id}/publication": h.publishArticle,
+		"POST /api/v1/editorial/sources":                   h.createSource,
 	}
 }
 
@@ -69,6 +73,161 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 func Patterns() []string {
 	var h Handler
 	return slices.Sorted(maps.Keys(h.routes()))
+}
+
+// approvalRequest is the approval payload: exactly one origin, the
+// attribution, and whether to publish immediately. The two origin fields
+// are pointers so an explicit null is "not supplied" rather than the zero
+// uuid, which would be a different - and wrong - answer.
+type approvalRequest struct {
+	TranslationID *string `json:"translation_id"`
+	SourceItemID  *string `json:"source_item_id"`
+	Attribution   string  `json:"attribution"`
+	Publish       bool    `json:"publish"`
+}
+
+// approvalResponse is the created article. published_at is null for the
+// publish: false path - an approved record that has not been released.
+type approvalResponse struct {
+	ArticleID   string  `json:"article_id"`
+	ApprovedBy  string  `json:"approved_by"`
+	ApprovedAt  string  `json:"approved_at"`
+	PublishedAt *string `json:"published_at"`
+}
+
+// publicationResponse is the released article.
+type publicationResponse struct {
+	ArticleID   string `json:"article_id"`
+	PublishedAt string `json:"published_at"`
+}
+
+// createApproval implements POST /api/v1/editorial/approvals.
+func (h *Handler) createApproval(w http.ResponseWriter, r *http.Request) {
+	var req approvalRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	approval, detail, ok := newApproval(req, editorFrom(r.Context()))
+	if !ok {
+		platformhttp.Problem(w, http.StatusBadRequest, detail)
+		return
+	}
+
+	article, err := h.store.Approve(r.Context(), approval)
+	switch {
+	case errors.Is(err, ErrOriginAlreadyApproved):
+		platformhttp.Problem(w, http.StatusConflict,
+			"this origin already has a published or approved article; withdraw it before approving a correction")
+		return
+	case errors.Is(err, ErrUnknownOrigin):
+		platformhttp.Problem(w, http.StatusBadRequest, "the named origin does not exist")
+		return
+	case errors.Is(err, ErrUntitledOrigin):
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"this item's feed provided no title, so an untranslated approval would have no headline; approve a translation of it instead")
+		return
+	// The database checks the approver's role again on insert. Reaching
+	// this arm means the caller passed the HTTP gate and the trigger still
+	// refused - the role changed under the request, and the database wins.
+	case errors.Is(err, ErrNotEditor):
+		platformhttp.Problem(w, http.StatusForbidden, "the editor role is required")
+		return
+	case err != nil:
+		h.internalError(w, r, "approving article", err)
+		return
+	}
+
+	body := approvalResponse{
+		ArticleID:  article.ID.String(),
+		ApprovedBy: article.ApprovedBy.String(),
+		ApprovedAt: article.ApprovedAt.Format(timeFormat),
+	}
+	if article.PublishedAt != nil {
+		published := article.PublishedAt.Format(timeFormat)
+		body.PublishedAt = &published
+	}
+	h.writeJSON(w, r, http.StatusCreated, body)
+}
+
+// publishArticle implements POST /api/v1/editorial/articles/{id}/publication.
+func (h *Handler) publishArticle(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathArticleID(w, r)
+	if !ok {
+		return
+	}
+	article, err := h.store.Publish(r.Context(), id, editorFrom(r.Context()).ID)
+	switch {
+	case errors.Is(err, ErrArticleNotFound):
+		platformhttp.Problem(w, http.StatusNotFound, "no article with this id")
+		return
+	case errors.Is(err, ErrAlreadyPublished):
+		platformhttp.Problem(w, http.StatusConflict,
+			"this article is already published; publication happens once and is never repeated")
+		return
+	// The database checks the actor's role again, under a row lock, inside
+	// the publishing transaction. Reaching this arm means the caller passed
+	// the HTTP gate and the account was demoted before the write - the
+	// database wins, and no publication happened.
+	case errors.Is(err, ErrNotEditor):
+		platformhttp.Problem(w, http.StatusForbidden, "the editor role is required")
+		return
+	case err != nil:
+		h.internalError(w, r, "publishing article", err)
+		return
+	}
+	h.writeJSON(w, r, http.StatusOK, publicationResponse{
+		ArticleID:   article.ID.String(),
+		PublishedAt: article.PublishedAt.Format(timeFormat),
+	})
+}
+
+// newApproval validates the payload and builds the store command, reporting
+// the 400 detail when it cannot.
+func newApproval(req approvalRequest, editor Editor) (approval NewApproval, detail string, ok bool) {
+	switch {
+	// Exactly one origin, mirroring article_exactly_one_origin: an article
+	// is born from a translation or from the retrieved item, never both and
+	// never neither.
+	case req.TranslationID != nil && req.SourceItemID != nil:
+		return NewApproval{}, "supply translation_id or source_item_id, not both: an article has exactly one origin", false
+	case req.TranslationID == nil && req.SourceItemID == nil:
+		return NewApproval{}, "supply translation_id or source_item_id: an article has exactly one origin", false
+	case blank(req.Attribution):
+		return NewApproval{}, "attribution is required and must not be blank", false
+	}
+
+	origin, field := req.TranslationID, "translation_id"
+	if req.SourceItemID != nil {
+		origin, field = req.SourceItemID, "source_item_id"
+	}
+	id, err := uuid.Parse(*origin)
+	if err != nil {
+		return NewApproval{}, field + " must be a uuid", false
+	}
+
+	approval = NewApproval{
+		Attribution: strings.TrimSpace(req.Attribution),
+		Publish:     req.Publish,
+		ApprovedBy:  editor.ID,
+	}
+	if req.SourceItemID != nil {
+		approval.SourceItemID = &id
+	} else {
+		approval.TranslationID = &id
+	}
+	return approval, "", true
+}
+
+// pathArticleID parses the {id} path segment, answering the 400 itself when
+// it is not a uuid: a malformed id is a client mistake worth naming, not the
+// 404 that would suggest the article merely does not exist.
+func pathArticleID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		platformhttp.Problem(w, http.StatusBadRequest, "the article id in the path must be a uuid")
+		return uuid.UUID{}, false
+	}
+	return id, true
 }
 
 // queueResponse is one page of the review queue.

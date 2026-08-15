@@ -292,3 +292,11 @@ func (unreachableStore) CreateSource(context.Context, editorial.NewSource) (edit
 func (unreachableStore) ReviewQueue(context.Context, editorial.QueueQuery) (editorial.QueuePage, error) {
 	return editorial.QueuePage{}, errors.New("the route probe must not reach the store")
 }
+
+func (unreachableStore) Approve(context.Context, editorial.NewApproval) (editorial.Article, error) {
+	return editorial.Article{}, errors.New("the route probe must not reach the store")
+}
+
+func (unreachableStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editorial.Article, error) {
+	return editorial.Article{}, errors.New("the route probe must not reach the store")
+}
