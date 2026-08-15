@@ -109,5 +109,45 @@ export function frontPagePath(lang: ReadingLanguage, slugs: readonly string[]): 
   return `/${lang}/${slugs.join(PLACE_SEPARATOR)}`;
 }
 
+/**
+ * The kicker for an item's place list — "München · Τοπικά" (mockup 1a):
+ * the first place's endonym plus its scope label from the caller's
+ * language. Slugs beyond the catalog render as themselves — the API may
+ * know places before this catalog does.
+ */
+export function placeKicker(
+  slugs: readonly string[],
+  scopeLabels: Readonly<Record<PlaceScope, string>>,
+): string {
+  const slug = slugs.at(0);
+  if (slug === undefined) {
+    return '';
+  }
+  const place = findPlace(slug);
+  if (place === undefined) {
+    return slug;
+  }
+  return `${place.endonym} · ${scopeLabels[place.scope]}`;
+}
+
+/**
+ * Composes an article path under the same axes: `/el/munich+greece/a/{id}`.
+ * The article keeps both axes in its URL so the back-link and the chrome
+ * language survive the navigation (FR-009).
+ */
+export function articlePath(
+  lang: ReadingLanguage,
+  slugs: readonly string[],
+  articleId: string,
+): string {
+  return `${frontPagePath(lang, slugs)}/a/${encodeURIComponent(articleId)}`;
+}
+
+/** The reading languages named in themselves, for chrome like "Ελληνικά · München". */
+export const LANGUAGE_ENDONYMS: Readonly<Record<ReadingLanguage, string>> = {
+  el: 'Ελληνικά',
+  de: 'Deutsch',
+};
+
 /** The US1 flagship journey — where `/` lands: Munich local + Greek national, in Greek. */
 export const DEFAULT_FRONT_PAGE = frontPagePath('el', ['munich', 'greece']);

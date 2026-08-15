@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  articlePath,
   DEFAULT_FRONT_PAGE,
   findPlace,
   frontPagePath,
   isReadingLanguage,
+  LANGUAGE_ENDONYMS,
   parseAxes,
   PLACE_CATALOG,
+  placeKicker,
 } from './axes';
 
 describe('isReadingLanguage', () => {
@@ -73,6 +76,39 @@ describe('frontPagePath', () => {
 
   it('lands the flagship journey on /el/munich+greece', () => {
     expect(DEFAULT_FRONT_PAGE).toBe('/el/munich+greece');
+  });
+});
+
+describe('articlePath', () => {
+  it('keeps both axes in the article URL (FR-009)', () => {
+    expect(articlePath('el', ['munich', 'greece'], 'abc-123')).toBe(
+      '/el/munich+greece/a/abc-123',
+    );
+  });
+
+  it('escapes ids that need it', () => {
+    expect(articlePath('de', ['munich'], 'a/b')).toBe('/de/munich/a/a%2Fb');
+  });
+});
+
+describe('placeKicker', () => {
+  const labels = { city: 'Local', region: 'Region', country: 'National' } as const;
+
+  it('joins the first place endonym with its scope label', () => {
+    expect(placeKicker(['munich'], labels)).toBe('München · Local');
+    expect(placeKicker(['greece', 'munich'], labels)).toBe('Ελλάδα · National');
+  });
+
+  it('renders unknown slugs as themselves and empty lists as nothing', () => {
+    expect(placeKicker(['atlantis'], labels)).toBe('atlantis');
+    expect(placeKicker([], labels)).toBe('');
+  });
+});
+
+describe('LANGUAGE_ENDONYMS', () => {
+  it('names each language in itself', () => {
+    expect(LANGUAGE_ENDONYMS.el).toBe('Ελληνικά');
+    expect(LANGUAGE_ENDONYMS.de).toBe('Deutsch');
   });
 });
 

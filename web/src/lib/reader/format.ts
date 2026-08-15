@@ -52,6 +52,30 @@ export function formatRecency(lang: ReadingLanguage, published: Date, now: Date)
   return formatItemDate(lang, published);
 }
 
+/** Date and clock time for record rows — e.g. de "14. August 2026 um 08:31". */
+export function formatDateTime(lang: ReadingLanguage, date: Date): string {
+  return new Intl.DateTimeFormat(lang, {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23', // the record reads as a log, in the 24-hour clock
+    timeZone: READER_TIME_ZONE,
+  }).format(date);
+}
+
+/**
+ * Splits an extract into its paragraphs for the article page. The payload
+ * carries one text; blank lines are the only structure it may contain.
+ */
+export function extractParagraphs(extract: string): string[] {
+  return extract
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph !== '');
+}
+
 /**
  * The display host of an outbound source link — "sueddeutsche.de" for the
  * card's link text. The public payload carries no structured publisher

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  extractParagraphs,
+  formatDateTime,
   formatItemDate,
   formatMastheadDate,
   formatRecency,
@@ -56,6 +58,29 @@ describe('formatRecency', () => {
     const now = new Date('2026-08-14T08:00:00Z');
     const atNow = formatRecency('de', now, now);
     expect(formatRecency('de', PUBLISHED, now)).toBe(atNow);
+  });
+});
+
+describe('formatDateTime', () => {
+  it('writes date and clock in the reader zone', () => {
+    expect(formatDateTime('de', PUBLISHED)).toContain('14. August 2026');
+    expect(formatDateTime('de', PUBLISHED)).toContain('10:12');
+    expect(formatDateTime('el', PUBLISHED)).toContain('14 Αυγούστου 2026');
+    expect(formatDateTime('el', PUBLISHED)).toContain('10:12');
+  });
+});
+
+describe('extractParagraphs', () => {
+  it('splits on blank lines and trims', () => {
+    expect(extractParagraphs('Πρώτη.\n\n Δεύτερη. ')).toEqual(['Πρώτη.', 'Δεύτερη.']);
+  });
+
+  it('keeps a single-paragraph extract whole', () => {
+    expect(extractParagraphs('Only one.')).toEqual(['Only one.']);
+  });
+
+  it('drops empty fragments', () => {
+    expect(extractParagraphs('A.\n\n\n\nB.\n\n')).toEqual(['A.', 'B.']);
   });
 });
 
