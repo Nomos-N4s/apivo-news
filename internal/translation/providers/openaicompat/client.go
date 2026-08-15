@@ -270,14 +270,29 @@ func (c *Client) Translate(ctx context.Context, req translation.Request) (transl
 			break
 		}
 		if err := c.sleep(ctx, backoff(attempt, c.cfg.BaseBackoff, out.retryAfter)); err != nil {
-			// Keep lastErr, and with it the sentinel that classified the
-			// provider's behaviour: a caller deciding whether to back off
-			// the whole pipeline needs to know it was being rate limited,
-			// not only that the context ended.
-			return translation.Result{}, withSpend(spent, fmt.Errorf("openaicompat: gave up while waiting to retry: %w: %w", err, lastErr))
+			return translation.Result{}, withSpend(spent, waitInterrupted(err, lastErr))
 		}
 	}
 	return translation.Result{}, withSpend(spent, lastErr)
+}
+
+// waitInterrupted builds the failure for a context that ended while we
+// were waiting to retry.
+//
+// It keeps everything a caller needs in one chain. lastErr carries the
+// sentinel that classified the provider's behaviour, and losing it here
+// would be losing it at exactly the moment it matters: a pipeline
+// deciding whether to slow down needs to know it was being rate limited,
+// not merely that a context ended. The caller's own deadline is a
+// timeout, and is classified as one for the same reason the transport
+// path does it - where the deadline was noticed is an implementation
+// detail, not a different kind of failure. Pure cancellation stays
+// cancellation.
+func waitInterrupted(waitErr, lastErr error) error {
+	if errors.Is(waitErr, context.DeadlineExceeded) {
+		return fmt.Errorf("openaicompat: the caller's deadline passed while waiting to retry: %w: %w: %w", waitErr, translation.ErrTimeout, lastErr)
+	}
+	return fmt.Errorf("openaicompat: the call was abandoned while waiting to retry: %w: %w", waitErr, lastErr)
 }
 
 // withSpend attaches spend to a failure, and only when there is spend to

@@ -760,6 +760,76 @@ func TestFailureThatCostNothingIsAPlainError(t *testing.T) {
 	}
 }
 
+// TestContextEndingDuringBackoffKeepsTheClassification: the reason the
+// provider was being retried is the reason a pipeline decides whether to
+// slow down, so it must survive a context that ends mid-wait.
+func TestContextEndingDuringBackoffKeepsTheClassification(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// endWait ends the caller's context the way this case wants,
+		// standing in for a wait that outlives it.
+		endWait func(cancel context.CancelFunc) error
+		wantIs  []error
+		wantNot []error
+	}{
+		{
+			name:    "the caller's deadline passes",
+			endWait: func(context.CancelFunc) error { return context.DeadlineExceeded },
+			wantIs: []error{
+				translation.ErrRateLimited,
+				translation.ErrTimeout,
+				context.DeadlineExceeded,
+			},
+		},
+		{
+			name:    "the caller gives up",
+			endWait: func(context.CancelFunc) error { return context.Canceled },
+			wantIs: []error{
+				translation.ErrRateLimited,
+				context.Canceled,
+			},
+			// Abandoning a run is not the provider being slow.
+			wantNot: []error{translation.ErrTimeout},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			host := newFakeHost(t, func(_ int, w http.ResponseWriter, _ *http.Request) {
+				answerJSON(w, http.StatusTooManyRequests, `{"error":{"message":"rate limit reached"}}`)
+			})
+			client, err := New(testConfig(host.URL))
+			if err != nil {
+				t.Fatalf("New(): %v", err)
+			}
+			// The wait is where the context ends, so the sleep reports
+			// the ending rather than actually waiting for it.
+			client.sleep = func(context.Context, time.Duration) error {
+				return tc.endWait(func() {})
+			}
+
+			_, err = client.Translate(t.Context(), sampleRequest)
+			if err == nil {
+				t.Fatal("Translate() succeeded, want the interrupted retry reported")
+			}
+			for _, want := range tc.wantIs {
+				if !errors.Is(err, want) {
+					t.Errorf("errors.Is(err, %v) = false, want the chain to keep it: %v", want, err)
+				}
+			}
+			for _, notWant := range tc.wantNot {
+				if errors.Is(err, notWant) {
+					t.Errorf("errors.Is(err, %v) = true, want it excluded: %v", notWant, err)
+				}
+			}
+		})
+	}
+}
+
 // TestRequestShape pins what actually goes on the wire: the endpoint, the
 // bearer token, and a body carrying the configured model plus the released
 // prompt's two turns.
