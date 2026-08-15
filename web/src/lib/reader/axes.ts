@@ -152,16 +152,19 @@ export const LANGUAGE_ENDONYMS: Readonly<Record<ReadingLanguage, string>> = {
 };
 
 /**
- * Parses a `?places=munich+greece` query value into selectable catalog
- * places — the setup page's prefill. Unknown and non-selectable slugs are
- * dropped rather than failing: the query is a convenience, not an address.
+ * Parses a `?places=munich%2Bgreece` query value into selectable catalog
+ * places — the setup page's prefill. Query strings decode a literal `+`
+ * to a space (unlike path segments), so a space is accepted as the
+ * separator too: an unencoded hand-typed `?places=munich+greece` still
+ * parses. Unknown and non-selectable slugs are dropped rather than
+ * failing: the query is a convenience, not an address.
  */
 export function parsePlacesParam(value: string | null): Place[] {
   if (value === null || value === '') {
     return [];
   }
   const places: Place[] = [];
-  for (const slug of value.split(PLACE_SEPARATOR)) {
+  for (const slug of value.split(/[+ ]/)) {
     const place = findPlace(slug);
     if (place !== undefined && place.selectable && !places.includes(place)) {
       places.push(place);

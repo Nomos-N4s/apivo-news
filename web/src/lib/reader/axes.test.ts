@@ -147,6 +147,17 @@ describe('parsePlacesParam', () => {
     ]);
   });
 
+  it('accepts the space a query-string + decodes to (URLSearchParams round trip)', () => {
+    expect(parsePlacesParam('munich greece').map((place) => place.slug)).toEqual([
+      'munich',
+      'greece',
+    ]);
+    expect(parsePlacesParam('greece munich').map((place) => place.slug)).toEqual([
+      'greece',
+      'munich',
+    ]);
+  });
+
   it('drops non-selectable slugs — the query offers, the catalog decides', () => {
     expect(parsePlacesParam('bavaria+greece').map((place) => place.slug)).toEqual(['greece']);
   });

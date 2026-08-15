@@ -45,7 +45,10 @@ const chips = [
   ),
 ];
 
-const setupHref = `/${lang}/setup?places=${slugs.join(PLACE_SEPARATOR)}`;
+// Unlike in a path segment, a literal + in a QUERY string decodes to a
+// space — so the joined value must be encoded (%2B) to survive the round
+// trip through URLSearchParams.
+const setupHref = `/${lang}/setup?places=${encodeURIComponent(slugs.join(PLACE_SEPARATOR))}`;
 ---
 
 <section class="axes" aria-label={`${t.readingLanguage} · ${t.places}`}>
