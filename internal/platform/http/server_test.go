@@ -2,11 +2,13 @@ package http_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,6 +54,127 @@ func TestHealthEndpoints(t *testing.T) {
 				t.Fatalf("X-Robots-Tag = %q, want %q on every response", got, "noindex, nofollow")
 			}
 		})
+	}
+}
+
+func TestMountedRoutes(t *testing.T) {
+	t.Parallel()
+	srv := platformhttp.New(discardLogger(), ":0", nil, platformhttp.Route{
+		Pattern: "/api/v1/editorial/",
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusTeapot)
+		}),
+	})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/editorial/queue", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("mounted route answered %d, want %d", rec.Code, http.StatusTeapot)
+	}
+	// Module routes share the platform mux, so the noindex stamping covers
+	// them too - the whole API stays uncrawlable, not just the health pair.
+	if got := rec.Header().Get("X-Robots-Tag"); got != "noindex, nofollow" {
+		t.Fatalf("X-Robots-Tag = %q, want %q on module routes", got, "noindex, nofollow")
+	}
+	// The health endpoints stay reachable alongside mounted routes.
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("healthz alongside mounted routes = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestProblem(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	platformhttp.Problem(rec, http.StatusConflict, "a source with this feed URL already exists")
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("Content-Type = %q, want application/problem+json", ct)
+	}
+	var got platformhttp.ProblemDetails
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshalling problem body: %v", err)
+	}
+	want := platformhttp.ProblemDetails{
+		Type:   "about:blank",
+		Title:  "Conflict",
+		Status: http.StatusConflict,
+		Detail: "a source with this feed URL already exists",
+	}
+	if got != want {
+		t.Fatalf("problem body = %+v, want %+v", got, want)
+	}
+}
+
+func TestProblemOmitsEmptyDetail(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	platformhttp.Problem(rec, http.StatusInternalServerError, "")
+	if strings.Contains(rec.Body.String(), "detail") {
+		t.Fatalf("empty detail must be omitted, got body %q", rec.Body.String())
+	}
+}
+
+func TestMountRoutesModuleHandlers(t *testing.T) {
+	t.Parallel()
+	srv := platformhttp.New(discardLogger(), ":0", nil)
+	srv.Mount("/api/v1/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	}))
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/front", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("mounted route answered %d, want %d", rec.Code, http.StatusTeapot)
+	}
+	// Mounted routes sit behind the same defence-in-depth header as the
+	// built-in ones: the API is never a crawlable surface.
+	if got := rec.Header().Get("X-Robots-Tag"); got != "noindex, nofollow" {
+		t.Fatalf("X-Robots-Tag = %q, want %q on mounted routes", got, "noindex, nofollow")
+	}
+
+	// Health endpoints keep working alongside the mounted module.
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/healthz alongside a mounted module = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestProblemWritesRFC9457Bodies(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	platformhttp.Problem(rec, http.StatusBadRequest, "unknown place \"atlantis\"")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/problem+json" {
+		t.Fatalf("Content-Type = %q, want application/problem+json", got)
+	}
+	var body struct {
+		Type   string `json:"type"`
+		Title  string `json:"title"`
+		Status int    `json:"status"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding problem body %q: %v", rec.Body.String(), err)
+	}
+	if body.Type != "about:blank" {
+		t.Errorf("type = %q, want about:blank", body.Type)
+	}
+	if body.Title != http.StatusText(http.StatusBadRequest) {
+		t.Errorf("title = %q, want the reason phrase %q", body.Title, http.StatusText(http.StatusBadRequest))
+	}
+	if body.Status != http.StatusBadRequest {
+		t.Errorf("status field = %d, want %d", body.Status, http.StatusBadRequest)
+	}
+	if body.Detail != "unknown place \"atlantis\"" {
+		t.Errorf("detail = %q, want the caller's detail verbatim", body.Detail)
 	}
 }
 

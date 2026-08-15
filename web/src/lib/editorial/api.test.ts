@@ -162,6 +162,21 @@ describe('editorial endpoints not deployed yet', () => {
     ).rejects.toMatchObject({ status: 500 });
   });
 
+  it('falls back to fixtures when the source list 404s', async () => {
+    // POST /editorial/sources exists on the API; the list does not, so a
+    // 404 there must not take the screen down.
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
+    const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources();
+    expect(page.sources.length).toBeGreaterThan(0);
+  });
+
+  it('still surfaces 401 on the source list — that is a real answer', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'unauthorised' }, 401));
+    await expect(
+      createEditorialApi('http://api:8080', null, fetchImpl).sources(),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+
   it('accepts a contract-compliant queue carrying only items', async () => {
     // No holds, no spend — the screen must not assume the proposed fields.
     const { fetchImpl } = respondingWith(jsonResponse({ items: [] }));
