@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns="http://purl.org/rss/1.0/"
+         xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel rdf:about="https://rdf.example.test/">
+    <title>RDF Feed</title>
+    <link>https://rdf.example.test/</link>
+    <description>RSS 1.0 still exists in the wild</description>
+    <items>
+      <rdf:Seq>
+        <rdf:li rdf:resource="https://rdf.example.test/articles/a1"/>
+      </rdf:Seq>
+    </items>
+  </channel>
+  <item rdf:about="https://rdf.example.test/articles/a1">
+    <title>Παλαιό μορφότυπο, νέο περιεχόμενο</title>
+    <link>https://rdf.example.test/articles/a1</link>
+    <dc:creator>Γιώργος Οικονόμου</dc:creator>
+    <dc:date>2025-06-01T07:45:00Z</dc:date>
+    <description>Η ροή RDF εξακολουθεί να υπάρχει και πρέπει να διαβάζεται.</description>
+  </item>
+</rdf:RDF>
