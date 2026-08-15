@@ -41,11 +41,27 @@ if (Astro.request.method === 'POST') {
   const purpose = String(form.get('purpose') ?? '');
   const granted = String(form.get('granted') ?? '') === 'true';
   if ((CONSENT_PURPOSES as readonly string[]).includes(purpose)) {
-    outcome = await api.setConsent(purpose as ConsentPurpose, granted);
+    // Once the consent endpoints exist this call crosses the network; a
+    // failure must degrade, not take the page down mid-render.
+    try {
+      outcome = await api.setConsent(purpose as ConsentPurpose, granted);
+    } catch (error) {
+      outcome = {
+        recorded: false,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 }
 
-const history: readonly ConsentRecord[] = await api.consentHistory();
+let history: readonly ConsentRecord[] = [];
+let historyFailed = false;
+try {
+  history = await api.consentHistory();
+} catch {
+  historyFailed = true;
+  Astro.response.status = 503;
+}
 const ordered = historyNewestFirst(history);
 const followed = PLACE_CATALOG.filter((place) => place.selectable);
 const here = `/${lang}/register`;
@@ -131,6 +147,7 @@ const here = `/${lang}/register`;
 
         <div class="history">
           <h6>{t.consentHistoryHeading}</h6>
+          {historyFailed && <p class="note">{t.unavailableBody}</p>}
           <ol>
             {
               ordered.map((record) => (
