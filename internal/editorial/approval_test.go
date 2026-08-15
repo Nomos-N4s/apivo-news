@@ -66,6 +66,10 @@ func (s *approvalStore) Publish(_ context.Context, articleID, editorID uuid.UUID
 	return s.article, s.err
 }
 
+func (s *approvalStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) (editorial.Withdrawal, error) {
+	return editorial.Withdrawal{}, errUnexpectedCall
+}
+
 // approvalBody is the decoded 201 payload, kept close to the contract's
 // wire shape so a renamed field fails the test.
 type approvalBody struct {

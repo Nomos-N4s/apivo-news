@@ -92,6 +92,10 @@ func (s errStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editorial.Arti
 	return editorial.Article{}, s.err
 }
 
+func (s errStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) (editorial.Withdrawal, error) {
+	return editorial.Withdrawal{}, s.err
+}
+
 // okStore returns a canned created source.
 type okStore struct{ src editorial.Source }
 
@@ -109,6 +113,10 @@ func (s okStore) Approve(context.Context, editorial.NewApproval) (editorial.Arti
 
 func (s okStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editorial.Article, error) {
 	return editorial.Article{}, errUnexpectedCall
+}
+
+func (s okStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) (editorial.Withdrawal, error) {
+	return editorial.Withdrawal{}, errUnexpectedCall
 }
 
 // recordingStore captures what the handler actually asked to persist.
@@ -129,6 +137,10 @@ func (s *recordingStore) Approve(context.Context, editorial.NewApproval) (editor
 
 func (s *recordingStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editorial.Article, error) {
 	return editorial.Article{}, errUnexpectedCall
+}
+
+func (s *recordingStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) (editorial.Withdrawal, error) {
+	return editorial.Withdrawal{}, errUnexpectedCall
 }
 
 func discardLogger() *slog.Logger {

@@ -4,7 +4,7 @@
     "title": "epiloYES internal HTTP API",
     "version": "1.0.0-alpha",
     "summary": "Public reader endpoints, editorial writes behind a bearer JWT, and the operational probes served by the Go binary.",
-    "description": "Machine-readable description of what the Go binary actually serves. It is written from the handlers, not from prose: where this document and `specs/001-epiloyes-alpha/contracts/http-api.md` disagree, the handlers won and this document follows them.\n\n**Topology.** The API is not publicly routable. In every deployment (compose, Cloudflare, Kubernetes) it listens on an internal network and the Astro server is the only public HTTP surface. As defence in depth every response - this document included - carries `X-Robots-Tag: noindex, nofollow`.\n\n**Errors.** Every handler-produced error is an RFC 9457 `application/problem+json` body: `type` (always `about:blank`), `title` (the plain rendering of the status code), `status`, and `detail` (omitted when empty). See the `Problem` schema.\n\n**Pagination.** Lists take `limit` (default 20) and `cursor` (opaque, keyset) and answer `{ items, next_cursor }`, where `next_cursor` is `null` on the last page. A `limit` outside 1-100 is rejected with 400 rather than clamped; a malformed or oversized `cursor` is rejected with 400.\n\n**Auth.** Only the editorial endpoints require authentication: `Authorization: Bearer <JWT>`, verified against the configured JWKS, and the subject's account must hold the editor role. The database enforces the same rule again on write. When `JWKS_URL` is unset the whole `/api/v1/editorial/` prefix is left unmounted deliberately, and those paths answer 404 instead of authenticating nobody.\n\n**Unrouted paths under `/api/v1/`.** The content module owns a catch-all across the whole namespace: a known reader path reached with the wrong method answers 405 with an `Allow` header, and anything else under `/api/v1/` answers 404, both in problem+json. Outside its reach - the editorial prefix - an unrouted path or a wrong method is answered by the router itself with a `text/plain` body. That is the one corner where the single error convention does not hold.\n\n**Completeness.** Every operation described here is served by the binary, and every route the binary registers is described here; a test in the composition root compares the two in both directions on every build. Endpoints that exist in the contract but have no implementation - editorial withdrawal and provenance - are deliberately absent rather than described speculatively.\n\n**Availability.** The editorial routes are mounted only when the deployment configures JWKS verification; without it they answer 404 rather than authenticating nobody. The reader endpoints and the probes mount unconditionally."
+    "description": "Machine-readable description of what the Go binary actually serves. It is written from the handlers, not from prose: where this document and `specs/001-epiloyes-alpha/contracts/http-api.md` disagree, the handlers won and this document follows them.\n\n**Topology.** The API is not publicly routable. In every deployment (compose, Cloudflare, Kubernetes) it listens on an internal network and the Astro server is the only public HTTP surface. As defence in depth every response - this document included - carries `X-Robots-Tag: noindex, nofollow`.\n\n**Errors.** Every handler-produced error is an RFC 9457 `application/problem+json` body: `type` (always `about:blank`), `title` (the plain rendering of the status code), `status`, and `detail` (omitted when empty). See the `Problem` schema.\n\n**Pagination.** Lists take `limit` (default 20) and `cursor` (opaque, keyset) and answer `{ items, next_cursor }`, where `next_cursor` is `null` on the last page. A `limit` outside 1-100 is rejected with 400 rather than clamped; a malformed or oversized `cursor` is rejected with 400.\n\n**Auth.** Only the editorial endpoints require authentication: `Authorization: Bearer <JWT>`, verified against the configured JWKS, and the subject's account must hold the editor role. The database enforces the same rule again on write. When `JWKS_URL` is unset the whole `/api/v1/editorial/` prefix is left unmounted deliberately, and those paths answer 404 instead of authenticating nobody.\n\n**Unrouted paths under `/api/v1/`.** The content module owns a catch-all across the whole namespace: a known reader path reached with the wrong method answers 405 with an `Allow` header, and anything else under `/api/v1/` answers 404, both in problem+json. Outside its reach - the editorial prefix - an unrouted path or a wrong method is answered by the router itself with a `text/plain` body. That is the one corner where the single error convention does not hold.\n\n**Completeness.** Every operation described here is served by the binary, and every route the binary registers is described here; a test in the composition root compares the two in both directions on every build. The one endpoint that exists in the contract but has no implementation - editorial provenance - is deliberately absent rather than described speculatively.\n\n**Availability.** The editorial routes are mounted only when the deployment configures JWKS verification; without it they answer 404 rather than authenticating nobody. The reader endpoints and the probes mount unconditionally."
   },
   "servers": [
     {
@@ -676,6 +676,149 @@
           }
         }
       }
+    },
+    "/api/v1/editorial/articles/{id}/withdrawal": {
+      "post": {
+        "tags": [
+          "editorial"
+        ],
+        "operationId": "withdrawArticle",
+        "summary": "End a publication, preserving every record",
+        "description": "Withdrawal ends publication and destroys nothing (FR-016, I-5). The article row, its approval, its approver, its attribution and the retrieved evidence stay exactly as they were; there is deliberately no way to erase an approval.\n\n**One guarded statement.** The update requires the article to be published and not yet withdrawn, so two concurrent withdrawals produce exactly one 200 and one 409 and neither meets the database's exception - the loser simply matches no row.\n\n**The origin comes back.** The one-per-origin indexes are partial on `withdrawn_at IS NULL`, so a withdrawn article frees its origin and it reappears in the review queue flagged as a correction candidate, carrying this withdrawal in its history.\n\n**Side effect.** `article.withdrawn`, carrying who and why, written by a database trigger in the same statement - so the audit record cannot be lost to application discipline, and the endpoint emits none of its own.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The article id. A value that is not a UUID answers 400 - a malformed id is a client mistake worth naming, distinct from an article that does not exist.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "examples": {
+              "id": {
+                "value": "8f1b6c1e-1f5a-4a2f-9e1a-2b3c4d5e6f70"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewWithdrawal"
+              },
+              "examples": {
+                "retraction": {
+                  "summary": "The source retracted the story",
+                  "value": {
+                    "reason": "the source retracted the story"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The recorded withdrawal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawalRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON or an unknown field, a blank reason, or an `{id}` path segment that is not a UUID.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "blankReason": {
+                    "summary": "No reason given",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "reason is required and must not be blank: a withdrawal is part of the audit record, and an unexplained one explains nothing"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotEditor"
+          },
+          "404": {
+            "description": "No article with this id, or one that was never published - withdrawal ends a publication, and an approval that was never released has none. Both answer 404: the existence of unpublished work is not something this endpoint confirms either.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "unknownArticle": {
+                    "summary": "No such article",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Not Found",
+                      "status": 404,
+                      "detail": "no article with this id"
+                    }
+                  },
+                  "neverPublished": {
+                    "summary": "Approved but never released",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Not Found",
+                      "status": 404,
+                      "detail": "no published article with this id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The article is already withdrawn. Withdrawal is one-way and final: who withdrew it, when and why is frozen once recorded.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "alreadyWithdrawn": {
+                    "summary": "Already withdrawn",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Conflict",
+                      "status": 409,
+                      "detail": "this article is already withdrawn; withdrawal is one-way and final, and who withdrew it, when and why is frozen"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1295,6 +1438,47 @@
           "published_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "NewWithdrawal": {
+        "type": "object",
+        "title": "NewWithdrawal",
+        "description": "The decision to end a publication. Only the reason is supplied: who withdrew it comes from the bearer token, never from the body.",
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why publication is ending. Part of the audit record, so a blank one is refused - an unexplained withdrawal explains nothing. Stored trimmed."
+          }
+        }
+      },
+      "WithdrawalRecord": {
+        "type": "object",
+        "title": "WithdrawalRecord",
+        "description": "The recorded withdrawal. The article row, its approval, its attribution and the retrieved evidence all survive it (FR-016, I-5).",
+        "required": [
+          "article_id",
+          "withdrawn_at",
+          "withdrawn_by"
+        ],
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "withdrawn_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "withdrawn_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The authenticated editor who ended the publication."
           }
         }
       }

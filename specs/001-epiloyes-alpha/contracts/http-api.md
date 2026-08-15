@@ -123,11 +123,16 @@ approval (I-1, I-5).
 
 Withdrawal ends publication and preserves every record (FR-016).
 
-- Body: `{ "reason": string }` (required, non-blank).
+- Body: `{ "reason": string }` (required, non-blank). `withdrawn_by` is
+  the authenticated editor, never a body field.
 - 200: `{ article_id, withdrawn_at, withdrawn_by }`.
+- 400: blank reason, or an `{id}` path segment that is not a uuid.
 - 404: unknown or never-published article; 409: already withdrawn.
+- 403: the database refuses a withdrawer without the editor role,
+  symmetrically with approval.
 - Side effect: `article.withdrawn` domain event (who, why) in the same
-  transaction.
+  transaction — written by the 0002 trigger, so the endpoint emits none
+  of its own.
 
 ### POST /api/v1/editorial/sources
 

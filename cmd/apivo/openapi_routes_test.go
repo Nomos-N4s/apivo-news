@@ -300,3 +300,7 @@ func (unreachableStore) Approve(context.Context, editorial.NewApproval) (editori
 func (unreachableStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editorial.Article, error) {
 	return editorial.Article{}, errors.New("the route probe must not reach the store")
 }
+
+func (unreachableStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) (editorial.Withdrawal, error) {
+	return editorial.Withdrawal{}, errors.New("the route probe must not reach the store")
+}

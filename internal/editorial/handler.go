@@ -63,6 +63,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"GET /api/v1/editorial/queue":                      h.reviewQueue,
 		"POST /api/v1/editorial/approvals":                 h.createApproval,
 		"POST /api/v1/editorial/articles/{id}/publication": h.publishArticle,
+		"POST /api/v1/editorial/articles/{id}/withdrawal":  h.withdrawArticle,
 		"POST /api/v1/editorial/sources":                   h.createSource,
 	}
 }
@@ -178,6 +179,68 @@ func (h *Handler) publishArticle(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, r, http.StatusOK, publicationResponse{
 		ArticleID:   article.ID.String(),
 		PublishedAt: article.PublishedAt.Format(timeFormat),
+	})
+}
+
+// withdrawalRequest is the withdrawal payload: why publication is ending.
+// Who is ending it comes from the bearer token, never from the body.
+type withdrawalRequest struct {
+	Reason string `json:"reason"`
+}
+
+// withdrawalResult is the recorded withdrawal.
+type withdrawalResult struct {
+	ArticleID   string `json:"article_id"`
+	WithdrawnAt string `json:"withdrawn_at"`
+	WithdrawnBy string `json:"withdrawn_by"`
+}
+
+// withdrawArticle implements POST /api/v1/editorial/articles/{id}/withdrawal.
+func (h *Handler) withdrawArticle(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathArticleID(w, r)
+	if !ok {
+		return
+	}
+	var req withdrawalRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if blank(req.Reason) {
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"reason is required and must not be blank: a withdrawal is part of the audit record, and an unexplained one explains nothing")
+		return
+	}
+
+	editor := editorFrom(r.Context())
+	withdrawal, err := h.store.Withdraw(r.Context(), id, editor.ID, strings.TrimSpace(req.Reason))
+	switch {
+	case errors.Is(err, ErrArticleNotFound):
+		platformhttp.Problem(w, http.StatusNotFound, "no article with this id")
+		return
+	// A never-published article has no publication to end. It answers 404
+	// rather than 409 per the contract: the existence of unpublished work
+	// is not something this endpoint confirms either.
+	case errors.Is(err, ErrArticleNotPublished):
+		platformhttp.Problem(w, http.StatusNotFound, "no published article with this id")
+		return
+	case errors.Is(err, ErrAlreadyWithdrawn):
+		platformhttp.Problem(w, http.StatusConflict,
+			"this article is already withdrawn; withdrawal is one-way and final, and who withdrew it, when and why is frozen")
+		return
+	// The database checks the withdrawer's role again, symmetrically with
+	// approval. Reaching this arm means the role changed under the request.
+	case errors.Is(err, ErrNotEditor):
+		platformhttp.Problem(w, http.StatusForbidden, "the editor role is required")
+		return
+	case err != nil:
+		h.internalError(w, r, "withdrawing article", err)
+		return
+	}
+
+	h.writeJSON(w, r, http.StatusOK, withdrawalResult{
+		ArticleID:   withdrawal.ArticleID.String(),
+		WithdrawnAt: withdrawal.WithdrawnAt.Format(timeFormat),
+		WithdrawnBy: withdrawal.WithdrawnBy.String(),
 	})
 }
 
