@@ -79,7 +79,13 @@ const recordRows = (item: FrontItem): { term: string; value: string; href?: stri
 const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`;
 ---
 
-<ReaderLayout lang={lang} title={title} description={t.tagline} footerNote={t.reassurance}>
+<ReaderLayout
+  lang={lang}
+  title={title}
+  description={t.tagline}
+  footerNote={t.reassurance}
+  homeHref={homeHref}
+>
   <Masthead homeHref={homeHref} dateText={formatMastheadDate(lang, now)}>
     <button class="btn btn-secondary sign-in" disabled title={t.signInPending}>{t.signIn}</button>
   </Masthead>

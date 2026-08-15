@@ -75,11 +75,17 @@ export interface SpendLedger {
   readonly cap_microusd: number;
 }
 
-/** A `GET /api/v1/editorial/queue` page, plus the states the screen needs. */
+/**
+ * A `GET /api/v1/editorial/queue` page, plus the states the screen needs.
+ *
+ * Only `items` is in the contract, so `holds` and `spend` are optional:
+ * a contract-compliant response carries neither, and the screen must
+ * render without them rather than throw on a missing ledger.
+ */
 export interface QueuePage {
   readonly items: readonly QueueItem[];
-  readonly holds: PipelineHolds;
-  readonly spend: SpendLedger;
+  readonly holds?: PipelineHolds;
+  readonly spend?: SpendLedger;
 }
 
 /**
@@ -152,6 +158,51 @@ export interface ArticleProvenance {
   readonly events?: readonly DomainEvent[];
 }
 
+/**
+ * Runtime check of a provenance payload. The audit screen dereferences
+ * nested objects and formats four timestamps, so a partial body would
+ * surface as `Invalid Date` or a thrown formatter mid-render. A
+ * malformed record is the client's error, not a crashed audit.
+ */
+function isArticleProvenance(body: unknown): body is ArticleProvenance {
+  if (typeof body !== 'object' || body === null) {
+    return false;
+  }
+  const record = body as Record<string, unknown>;
+  const source = record['source'] as Record<string, unknown> | undefined;
+  const item = record['source_item'] as Record<string, unknown> | undefined;
+  const approval = record['approval'] as Record<string, unknown> | undefined;
+  const translation = record['translation'] as Record<string, unknown> | null | undefined;
+  return (
+    typeof record['article_id'] === 'string' &&
+    typeof record['headline'] === 'string' &&
+    Array.isArray(record['places']) &&
+    typeof source === 'object' &&
+    source !== null &&
+    typeof source['name'] === 'string' &&
+    typeof item === 'object' &&
+    item !== null &&
+    typeof item['source_url'] === 'string' &&
+    isTimestamp(item['retrieved_at']) &&
+    typeof item['licence_snapshot'] === 'string' &&
+    typeof item['usage_rule_snapshot'] === 'string' &&
+    typeof approval === 'object' &&
+    approval !== null &&
+    typeof approval['approver_name'] === 'string' &&
+    isTimestamp(approval['approved_at']) &&
+    (translation === null ||
+      translation === undefined ||
+      (typeof translation === 'object' &&
+        typeof translation['model'] === 'string' &&
+        isTimestamp(translation['generated_at'])))
+  );
+}
+
+/** A value usable as a date — a string the Date constructor can read. */
+function isTimestamp(value: unknown): boolean {
+  return typeof value === 'string' && !Number.isNaN(new Date(value).getTime());
+}
+
 /** One append-only audit record (FR-012). */
 export interface DomainEvent {
   readonly type: string;
@@ -185,7 +236,16 @@ export interface WithdrawalOutcome {
 /** The editorial API surface the pages consume. */
 export interface EditorialApi {
   queue(): Promise<QueuePage>;
-  approve(sourceItemId: string, translationId: string | null): Promise<ApprovalOutcome>;
+  /**
+   * Approval carries the attribution the contract requires (non-blank —
+   * it becomes `article.attribution_block`, which FR-008 renders on every
+   * published item).
+   */
+  approve(
+    sourceItemId: string,
+    translationId: string | null,
+    attribution: string,
+  ): Promise<ApprovalOutcome>;
   /** The audit trace; null when the id matches no article. */
   provenance(articleId: string): Promise<ArticleProvenance | null>;
   withdraw(articleId: string, reason: string): Promise<WithdrawalOutcome>;
@@ -196,6 +256,16 @@ const NOT_WIRED_APPROVAL =
 
 const NOT_WIRED_WITHDRAWAL =
   'The editorial API is not implemented yet (T021), so publication did not end and nothing was written to the audit stream.';
+
+/**
+ * `API_BASE_URL` is one address for the whole Go API, but the reader and
+ * editorial endpoints land as separate tasks (T024 versus T019/T020). A
+ * deployment can therefore serve the reader while the editorial routes
+ * are still absent, and the editorial screens must not turn that into an
+ * error page: a 404 means "not deployed yet", which is exactly the state
+ * the fixtures describe.
+ */
+const NOT_DEPLOYED = 404;
 
 function fixtureApi(): EditorialApi {
   return {
@@ -213,10 +283,16 @@ function fixtureApi(): EditorialApi {
       return Promise.resolve({ recorded: false, reason: NOT_WIRED_APPROVAL });
     },
     provenance(articleId: string): Promise<ArticleProvenance | null> {
+      // An empty id is the screen's first visit, with nothing typed yet:
+      // show a trace so the page has something to demonstrate. A given
+      // id that matches nothing is genuinely not found — falling back to
+      // an unrelated article would be the one thing an audit must never
+      // do, since the reader would be looking at another item's evidence.
+      if (articleId === '') {
+        return Promise.resolve(PROVENANCE_FIXTURES.at(0) ?? null);
+      }
       return Promise.resolve(
-        PROVENANCE_FIXTURES.find((row) => row.article_id === articleId) ??
-          PROVENANCE_FIXTURES.at(0) ??
-          null,
+        PROVENANCE_FIXTURES.find((row) => row.article_id === articleId) ?? null,
       );
     },
     withdraw(): Promise<WithdrawalOutcome> {
@@ -233,9 +309,13 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
   if (token !== null) {
     headers['Authorization'] = `Bearer ${token}`;
   }
+  const fixtures = fixtureApi();
   return {
     async queue(): Promise<QueuePage> {
       const response = await fetchImpl(new URL(`${base}/api/v1/editorial/queue`), { headers });
+      if (response.status === NOT_DEPLOYED) {
+        return fixtures.queue();
+      }
       if (!response.ok) {
         throw new EditorialApiError(
           `editorial API answered ${response.status} for the queue`,
@@ -252,9 +332,14 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
       }
       return body as QueuePage;
     },
-    async approve(sourceItemId: string, translationId: string | null): Promise<ApprovalOutcome> {
+    async approve(
+      sourceItemId: string,
+      translationId: string | null,
+      attribution: string,
+    ): Promise<ApprovalOutcome> {
       // The contract takes exactly one origin: translation_id XOR
-      // source_item_id (400 if both or neither).
+      // source_item_id (400 if both or neither), plus a non-blank
+      // attribution, which becomes the article's attribution block.
       const origin =
         translationId === null
           ? { source_item_id: sourceItemId }
@@ -262,8 +347,11 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
       const response = await fetchImpl(new URL(`${base}/api/v1/editorial/approvals`), {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...origin, publish: true }),
+        body: JSON.stringify({ ...origin, attribution, publish: true }),
       });
+      if (response.status === NOT_DEPLOYED) {
+        return fixtures.approve(sourceItemId, translationId, attribution);
+      }
       if (!response.ok) {
         throw new EditorialApiError(
           `editorial API answered ${response.status} for the approval`,
@@ -277,6 +365,12 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
       return { recorded: true, ...(body as Record<string, unknown>) } as ApprovalOutcome;
     },
     async provenance(articleId: string): Promise<ArticleProvenance | null> {
+      // No id means nothing to trace. Interpolating an empty segment
+      // would request /articles//provenance and turn a first visit into
+      // an error.
+      if (articleId === '') {
+        return null;
+      }
       const url = new URL(
         `${base}/api/v1/editorial/articles/${encodeURIComponent(articleId)}/provenance`,
       );
@@ -291,10 +385,10 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
         );
       }
       const body: unknown = await response.json();
-      if (typeof body !== 'object' || body === null || !('article_id' in body)) {
-        throw new EditorialApiError('editorial API answered without a provenance record');
+      if (!isArticleProvenance(body)) {
+        throw new EditorialApiError('editorial API answered with a malformed provenance record');
       }
-      return body as ArticleProvenance;
+      return body;
     },
     async withdraw(articleId: string, reason: string): Promise<WithdrawalOutcome> {
       const url = new URL(
