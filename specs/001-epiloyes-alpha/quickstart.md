@@ -15,6 +15,47 @@ DATABASE_URL="postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable" go ru
 cd web && npm ci && npm run dev         # frontend on :4321, API on :8080
 ```
 
+## Provision an editor (once per person)
+
+Signing in is not the same as being an editor. Supabase Auth says who
+someone is; the `account` row is what makes them a person this system can
+name as an approver, and nothing creates it automatically. Until it
+exists, `identity.Authenticate` finds no row for the token's subject and
+answers 401 — a valid sign-in that every editorial call rejects.
+
+`account.id` **must equal the Supabase Auth user id**. That id is the
+`sub` claim of every token the project issues, and `Authenticate` looks
+the account up by it directly; any other value is an account nobody can
+authenticate as.
+
+1. Configure both halves of auth: `JWKS_URL` on the api (it verifies the
+   tokens) and `PUBLIC_SUPABASE_URL` + `PUBLIC_SUPABASE_ANON_KEY` on the
+   web (it issues them). Left empty, the editorial routes are unmounted
+   and the screens say they are a preview.
+2. Create the person in Supabase Studio → Authentication → Users, and
+   copy their user id.
+3. In Studio's SQL editor, run this once per editor:
+
+   ```sql
+   insert into account (id, email, display_name, role)
+   values ('<the Supabase user id>', 'eleni@example.org', 'Eleni Papadaki', 'editor');
+   ```
+
+   `display_name` is the name `article_provenance` reports as the approver
+   of everything this person ever approves (I-1), so it is a real human
+   name, not a handle or a team. `role` must be `editor`: the trigger from
+   migration 0002 refuses an article whose approver is a reader.
+4. Optionally, on the same user in Studio, set the metadata the editorial
+   chrome reads — user metadata `{"display_name": "Eleni Papadaki"}` and
+   app metadata `{"role": "editor"}`. This is display only: the web
+   container never reads the `account` table, so without it the screens
+   fall back to the email address and name the role as reader. Nothing is
+   permitted by it — approval authority is checked by the database.
+
+There is deliberately no `apivo` subcommand for this. Creating approvers
+is a rare, founder-only act with legal weight, and a CLI that mints them
+is a second path to the authority the database is the sole gate for.
+
 ## Exercise the alpha end to end (once implemented)
 
 1. **Add a source** (editor JWT): `POST /api/v1/editorial/sources` with a
