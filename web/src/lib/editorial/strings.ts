@@ -23,6 +23,11 @@ export interface EditorialStrings {
   readonly signInFailed: string;
   readonly signInUnavailable: string;
   readonly signedOutNow: string;
+  /**
+   * A POST arrived from a session that had already ended. The page keeps
+   * what was typed on screen instead of bouncing it through a redirect.
+   */
+  readonly signedOutMidPost: string;
   /** Nav rail. */
   readonly reviewQueue: string;
   readonly sources: string;
@@ -127,6 +132,8 @@ const EL: EditorialStrings = {
   signInUnavailable:
     'Δεν έχει ρυθμιστεί υπηρεσία ταυτοποίησης σε αυτή την εγκατάσταση, οπότε η φόρμα δεν στέλνει τίποτα. Οι συντακτικές οθόνες δείχνουν δείγματα δεδομένων.',
   signedOutNow: 'Αποσυνδεθήκατε.',
+  signedOutMidPost:
+    'Η συνεδρία σας έληξε πριν από την υποβολή, οπότε τίποτα δεν καταγράφηκε. Συνδεθείτε ξανά — ό,τι πληκτρολογήσατε διατηρείται εδώ.',
   reviewQueue: 'Ουρά ελέγχου',
   sources: 'Πηγές',
   published: 'Δημοσιευμένα',
@@ -234,6 +241,8 @@ const DE: EditorialStrings = {
   signInUnavailable:
     'In dieser Installation ist kein Anmeldedienst eingerichtet, dieses Formular sendet also nichts. Die Redaktionsansichten zeigen Beispieldaten.',
   signedOutNow: 'Sie sind abgemeldet.',
+  signedOutMidPost:
+    'Ihre Sitzung endete vor dem Absenden, es wurde also nichts verzeichnet. Melden Sie sich erneut an — das Eingetippte bleibt hier erhalten.',
   reviewQueue: 'Prüfliste',
   sources: 'Quellen',
   published: 'Veröffentlicht',

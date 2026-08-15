@@ -38,8 +38,14 @@ const session = editorSession(Astro.request);
 // the sign-in screen: this page offers approval, and approval needs a
 // named editor's own token. Without a provider there is nothing to sign
 // in to, and the screen stays the fixture preview it has been.
+//
+// Only a GET is redirected. A POST is someone's finished work arriving
+// from a session that expired mid-edit; a redirect would land on the
+// sign-in page as a GET with the form's content gone, so the page
+// re-renders instead with a signed-out notice that keeps what was typed.
 const configured = authConfigured();
-if (configured && !session.authenticated) {
+const signedOut = configured && !session.authenticated;
+if (signedOut && Astro.request.method !== 'POST') {
   return Astro.redirect(`/${lang}/editor/signin`);
 }
 
@@ -49,6 +55,9 @@ const api = createEditorialApi(API_BASE_URL, session.token);
 // real. With no editorial API the client answers recorded:false and the
 // screen says so — it never claims a record it did not create.
 let outcome: ApprovalOutcome | null = null;
+let signedOutPost = false;
+let staleItemId: string | null = null;
+let staleAttribution: string | null = null;
 if (Astro.request.method === 'POST') {
   // Approval is a privileged, named act. A cross-site form must never be
   // able to drive it with a logged-in editor's browser — the check is in
@@ -65,7 +74,14 @@ if (Astro.request.method === 'POST') {
   // The contract requires a non-blank attribution: it becomes the
   // article's attribution block, which FR-008 renders on every item.
   const attribution = String(form.get('attribution') ?? '').trim();
-  if (sourceItemId !== '' && attribution !== '') {
+  if (signedOut) {
+    // No token, so nothing can be recorded — but the attribution is this
+    // editor's wording, and losing it to a redirect would cost the one
+    // thing on this form that was typed rather than selected.
+    signedOutPost = true;
+    staleItemId = sourceItemId === '' ? null : sourceItemId;
+    staleAttribution = attribution === '' ? null : attribution;
+  } else if (sourceItemId !== '' && attribution !== '') {
     try {
       outcome = await api.approve(sourceItemId, translationId, attribution);
     } catch (error) {
@@ -87,7 +103,9 @@ try {
 }
 
 const items = queue?.items ?? [];
-const selectedId = Astro.url.searchParams.get('item');
+// A signed-out POST re-selects the item it was about, so the re-render
+// puts the preserved attribution back into its own form.
+const selectedId = Astro.url.searchParams.get('item') ?? staleItemId;
 const selected = items.find((item) => item.source_item_id === selectedId) ?? items.at(0);
 
 const here = `/${lang}/editor`;
@@ -181,6 +199,23 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
       </div>
 
       <div class="review">
+        {
+          signedOutPost && (
+            <div class="banner banner-warn">
+              <span class="banner-label">{t.notRecordedTitle}</span>
+              <span class="banner-body">
+                {t.signedOutMidPost}
+                {/* The queue may be unreadable without a token, and then
+                    there is no form to put the wording back into — so the
+                    notice itself carries it. */}
+                {staleAttribution !== null && selected === undefined && ` «${staleAttribution}»`}
+              </span>
+              <a class="banner-link" href={`/${lang}/editor/signin`}>
+                {t.signIn}
+              </a>
+            </div>
+          )
+        }
         {
           outcome !== null && (
             <div class:list={['banner', { 'banner-warn': !outcome.recorded }]}>
@@ -281,7 +316,11 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                         class="input"
                         id="attribution"
                         name="attribution"
-                        value={defaultAttribution(selected)}
+                        value={
+                          selected.source_item_id === staleItemId && staleAttribution !== null
+                            ? staleAttribution
+                            : defaultAttribution(selected)
+                        }
                         required
                       />
                     </div>
@@ -433,6 +472,10 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
   .banner-body {
     font-size: 13px;
     max-width: 80ch;
+  }
+  .banner-link {
+    font-size: 13px;
+    color: var(--color-accent-400);
   }
   .empty-review {
     padding: var(--space-8) var(--space-6);
