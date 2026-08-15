@@ -106,6 +106,11 @@ path); the database permits `published_at` to be set exactly once.
 - 400: the `{id}` path segment is not a uuid — a malformed id is a client
   mistake worth naming, distinct from an article that does not exist.
 - 404: unknown article; 409: already published.
+- 403: the actor no longer holds the editor role at the moment of the
+  write. No trigger can enforce this one — nothing on the article records
+  who released it — so the publishing transaction takes a locking read of
+  the actor's account row and the UPDATE itself carries the editor
+  predicate. A demotion and a publication therefore serialize.
 - Side effect: `article.published` domain event, in the same transaction.
 
 Lifecycle note: an approved article is either published (this endpoint or
