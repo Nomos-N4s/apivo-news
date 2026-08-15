@@ -83,6 +83,14 @@ func (s okStore) CreateSource(context.Context, editorial.NewSource) (editorial.S
 	return s.src, nil
 }
 
+// recordingStore captures what the handler actually asked to persist.
+type recordingStore struct{ got editorial.NewSource }
+
+func (s *recordingStore) CreateSource(_ context.Context, src editorial.NewSource) (editorial.Source, error) {
+	s.got = src
+	return editorial.Source{ID: uuid.New(), URL: src.URL, UsageRule: "extract_and_link"}, nil
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -288,6 +296,73 @@ func TestCreateSourceValidation(t *testing.T) {
 			t.Parallel()
 			wantProblem(t, post(t, tc.body), http.StatusBadRequest, tc.field)
 		})
+	}
+
+	// source.url is the sole ingestion origin: a value the crawler cannot
+	// fetch registers a source no poller will ever read, so it must be
+	// refused here rather than persisted with a 201.
+	badURLs := []struct {
+		name string
+		url  string
+	}{
+		{name: "no scheme", url: "not-a-url"},
+		{name: "host without a scheme", url: "example.test/feed.xml"},
+		{name: "scheme-relative", url: "//example.test/feed.xml"},
+		{name: "relative path", url: "/feed.xml"},
+		{name: "non-http scheme", url: "ftp://example.test/feed.xml"},
+		{name: "file scheme", url: "file:///etc/passwd"},
+		{name: "javascript scheme", url: "javascript:alert(1)"},
+		{name: "scheme with no host", url: "http://"},
+		{name: "port with no host", url: "http://:8080"},
+		{name: "whitespace only", url: "   "},
+	}
+	for _, tc := range badURLs {
+		t.Run("400 on url "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := `{"name":"N","url":` + jsonString(t, tc.url) +
+				`,"language":"el","jurisdiction":"GR","licence_terms":"T"}`
+			wantProblem(t, post(t, body), http.StatusBadRequest, "url")
+		})
+	}
+
+	goodURLs := []struct {
+		name string
+		url  string
+	}{
+		{name: "https", url: "https://example.test/feed.xml"},
+		{name: "http", url: "http://example.test/feed.xml"},
+		{name: "with port and query", url: "https://example.test:8443/feed?format=atom"},
+		{name: "surrounding whitespace is trimmed", url: "  https://example.test/feed.xml  "},
+	}
+	for _, tc := range goodURLs {
+		t.Run("201 on url "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			// The canned store answers, so reaching 201 proves the URL
+			// passed validation rather than that anything was persisted.
+			h := newHandler(t, okStore{src: editorial.Source{ID: uuid.New(), UsageRule: "extract_and_link"}})
+			body := `{"name":"N","url":` + jsonString(t, tc.url) +
+				`,"language":"el","jurisdiction":"GR","licence_terms":"T"}`
+			rec := doJSON(t, h, http.MethodPost, "/api/v1/editorial/sources", editorToken, body)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusCreated, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestCreateSourceTrimsURL pins that the stored feed URL is the trimmed
+// one: the unique index that backs the 409 compares stored values, so
+// leading or trailing whitespace must not smuggle a duplicate past it.
+func TestCreateSourceTrimsURL(t *testing.T) {
+	t.Parallel()
+	rec := &recordingStore{}
+	h := editorial.NewHandler(discardLogger(), rec, fakeAuth{})
+	body := `{"name":"N","url":"  https://example.test/feed.xml  ","language":"el","jurisdiction":"GR","licence_terms":"T"}`
+	if got := doJSON(t, h, http.MethodPost, "/api/v1/editorial/sources", editorToken, body); got.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d (body %q)", got.Code, http.StatusCreated, got.Body.String())
+	}
+	if want := "https://example.test/feed.xml"; rec.got.URL != want {
+		t.Errorf("stored url = %q, want the trimmed %q", rec.got.URL, want)
 	}
 }
 

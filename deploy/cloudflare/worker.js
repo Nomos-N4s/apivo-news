@@ -83,13 +83,18 @@ export class ApiContainer extends ContainerHost {
 		// token, so an editorial-only misconfiguration must not take the
 		// public site down. The Go binary logs an ERROR line at startup and
 		// leaves every /api/v1/editorial/ route unmounted (404).
+		//
+		// Each var is forwarded INDEPENDENTLY. Gating the audience on the
+		// JWKS URL would quietly drop a configured JWT_AUDIENCE whenever
+		// JWKS_URL was absent — exactly the inconsistent pair that
+		// config.FromEnv is written to reject. Swallowing it here would
+		// convert a loud, documented startup error into a silent degrade to
+		// reader-only mode, hiding the operator's mistake.
 		if (this.env.JWKS_URL) {
 			containerEnv.JWKS_URL = this.env.JWKS_URL;
-			// Only meaningful alongside JWKS_URL: the binary rejects an
-			// audience without a verification endpoint.
-			if (this.env.JWT_AUDIENCE) {
-				containerEnv.JWT_AUDIENCE = this.env.JWT_AUDIENCE;
-			}
+		}
+		if (this.env.JWT_AUDIENCE) {
+			containerEnv.JWT_AUDIENCE = this.env.JWT_AUDIENCE;
 		}
 		return containerEnv;
 	}

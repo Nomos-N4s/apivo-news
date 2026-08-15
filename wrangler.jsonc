@@ -25,24 +25,29 @@
 // Non-secret vars — plain configuration in "vars" below, handed to the API
 // container by deploy/cloudflare/worker.js:
 //
-//   JWKS_URL       The auth provider's JWKS endpoint. NOT a secret: it names
-//                  where PUBLIC keys are published. Required for the
-//                  editorial endpoints — with it unset the API starts and
-//                  serves readers normally, logs an ERROR line naming the
-//                  consequence, and every /api/v1/editorial/ route answers
-//                  404. The value below is a CHANGE-ME placeholder; replace
-//                  the project reference before deploying.
+//   JWKS_URL       The auth provider's JWKS endpoint, e.g.
+//                  https://<project>.supabase.co/auth/v1/.well-known/jwks.json
+//                  NOT a secret: it names where PUBLIC keys are published.
+//                  Required for the editorial endpoints — left EMPTY the API
+//                  starts and serves readers normally, logs an ERROR line
+//                  naming the consequence, and every /api/v1/editorial/ route
+//                  answers 404.
 //   JWT_AUDIENCE   Optional. When set, tokens must additionally carry this
 //                  aud claim (Supabase access tokens carry "authenticated").
-//                  Only meaningful alongside JWKS_URL — setting it alone
-//                  fails startup.
+//                  Only meaningful alongside a non-empty JWKS_URL — setting
+//                  it alone fails startup, by design.
+//
+// Both ship EMPTY on purpose. A placeholder hostname is a real value to the
+// binary, so it would select the fail-fast verifier path and a fresh deploy
+// would crash-loop until someone edited it; empty means exactly "not
+// configured yet", and nothing in between can fake a configuration.
 {
 	"name": "apivo-news",
 	"main": "deploy/cloudflare/worker.js",
 	"compatibility_date": "2026-08-01",
 	"vars": {
-		"JWKS_URL": "https://PLACEHOLDER_PROJECT.supabase.co/auth/v1/.well-known/jwks.json",
-		"JWT_AUDIENCE": "authenticated"
+		"JWKS_URL": "",
+		"JWT_AUDIENCE": ""
 	},
 	"containers": [
 		{

@@ -18,8 +18,13 @@
 #   DATABASE_URL is deliberately absent: it is a credential and lives in the
 #   Secret (see secret.yaml).
 #
-# The JWKS_URL value below is a CHANGE-ME placeholder, not a real endpoint:
-# replace the project reference before applying.
+# JWKS_URL and JWT_AUDIENCE ship EMPTY, and deliberately so. A placeholder
+# hostname would be worse than nothing: it is a real value as far as the
+# binary is concerned, so it selects the fail-fast verifier path and the api
+# would refuse to start until an operator edited it. Empty means exactly
+# "not configured yet" - the documented safe state - and there is no third
+# value that could fake a configuration. Set a real endpoint to enable the
+# editorial endpoints.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -31,5 +36,10 @@ data:
   HTTP_ADDR: ":8080"
   APP_ENV: "prod"
   LOG_LEVEL: "info"
-  JWKS_URL: "https://PLACEHOLDER_PROJECT.supabase.co/auth/v1/.well-known/jwks.json" # CHANGE-ME placeholder, not a credential
-  JWT_AUDIENCE: "authenticated"
+  # Empty = editorial endpoints unmounted (ERROR logged at startup, readers
+  # unaffected). Set to e.g.
+  # https://<project>.supabase.co/auth/v1/.well-known/jwks.json to enable them.
+  JWKS_URL: ""
+  # Optional, and only alongside a non-empty JWKS_URL (the binary rejects an
+  # audience without a verification endpoint). Supabase tokens: "authenticated".
+  JWT_AUDIENCE: ""

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
 )
@@ -70,7 +72,7 @@ func (h *Handler) createSource(w http.ResponseWriter, r *http.Request) {
 	}
 	src := NewSource{
 		Name:         req.Name,
-		URL:          req.URL,
+		URL:          strings.TrimSpace(req.URL),
 		Language:     req.Language,
 		Jurisdiction: req.Jurisdiction,
 		LicenceTerms: req.LicenceTerms,
@@ -105,15 +107,17 @@ func (h *Handler) createSource(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// validateNewSource checks a registration for blank fields. The database
-// enforces the same non-blank rules again; this is the polite 400 with a
-// nameable field, not the guarantee.
+// validateNewSource checks a registration for blank fields and a usable
+// feed URL. The database enforces the non-blank rules again; this is the
+// polite 400 with a nameable field, not the guarantee.
 func validateNewSource(src NewSource) (detail string, ok bool) {
 	switch {
 	case blank(src.Name):
 		return "name is required and must not be blank", false
 	case blank(src.URL):
 		return "url is required and must not be blank", false
+	case !feedURL(src.URL):
+		return "url must be an absolute http or https URL with a host, e.g. https://example.org/feed.xml", false
 	case blank(src.Language):
 		return "language is required and must not be blank", false
 	case blank(src.Jurisdiction):
@@ -122,4 +126,23 @@ func validateNewSource(src NewSource) (detail string, ok bool) {
 		return "licence_terms is required and must not be blank", false
 	}
 	return "", true
+}
+
+// feedURL reports whether raw is a URL the crawler could actually poll:
+// absolute, http or https, and carrying a host. source.url is the sole
+// ingestion origin, so a syntactically accepted but unfetchable value
+// (`not-a-url`, `/feed.xml`, `ftp://…`) would register a source no poller
+// can ever read - the database has no opinion on the matter, so this is
+// the only place it can be caught.
+func feedURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	// Parse accepts "http://" with an empty host; a feed needs somewhere
+	// to point at. Hostname() strips any port, so ":8080" alone fails too.
+	return u.Hostname() != ""
 }

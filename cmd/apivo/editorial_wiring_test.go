@@ -260,10 +260,14 @@ func TestEditorAuthMapsVanishedAccountTo401(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = verifier.Close(context.Background()) })
 
-	auth := editorAuth{
-		ids:   identity.New(verifier, pool),
-		roles: vanishingRoles{pool: pool, real: identity.NewAccountRoles(pool), t: t},
-	}
+	// Built through the same constructor the composition root uses, so a
+	// change to how the adapter is assembled is exercised here too; only
+	// the role source is substituted, since forcing the delete-between-
+	// queries window is the whole point of this test.
+	auth := newEditorAuth(
+		identity.New(verifier, pool),
+		vanishingRoles{pool: pool, real: identity.NewAccountRoles(pool), t: t},
+	)
 
 	_, err = auth.AuthenticateEditor(ctx, mintBearer(t, key, editorID.String()))
 	if !errors.Is(err, editorial.ErrUnauthenticated) {
@@ -400,12 +404,15 @@ func TestRunFailsFastOnUnreachableJWKS(t *testing.T) {
 		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise this test")
 	}
 
-	srv := httptest.NewServer(http.NotFoundHandler())
-	srv.Close() // now unreachable
 	env := map[string]string{
 		"DATABASE_URL": dbURL,
 		"HTTP_ADDR":    "127.0.0.1:0",
-		"JWKS_URL":     srv.URL,
+		// Port 0 is never a valid destination, so the connection fails
+		// deterministically - unlike a closed httptest server, whose freed
+		// ephemeral port a later parallel listener could be handed back,
+		// turning this into a flake. Same reasoning as the healthcheck
+		// test's "nothing listening" case in main_test.go.
+		"JWKS_URL": "http://127.0.0.1:0/.well-known/jwks.json",
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

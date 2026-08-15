@@ -119,14 +119,19 @@ func newEditorialRoute(ctx context.Context, cfg config.Config, log *slog.Logger,
 	if err != nil {
 		return platformhttp.Route{}, nil, err
 	}
-	auth := editorAuth{
-		ids:   identity.New(verifier, pool),
-		roles: identity.NewAccountRoles(pool),
-	}
+	auth := newEditorAuth(identity.New(verifier, pool), identity.NewAccountRoles(pool))
 	return platformhttp.Route{
 		Pattern: "/api/v1/editorial/",
 		Handler: editorial.NewHandler(log, editorial.NewPGStore(pool), auth),
 	}, func() { _ = verifier.Close(context.Background()) }, nil
+}
+
+// newEditorAuth builds the identity-to-editorial adapter. It is the single
+// construction point for editorAuth, so callers - production wiring and
+// tests alike - go through the same path and a new dependency cannot be
+// wired one way here and another way there.
+func newEditorAuth(ids *identity.Service, roles identity.RoleLookup) editorAuth {
+	return editorAuth{ids: ids, roles: roles}
 }
 
 // editorAuth adapts the identity module to editorial's consumer-defined
