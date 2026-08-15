@@ -490,6 +490,12 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
     },
     async sources(): Promise<SourcesPage> {
       const response = await fetchImpl(new URL(`${base}/api/v1/editorial/sources`), { headers });
+      // Only the POST exists on the API today; the list is a proposed
+      // addition, so a 404 here means the read is not deployed rather
+      // than that the screen is broken.
+      if (response.status === NOT_DEPLOYED) {
+        return fixtures.sources();
+      }
       if (!response.ok) {
         throw new EditorialApiError(
           `editorial API answered ${response.status} for the source list`,
