@@ -47,27 +47,33 @@ func (s *PGStore) Withdraw(ctx context.Context, articleID, editorID uuid.UUID, r
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := s.q.WithTx(tx)
 
-	id := pgtype.UUID{Bytes: articleID, Valid: true}
 	row, err := q.WithdrawArticle(ctx, store.WithdrawArticleParams{
-		ArticleID:   id,
+		ArticleID:   pgtype.UUID{Bytes: articleID, Valid: true},
 		WithdrawnBy: pgtype.UUID{Bytes: editorID, Valid: true},
 		Reason:      reason,
 	})
 	switch {
+	// No row for the id at all: the statement selects the article first, so
+	// this is the only thing "nothing came back" can mean.
 	case errors.Is(err, pgx.ErrNoRows):
-		// The guarded UPDATE matched nothing. Which of the three reasons it
-		// was is a question only the database can answer.
-		return Withdrawal{}, withdrawalRefusal(ctx, q, articleID, id)
+		return Withdrawal{}, fmt.Errorf("%w: %s", ErrArticleNotFound, articleID)
 	case err != nil:
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && databaseRefusedEditor(pgErr) {
 			return Withdrawal{}, fmt.Errorf("%w: %s", ErrNotEditor, pgErr.Message)
 		}
 		return Withdrawal{}, fmt.Errorf("editorial: withdrawing article: %w", err)
+	// The flags come from the same locked row the update was applied to, so
+	// they say why it did not apply rather than what some later snapshot
+	// happens to show.
+	case !row.WasPublished:
+		return Withdrawal{}, fmt.Errorf("%w: %s", ErrArticleNotPublished, articleID)
+	case row.WasWithdrawn:
+		return Withdrawal{}, fmt.Errorf("%w: %s", ErrAlreadyWithdrawn, articleID)
 	}
 
 	withdrawal := Withdrawal{
-		ArticleID:   uuid.UUID(row.ID.Bytes),
+		ArticleID:   uuid.UUID(row.ArticleID.Bytes),
 		WithdrawnAt: row.WithdrawnAt.Time,
 		WithdrawnBy: uuid.UUID(row.WithdrawnBy.Bytes),
 		Reason:      row.WithdrawalReason.String,
@@ -76,24 +82,4 @@ func (s *PGStore) Withdraw(ctx context.Context, articleID, editorID uuid.UUID, r
 		return Withdrawal{}, fmt.Errorf("editorial: committing withdrawal: %w", err)
 	}
 	return withdrawal, nil
-}
-
-// withdrawalRefusal names the reason the guarded update matched no row:
-// no such article, an article that was never published, or one whose
-// publication has already ended.
-func withdrawalRefusal(ctx context.Context, q *store.Queries, articleID uuid.UUID, id pgtype.UUID) error {
-	lifecycle, err := q.ArticleLifecycle(ctx, id)
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		return fmt.Errorf("%w: %s", ErrArticleNotFound, articleID)
-	case err != nil:
-		return fmt.Errorf("editorial: reading article lifecycle: %w", err)
-	case !lifecycle.PublishedAt.Valid:
-		return fmt.Errorf("%w: %s", ErrArticleNotPublished, articleID)
-	}
-	// The article is published, so the only predicate left to have failed
-	// is `withdrawn_at is null`. That covers the concurrent case too: if a
-	// rival withdrawal committed between the two statements, this one lost,
-	// and a conflict is exactly what it lost with.
-	return fmt.Errorf("%w: %s", ErrAlreadyWithdrawn, articleID)
 }
