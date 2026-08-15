@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -186,12 +187,15 @@ func (c FetchConfig) Fetch(ctx context.Context, feedURL string, validators Valid
 		retryAfter time.Duration
 	)
 	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
-		result, wait, err := cfg.attempt(ctx, feedURL, validators)
+		result, wait, overCap, err := cfg.attempt(ctx, feedURL, validators)
 		if err == nil {
 			return result, nil
 		}
 		lastErr, retryAfter = err, wait
-		if attempt == cfg.MaxAttempts || !retryableFetch(err) || ctx.Err() != nil {
+		// overCap honours the promise maxFetchBackoff's comment makes: a
+		// source demanding more than the ceiling is not re-asked under it -
+		// this call ends and the source is left to the next poll.
+		if attempt == cfg.MaxAttempts || overCap || !retryableFetch(err) || ctx.Err() != nil {
 			break
 		}
 		if err := sleepContext(ctx, fetchBackoff(attempt, cfg.BaseBackoff, wait)); err != nil {
@@ -235,13 +239,14 @@ func (c FetchConfig) withDefaults() FetchConfig {
 
 // attempt performs one request. It returns the wait the source asked for
 // separately from the error, because a rate limit is the one failure that
-// carries an instruction.
-func (c FetchConfig) attempt(ctx context.Context, feedURL string, validators Validators) (Result, time.Duration, error) {
+// carries an instruction; overCap reports an ask beyond the ceiling, which
+// ends the call's retrying.
+func (c FetchConfig) attempt(ctx context.Context, feedURL string, validators Validators) (Result, time.Duration, bool, error) {
 	// A context that has already ended means the request never leaves.
 	// Checked here rather than left to the transport so the outcome is
 	// unambiguous.
 	if err := ctx.Err(); err != nil {
-		return Result{}, 0, callerContextError(err)
+		return Result{}, 0, false, callerContextError(err)
 	}
 
 	attemptCtx, cancel := context.WithTimeout(ctx, c.Timeout)
@@ -249,7 +254,10 @@ func (c FetchConfig) attempt(ctx context.Context, feedURL string, validators Val
 
 	req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, feedURL, nil)
 	if err != nil {
-		return Result{}, 0, fmt.Errorf("ingestion: building the request for %q: %w", feedURL, err)
+		// The URL survived checkFeedLocation, so it parses; quote the
+		// redacted form - a licensed feed URL can carry credentials, and
+		// an error is not the place for them.
+		return Result{}, 0, false, fmt.Errorf("ingestion: building the request for %q: %w", redactedFeedURL(feedURL), err)
 	}
 	req.Header.Set("User-Agent", c.UserAgent)
 	req.Header.Set("Accept", feedAccept)
@@ -262,7 +270,7 @@ func (c FetchConfig) attempt(ctx context.Context, feedURL string, validators Val
 
 	resp, err := c.Client.Do(req)
 	if err != nil {
-		return Result{}, 0, c.transportError(ctx, err)
+		return Result{}, 0, false, c.transportError(ctx, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -272,9 +280,18 @@ func (c FetchConfig) attempt(ctx context.Context, feedURL string, validators Val
 			NotModified:  true,
 			ETag:         strings.TrimSpace(resp.Header.Get("ETag")),
 			LastModified: strings.TrimSpace(resp.Header.Get("Last-Modified")),
-		}, 0, nil
+		}, 0, false, nil
 	case resp.StatusCode != http.StatusOK:
-		return Result{}, feedRetryAfter(resp.Header), statusError(resp.StatusCode, resp.Body)
+		// Retry-After is read only where it is the source speaking - a
+		// rate limit or a stated outage. A stray header on a 404 is not an
+		// instruction, and reporting it as one would have the poll loop
+		// deferring a source that actually refused us.
+		var wait time.Duration
+		var overCap bool
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+			wait, overCap = feedRetryAfter(resp.Header)
+		}
+		return Result{}, wait, overCap, statusError(resp.StatusCode, resp.Body)
 	}
 
 	// A declared length over the bound is refused before the parser reads
@@ -283,7 +300,7 @@ func (c FetchConfig) attempt(ctx context.Context, feedURL string, validators Val
 	// claim - but there is no reason to start parsing a document the
 	// source has already told us we will have to throw away.
 	if resp.ContentLength > MaxFeedBytes {
-		return Result{}, 0, fmt.Errorf("ingestion: source declared a %d-byte feed, over the %d-byte limit: %w", resp.ContentLength, int64(MaxFeedBytes), ErrFeedTooLarge)
+		return Result{}, 0, false, fmt.Errorf("ingestion: source declared a %d-byte feed, over the %d-byte limit: %w", resp.ContentLength, int64(MaxFeedBytes), ErrFeedTooLarge)
 	}
 
 	// Straight to the parser: not read into a buffer, not decoded and
@@ -291,13 +308,13 @@ func (c FetchConfig) attempt(ctx context.Context, feedURL string, validators Val
 	// into source_item.content_hash, has to be what the source sent (I-2).
 	items, err := ParseFeed(resp.Body)
 	if err != nil {
-		return Result{}, 0, c.parseFailure(ctx, attemptCtx, err)
+		return Result{}, 0, false, c.parseFailure(ctx, attemptCtx, err)
 	}
 	return Result{
 		Items:        items,
 		ETag:         strings.TrimSpace(resp.Header.Get("ETag")),
 		LastModified: strings.TrimSpace(resp.Header.Get("Last-Modified")),
-	}, 0, nil
+	}, 0, false, nil
 }
 
 // parseFailure decides what a failed parse really was. A document that
@@ -314,16 +331,31 @@ func (c FetchConfig) parseFailure(ctx, attemptCtx context.Context, err error) er
 	if attemptCtx.Err() != nil {
 		return fmt.Errorf("ingestion: the feed stopped arriving within %s: %w", c.Timeout, ErrTimeout)
 	}
+	// The body streams straight into the parser, so a connection dying
+	// mid-document surfaces here rather than in transportError - but it is
+	// the same failure, and it gets the same classification it would have
+	// had one packet sooner. A reset is the source being unwell; a timeout
+	// is a timeout wherever it fired (a caller-supplied Client.Timeout
+	// lands here too). Only a document that genuinely arrived and made no
+	// sense falls through unclassified.
+	var netErr net.Error
+	switch {
+	case errors.As(err, &netErr) && netErr.Timeout():
+		return fmt.Errorf("ingestion: the feed stopped arriving in time: %w: %w", err, ErrTimeout)
+	case errors.Is(err, io.ErrUnexpectedEOF), errors.As(err, new(*net.OpError)):
+		return fmt.Errorf("ingestion: the connection failed mid-feed: %w: %w", err, ErrUnavailable)
+	}
 	return err
 }
 
 // transportError classifies an exchange that never completed, keeping the
 // caller's own cancellation distinct from our per-attempt deadline.
 func (c FetchConfig) transportError(ctx context.Context, err error) error {
-	// A refused location is a decision this client made, not a transport
-	// hiccup, so it is neither reclassified nor retried. The transport
-	// wraps it in a *url.Error, which unwraps to the sentinel.
-	if errors.Is(err, ErrUnsafeLocation) {
+	// A refused location or a refused redirect chain is a decision this
+	// client made, not a transport hiccup, so neither is reclassified nor
+	// retried. The transport wraps both in a *url.Error, which unwraps to
+	// the sentinel.
+	if errors.Is(err, ErrUnsafeLocation) || errors.Is(err, ErrRefused) {
 		return err
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
@@ -392,19 +424,36 @@ func snippetOf(body io.Reader) string {
 }
 
 // checkFeedLocation refuses a configured feed URL this client will not
-// speak, before any request is built.
+// speak, before any request is built. Errors quote the redacted form only:
+// a licensed feed URL can carry credentials, and the log line reporting a
+// misconfiguration is exactly where they must not appear.
 func checkFeedLocation(raw string) error {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return fmt.Errorf("ingestion: feed URL %q is not a URL: %w", raw, err)
+		// The parse error embeds the input verbatim, credentials included,
+		// so it is not wrapped. Whoever configured the source knows which
+		// URL they typed.
+		return fmt.Errorf("ingestion: the configured feed URL does not parse: %w", ErrUnsafeLocation)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("ingestion: feed URL %q has scheme %q: %w", raw, parsed.Scheme, ErrUnsafeLocation)
+		return fmt.Errorf("ingestion: feed URL %q has scheme %q: %w", parsed.Redacted(), parsed.Scheme, ErrUnsafeLocation)
 	}
 	if parsed.Host == "" {
-		return fmt.Errorf("ingestion: feed URL %q has no host: %w", raw, ErrUnsafeLocation)
+		return fmt.Errorf("ingestion: feed URL %q has no host: %w", parsed.Redacted(), ErrUnsafeLocation)
 	}
 	return nil
+}
+
+// redactedFeedURL is the form of a feed URL that may appear in an error: the
+// password, if the URL carries one, replaced. A URL that does not parse is
+// not quoted at all - checkFeedLocation refused it before any error here
+// could mention it.
+func redactedFeedURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "(unparsable feed URL)"
+	}
+	return parsed.Redacted()
 }
 
 // refuseUnsafeLocation is the redirect policy. A source is free to move its
@@ -416,25 +465,40 @@ func refuseUnsafeLocation(req *http.Request, via []*http.Request) error {
 	if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
 		return fmt.Errorf("ingestion: feed redirected to a %q location: %w", req.URL.Scheme, ErrUnsafeLocation)
 	}
+	// A chain this long is a loop or a trap - the comment on the constant
+	// says so - and both are properties of the source's configuration, not
+	// of its availability. Walking it again reproduces it, so it is a
+	// refusal: non-retried, escalated to a human.
 	if len(via) >= maxFeedRedirects {
-		return fmt.Errorf("ingestion: feed redirected more than %d times: %w", maxFeedRedirects, ErrUnavailable)
+		return fmt.Errorf("ingestion: feed redirected more than %d times: %w", maxFeedRedirects, ErrRefused)
 	}
 	return nil
 }
 
-// feedRetryAfter reads the wait a source asked for, already clamped. Only
-// the delta-seconds form is read, which is what a rate limiter sends; an
-// HTTP-date falls through to our own backoff rather than being guessed at.
-func feedRetryAfter(header http.Header) time.Duration {
+// feedRetryAfter reads the wait a source asked for. The returned duration is
+// already clamped to maxFetchBackoff; overCap reports that the source asked
+// for more than that, which is Fetch's cue to stop asking this call and
+// leave the source to the next poll. Only the delta-seconds form is read,
+// which is what a rate limiter sends; an HTTP-date falls through to our own
+// backoff rather than being guessed at.
+func feedRetryAfter(header http.Header) (wait time.Duration, overCap bool) {
 	value := strings.TrimSpace(header.Get("Retry-After"))
 	if value == "" {
-		return 0
+		return 0, false
 	}
 	seconds, err := strconv.ParseFloat(value, 64)
-	if err != nil || seconds <= 0 || math.IsInf(seconds, 0) {
-		return 0
+	if err != nil || math.IsNaN(seconds) || seconds <= 0 {
+		return 0, false
 	}
-	return min(time.Duration(seconds*float64(time.Second)), maxFetchBackoff)
+	// The clamp happens in float space, before the conversion: converting
+	// first would overflow int64 for a large enough ask, and an overflowed
+	// float-to-int conversion is implementation-defined - on amd64 it lands
+	// on math.MinInt64, a negative "wait" a min() would then keep. +Inf is
+	// caught here too, being over any cap.
+	if seconds >= maxFetchBackoff.Seconds() {
+		return maxFetchBackoff, true
+	}
+	return time.Duration(seconds * float64(time.Second)), false
 }
 
 // fetchBackoff is the wait before the attempt after this one: the source's

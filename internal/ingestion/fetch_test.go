@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -208,6 +209,74 @@ func TestFetchHonoursRetryAfterButClampsIt(t *testing.T) {
 		}
 		if got := hits.Load(); got != 1 {
 			t.Errorf("source was asked %d times, want 1", got)
+		}
+	})
+
+	t.Run("an overflowing or unreadable wait is the ceiling, never negative", func(t *testing.T) {
+		t.Parallel()
+
+		// Values whose float-to-int conversion would overflow int64 - an
+		// epoch-milliseconds timestamp, an absurd exponent, a NaN. Clamped
+		// after converting, each lands on math.MinInt64: a negative "wait"
+		// the poll loop would read as "poll again immediately", the exact
+		// opposite of what the source asked. A genuine number over the
+		// ceiling is the ceiling; NaN is not an instruction at all and
+		// falls back to our own backoff.
+		cases := map[string]time.Duration{
+			"99999999999": 30 * time.Second,
+			"1e300":       30 * time.Second,
+			"NaN":         0,
+		}
+		for value, want := range cases {
+			t.Run(value, func(t *testing.T) {
+				t.Parallel()
+
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Retry-After", value)
+					w.WriteHeader(http.StatusTooManyRequests)
+				}))
+				defer server.Close()
+
+				cfg := ingestion.FetchConfig{MaxAttempts: 1}
+				result, err := cfg.Fetch(t.Context(), server.URL+"/feed.xml", ingestion.Validators{})
+				if !errors.Is(err, ingestion.ErrRateLimited) {
+					t.Fatalf("error = %v, want ErrRateLimited", err)
+				}
+				if result.RetryAfter < 0 {
+					t.Fatalf("RetryAfter = %v: negative, the clamp overflowed", result.RetryAfter)
+				}
+				if result.RetryAfter != want {
+					t.Errorf("RetryAfter = %v, want %v", result.RetryAfter, want)
+				}
+			})
+		}
+	})
+
+	t.Run("a wait over the ceiling ends the call's retrying", func(t *testing.T) {
+		t.Parallel()
+
+		var hits atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hits.Add(1)
+			w.Header().Set("Retry-After", "600")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		defer server.Close()
+
+		// Three attempts are allowed. Re-asking under a 30s cap a source
+		// that said "ten minutes" would be hammering it against its own
+		// instruction, so the call must end on the first answer.
+		cfg := ingestion.FetchConfig{MaxAttempts: 3, BaseBackoff: 30 * time.Second}
+		started := time.Now()
+		_, err := cfg.Fetch(t.Context(), server.URL+"/feed.xml", ingestion.Validators{})
+		if !errors.Is(err, ingestion.ErrRateLimited) {
+			t.Fatalf("error = %v, want ErrRateLimited", err)
+		}
+		if got := hits.Load(); got != 1 {
+			t.Errorf("source was asked %d times, want 1: it asked to be left alone for longer than we ever wait", got)
+		}
+		if elapsed := time.Since(started); elapsed > 10*time.Second {
+			t.Errorf("the over-ceiling ask took %v, so it was waited out and retried", elapsed)
 		}
 	})
 
@@ -562,5 +631,159 @@ func TestFetchDoesNotRetryA404(t *testing.T) {
 	// blocked one, so the error quotes them.
 	if !strings.Contains(err.Error(), "no such feed") {
 		t.Errorf("the error does not quote what the source said: %v", err)
+	}
+}
+
+// halfFeedThenRST answers with valid headers and half a document, then
+// resets the connection: the failure mode of a proxy restarting mid-transfer.
+func halfFeedThenRST(t *testing.T, feed []byte, hits *atomic.Int64) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("test server does not support hijacking")
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Fatalf("hijacking: %v", err)
+		}
+		half := feed[:len(feed)/2]
+		_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/rss+xml\r\n\r\n")
+		_, _ = conn.Write(half)
+		// Linger zero turns Close into an RST rather than a FIN: the read
+		// side sees a connection error, not a clean end of body.
+		if tcp, ok := conn.(*net.TCPConn); ok {
+			_ = tcp.SetLinger(0)
+		}
+		_ = conn.Close()
+	}
+}
+
+func TestFetchRetriesAConnectionLostMidFeed(t *testing.T) {
+	t.Parallel()
+
+	feed := feedFixture(t)
+	var hits atomic.Int64
+	server := httptest.NewServer(halfFeedThenRST(t, feed, &hits))
+	defer server.Close()
+
+	// The same reset one packet earlier - before the headers - is wrapped
+	// in ErrUnavailable and retried. Dying mid-body must not be treated
+	// differently: it is the transport failing, not the document lying.
+	cfg := ingestion.FetchConfig{MaxAttempts: 2, BaseBackoff: time.Millisecond}
+	_, err := cfg.Fetch(t.Context(), server.URL+"/feed.xml", ingestion.Validators{})
+	if !errors.Is(err, ingestion.ErrUnavailable) {
+		t.Fatalf("error = %v, want ErrUnavailable: a reset mid-body is the source being unwell, not a broken document", err)
+	}
+	if got := hits.Load(); got != 2 {
+		t.Errorf("source was asked %d times, want 2: a transport failure is retried wherever in the exchange it happened", got)
+	}
+}
+
+func TestFetchClassifiesTheCallersClientTimeoutMidFeed(t *testing.T) {
+	t.Parallel()
+
+	feed := feedFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(feed[:len(feed)/2])
+		w.(http.Flusher).Flush()
+		// Stall until the client gives up: its own timeout closing the
+		// connection cancels the request context and releases the handler,
+		// so shutting the server down never waits on it.
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	// The caller's own Client.Timeout firing while the body streams lands
+	// in the parser's error, not the transport's. It is still a timeout
+	// and must be named one - not returned as an unclassified parse error
+	// the poll loop would escalate to a human.
+	cfg := ingestion.FetchConfig{
+		Client:      &http.Client{Timeout: 100 * time.Millisecond},
+		MaxAttempts: 1,
+	}
+	_, err := cfg.Fetch(t.Context(), server.URL+"/feed.xml", ingestion.Validators{})
+	if !errors.Is(err, ingestion.ErrTimeout) {
+		t.Fatalf("error = %v, want ErrTimeout", err)
+	}
+}
+
+func TestFetchIgnoresARetryAfterOnARefusal(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "600")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, "no such feed")
+	}))
+	defer server.Close()
+
+	// A stray Retry-After on a 404 - misconfigured CDNs send these - is
+	// not the source speaking about rate. Reporting it would have the poll
+	// loop dutifully deferring a source that actually refused us.
+	cfg := ingestion.FetchConfig{MaxAttempts: 1}
+	result, err := cfg.Fetch(t.Context(), server.URL+"/feed.xml", ingestion.Validators{})
+	if !errors.Is(err, ingestion.ErrRefused) {
+		t.Fatalf("error = %v, want ErrRefused", err)
+	}
+	if result.RetryAfter != 0 {
+		t.Errorf("RetryAfter = %v, want 0: a refusal carries no instruction worth relaying", result.RetryAfter)
+	}
+}
+
+func TestFetchDoesNotRetryARedirectLoop(t *testing.T) {
+	t.Parallel()
+
+	var hits atomic.Int64
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, r, server.URL+"/feed.xml", http.StatusFound)
+	}))
+	defer server.Close()
+
+	// A loop is deterministic: walking it a second and third time takes
+	// eighteen requests to learn what the first walk already proved. It is
+	// a refusal - the source's configuration needs a human.
+	cfg := ingestion.FetchConfig{MaxAttempts: 3, BaseBackoff: 30 * time.Second}
+	started := time.Now()
+	_, err := cfg.Fetch(t.Context(), server.URL+"/feed.xml", ingestion.Validators{})
+	if !errors.Is(err, ingestion.ErrRefused) {
+		t.Fatalf("error = %v, want ErrRefused", err)
+	}
+	if got, walkOnce := hits.Load(), int64(6); got > walkOnce {
+		t.Errorf("source was asked %d times, want at most %d: the loop was walked more than once", got, walkOnce)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Errorf("the loop took %v, so it was backed off and retried", elapsed)
+	}
+}
+
+func TestFetchErrorsNeverQuoteCredentials(t *testing.T) {
+	t.Parallel()
+
+	// Licensed feeds are handed out with basic-auth userinfo in the URL,
+	// and every one of these errors is destined for a log line a human
+	// reads. The password must not make the trip.
+	cases := map[string]string{
+		"a scheme this client refuses": "ftp://editor:hunter2@example.org/feed.xml",
+		"a URL with no host":           "https://editor:hunter2@/feed.xml",
+	}
+	for name, feedURL := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var cfg ingestion.FetchConfig
+			_, err := cfg.Fetch(t.Context(), feedURL, ingestion.Validators{})
+			if !errors.Is(err, ingestion.ErrUnsafeLocation) {
+				t.Fatalf("error = %v, want ErrUnsafeLocation", err)
+			}
+			if strings.Contains(err.Error(), "hunter2") {
+				t.Errorf("the error quotes the password: %v", err)
+			}
+		})
 	}
 }
