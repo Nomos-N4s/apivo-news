@@ -147,6 +147,10 @@ const setupHref = `/${lang}/setup?places=${encodeURIComponent(slugs.join(PLACE_S
     color: var(--color-accent-700);
     text-decoration: none;
     margin-left: auto;
+    /* 24px touch-target floor without moving the text (SC 2.5.8). */
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
   }
   .edit:hover {
     color: var(--color-accent-800);
