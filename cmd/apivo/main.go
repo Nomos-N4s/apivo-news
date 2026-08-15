@@ -23,6 +23,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
 	"github.com/Nomos-N4s/apivo-news/internal/identity"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
@@ -103,6 +104,10 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 	}
 
 	srv := platformhttp.New(log, cfg.HTTPAddr, readiness(pool), routes...)
+	// The reader endpoints need no bearer token, so they mount
+	// unconditionally - a missing JWKS_URL costs the editorial routes, never
+	// the public site.
+	srv.Mount("/api/v1/", content.NewHandler(log, pool))
 	log.InfoContext(ctx, "starting", "addr", cfg.HTTPAddr, "env", cfg.Env)
 	return srv.Run(ctx)
 }

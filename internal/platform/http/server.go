@@ -28,26 +28,35 @@ type Route struct {
 // context-driven graceful shutdown.
 type Server struct {
 	log   *slog.Logger
+	mux   *http.ServeMux
 	inner *http.Server
 }
 
 // New builds a Server listening on addr. The ready check backs /readyz;
-// pass the database ping. A nil check reports always ready. Any routes are
-// mounted on the same mux, sharing the noindex stamping.
+// pass the database ping. A nil check reports always ready. Any routes
+// given here are mounted on the same mux, sharing the noindex stamping;
+// Mount adds more later.
 func New(log *slog.Logger, addr string, ready ReadinessCheck, routes ...Route) *Server {
-	s := &Server{log: log}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
-	mux.HandleFunc("GET /readyz", s.handleReadyz(ready))
+	s := &Server{log: log, mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /readyz", s.handleReadyz(ready))
 	for _, r := range routes {
-		mux.Handle(r.Pattern, r.Handler)
+		s.mux.Handle(r.Pattern, r.Handler)
 	}
 	s.inner = &http.Server{
 		Addr:              addr,
-		Handler:           noindex(mux),
+		Handler:           noindex(s.mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	return s
+}
+
+// Mount registers a module's route table on the server. This is how the
+// composition root in cmd contributes business routes: the module builds an
+// http.Handler, cmd mounts it here. Call before Run; mounted routes inherit
+// the server-wide headers (X-Robots-Tag on every response).
+func (s *Server) Mount(pattern string, handler http.Handler) {
+	s.mux.Handle(pattern, handler)
 }
 
 // noindex stamps every response with a robots-blocking header. The API is
