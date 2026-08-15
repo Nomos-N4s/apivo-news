@@ -1,0 +1,709 @@
+---
+import { API_BASE_URL } from 'astro:env/server';
+import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import {
+  createEditorialApi,
+  formatItemCost,
+  formatSpend,
+  spendPercent,
+  type ApprovalOutcome,
+  type QueuePage,
+} from '../../lib/editorial/api';
+import { editorSession } from '../../lib/editorial/session';
+import { editorialStrings, languageName } from '../../lib/editorial/strings';
+import { findPlace, isReadingLanguage } from '../../lib/reader/axes';
+import { formatDateTime, safeSourceUrl } from '../../lib/reader/format';
+import { uiStrings } from '../../lib/reader/strings';
+
+// The editorial review queue — mockup 1g, the approval gate (issue #61,
+// toward T022 #25). Nothing publishes without a named editor (US4,
+// FR-007), so this screen is the product's only door: the original sits
+// beside the translation, the spend ledger is visible before anything is
+// spent (FR-006), and approval states plainly that it is permanent.
+//
+// Selection is a link (?item=…) and approval is a form POST, so the
+// screen needs no client JavaScript.
+const langSegment = Astro.params['lang'];
+if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+  return Astro.rewrite('/404');
+}
+const lang = langSegment;
+const t = editorialStrings(lang);
+const reader = uiStrings(lang);
+const session = editorSession(Astro.request);
+
+const api = createEditorialApi(API_BASE_URL, session.token);
+
+// Approval carries the editor's intent; the database is what makes it
+// real. With no editorial API the client answers recorded:false and the
+// screen says so — it never claims a record it did not create.
+let outcome: ApprovalOutcome | null = null;
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const sourceItemId = String(form.get('source_item_id') ?? '');
+  const rawTranslationId = form.get('translation_id');
+  const translationId =
+    typeof rawTranslationId === 'string' && rawTranslationId !== '' ? rawTranslationId : null;
+  if (sourceItemId !== '') {
+    try {
+      outcome = await api.approve(sourceItemId, translationId);
+    } catch (error) {
+      outcome = {
+        recorded: false,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+}
+
+let queue: QueuePage | null = null;
+let queueFailed = false;
+try {
+  queue = await api.queue();
+} catch {
+  queueFailed = true;
+  Astro.response.status = 503;
+}
+
+const items = queue?.items ?? [];
+const selectedId = Astro.url.searchParams.get('item');
+const selected = items.find((item) => item.source_item_id === selectedId) ?? items.at(0);
+
+const here = `/${lang}/editor`;
+const itemHref = (id: string): string => `${here}?item=${encodeURIComponent(id)}`;
+
+const placeName = (slugs: readonly string[] | undefined): string => {
+  const slug = slugs?.at(0);
+  return slug === undefined ? '' : (findPlace(slug)?.endonym ?? slug);
+};
+---
+
+<ReaderLayout lang={lang} title={`epiloYES — ${t.editorial}`} description={reader.tagline}>
+  <header class="chrome">
+    <span class="brand">epilo<span class="brand-yes">YES</span></span>
+    <span class="tag tag-neutral">{t.editorial}</span>
+    <span class="who">
+      {t.signedInAs} <strong>{session.displayName}</strong> · {t.roleEditor}
+      {!session.authenticated && <span class="preview-flag">{t.previewSession}</span>}
+    </span>
+  </header>
+
+  <div class="shell">
+    <nav class="rail">
+      <span class="rail-item rail-current">
+        {t.reviewQueue} <span class="count">{items.length}</span>
+      </span>
+      <span class="rail-item rail-pending">{t.sources} <span class="count">{t.pending}</span></span>
+      <span class="rail-item rail-pending">{t.published} <span class="count">{t.pending}</span></span>
+      <span class="rail-item rail-pending">{t.audit} <span class="count">{t.pending}</span></span>
+
+      {
+        queue !== null && (
+          <div class="spend">
+            <h6>{t.translationSpend}</h6>
+            <div class="spend-amount">{formatSpend(queue.spend.spent_microusd)}</div>
+            <div
+              class="spend-bar"
+              role="meter"
+              aria-valuenow={Math.round(spendPercent(queue.spend))}
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-label={t.translationSpend}
+            >
+              <div class="spend-fill" style={`width:${spendPercent(queue.spend)}%`} />
+            </div>
+            <div class="spend-note">
+              {t.ofMonthlyCap(formatSpend(queue.spend.cap_microusd), queue.spend.month)}
+            </div>
+          </div>
+        )
+      }
+    </nav>
+
+    <div class="work">
+      <div class="queue">
+        <div class="queue-head">
+          <h6>{t.awaitingApproval}</h6>
+          <span class="muted">{t.newestFirst}</span>
+        </div>
+
+        {
+          items.map((item) => (
+            <a
+              class:list={['row', { 'row-on': item.source_item_id === selected?.source_item_id }]}
+              href={itemHref(item.source_item_id)}
+              aria-current={item.source_item_id === selected?.source_item_id ? 'true' : undefined}
+            >
+              <span class="row-meta">
+                <span class="kicker">{placeName(item.places)}</span>
+                <span class="muted">
+                  {item.source_name} · {formatDateTime(lang, new Date(item.retrieved_at))}
+                </span>
+              </span>
+              <span class="row-title">
+                {item.headline_translated ?? item.headline_original ?? item.source_item_id}
+              </span>
+              <span class="row-tags">
+                {item.translation_id === null ? (
+                  <span class="tag tag-outline">{t.noTranslationNeeded}</span>
+                ) : (
+                  <>
+                    <span class="tag tag-accent">
+                      {(item.source_lang ?? '').toUpperCase()} → {(item.target_lang ?? '').toUpperCase()}
+                    </span>
+                    {typeof item.cost_microusd === 'number' && (
+                      <span class="tag tag-neutral">{formatItemCost(item.cost_microusd)}</span>
+                    )}
+                  </>
+                )}
+              </span>
+            </a>
+          ))
+        }
+
+        {
+          queue !== null && queue.holds.queued_untranslated > 0 && (
+            <div class="hold">
+              <h6>{t.queuedUntranslated}</h6>
+              <p>{t.queuedUntranslatedBody(queue.holds.queued_untranslated)}</p>
+            </div>
+          )
+        }
+        {
+          queue !== null && queue.holds.skipped_over_ceiling > 0 && (
+            <p class="skip-note">{t.skippedOverCeiling(queue.holds.skipped_over_ceiling)}</p>
+          )
+        }
+        {queueFailed && <p class="skip-note">{reader.unavailableBody}</p>}
+        {!queueFailed && items.length === 0 && <p class="skip-note">{t.emptyQueue}</p>}
+      </div>
+
+      <div class="review">
+        {
+          outcome !== null && (
+            <div class:list={['banner', { 'banner-warn': !outcome.recorded }]}>
+              <span class="banner-label">
+                {outcome.recorded ? t.approvedTitle : t.notRecordedTitle}
+              </span>
+              <span class="banner-body">
+                {outcome.recorded
+                  ? `approved_by = ${outcome.approved_by ?? session.displayName} · article ${outcome.article_id ?? ''}`
+                  : outcome.reason}
+              </span>
+            </div>
+          )
+        }
+
+        {
+          selected === undefined ? (
+            <p class="empty-review">{t.selectAnItem}</p>
+          ) : (
+            <>
+              <div class="review-head">
+                <div class="review-meta">
+                  <span class="kicker">source_item {selected.source_item_id.slice(0, 8)}</span>
+                  <span class="meta-rule" aria-hidden="true" />
+                  <span class="muted">
+                    {t.retrievedImmutable(formatDateTime(lang, new Date(selected.retrieved_at)))}
+                  </span>
+                </div>
+                <h3>{t.reviewBeforeApproval}</h3>
+              </div>
+
+              <div class="split">
+                <section class="original">
+                  <div class="col-head">
+                    <h6>{t.originalIn(languageName(lang, selected.source_lang ?? ''))}</h6>
+                    {safeSourceUrl(selected.source_url ?? '') !== null && (
+                      <a href={safeSourceUrl(selected.source_url ?? '')} rel="external noopener">
+                        {t.openSource}
+                      </a>
+                    )}
+                  </div>
+                  <div class="col-title">{selected.headline_original ?? '—'}</div>
+                  <p class="col-extract">{selected.extract_original ?? '—'}</p>
+                  <dl class="evidence">
+                    <div>
+                      <dt>original_author</dt>
+                      <dd>{selected.original_author ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt>published_at</dt>
+                      <dd>
+                        {selected.original_published_at === null ||
+                        selected.original_published_at === undefined
+                          ? '—'
+                          : formatDateTime(lang, new Date(selected.original_published_at))}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>content_hash</dt>
+                      <dd class="hash">{selected.content_hash ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt>{t.licenceAtRetrieval}</dt>
+                      <dd>{selected.licence_snapshot}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section class="translated">
+                  <div class="col-head">
+                    <h6 class="accent">
+                      {selected.translation_id === null
+                        ? t.publishedAsIs
+                        : t.translationIn(languageName(lang, selected.target_lang ?? ''))}
+                    </h6>
+                    <span class="muted">
+                      {selected.translation_id === null
+                        ? t.noTranslationNeeded
+                        : `${selected.model ?? '—'} · prompt ${selected.prompt_version ?? '—'}`}
+                    </span>
+                  </div>
+                  <div class="col-title">
+                    {selected.headline_translated ?? selected.headline_original ?? '—'}
+                  </div>
+                  <p class="col-extract">
+                    {selected.extract_translated ?? selected.extract_original ?? '—'}
+                  </p>
+                  <p class="muted extract-note">{t.extractOnlyNote}</p>
+
+                  <form class="approval" method="post" action={here}>
+                    <input type="hidden" name="source_item_id" value={selected.source_item_id} />
+                    <input
+                      type="hidden"
+                      name="translation_id"
+                      value={selected.translation_id ?? ''}
+                    />
+                    <label class="ack">
+                      <input type="checkbox" name="acknowledged" required />
+                      <span class="box" aria-hidden="true" />
+                      <span class="ack-text">{t.acknowledgement}</span>
+                    </label>
+                    <div class="actions">
+                      <button class="btn btn-primary" type="submit">{t.approveAndPublish}</button>
+                      <button class="btn btn-secondary" type="button" disabled>{t.reject}</button>
+                      <a class="btn btn-ghost skip" href={here}>{t.skip}</a>
+                    </div>
+                    <p class="muted reject-note">{t.rejectNote}</p>
+                  </form>
+                </section>
+              </div>
+            </>
+          )
+        }
+      </div>
+    </div>
+  </div>
+</ReaderLayout>
+
+<style>
+  .chrome {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-6);
+    border-bottom: 2px solid var(--color-divider);
+  }
+  .brand {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 18px;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .brand-yes {
+    color: var(--color-accent);
+  }
+  .who {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: 12px;
+    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  }
+  .who strong {
+    color: var(--color-text);
+  }
+  .preview-flag {
+    border: 1px solid var(--color-accent);
+    color: var(--color-accent-800);
+    background: var(--color-accent-100);
+    padding: 2px var(--space-2);
+    font-size: 11px;
+  }
+
+  .shell {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 190px 1fr;
+  }
+
+  /* — nav rail + the spend ledger, always in view (FR-006) — */
+  .rail {
+    border-right: 1px solid var(--color-divider);
+    padding: var(--space-4) 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .rail-item {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    font-size: 13.5px;
+  }
+  .rail-current {
+    background: var(--color-accent);
+    color: var(--color-bg);
+    font-weight: 600;
+  }
+  .rail-pending {
+    color: color-mix(in srgb, var(--color-text) 45%, transparent);
+  }
+  .count {
+    font-size: 11px;
+    opacity: 0.8;
+  }
+  .spend {
+    margin-top: auto;
+    padding: var(--space-4) var(--space-4) 0;
+    border-top: 1px solid var(--color-divider);
+  }
+  .spend h6 {
+    margin: 0 0 var(--space-2);
+    font-size: 10px;
+  }
+  .spend-amount {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 18px;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+  .spend-bar {
+    height: 6px;
+    background: var(--color-neutral-300);
+    margin-bottom: 6px;
+  }
+  .spend-fill {
+    height: 6px;
+    background: var(--color-accent);
+  }
+  .spend-note {
+    font-size: 11px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+
+  .work {
+    display: grid;
+    grid-template-columns: 400px 1fr;
+    min-height: 0;
+  }
+
+  /* — the queue — */
+  .queue {
+    border-right: 1px solid var(--color-divider);
+  }
+  .queue-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .queue-head h6 {
+    margin: 0;
+  }
+  .muted {
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .queue-head .muted {
+    margin-left: auto;
+  }
+  .row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--color-divider);
+    border-left: 3px solid transparent;
+    text-decoration: none;
+    color: var(--color-text);
+  }
+  .row:hover {
+    background: color-mix(in srgb, var(--color-text) 4%, transparent);
+  }
+  .row-on {
+    border-left-color: var(--color-accent);
+    background: var(--color-accent-100);
+  }
+  .row-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .kicker {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+  }
+  .row-title {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 15.5px;
+    line-height: 1.25;
+    text-wrap: pretty;
+  }
+  .row-tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .row-tags .tag {
+    font-size: 10px;
+  }
+  .hold {
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--color-divider);
+    background: var(--color-surface);
+  }
+  .hold h6 {
+    margin: 0 0 6px;
+    font-size: 10px;
+    color: var(--color-accent-700);
+  }
+  .hold p {
+    margin: 0;
+    font-size: 12.5px;
+    text-wrap: pretty;
+  }
+  .skip-note {
+    padding: var(--space-3) var(--space-4);
+    margin: 0;
+    font-size: 12px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    text-wrap: pretty;
+  }
+
+  /* — the review pane — */
+  .review {
+    display: flex;
+    flex-direction: column;
+  }
+  .banner {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-6);
+    background: var(--color-accent);
+    color: var(--color-bg);
+    flex-wrap: wrap;
+  }
+  .banner-warn {
+    background: var(--color-text);
+  }
+  .banner-label {
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    flex: none;
+  }
+  .banner-warn .banner-label {
+    color: var(--color-accent-400);
+  }
+  .banner-body {
+    font-size: 13px;
+    max-width: 80ch;
+  }
+  .empty-review {
+    padding: var(--space-8) var(--space-6);
+    margin: 0;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .review-head {
+    padding: var(--space-6);
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .review-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .meta-rule {
+    width: 1px;
+    height: 11px;
+    background: var(--color-divider);
+  }
+  .review-head h3 {
+    margin: 0;
+    font-size: 23px;
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    flex: 1;
+  }
+  .original {
+    padding: var(--space-6);
+    border-right: 1px solid var(--color-divider);
+    background: var(--color-surface);
+  }
+  .translated {
+    padding: var(--space-6);
+    display: flex;
+    flex-direction: column;
+  }
+  .col-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .col-head h6 {
+    margin: 0;
+  }
+  .col-head .accent {
+    color: var(--color-accent);
+  }
+  .col-head a {
+    font-size: 11.5px;
+    text-decoration: none;
+  }
+  .col-title {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 20px;
+    line-height: 1.2;
+    margin-bottom: var(--space-3);
+    text-wrap: pretty;
+  }
+  .col-extract {
+    font-size: 14px;
+    margin: 0 0 var(--space-4);
+    text-wrap: pretty;
+  }
+  .evidence {
+    margin: 0;
+    border-top: 1px solid var(--color-divider);
+    padding-top: var(--space-3);
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: color-mix(in srgb, var(--color-text) 70%, transparent);
+  }
+  .evidence > div {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .evidence dt {
+    flex: none;
+    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  }
+  .evidence dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .hash {
+    word-break: break-all;
+  }
+  .extract-note {
+    margin: 0 0 var(--space-4);
+  }
+
+  /* — the approval affordance — */
+  .approval {
+    margin-top: auto;
+    border-top: 1px solid var(--color-divider);
+    padding-top: var(--space-4);
+  }
+  .ack {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+    cursor: pointer;
+  }
+  .ack input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .box {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    margin-top: 2px;
+    border: 1.5px solid var(--color-accent);
+  }
+  .ack:has(input:checked) .box {
+    background: var(--color-accent);
+  }
+  .ack:has(input:focus-visible) .box {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  .ack-text {
+    font-size: 12.5px;
+    text-wrap: pretty;
+  }
+  .actions {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .actions .btn {
+    font-size: 14px;
+    padding: var(--space-3) calc(var(--space-4) + 2px);
+  }
+  .skip {
+    margin-left: auto;
+    font-size: 13px;
+    text-decoration: none;
+  }
+  .reject-note {
+    margin: var(--space-3) 0 0;
+  }
+
+  @media (max-width: 1100px) {
+    .work {
+      grid-template-columns: 1fr;
+    }
+    .queue {
+      border-right: 0;
+      border-bottom: 2px solid var(--color-divider);
+    }
+    .split {
+      grid-template-columns: 1fr;
+    }
+    .original {
+      border-right: 0;
+      border-bottom: 1px solid var(--color-divider);
+    }
+  }
+  @media (max-width: 760px) {
+    .shell {
+      grid-template-columns: 1fr;
+    }
+    .rail {
+      border-right: 0;
+      border-bottom: 1px solid var(--color-divider);
+    }
+    .spend {
+      margin-top: var(--space-4);
+    }
+  }
+</style>
