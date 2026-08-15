@@ -293,6 +293,62 @@ describe('the audit trace', () => {
   });
 });
 
+describe('the source list payload', () => {
+  const validCycle = { retrieved: 1, duplicates_skipped: 0, failures: [] };
+  const validSource = {
+    id: 's1',
+    name: 'X',
+    feed_path: '/rss',
+    language: 'de',
+    jurisdiction: 'DE',
+    usage_rule: 'extract_and_link',
+    permission_evidence: null,
+    active: true,
+    last_polled_at: '2026-08-14T06:12:00Z',
+  };
+
+  it('accepts a well-formed list', async () => {
+    const { fetchImpl } = respondingWith(
+      jsonResponse({ sources: [validSource], cycle: validCycle }),
+    );
+    const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources();
+    expect(page.sources).toHaveLength(1);
+  });
+
+  it('rejects a body whose poll cycle is missing — the screen dereferences it', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ sources: [validSource] }));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources(),
+    ).rejects.toBeInstanceOf(EditorialApiError);
+  });
+
+  it('rejects a last_polled_at the screen could not format', async () => {
+    // A non-null invalid timestamp would throw RangeError inside Intl
+    // mid-render; rejecting here becomes the page's calm 503 instead.
+    const { fetchImpl } = respondingWith(
+      jsonResponse({
+        sources: [{ ...validSource, last_polled_at: 'not a date' }],
+        cycle: validCycle,
+      }),
+    );
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources(),
+    ).rejects.toBeInstanceOf(EditorialApiError);
+  });
+
+  it('accepts a never-polled source, whose timestamp is null', async () => {
+    const { fetchImpl } = respondingWith(
+      jsonResponse({
+        sources: [{ ...validSource, last_polled_at: null }],
+        cycle: validCycle,
+      }),
+    );
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources(),
+    ).resolves.toBeTruthy();
+  });
+});
+
 describe('sources', () => {
   it('lists configured feeds and the deduplicating poll cycle (FR-014)', async () => {
     const page = await createEditorialApi(undefined).sources();
