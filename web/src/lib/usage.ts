@@ -10,6 +10,8 @@
 // `usage_rollup` structured log line, so the deployment's ordinary log
 // pipeline is the whole storage story.
 
+import { isReadingLanguage } from './reader/axes';
+
 /** The coarse shape of a request — never the concrete URL. */
 export type RouteClass =
   | 'front'
@@ -21,8 +23,6 @@ export type RouteClass =
   | 'robots'
   | 'other';
 
-const READING_LANGS: ReadonlySet<string> = new Set(['el', 'de']);
-
 /**
  * Classifies a pathname into its route class, or null for paths that must
  * not be counted at all (static assets). Classification is shape-based:
@@ -33,13 +33,18 @@ export function classifyRoute(pathname: string): RouteClass | null {
   if (pathname === '/robots.txt') {
     return 'robots';
   }
+  // The setup form's destination lives at the root — GET /go — because it
+  // receives the language as form data rather than as a path segment.
+  if (pathname === '/go') {
+    return 'go';
+  }
   const segments = pathname.split('/').filter((segment) => segment !== '');
   const last = segments.at(-1);
   if (last !== undefined && last.includes('.')) {
     return null;
   }
   const [langSegment, second, third] = segments;
-  if (langSegment === undefined || !READING_LANGS.has(langSegment)) {
+  if (langSegment === undefined || !isReadingLanguage(langSegment)) {
     return 'other';
   }
   if (second === undefined) {
@@ -70,12 +75,12 @@ export function classifyRoute(pathname: string): RouteClass | null {
 /** The reading language a pathname claims, or 'none' outside the axes. */
 export function pathLang(pathname: string): string {
   const first = pathname.split('/').find((segment) => segment !== '');
-  return first !== undefined && READING_LANGS.has(first) ? first : 'none';
+  return first !== undefined && isReadingLanguage(first) ? first : 'none';
 }
 
 // Day boundaries follow the newsroom clock (Europe/Berlin, like every
 // timestamp the reader sees), not UTC — a rollup day should mean the same
-// thing as the masthead date. en-CA formats as YYYY-MM-DD.
+// thing as the masthead date.
 const dayFormat = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Europe/Berlin',
   year: 'numeric',
@@ -83,9 +88,24 @@ const dayFormat = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 });
 
-/** The Europe/Berlin calendar day a moment falls on, as YYYY-MM-DD. */
+/**
+ * The Europe/Berlin calendar day a moment falls on, as YYYY-MM-DD —
+ * assembled from formatToParts rather than format(): only the time-zone
+ * arithmetic is Intl's job here, because a locale's separator/order
+ * conventions are CLDR data, not a spec guarantee, and the rollup day is
+ * a machine key that downstream consumers sort and parse.
+ */
 export function usageDay(now: Date): string {
-  return dayFormat.format(now);
+  const parts = new Map(
+    dayFormat.formatToParts(now).map((part) => [part.type, part.value]),
+  );
+  const year = parts.get('year');
+  const month = parts.get('month');
+  const day = parts.get('day');
+  if (year === undefined || month === undefined || day === undefined) {
+    throw new Error('Intl.DateTimeFormat returned no year/month/day parts');
+  }
+  return `${year}-${month}-${day}`;
 }
 
 export interface UsageCount {

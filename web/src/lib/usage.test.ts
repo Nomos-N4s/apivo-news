@@ -15,6 +15,10 @@ describe('classifyRoute', () => {
     expect(classifyRoute('/el/munich+greece/a/0d9f4a12')).toBe('article');
     expect(classifyRoute('/el/setup')).toBe('setup');
     expect(classifyRoute('/de/register')).toBe('register');
+    // The setup form's real destination is the root /go endpoint (it
+    // carries lang as form data); the langful shape is kept for the day
+    // the endpoint ever moves under the axis.
+    expect(classifyRoute('/go')).toBe('go');
     expect(classifyRoute('/el/go')).toBe('go');
     expect(classifyRoute('/el/editor')).toBe('editor');
     expect(classifyRoute('/de/editor/audit')).toBe('editor');
@@ -44,6 +48,9 @@ describe('pathLang', () => {
     expect(pathLang('/de/register')).toBe('de');
     expect(pathLang('/fr/paris')).toBe('none');
     expect(pathLang('/')).toBe('none');
+    // /go carries its language as form data, not in the path — the
+    // pathname honestly has no language axis.
+    expect(pathLang('/go')).toBe('none');
   });
 });
 
