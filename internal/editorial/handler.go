@@ -154,11 +154,14 @@ func parseQueueQuery(values url.Values) (query QueueQuery, detail string, ok boo
 	}
 
 	query.Limit = defaultQueueLimit
-	if raw := values.Get("limit"); raw != "" {
+	// Presence, not a non-empty value: `?limit=` is a supplied limit that
+	// happens to be unparseable, and answering it with the default page
+	// would read as acceptance of whatever the caller meant to send.
+	if values.Has("limit") {
 		// ParseInt with a 32-bit size, not Atoi: it refuses anything that
 		// would not fit the column type in the first place, so the bound
 		// check below is about the contract rather than about overflow.
-		limit, err := strconv.ParseInt(raw, 10, 32)
+		limit, err := strconv.ParseInt(values.Get("limit"), 10, 32)
 		if err != nil || limit < 1 || limit > maxQueueLimit {
 			return QueueQuery{}, "limit must be a whole number between 1 and " + strconv.Itoa(maxQueueLimit), false
 		}

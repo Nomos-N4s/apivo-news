@@ -126,6 +126,10 @@ func TestReviewQueueQueryValidation(t *testing.T) {
 		detail string
 	}{
 		{name: "limit is not a number", query: "?limit=many", detail: "limit"},
+		// A supplied-but-empty limit is a malformed request, not an absent
+		// parameter: answering it with the default page would read as
+		// acceptance of whatever the caller meant to send.
+		{name: "limit is supplied but empty", query: "?limit=", detail: "limit"},
 		{name: "limit is zero", query: "?limit=0", detail: "limit"},
 		{name: "limit is negative", query: "?limit=-1", detail: "limit"},
 		{name: "limit exceeds the maximum", query: "?limit=101", detail: "limit"},
