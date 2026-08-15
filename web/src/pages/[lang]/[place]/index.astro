@@ -5,7 +5,7 @@ import Masthead from '../../../components/Masthead.astro';
 import ProvenanceDisclosure from '../../../components/ProvenanceDisclosure.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
 import { createReaderApi, type FrontItem } from '../../../lib/reader/api';
-import { findPlace, frontPagePath, parseAxes } from '../../../lib/reader/axes';
+import { articlePath, frontPagePath, parseAxes, placeKicker } from '../../../lib/reader/axes';
 import {
   formatItemDate,
   formatMastheadDate,
@@ -38,20 +38,7 @@ const emptyPlaces = places.filter(
 const now = new Date();
 const homeHref = frontPagePath(lang, slugs);
 
-// Kicker: the item's first place endonym + the scope label (mockup:
-// "München · Local"). Slugs beyond the catalog render as themselves — the
-// API may know places before this catalog does.
-const kicker = (item: FrontItem): string => {
-  const slug = item.places.at(0);
-  if (slug === undefined) {
-    return '';
-  }
-  const place = findPlace(slug);
-  if (place === undefined) {
-    return slug;
-  }
-  return `${place.endonym} · ${t.scopeLabels[place.scope]}`;
-};
+const kicker = (item: FrontItem): string => placeKicker(item.places, t.scopeLabels);
 
 const recordRows = (item: FrontItem): { term: string; value: string; href?: string }[] => [
   { term: t.source, value: sourceHost(item.source_url), href: item.source_url },
@@ -88,7 +75,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
             <span class="meta-rule" aria-hidden="true" />
             <span class="when">{formatRecency(lang, new Date(lead.published_at), now)}</span>
           </div>
-          <h1>{lead.headline}</h1>
+          <h1><a class="headline-link" href={articlePath(lang, slugs, lead.id)}>{lead.headline}</a></h1>
           <p class="lead-extract">{lead.extract}</p>
           <div class="lead-record">
             <p class="attribution">
@@ -118,7 +105,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
           {rest.map((item) => (
             <article class="cell">
               <span class="kicker">{kicker(item)}</span>
-              <h3>{item.headline}</h3>
+              <h3><a class="headline-link" href={articlePath(lang, slugs, item.id)}>{item.headline}</a></h3>
               <p class="cell-extract">{item.extract}</p>
               <div class="cell-record">
                 <a class="source-link" href={item.source_url} rel="external noopener">
@@ -181,6 +168,16 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
 
   main {
     flex: 1;
+  }
+
+  /* Headlines are doorways to the article page; they read as ink until
+     touched, per the mockup. */
+  .headline-link {
+    color: inherit;
+    text-decoration: none;
+  }
+  .headline-link:hover {
+    color: var(--color-accent);
   }
 
   /* — the lead: typographic (the alpha is text-only; the mockup's

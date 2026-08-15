@@ -24,6 +24,19 @@ export interface UiStrings {
   readonly source: string;
   readonly published: string;
   readonly attribution: string;
+  /** Record-row term for the approval time (public payload's approved_at). */
+  readonly approved: string;
+  /** The article page's Record rail heading (mockup 1c). */
+  readonly record: string;
+  /** The extract-boundary block (mockup 1c): the page is a doorway, and says so. */
+  readonly wholeExtractTitle: string;
+  readonly wholeExtractBody: string;
+  /** The primary CTA to the publisher: "Continue at {host} ↗" (SC-008). */
+  readonly continueAt: (host: string) => string;
+  /** 1d's plain-language note, adopted under the CTA. */
+  readonly extractNote: string;
+  /** The related rail heading: "More from {place}". */
+  readonly moreFrom: (placeName: string) => string;
   /** Empty-state band for a followed place with nothing published (US1-AC3). */
   readonly emptyPlaceTitle: string;
   readonly emptyPlaceBody: (placeName: string) => string;
@@ -45,6 +58,14 @@ const EL: UiStrings = {
   source: 'Πηγή',
   published: 'Δημοσίευση',
   attribution: 'Απόδοση',
+  approved: 'Έγκριση',
+  record: 'Μητρώο',
+  wholeExtractTitle: 'Αυτό είναι ολόκληρο το απόσπασμα',
+  wholeExtractBody:
+    'Η άδεια με αυτόν τον εκδότη καλύπτει αποδιδόμενο τίτλο και σύντομο απόσπασμα. Το υπόλοιπο άρθρο παραμένει εκεί όπου γράφτηκε.',
+  continueAt: (host) => `Συνέχεια στο ${host} ↗`,
+  extractNote: 'Μόνο απόσπασμα, βάσει άδειας. Ένα κλικ έως τον εκδότη.',
+  moreFrom: (placeName) => `Περισσότερα από ${placeName}`,
   emptyPlaceTitle: 'Τόπος χωρίς δημοσιεύσεις ακόμη',
   emptyPlaceBody: (placeName) =>
     `Δεν έχει δημοσιευθεί ακόμη τίποτα για ${placeName}. Τα εγκεκριμένα άρθρα θα εμφανίζονται εδώ.`,
@@ -65,6 +86,14 @@ const DE: UiStrings = {
   source: 'Quelle',
   published: 'Veröffentlicht',
   attribution: 'Quellenvermerk',
+  approved: 'Freigabe',
+  record: 'Nachweis',
+  wholeExtractTitle: 'Das ist der ganze Auszug',
+  wholeExtractBody:
+    'Die Lizenz mit diesem Verlag deckt eine wiedergegebene Überschrift und einen kurzen Auszug. Der Rest des Artikels bleibt, wo er geschrieben wurde.',
+  continueAt: (host) => `Weiter bei ${host} ↗`,
+  extractNote: 'Nur Auszug, laut Lizenz. Ein Klick zum Verlag.',
+  moreFrom: (placeName) => `Mehr aus ${placeName}`,
   emptyPlaceTitle: 'Noch nichts veröffentlicht',
   emptyPlaceBody: (placeName) =>
     `Für ${placeName} wurde noch nichts veröffentlicht. Freigegebene Beiträge erscheinen hier.`,

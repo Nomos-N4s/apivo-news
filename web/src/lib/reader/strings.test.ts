@@ -27,4 +27,18 @@ describe('uiStrings', () => {
     expect(uiStrings('el').reassurance).toContain('απόσπασμα');
     expect(uiStrings('de').reassurance).toContain('Auszug');
   });
+
+  it('sends the reader to the publisher by name (SC-008)', () => {
+    expect(uiStrings('el').continueAt('kathimerini.example')).toBe(
+      'Συνέχεια στο kathimerini.example ↗',
+    );
+    expect(uiStrings('de').continueAt('tagblatt.example')).toBe(
+      'Weiter bei tagblatt.example ↗',
+    );
+  });
+
+  it('titles the related rail with the place', () => {
+    expect(uiStrings('el').moreFrom('München')).toBe('Περισσότερα από München');
+    expect(uiStrings('de').moreFrom('München')).toBe('Mehr aus München');
+  });
 });
