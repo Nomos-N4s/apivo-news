@@ -55,8 +55,8 @@ withdrawn as (
 -- publication has already ended. Otherwise the withdrawal happened and the
 -- joined columns carry it.
 select
-    t.published_at is not null as was_published,
-    t.withdrawn_at is not null as was_withdrawn,
+    (t.published_at is not null)::boolean as was_published,
+    (t.withdrawn_at is not null)::boolean as was_withdrawn,
     w.id                       as article_id,
     w.withdrawn_at,
     w.withdrawn_by,
