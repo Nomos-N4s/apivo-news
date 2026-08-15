@@ -21,14 +21,16 @@ interface Props {
   /** Right-hand note in the bar — e.g. the audit's read-only statement. */
   note?: string | undefined;
   /**
-   * Whether this deployment has an auth provider at all. Without one the
-   * bar says the screens are a preview; with one, an absent session is a
-   * plain "not signed in" and the flag would be a false excuse for it.
+   * Whether what this screen shows is fixture data rather than the API's
+   * records. Keyed to the data's own provenance, not to whether sign-in
+   * is possible: fixtures render whenever the editorial API is absent,
+   * and a signed-in editor shown invented numbers unflagged is exactly
+   * the dishonest-record state this marker exists to prevent.
    */
-  authConfigured?: boolean | undefined;
+  previewData?: boolean | undefined;
 }
 
-const { lang, session, active, queueCount, spend, note, authConfigured = false } = Astro.props;
+const { lang, session, active, queueCount, spend, note, previewData = false } = Astro.props;
 const t = editorialStrings(lang);
 const signinHref = `/${lang}/editor/signin`;
 
@@ -63,6 +65,9 @@ const sections: {
       and offers the way in, rather than filling the gap with someone. */}
   <span class="who">
     {note !== undefined && <span class="who-note">{note}</span>}
+    {/* The fixture flag rides with the data, not the session: it shows
+        whenever what is on screen is sample data — signed in or not. */}
+    {previewData && <span class="preview-flag">{t.previewData}</span>}
     {
       session.authenticated ? (
         <>
@@ -80,7 +85,6 @@ const sections: {
       ) : (
         <>
           <span>{t.notSignedIn}</span>
-          {!authConfigured && <span class="preview-flag">{t.previewSession}</span>}
           <a href={signinHref}>{t.signIn}</a>
         </>
       )

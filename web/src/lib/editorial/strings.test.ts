@@ -34,7 +34,7 @@ describe('editorialStrings', () => {
       const t = editorialStrings(lang);
       expect(t.reviewQueue).not.toBe('');
       expect(t.approveAndPublish).not.toBe('');
-      expect(t.previewSession).not.toBe('');
+      expect(t.previewData).not.toBe('');
       expect(t.notRecordedTitle).not.toBe('');
       expect(t.notSignedIn).not.toBe('');
       expect(t.signInTitle).not.toBe('');

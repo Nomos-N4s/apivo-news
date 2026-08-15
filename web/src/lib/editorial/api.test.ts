@@ -50,6 +50,14 @@ describe('the fixture client (no API_BASE_URL)', () => {
     const page = await createEditorialApi('').queue();
     expect(page.items.length).toBeGreaterThan(0);
   });
+
+  it('declares every fixture answer as fixture data', async () => {
+    // The chrome's preview marker keys on this flag: invented numbers
+    // must carry their provenance whoever is signed in.
+    expect((await api.queue()).fixture).toBe(true);
+    expect((await api.sources()).fixture).toBe(true);
+    expect((await api.provenance(''))?.fixture).toBe(true);
+  });
 });
 
 describe('the HTTP client (API_BASE_URL set)', () => {
@@ -144,6 +152,15 @@ describe('editorial endpoints not deployed yet', () => {
     const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
     const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).queue();
     expect(page.items.length).toBeGreaterThan(0);
+    // The fallback declares itself: a signed-in editor with an API base
+    // URL but absent routes still sees fixture data flagged as fixture.
+    expect(page.fixture).toBe(true);
+  });
+
+  it('does not mark a real API answer as fixture data', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ items: [] }));
+    const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).queue();
+    expect(page.fixture).toBeUndefined();
   });
 
   it('reports not-recorded rather than erroring when approvals 404', async () => {

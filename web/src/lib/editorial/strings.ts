@@ -11,8 +11,13 @@ export interface EditorialStrings {
   readonly roleEditor: string;
   /** The other value of `account.role`; the chrome names what it found. */
   readonly roleReader: string;
-  /** Shown while the identity is a placeholder rather than a real sign-in. */
-  readonly previewSession: string;
+  /**
+   * Shown when what the screen displays is fixture data rather than the
+   * API's records — keyed to the data's own provenance, because invented
+   * numbers must never present as real, least of all to a signed-in
+   * editor whose decisions they would inform.
+   */
+  readonly previewData: string;
   /** The chrome when nobody is signed in — it names no one. */
   readonly notSignedIn: string;
   readonly signIn: string;
@@ -129,7 +134,7 @@ const EL: EditorialStrings = {
   signedInAs: 'Συνδεδεμένος ως',
   roleEditor: 'ρόλος συντάκτη',
   roleReader: 'ρόλος αναγνώστη',
-  previewSession: 'Προεπισκόπηση — δεν έχει ρυθμιστεί σύνδεση',
+  previewData: 'Δείγματα δεδομένων — καμία πραγματική εγγραφή',
   notSignedIn: 'Καμία σύνδεση',
   signIn: 'Σύνδεση',
   signOut: 'Αποσύνδεση',
@@ -241,7 +246,7 @@ const DE: EditorialStrings = {
   signedInAs: 'Angemeldet als',
   roleEditor: 'Rolle Redaktion',
   roleReader: 'Rolle Lesen',
-  previewSession: 'Vorschau — keine Anmeldung eingerichtet',
+  previewData: 'Beispieldaten — keine echten Einträge',
   notSignedIn: 'Nicht angemeldet',
   signIn: 'Anmelden',
   signOut: 'Abmelden',

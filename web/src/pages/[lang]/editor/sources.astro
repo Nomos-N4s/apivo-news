@@ -108,7 +108,7 @@ const activeCount = sources.filter((source) => source.active).length;
     session={session}
     active="sources"
     note={t.sourcesSummary(sources.length, activeCount)}
-    authConfigured={configured}
+    previewData={page?.fixture === true}
   >
     {
       signedOutPost && (

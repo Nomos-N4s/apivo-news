@@ -146,14 +146,15 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
 <ReaderLayout lang={lang} title={`epiloYES — ${t.editorial}`} description={reader.tagline}>
   {/* The chrome, rail and ledger live in EditorChrome; the ledger is a
       proposed addition, so it renders only when the response carries
-      one. */}
+      one. The preview marker keys on the data's own provenance: fixture
+      numbers must be flagged even for a genuinely signed-in editor. */}
   <EditorChrome
     lang={lang}
     session={session}
     active="queue"
     queueCount={items.length}
     spend={queue?.spend}
-    authConfigured={configured}
+    previewData={queue?.fixture === true}
   >
     {
       notProvisioned && (
