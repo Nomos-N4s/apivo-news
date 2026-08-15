@@ -30,7 +30,7 @@ import (
 func currentMonthLedger(t *testing.T, tx pgx.Tx) (spent int64, attempts int) {
 	t.Helper()
 	err := tx.QueryRow(context.Background(),
-		`insert into translation_spend (month, spent_microusd) values (date_trunc('month', now())::date, 0)
+		`insert into translation_spend (month, spent_microusd) values (date_trunc('month', now() at time zone 'utc')::date, 0)
 		 on conflict (month) do update set spent_microusd = translation_spend.spent_microusd
 		 returning spent_microusd, unmetered_attempts`).Scan(&spent, &attempts)
 	if err != nil {
@@ -81,7 +81,7 @@ func TestEveryTranslationInsertMovesTheLedger(t *testing.T) {
 	var attemptsAfter int
 	if err := tx.QueryRow(ctx,
 		`select spent_microusd, unmetered_attempts from translation_spend
-		 where month = date_trunc('month', now())::date`).Scan(&spentAfter, &attemptsAfter); err != nil {
+		 where month = date_trunc('month', now() at time zone 'utc')::date`).Scan(&spentAfter, &attemptsAfter); err != nil {
 		t.Fatalf("reading the ledger after the insert: %v", err)
 	}
 	if got := spentAfter - spentBefore; got != 4321 {

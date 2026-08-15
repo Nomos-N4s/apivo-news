@@ -114,7 +114,7 @@ comment on column translation_spend.halted_at is
     'When this month crossed the monthly cap and the pipeline stopped translating. Latched by a single conditional UPDATE, so exactly one transaction can set it and the halt is announced once per month, not once per tick.';
 
 comment on table translation_spend is
-    'Monthly translation spend ledger. Every translation insert moves it by trigger, so a translation whose cost is not in the ledger is unrepresentable; spend from calls that were billed but produced no translation is added directly. Caps (per-article ceiling, monthly cap) remain configuration - the database supplies the atomic counter and the once-per-month halt latch, not the budget.';
+    'Monthly translation spend ledger. Every translation insert moves it by trigger, so a translation whose cost is not in the ledger is unrepresentable; spend from calls that were billed but produced no translation is added directly. The month key is the calendar month IN UTC - every writer and reader derives it as date_trunc(''month'', now() at time zone ''utc'')::date, never from the session TimeZone, so an operator''s psql session and the app pool always land spend in the same row. Caps (per-article ceiling, monthly cap) remain configuration - the database supplies the atomic counter and the once-per-month halt latch, not the budget.';
 
 -- Following the article_record_withdrawal_event precedent (0002): the
 -- derived row is written by the database, in the same transaction as the
@@ -129,8 +129,14 @@ begin
     -- overwriting each other's totals. unmetered_attempts accumulates
     -- alongside the cost because the two are one fact - what the month
     -- spent, and how confident that number is.
+    --
+    -- The month is pinned to UTC: a bare date_trunc + ::date on a
+    -- timestamptz both work in the session's TimeZone GUC, which nothing in
+    -- this repo pins - an operator session at another offset would key a
+    -- different row for the same instant, and the cap check would read only
+    -- one of the two ledgers. See the translation_spend table comment.
     insert into translation_spend (month, spent_microusd, unmetered_attempts)
-    values (date_trunc('month', now())::date, new.cost_microusd, new.unmetered_attempts)
+    values (date_trunc('month', now() at time zone 'utc')::date, new.cost_microusd, new.unmetered_attempts)
     on conflict (month) do update
        set spent_microusd = translation_spend.spent_microusd + excluded.spent_microusd,
            unmetered_attempts = translation_spend.unmetered_attempts + excluded.unmetered_attempts;

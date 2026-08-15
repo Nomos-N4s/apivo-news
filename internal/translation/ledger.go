@@ -34,6 +34,13 @@ type DB interface {
 // trigger on translation cannot do - record spend that produced no
 // translation row, and latch the month's halt - plus the read a caller
 // needs before it decides to call a provider at all.
+//
+// The month key is the calendar month in UTC, everywhere: the queries here
+// and the 0005 trigger all derive it as
+// date_trunc('month', now() at time zone 'utc')::date, never from the
+// session TimeZone, so every session lands spend in the same row whatever
+// its offset. The decision is recorded on the translation_spend table
+// comment.
 type Ledger struct {
 	db Queryer
 }
@@ -79,7 +86,7 @@ func (l *Ledger) ThisMonth(ctx context.Context) (Month, error) {
 	)
 	err := l.db.QueryRow(ctx,
 		`select m.month, coalesce(s.spent_microusd, 0), coalesce(s.unmetered_attempts, 0), s.halted_at
-		   from (select date_trunc('month', now())::date as month) m
+		   from (select date_trunc('month', now() at time zone 'utc')::date as month) m
 		   left join translation_spend s on s.month = m.month`).
 		Scan(&month, &out.SpentMicroUSD, &out.UnmeteredAttempts, &haltedAt)
 	if err != nil {
@@ -123,7 +130,7 @@ func (l *Ledger) RecordUnbilledSpend(ctx context.Context, spend Spend) (int64, e
 	var total int64
 	err := l.db.QueryRow(ctx,
 		`insert into translation_spend (month, spent_microusd, unmetered_attempts)
-		 values (date_trunc('month', now())::date, $1, $2)
+		 values (date_trunc('month', now() at time zone 'utc')::date, $1, $2)
 		 on conflict (month) do update
 		    set spent_microusd = translation_spend.spent_microusd + excluded.spent_microusd,
 		        unmetered_attempts = translation_spend.unmetered_attempts + excluded.unmetered_attempts

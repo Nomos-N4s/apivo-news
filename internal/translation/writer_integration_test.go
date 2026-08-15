@@ -244,7 +244,7 @@ func TestTheCrossingTranslationHaltsTheMonth(t *testing.T) {
 	if err := tx.QueryRow(ctx,
 		`select count(*) from domain_event
 		  where type = 'pipeline.halted'
-		    and (payload->>'month')::date = date_trunc('month', now())::date
+		    and (payload->>'month')::date = date_trunc('month', now() at time zone 'utc')::date
 		    and (payload->>'halted_at')::timestamptz = $1`, crossing.HaltedAt).Scan(&events); err != nil {
 		t.Fatalf("querying pipeline.halted events: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestTheCrossingTranslationHaltsTheMonth(t *testing.T) {
 	if err := tx.QueryRow(ctx,
 		`select count(*) from domain_event
 		  where type = 'pipeline.halted'
-		    and (payload->>'month')::date = date_trunc('month', now())::date`).Scan(&events); err != nil {
+		    and (payload->>'month')::date = date_trunc('month', now() at time zone 'utc')::date`).Scan(&events); err != nil {
 		t.Fatalf("querying pipeline.halted events: %v", err)
 	}
 	if events != 1 {
