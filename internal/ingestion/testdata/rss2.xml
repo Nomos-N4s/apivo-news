@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Δήμος Μονάχου — Νέα</title>
+    <link>https://news.example.test/</link>
+    <description>Municipal news for the alpha fixtures</description>
+    <item>
+      <title>Νέο πάρκο στο κέντρο &#8211; εγκαίνια τον Μάιο</title>
+      <link>https://news.example.test/articles/parko</link>
+      <dc:creator>Μαρία Παπαδοπούλου</dc:creator>
+      <pubDate>Mon, 02 Jun 2025 09:30:00 +0300</pubDate>
+      <description><![CDATA[
+        Σύντομη περίληψη: το νέο πάρκο ανοίγει τον Μάιο.
+      ]]></description>
+      <content:encoded><![CDATA[
+        <p>Το νέο πάρκο στο κέντρο της πόλης ανοίγει τον Μάιο, με παιδική χαρά και ποδηλατόδρομο.</p>
+      ]]></content:encoded>
+    </item>
+    <item>
+      <title>Stadtrat beschließt neue Radwege</title>
+      <link>https://news.example.test/articles/radwege</link>
+      <author>redaktion@example.test (Redaktion)</author>
+      <pubDate>Tue, 03 Jun 2025 08:00:00 +0200</pubDate>
+      <description>Der Stadtrat hat den Ausbau der Radwege beschlossen.</description>
+    </item>
+    <item>
+      <title>Bare author address alongside a named creator</title>
+      <link>https://news.example.test/articles/creator</link>
+      <author>desk@example.test</author>
+      <dc:creator>Ελένη Δημητρίου</dc:creator>
+      <pubDate>Wed, 04 Jun 2025 07:15:00 +0300</pubDate>
+      <description>Ο συντάκτης δηλώνεται και ως διεύθυνση και ως όνομα.</description>
+    </item>
+  </channel>
+</rss>

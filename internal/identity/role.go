@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // RoleEditor is the account role editorial endpoints require. It mirrors
@@ -20,18 +21,44 @@ var ErrNotEditor = errors.New("identity: account is not an editor")
 
 // RoleLookup resolves the role of an account.
 //
-// This interface is the deliberate seam for migration 0002, which is
-// being built in parallel and adds the account.role column: this module
-// compiles and tests against the 0001 schema and therefore must not read
-// that column itself. Once 0002 lands, the composition root wires an
-// implementation backed by `select role from account where id = $1`
-// (satisfiable by the platform pool via a one-method adapter); until
-// then, tests and callers supply their own. Nothing else in this module
-// needs to change when the column arrives.
+// This interface was the deliberate seam for migration 0002 while it was
+// built in parallel; now that the account.role column exists, AccountRoles
+// below is the real implementation and the composition root wires it with
+// the platform pool. The seam stays: tests supply canned lookups, and a
+// future role source (claims, a cache) slots in without touching callers.
 type RoleLookup interface {
 	// Role returns the role of the given account, e.g. "editor". An error
 	// means the lookup failed, not that the account lacks a role.
 	Role(ctx context.Context, accountID uuid.UUID) (string, error)
+}
+
+// AccountRoles is the database-backed RoleLookup, reading account.role
+// (migration 0002) - the same column the article triggers enforce, so the
+// early HTTP answer and the database verdict can never come from different
+// sources of truth.
+type AccountRoles struct {
+	db Querier
+}
+
+// NewAccountRoles builds the RoleLookup the composition root wires; the
+// platform pool satisfies Querier.
+func NewAccountRoles(db Querier) AccountRoles { return AccountRoles{db: db} }
+
+// Role returns account.role for the given account. A missing account
+// reports ErrUnknownAccount - distinct from a lookup failure, which means
+// the question went unanswered, not that the account lacks a role.
+func (r AccountRoles) Role(ctx context.Context, accountID uuid.UUID) (string, error) {
+	var role string
+	err := r.db.QueryRow(ctx,
+		`select role from account where id = $1`,
+		accountID.String()).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("%w: subject %s", ErrUnknownAccount, accountID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("identity: role lookup for %s: %w", accountID, err)
+	}
+	return role, nil
 }
 
 // RequireEditor is the gate editorial endpoints apply after Authenticate:
