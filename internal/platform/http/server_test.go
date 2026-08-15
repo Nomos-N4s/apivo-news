@@ -2,6 +2,7 @@ package http_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -52,6 +53,66 @@ func TestHealthEndpoints(t *testing.T) {
 				t.Fatalf("X-Robots-Tag = %q, want %q on every response", got, "noindex, nofollow")
 			}
 		})
+	}
+}
+
+func TestMountRoutesModuleHandlers(t *testing.T) {
+	t.Parallel()
+	srv := platformhttp.New(discardLogger(), ":0", nil)
+	srv.Mount("/api/v1/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	}))
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/front", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("mounted route answered %d, want %d", rec.Code, http.StatusTeapot)
+	}
+	// Mounted routes sit behind the same defence-in-depth header as the
+	// built-in ones: the API is never a crawlable surface.
+	if got := rec.Header().Get("X-Robots-Tag"); got != "noindex, nofollow" {
+		t.Fatalf("X-Robots-Tag = %q, want %q on mounted routes", got, "noindex, nofollow")
+	}
+
+	// Health endpoints keep working alongside the mounted module.
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/healthz alongside a mounted module = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestProblemWritesRFC9457Bodies(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	platformhttp.Problem(rec, http.StatusBadRequest, "unknown place \"atlantis\"")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/problem+json" {
+		t.Fatalf("Content-Type = %q, want application/problem+json", got)
+	}
+	var body struct {
+		Type   string `json:"type"`
+		Title  string `json:"title"`
+		Status int    `json:"status"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding problem body %q: %v", rec.Body.String(), err)
+	}
+	if body.Type != "about:blank" {
+		t.Errorf("type = %q, want about:blank", body.Type)
+	}
+	if body.Title != http.StatusText(http.StatusBadRequest) {
+		t.Errorf("title = %q, want the reason phrase %q", body.Title, http.StatusText(http.StatusBadRequest))
+	}
+	if body.Status != http.StatusBadRequest {
+		t.Errorf("status field = %d, want %d", body.Status, http.StatusBadRequest)
+	}
+	if body.Detail != "unknown place \"atlantis\"" {
+		t.Errorf("detail = %q, want the caller's detail verbatim", body.Detail)
 	}
 }
 
