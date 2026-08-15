@@ -156,3 +156,50 @@ describe('ledger formatting', () => {
     expect(spendPercent({ month: 'm', spent_microusd: 1, cap_microusd: 0 })).toBe(0);
   });
 });
+
+describe('the audit trace', () => {
+  it('answers a provenance record from fixtures', async () => {
+    const record = await createEditorialApi(undefined).provenance(
+      'a41e7c92-08d5-4d1b-9d6c-1f0b7e3a55c1',
+    );
+    expect(record?.approval.approver_name).not.toBe('');
+    expect(record?.source_item.usage_rule_snapshot).toBe('extract_and_link');
+    expect(record?.events?.length).toBeGreaterThan(0);
+  });
+
+  it('carries a null translation when the target locale already matched', async () => {
+    const record = await createEditorialApi(undefined).provenance(
+      'd57b1f30-6c92-4a44-b8e1-95ac2f7d0e63',
+    );
+    expect(record?.translation).toBeNull();
+  });
+
+  it('never fakes a withdrawal — publication cannot end unrecorded (FR-016)', async () => {
+    const outcome = await createEditorialApi(undefined).withdraw('any', 'publisher request');
+    expect(outcome.recorded).toBe(false);
+    expect(outcome.withdrawn_at).toBeUndefined();
+    // The reason must describe withdrawal, not approval.
+    expect(outcome.reason).toContain('publication did not end');
+  });
+
+  it('reads a 404 trace as null rather than throwing', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).provenance('missing'),
+    ).resolves.toBeNull();
+  });
+
+  it('calls the contract paths for trace and withdrawal', async () => {
+    const trace = respondingWith(
+      jsonResponse({ article_id: 'x', approval: {}, source: {}, source_item: {} }),
+    );
+    await createEditorialApi('http://api:8080', 'jwt', trace.fetchImpl).provenance('x');
+    expect(trace.calls.at(0)?.url.pathname).toBe('/api/v1/editorial/articles/x/provenance');
+
+    const wd = respondingWith(jsonResponse({ article_id: 'x', withdrawn_at: 'now' }));
+    await createEditorialApi('http://api:8080', 'jwt', wd.fetchImpl).withdraw('x', 'because');
+    expect(wd.calls.at(0)?.url.pathname).toBe('/api/v1/editorial/articles/x/withdrawal');
+    expect(wd.calls.at(0)?.init?.method).toBe('POST');
+    expect(JSON.parse(String(wd.calls.at(0)?.init?.body))['reason']).toBe('because');
+  });
+});
