@@ -6,6 +6,7 @@ import {
   formatItemDate,
   formatMastheadDate,
   formatRecency,
+  safeSourceUrl,
   sourceHost,
 } from './format';
 
@@ -93,5 +94,26 @@ describe('sourceHost', () => {
 
   it('returns a malformed value as-is rather than failing the page', () => {
     expect(sourceHost('not a url')).toBe('not a url');
+  });
+});
+
+describe('safeSourceUrl', () => {
+  it('passes http and https through', () => {
+    expect(safeSourceUrl('https://isarkurier.example/x')).toBe(
+      'https://isarkurier.example/x',
+    );
+    expect(safeSourceUrl('http://isarkurier.example/x')).toBe('http://isarkurier.example/x');
+  });
+
+  it('refuses every other scheme — feed data must never become a clickable script', () => {
+    expect(safeSourceUrl('javascript:alert(1)')).toBeNull();
+    expect(safeSourceUrl('data:text/html,<script>alert(1)</script>')).toBeNull();
+    expect(safeSourceUrl('vbscript:msgbox(1)')).toBeNull();
+    expect(safeSourceUrl('file:///etc/passwd')).toBeNull();
+  });
+
+  it('refuses what does not parse at all', () => {
+    expect(safeSourceUrl('not a url')).toBeNull();
+    expect(safeSourceUrl('')).toBeNull();
   });
 });

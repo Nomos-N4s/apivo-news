@@ -45,6 +45,12 @@ export interface UiStrings {
   /** Calm not-found copy. */
   readonly notFoundTitle: string;
   readonly notFoundBody: string;
+  /** Calm degraded state when the reader API cannot be reached (503). */
+  readonly unavailableTitle: string;
+  readonly unavailableBody: string;
+  /** Masthead sign-in (mockup 1a) — disabled until registration ships (T031). */
+  readonly signIn: string;
+  readonly signInPending: string;
 }
 
 const EL: UiStrings = {
@@ -73,6 +79,11 @@ const EL: UiStrings = {
     'Κάθε άρθρο προέρχεται από αδειοδοτημένη ροή, αποδίδεται μόνο ως τίτλος και απόσπασμα — ποτέ πλήρες κείμενο — και εγκρίνεται από επώνυμο συντάκτη πριν εμφανιστεί.',
   notFoundTitle: 'Δεν υπάρχει κάτι εδώ.',
   notFoundBody: 'Η διεύθυνση δεν αντιστοιχεί σε δημοσιευμένη σελίδα.',
+  unavailableTitle: 'Η σελίδα δεν είναι διαθέσιμη αυτή τη στιγμή',
+  unavailableBody:
+    'Δοκιμάστε ξανά σε λίγο. Δεν χάθηκε τίποτα — τα άρθρα θα εμφανιστούν μόλις αποκατασταθεί η σύνδεση.',
+  signIn: 'Σύνδεση',
+  signInPending: 'Διαθέσιμο με την εγγραφή',
 };
 
 const DE: UiStrings = {
@@ -101,6 +112,11 @@ const DE: UiStrings = {
     'Jeder Beitrag stammt aus einem lizenzierten Feed, wird nur als Überschrift und Auszug wiedergegeben — nie im Volltext — und vor der Veröffentlichung von einer namentlich genannten Redaktion freigegeben.',
   notFoundTitle: 'Hier gibt es nichts.',
   notFoundBody: 'Diese Adresse führt zu keiner veröffentlichten Seite.',
+  unavailableTitle: 'Die Seite ist gerade nicht erreichbar',
+  unavailableBody:
+    'Versuchen Sie es gleich noch einmal. Nichts ist verloren — die Beiträge erscheinen, sobald die Verbindung wieder steht.',
+  signIn: 'Anmelden',
+  signInPending: 'Verfügbar mit der Registrierung',
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, UiStrings>> = { el: EL, de: DE };
