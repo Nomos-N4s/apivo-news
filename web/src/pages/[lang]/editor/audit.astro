@@ -8,6 +8,7 @@ import {
   type ArticleProvenance,
   type WithdrawalOutcome,
 } from '../../../lib/editorial/api';
+import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings } from '../../../lib/editorial/strings';
 import { authConfigured } from '../../../lib/editorial/supabase';
@@ -52,6 +53,12 @@ const here = `/${lang}/editor/audit`;
 let withdrawal: WithdrawalOutcome | null = null;
 let withdrawnId = '';
 if (Astro.request.method === 'POST') {
+  // Withdrawal ends a publication under the editor's own credentials — a
+  // cross-site form must not be able to drive it, so it takes the same
+  // origin check as approval before the body is read.
+  if (!isSameOrigin(Astro.request, Astro.url.origin)) {
+    return new Response('Forbidden', { status: 403 });
+  }
   const form = await Astro.request.formData();
   withdrawnId = String(form.get('article_id') ?? '');
   const reason = String(form.get('reason') ?? '');

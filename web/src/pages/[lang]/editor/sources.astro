@@ -7,6 +7,7 @@ import {
   type SourceOutcome,
   type SourcesPage,
 } from '../../../lib/editorial/api';
+import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings } from '../../../lib/editorial/strings';
 import { authConfigured } from '../../../lib/editorial/supabase';
@@ -44,6 +45,12 @@ const here = `/${lang}/editor/sources`;
 
 let outcome: SourceOutcome | null = null;
 if (Astro.request.method === 'POST') {
+  // Configuring a source is a licensing record under the editor's own
+  // credentials — the same privileged shape as approval, so it takes the
+  // same origin check before the body is even read.
+  if (!isSameOrigin(Astro.request, Astro.url.origin)) {
+    return new Response('Forbidden', { status: 403 });
+  }
   const form = await Astro.request.formData();
   const input = {
     name: String(form.get('name') ?? ''),
