@@ -19,6 +19,7 @@ import (
 
 	"github.com/Nomos-N4s/apivo-news/internal/content/store"
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/text"
 )
 
 // Pagination bounds per the API contract: limit defaults to 20, capped at
@@ -255,7 +256,7 @@ func itemFrom(row store.ListFrontPageRow) feedItem {
 		item.Headline = row.OriginalTitle.String
 		// raw_body is fetched only for this shape; an absent body simply
 		// yields an empty extract rather than a failed request.
-		item.Extract = DeriveExtract(row.RawBody.String)
+		item.Extract = text.DeriveExtract(row.RawBody.String)
 	}
 	return item
 }

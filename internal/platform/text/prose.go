@@ -1,4 +1,14 @@
-package content
+// Package text holds the D9 extract rule: markup reduced to prose, bounded,
+// and cut at a sentence boundary.
+//
+// It lives in platform because four modules need the same bound and the
+// module boundaries forbid them importing each other. Content renders an
+// extract for an untranslated article, ingestion derives one at write time,
+// editorial shows one as the evidence an approval rests on, and translation
+// bounds what it sends a provider. The bound exists for licensing reasons -
+// extract-and-link is a defensible basis only while the ceiling holds - so
+// four copies of it would be four places for it to quietly differ.
+package text
 
 import (
 	"html"
@@ -8,18 +18,18 @@ import (
 )
 
 const (
-	// maxExtractRunes bounds the derived extract (research D9): extract-and-link
+	// MaxExtractRunes bounds the derived extract (research D9): extract-and-link
 	// must stay defensibly "extract", so the bound is part of the rule, not a
 	// presentation choice. Counted in runes - Greek text is not shorter for
 	// taking more bytes. Every return path below is capped by it; a derivation
 	// that could hand back a whole article would be a licensing problem, not
 	// merely an ugly one.
-	maxExtractRunes = 300
+	MaxExtractRunes = 300
 	// scanRunes is one past the bound: enough normalised text to apply the
 	// sentence rule across the whole window AND to know whether anything
 	// followed it. Nothing beyond this is ever normalised, so a multi-megabyte
 	// body costs the same as a short one.
-	scanRunes = maxExtractRunes + 1
+	scanRunes = MaxExtractRunes + 1
 	// maxEntityBytes caps how far a '&' is allowed to look for its ';'. Real
 	// character references are far shorter; the cap keeps a stray ampersand
 	// from scanning the rest of the body.
@@ -45,11 +55,10 @@ func isClosingPunctuation(r rune) bool {
 	return false
 }
 
-// DeriveExtract derives the reader-facing extract for an untranslated
-// (same-language) article from the retrieved raw body, per research D9: the
-// first sentences of the text, up to 300 characters, cut at a sentence
-// boundary. (The feed-summary preference in D9 is ingestion's side of the
-// rule; at read time the stored body is all there is.)
+// DeriveExtract reduces a retrieved raw body to an extract, per research D9:
+// the first sentences of the text, up to MaxExtractRunes characters, cut at a
+// sentence boundary. The feed-summary preference in D9 is ingestion's side of
+// the rule and stays there; this is the part every module shares.
 //
 // The rule is deliberately deterministic and dumb: markup is dropped,
 // character references are decoded, whitespace runs collapse to single
@@ -64,14 +73,9 @@ func isClosingPunctuation(r rune) bool {
 // payload. Dropping tags makes the extract what the name promises - the
 // article's words - and makes the 300-rune bound a bound on prose rather than
 // on markup.
-//
-// This is the read-time half of D9. Ingestion derives the same extract at
-// write time (for translation input and for editorial review), and the two
-// must agree: same ceiling, same sentence rule, same plain-text output. A
-// change to either belongs in both.
 func DeriveExtract(rawBody string) string {
 	runes := normalisePrefix(rawBody, scanRunes)
-	if len(runes) <= maxExtractRunes {
+	if len(runes) <= MaxExtractRunes {
 		// The whole body fits - and is therefore already within the bound.
 		return string(runes)
 	}
@@ -80,7 +84,7 @@ func DeriveExtract(rawBody string) string {
 	// sentences as fit. runes[i+1] is always in range because len(runes) is
 	// scanRunes here, one past the window being scanned.
 	end := 0
-	for i := range maxExtractRunes {
+	for i := range MaxExtractRunes {
 		if isSentenceTerminator(runes[i]) && runes[i+1] == ' ' {
 			end = i + 1
 		}
@@ -91,13 +95,13 @@ func DeriveExtract(rawBody string) string {
 
 	// No sentence boundary in reach: cut at the last word boundary that
 	// keeps the ellipsis inside the bound.
-	cut := maxExtractRunes - 1
+	cut := MaxExtractRunes - 1
 	for cut > 0 && !unicode.IsSpace(runes[cut]) {
 		cut--
 	}
 	if cut == 0 {
 		// One unbroken 300-rune word; a hard cut is all that is left.
-		cut = maxExtractRunes - 1
+		cut = MaxExtractRunes - 1
 	}
 	return strings.TrimRight(string(runes[:cut]), " ") + "…"
 }
