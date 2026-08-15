@@ -90,6 +90,27 @@ describe('text contrast (WCAG 1.4.3, 4.5:1)', () => {
   });
 });
 
+describe('composed states — opacity over fills', () => {
+  // Two individually passing colors can render a failing pair when a
+  // descendant carries opacity: the text composites over its ancestor's
+  // fill. This is why de-emphasis in the pages uses the explicit ink
+  // tokens and never opacity — these assertions pin the arithmetic.
+  const over = (top: Rgb, alpha: number, backdrop: Rgb): Rgb =>
+    [0, 1, 2].map((i) =>
+      Math.round(top[i]! * alpha + backdrop[i]! * (1 - alpha)),
+    ) as unknown as Rgb;
+
+  it('light ink dimmed to 75% over accent-700 fails; the full ink passes', () => {
+    expect(ratio(over(bg, 0.75, accent700), accent700)).toBeLessThan(4.5);
+    expect(ratio(bg, accent700)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('body ink halved over the page fails; --ink-muted passes', () => {
+    expect(ratio(over(text, 0.5, bg), bg)).toBeLessThan(4.5);
+    expect(ratio(mixOver(token('--ink-muted'), bg), bg)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
 describe('non-text contrast (WCAG 1.4.11, 3:1)', () => {
   it('control boundaries pass on both backgrounds', () => {
     expect(ratio(mixOver(token('--border-strong'), bg), bg)).toBeGreaterThanOrEqual(3);

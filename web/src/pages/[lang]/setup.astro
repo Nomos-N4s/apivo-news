@@ -226,13 +226,19 @@ const title = `epiloYES — ${t.setupTitle}`;
   .lang-sub {
     display: block;
     font-size: 11.5px;
-    opacity: 0.75;
+    /* De-emphasis must be an explicit ink, never opacity: an opacity here
+       composites the light text over the checked option's accent-700 fill
+       and lands below the 4.5:1 floor even though both source colors pass. */
+    color: var(--ink-muted);
     margin-top: 2px;
   }
   .lang-opt:has(input:checked) {
     background: var(--color-accent-700);
     color: var(--color-bg);
     border-color: var(--color-accent-700);
+  }
+  .lang-opt:has(input:checked) .lang-sub {
+    color: var(--color-bg);
   }
   .lang-opt:not(:has(input:checked)):hover {
     background: color-mix(in srgb, var(--color-text) 7%, transparent);
@@ -292,8 +298,14 @@ const title = `epiloYES — ${t.setupTitle}`;
     color: var(--ink-soft);
   }
   .place-row-context {
-    opacity: 0.5;
+    /* Same rule as .lang-sub: row-level opacity would composite every
+       descendant — including the already-muted subtitle — below the text
+       floors, so the context rows de-emphasise with explicit inks. */
     cursor: default;
+  }
+  .place-row-context .place-name {
+    color: var(--ink-muted);
+    font-weight: 400;
   }
 
   .panel-foot {
