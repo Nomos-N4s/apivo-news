@@ -21,7 +21,7 @@ select
     t.extract   as translation_extract,
     t.target_locale,
     si.original_title,
-    si.raw_body,
+    untranslated.raw_body,
     si.source_url,
     s.language_code as source_language,
     (
@@ -34,6 +34,7 @@ from article a
 left join translation t on t.id = a.translation_id
 join source_item si on si.id = coalesce(t.source_item_id, a.source_item_id)
 join source s on s.id = si.source_id
+left join source_item untranslated on untranslated.id = a.source_item_id
 where a.id = $1
   and a.published_at is not null
   and a.withdrawn_at is null
@@ -48,7 +49,7 @@ type GetPublishedArticleRow struct {
 	TranslationExtract  pgtype.Text
 	TargetLocale        pgtype.Text
 	OriginalTitle       pgtype.Text
-	RawBody             string
+	RawBody             pgtype.Text
 	SourceUrl           string
 	SourceLanguage      string
 	PlaceSlugs          []string
@@ -56,7 +57,13 @@ type GetPublishedArticleRow struct {
 
 // Article detail. Same visibility rule as the feed: an unpublished or
 // withdrawn article is absent (the endpoint maps no-rows to 404 - the
-// existence of unpublished work is not public).
+// existence of unpublished work is not public). raw_body is conditional
+// exactly as in the feed, so both row shapes carry the same fields and the
+// endpoint renders them through one code path.
+// Untranslated origins only: article_exactly_one_origin means
+// a.source_item_id is set exactly when there is no translation, so this
+// join matches only those rows and the evidence blob is never read - nor
+// carried across the wire - for a translated one.
 func (q *Queries) GetPublishedArticle(ctx context.Context, id pgtype.UUID) (GetPublishedArticleRow, error) {
 	row := q.db.QueryRow(ctx, getPublishedArticle, id)
 	var i GetPublishedArticleRow
@@ -87,7 +94,7 @@ select
     t.extract   as translation_extract,
     t.target_locale,
     si.original_title,
-    si.raw_body,
+    untranslated.raw_body,
     si.source_url,
     s.language_code as source_language,
     (
@@ -100,6 +107,7 @@ from article a
 left join translation t on t.id = a.translation_id
 join source_item si on si.id = coalesce(t.source_item_id, a.source_item_id)
 join source s on s.id = si.source_id
+left join source_item untranslated on untranslated.id = a.source_item_id
 where a.published_at is not null
   and a.withdrawn_at is null
   and coalesce(t.target_locale, s.language_code) = $1::text
@@ -112,6 +120,7 @@ where a.published_at is not null
   )
   and (
         $3::timestamptz is null
+        or $4::uuid is null
         or (a.published_at, a.id)
             < ($3::timestamptz, $4::uuid)
   )
@@ -135,7 +144,7 @@ type ListFrontPageRow struct {
 	TranslationExtract  pgtype.Text
 	TargetLocale        pgtype.Text
 	OriginalTitle       pgtype.Text
-	RawBody             string
+	RawBody             pgtype.Text
 	SourceUrl           string
 	SourceLanguage      string
 	PlaceSlugs          []string
@@ -148,19 +157,37 @@ type ListFrontPageRow struct {
 // Column backing per the HTTP contract: a translated origin renders
 // translation.headline/.extract; an untranslated (same-language) origin
 // renders source_item.original_title with an extract derived at read time
-// from raw_body (research D9). The query layer therefore returns both the
-// translation columns and the raw source fields; the endpoint picks per
-// origin shape.
+// from raw_body (research D9). The query layer returns whichever of the two
+// a row actually needs - raw_body only for untranslated rows - and the
+// endpoint picks per origin shape.
 //
 // Language resolution: a translated article matches on the translation's
 // target locale, an untranslated one on its source's language - which is
 // exactly coalesce(t.target_locale, s.language_code).
 // Front-page feed: newest first, keyset-paginated on (published_at, id)
-// descending. The cursor is the last row of the previous page; a null
-// cursor_published_at means the first page. Offset pagination is
-// deliberately not used - the feed moves while readers page through it.
+// descending. Offset pagination is deliberately not used - the feed moves
+// while readers page through it.
+//
+// The cursor is the (published_at, id) of the previous page's last row, and
+// it is atomic: BOTH halves must be present for the keyset comparison to
+// apply. A half-supplied cursor is treated as no cursor - the first page -
+// because the alternative is worse: SQL row comparison against a NULL
+// yields UNKNOWN, which would filter out every row and hand the reader a
+// silently empty feed. Callers that build cursors from encodeCursor always
+// supply both halves; the endpoint rejects malformed cursors with 400
+// before reaching here, so this arm is the last line of defence.
+//
+// raw_body is fetched only for untranslated rows, through a left join on the
+// article's own source_item: it is the full retrieval evidence blob, and a
+// translated row renders from the translation columns, so reading it for
+// every feed row would be pure overfetch on the hottest read path.
+//
 // Place scoping honours the many-to-many model via EXISTS, so an article
 // tagged to several requested places still appears exactly once.
+// Untranslated origins only: article_exactly_one_origin means
+// a.source_item_id is set exactly when there is no translation, so this
+// join matches only those rows and the evidence blob is never read - nor
+// carried across the wire - for a translated one.
 func (q *Queries) ListFrontPage(ctx context.Context, arg ListFrontPageParams) ([]ListFrontPageRow, error) {
 	rows, err := q.db.Query(ctx, listFrontPage,
 		arg.Lang,

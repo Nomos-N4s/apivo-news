@@ -253,6 +253,11 @@ func TestReaderQueries(t *testing.T) {
 		if top.AttributionBlock != f.deAttribution {
 			t.Errorf("AttributionBlock = %q, want %q", top.AttributionBlock, f.deAttribution)
 		}
+		// A translated row renders from the translation columns, so the
+		// evidence blob is deliberately not fetched for it.
+		if top.RawBody.Valid {
+			t.Errorf("RawBody = %+v on a translated row; the feed must not overfetch the evidence blob", top.RawBody)
+		}
 		if !top.PublishedAt.Time.Equal(f.deNewPublished) {
 			t.Errorf("PublishedAt = %v, want %v", top.PublishedAt.Time, f.deNewPublished)
 		}
@@ -270,8 +275,8 @@ func TestReaderQueries(t *testing.T) {
 		if !got.OriginalTitle.Valid || got.OriginalTitle.String != f.elTitle {
 			t.Errorf("OriginalTitle = %+v, want %q", got.OriginalTitle, f.elTitle)
 		}
-		if got.RawBody != f.elRawBody {
-			t.Errorf("RawBody = %q, want %q", got.RawBody, f.elRawBody)
+		if !got.RawBody.Valid || got.RawBody.String != f.elRawBody {
+			t.Errorf("RawBody = %+v, want %q", got.RawBody, f.elRawBody)
 		}
 		if got.SourceLanguage != "el" {
 			t.Errorf("SourceLanguage = %q, want el", got.SourceLanguage)
@@ -318,6 +323,53 @@ func TestReaderQueries(t *testing.T) {
 		}
 	})
 
+	// A cursor is a (published_at, id) pair and the query treats it
+	// atomically: a half-supplied cursor is no cursor. Without that arm the
+	// row comparison against a NULL would be UNKNOWN for every row and the
+	// reader would get a silently empty feed instead of a first page.
+	t.Run("half-supplied cursor is treated as no cursor, never an empty page", func(t *testing.T) {
+		full := frontPage(ctx, t, f, "de", []string{f.alphaSlug}, 10, nil)
+		last := full[len(full)-1]
+
+		tests := []struct {
+			name   string
+			params store.ListFrontPageParams
+		}{
+			{
+				name: "timestamp without id",
+				params: store.ListFrontPageParams{
+					Lang: "de", Places: []string{f.alphaSlug}, RowLimit: 10,
+					CursorPublishedAt: last.PublishedAt,
+				},
+			},
+			{
+				name: "id without timestamp",
+				params: store.ListFrontPageParams{
+					Lang: "de", Places: []string{f.alphaSlug}, RowLimit: 10,
+					CursorID: last.ID,
+				},
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				rows, err := f.q.ListFrontPage(ctx, tt.params)
+				if err != nil {
+					t.Fatalf("ListFrontPage: %v", err)
+				}
+				if !slices.Equal(ids(rows), ids(full)) {
+					t.Errorf("feed = %v, want the unpaged first page %v", ids(rows), ids(full))
+				}
+			})
+		}
+
+		// The complete pair still pages: the atomicity arm did not disable
+		// the keyset comparison.
+		paged := frontPage(ctx, t, f, "de", []string{f.alphaSlug}, 10, &full[0])
+		if !slices.Equal(ids(paged), ids(full[1:])) {
+			t.Errorf("paged feed = %v, want %v", ids(paged), ids(full[1:]))
+		}
+	})
+
 	t.Run("detail returns both origin shapes", func(t *testing.T) {
 		translated, err := f.q.GetPublishedArticle(ctx, f.deNew)
 		if err != nil {
@@ -337,8 +389,11 @@ func TestReaderQueries(t *testing.T) {
 		if !untranslated.OriginalTitle.Valid || untranslated.OriginalTitle.String != f.elTitle {
 			t.Errorf("detail OriginalTitle = %+v, want %q", untranslated.OriginalTitle, f.elTitle)
 		}
-		if untranslated.RawBody != f.elRawBody {
-			t.Errorf("detail RawBody = %q, want %q", untranslated.RawBody, f.elRawBody)
+		if !untranslated.RawBody.Valid || untranslated.RawBody.String != f.elRawBody {
+			t.Errorf("detail RawBody = %+v, want %q", untranslated.RawBody, f.elRawBody)
+		}
+		if translated.RawBody.Valid {
+			t.Errorf("detail RawBody = %+v on a translated article; it renders from the translation columns", translated.RawBody)
 		}
 		if !slices.Equal(untranslated.PlaceSlugs, []string{f.alphaSlug, f.betaSlug}) {
 			t.Errorf("detail PlaceSlugs = %v, want [%s %s]", untranslated.PlaceSlugs, f.alphaSlug, f.betaSlug)

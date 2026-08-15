@@ -5,9 +5,9 @@
 -- Column backing per the HTTP contract: a translated origin renders
 -- translation.headline/.extract; an untranslated (same-language) origin
 -- renders source_item.original_title with an extract derived at read time
--- from raw_body (research D9). The query layer therefore returns both the
--- translation columns and the raw source fields; the endpoint picks per
--- origin shape.
+-- from raw_body (research D9). The query layer returns whichever of the two
+-- a row actually needs - raw_body only for untranslated rows - and the
+-- endpoint picks per origin shape.
 --
 -- Language resolution: a translated article matches on the translation's
 -- target locale, an untranslated one on its source's language - which is
@@ -15,9 +15,23 @@
 
 -- name: ListFrontPage :many
 -- Front-page feed: newest first, keyset-paginated on (published_at, id)
--- descending. The cursor is the last row of the previous page; a null
--- cursor_published_at means the first page. Offset pagination is
--- deliberately not used - the feed moves while readers page through it.
+-- descending. Offset pagination is deliberately not used - the feed moves
+-- while readers page through it.
+--
+-- The cursor is the (published_at, id) of the previous page's last row, and
+-- it is atomic: BOTH halves must be present for the keyset comparison to
+-- apply. A half-supplied cursor is treated as no cursor - the first page -
+-- because the alternative is worse: SQL row comparison against a NULL
+-- yields UNKNOWN, which would filter out every row and hand the reader a
+-- silently empty feed. Callers that build cursors from encodeCursor always
+-- supply both halves; the endpoint rejects malformed cursors with 400
+-- before reaching here, so this arm is the last line of defence.
+--
+-- raw_body is fetched only for untranslated rows, through a left join on the
+-- article's own source_item: it is the full retrieval evidence blob, and a
+-- translated row renders from the translation columns, so reading it for
+-- every feed row would be pure overfetch on the hottest read path.
+--
 -- Place scoping honours the many-to-many model via EXISTS, so an article
 -- tagged to several requested places still appears exactly once.
 select
@@ -28,7 +42,7 @@ select
     t.extract   as translation_extract,
     t.target_locale,
     si.original_title,
-    si.raw_body,
+    untranslated.raw_body,
     si.source_url,
     s.language_code as source_language,
     (
@@ -41,6 +55,11 @@ from article a
 left join translation t on t.id = a.translation_id
 join source_item si on si.id = coalesce(t.source_item_id, a.source_item_id)
 join source s on s.id = si.source_id
+-- Untranslated origins only: article_exactly_one_origin means
+-- a.source_item_id is set exactly when there is no translation, so this
+-- join matches only those rows and the evidence blob is never read - nor
+-- carried across the wire - for a translated one.
+left join source_item untranslated on untranslated.id = a.source_item_id
 where a.published_at is not null
   and a.withdrawn_at is null
   and coalesce(t.target_locale, s.language_code) = sqlc.arg(lang)::text
@@ -53,6 +72,7 @@ where a.published_at is not null
   )
   and (
         sqlc.narg(cursor_published_at)::timestamptz is null
+        or sqlc.narg(cursor_id)::uuid is null
         or (a.published_at, a.id)
             < (sqlc.narg(cursor_published_at)::timestamptz, sqlc.narg(cursor_id)::uuid)
   )
@@ -62,7 +82,9 @@ limit sqlc.arg(row_limit);
 -- name: GetPublishedArticle :one
 -- Article detail. Same visibility rule as the feed: an unpublished or
 -- withdrawn article is absent (the endpoint maps no-rows to 404 - the
--- existence of unpublished work is not public).
+-- existence of unpublished work is not public). raw_body is conditional
+-- exactly as in the feed, so both row shapes carry the same fields and the
+-- endpoint renders them through one code path.
 select
     a.id,
     a.published_at,
@@ -72,7 +94,7 @@ select
     t.extract   as translation_extract,
     t.target_locale,
     si.original_title,
-    si.raw_body,
+    untranslated.raw_body,
     si.source_url,
     s.language_code as source_language,
     (
@@ -85,6 +107,11 @@ from article a
 left join translation t on t.id = a.translation_id
 join source_item si on si.id = coalesce(t.source_item_id, a.source_item_id)
 join source s on s.id = si.source_id
+-- Untranslated origins only: article_exactly_one_origin means
+-- a.source_item_id is set exactly when there is no translation, so this
+-- join matches only those rows and the evidence blob is never read - nor
+-- carried across the wire - for a translated one.
+left join source_item untranslated on untranslated.id = a.source_item_id
 where a.id = $1
   and a.published_at is not null
   and a.withdrawn_at is null;
