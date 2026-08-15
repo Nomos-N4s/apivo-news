@@ -51,6 +51,17 @@ export interface UiStrings {
   /** Masthead sign-in (mockup 1a) — disabled until registration ships (T031). */
   readonly signIn: string;
   readonly signInPending: string;
+  /**
+   * Site footer. The imprint and privacy notice are not decoration: a
+   * German-facing service owes an Impressum (TMG §5) and a GDPR privacy
+   * notice, so the footer carries their places and says openly that they
+   * are still owed rather than linking to pages that do not exist.
+   */
+  readonly alphaLabel: string;
+  readonly imprint: string;
+  readonly privacy: string;
+  readonly contact: string;
+  readonly legalPending: string;
   /** The axis bar (mockup 1f) — chip actions and the independence line. */
   readonly addPlace: (placeName: string) => string;
   readonly removePlace: (placeName: string) => string;
@@ -99,6 +110,11 @@ const EL: UiStrings = {
     'Δοκιμάστε ξανά σε λίγο. Δεν χάθηκε τίποτα — τα άρθρα θα εμφανιστούν μόλις αποκατασταθεί η σύνδεση.',
   signIn: 'Σύνδεση',
   signInPending: 'Διαθέσιμο με την εγγραφή',
+  alphaLabel: 'Άλφα',
+  imprint: 'Ταυτότητα',
+  privacy: 'Απόρρητο',
+  contact: 'Επικοινωνία',
+  legalPending: 'εκκρεμούν πριν από τη δημόσια κυκλοφορία',
   addPlace: (placeName) => `Προσθήκη τόπου: ${placeName}`,
   removePlace: (placeName) => `Αφαίρεση τόπου: ${placeName}`,
   independenceLine: 'Η γλώσσα και ο τόπος δεν συνδυάζονται ποτέ σε μία ρύθμιση.',
@@ -147,6 +163,11 @@ const DE: UiStrings = {
     'Versuchen Sie es gleich noch einmal. Nichts ist verloren — die Beiträge erscheinen, sobald die Verbindung wieder steht.',
   signIn: 'Anmelden',
   signInPending: 'Verfügbar mit der Registrierung',
+  alphaLabel: 'Alpha',
+  imprint: 'Impressum',
+  privacy: 'Datenschutz',
+  contact: 'Kontakt',
+  legalPending: 'vor dem öffentlichen Start erforderlich',
   addPlace: (placeName) => `Ort hinzufügen: ${placeName}`,
   removePlace: (placeName) => `Ort entfernen: ${placeName}`,
   independenceLine: 'Sprache und Ort werden nie zu einer Einstellung kombiniert.',

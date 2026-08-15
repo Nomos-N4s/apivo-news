@@ -88,7 +88,13 @@ const recordRows: { term: string; value: string; href?: string }[] = [
 const title = `${article.headline} · epiloYES`;
 ---
 
-<ReaderLayout lang={lang} title={title} description={t.tagline}>
+<ReaderLayout
+  lang={lang}
+  title={title}
+  description={t.tagline}
+  footerNote={t.reassurance}
+  homeHref={backHref}
+>
   <header class="head">
     <a class="brand" href={backHref}>epilo<span class="brand-yes">YES</span></a>
     <span class="head-rule" aria-hidden="true"></span>

@@ -1,5 +1,6 @@
 ---
 import '../styles/modernist.css';
+import SiteFooter from '../components/SiteFooter.astro';
 import type { ReadingLanguage } from '../lib/reader/axes';
 
 // The shell every reader page shares: the document, the Modernist
@@ -12,9 +13,13 @@ interface Props {
   lang: ReadingLanguage;
   title: string;
   description: string;
+  /** Closing statement above the footer — the licence note on reader pages. */
+  footerNote?: string | undefined;
+  /** Where the footer's brand leads; pages with axes pass their own path. */
+  homeHref?: string | undefined;
 }
 
-const { lang, title, description } = Astro.props;
+const { lang, title, description, footerNote, homeHref } = Astro.props;
 ---
 
 <!doctype html>
@@ -28,6 +33,7 @@ const { lang, title, description } = Astro.props;
   <body>
     <div class="frame">
       <slot />
+      <SiteFooter lang={lang} note={footerNote} homeHref={homeHref} />
     </div>
   </body>
 </html>

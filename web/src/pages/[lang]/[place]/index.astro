@@ -79,7 +79,13 @@ const recordRows = (item: FrontItem): { term: string; value: string; href?: stri
 const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`;
 ---
 
-<ReaderLayout lang={lang} title={title} description={t.tagline}>
+<ReaderLayout
+  lang={lang}
+  title={title}
+  description={t.tagline}
+  footerNote={t.reassurance}
+  homeHref={homeHref}
+>
   <Masthead homeHref={homeHref} dateText={formatMastheadDate(lang, now)}>
     <button class="btn btn-secondary sign-in" disabled title={t.signInPending}>{t.signIn}</button>
   </Masthead>
@@ -169,8 +175,6 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
       ))
     }
   </main>
-
-  <footer class="reassurance">{t.reassurance}</footer>
 </ReaderLayout>
 
 <style>
@@ -352,13 +356,6 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
   }
   .cell-record .source-link {
     font-size: 12.5px;
-  }
-
-  .reassurance {
-    padding: var(--space-4) calc(var(--space-6) + var(--space-1));
-    border-top: 2px solid var(--color-divider);
-    font-size: 11.5px;
-    color: color-mix(in srgb, var(--color-text) 55%, transparent);
   }
 
   @media (max-width: 980px) {
