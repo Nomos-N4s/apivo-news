@@ -258,6 +258,49 @@ export interface SourcesPage {
   readonly cycle: PollCycle;
 }
 
+/**
+ * Runtime check of a source list. The screen dereferences `cycle` and
+ * formats every non-null `last_polled_at`, so a body that satisfies only
+ * "has a sources array" could still throw mid-render — a validated
+ * rejection turns that into the page's own 503 state instead of a 500.
+ */
+function isSourcesPage(body: unknown): body is SourcesPage {
+  if (typeof body !== 'object' || body === null) {
+    return false;
+  }
+  const record = body as Record<string, unknown>;
+  const cycle = record['cycle'] as Record<string, unknown> | undefined;
+  if (
+    typeof cycle !== 'object' ||
+    cycle === null ||
+    typeof cycle['retrieved'] !== 'number' ||
+    typeof cycle['duplicates_skipped'] !== 'number' ||
+    !Array.isArray(cycle['failures'])
+  ) {
+    return false;
+  }
+  const sources = record['sources'];
+  if (!Array.isArray(sources)) {
+    return false;
+  }
+  return sources.every((row: unknown) => {
+    if (typeof row !== 'object' || row === null) {
+      return false;
+    }
+    const source = row as Record<string, unknown>;
+    const polled = source['last_polled_at'];
+    return (
+      typeof source['name'] === 'string' &&
+      typeof source['feed_path'] === 'string' &&
+      typeof source['language'] === 'string' &&
+      typeof source['usage_rule'] === 'string' &&
+      typeof source['active'] === 'boolean' &&
+      // Either never polled, or a timestamp the screen can format.
+      (polled === null || isTimestamp(polled))
+    );
+  });
+}
+
 /** The outcome of configuring a source. */
 export interface SourceOutcome {
   readonly recorded: boolean;
@@ -503,14 +546,10 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
         );
       }
       const body: unknown = await response.json();
-      if (
-        typeof body !== 'object' ||
-        body === null ||
-        !Array.isArray((body as { sources?: unknown }).sources)
-      ) {
-        throw new EditorialApiError('editorial API answered without a sources array');
+      if (!isSourcesPage(body)) {
+        throw new EditorialApiError('editorial API answered with a malformed source list');
       }
-      return body as SourcesPage;
+      return body;
     },
     async addSource(input: NewSource): Promise<SourceOutcome> {
       // The usage rule is not sent: the contract does not accept it, and
