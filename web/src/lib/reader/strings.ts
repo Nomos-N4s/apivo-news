@@ -62,6 +62,22 @@ export interface UiStrings {
   readonly privacy: string;
   readonly contact: string;
   readonly legalPending: string;
+  /**
+   * The about page (issue #92, FR-016). Every statement below derives from
+   * the spec or from shipped behaviour — the page describes the pipeline
+   * the product actually runs, never aspirations.
+   */
+  readonly aboutLabel: string;
+  readonly aboutHeading: string;
+  readonly aboutIntro: string;
+  readonly aboutPipelineHeading: string;
+  readonly aboutPipelineParagraphs: readonly string[];
+  readonly aboutTranslationHeading: string;
+  readonly aboutTranslationParagraphs: readonly string[];
+  readonly aboutCorrectionsHeading: string;
+  readonly aboutCorrectionsParagraphs: readonly string[];
+  readonly aboutPublishersHeading: string;
+  readonly aboutPublishersParagraphs: readonly string[];
   /** Registration and consent (mockup 1j, US6/FR-011). */
   readonly createAccount: string;
   readonly accountSubtitle: string;
@@ -140,6 +156,28 @@ const EL: UiStrings = {
   privacy: 'Απόρρητο',
   contact: 'Επικοινωνία',
   legalPending: 'εκκρεμούν πριν από τη δημόσια κυκλοφορία',
+  aboutLabel: 'Σχετικά',
+  aboutHeading: 'Σχετικά με το epiloYES',
+  aboutIntro:
+    'Το epiloYES είναι μια πολύγλωσση τοπική εφημερίδα για τις ελληνικές κοινότητες του εξωτερικού. Η γλώσσα ανάγνωσης και οι τόποι που παρακολουθείτε είναι δύο ανεξάρτητοι άξονες: διαβάζετε στα ελληνικά ή στα γερμανικά, για όποιους τόπους σας αφορούν — η αλλαγή του ενός δεν αγγίζει ποτέ τον άλλον.',
+  aboutPipelineHeading: 'Πώς δουλεύει',
+  aboutPipelineParagraphs: [
+    'Παρακολουθούμε αδειοδοτημένες πηγές ειδήσεων και παίρνουμε από αυτές μόνο ό,τι επιτρέπει η άδειά τους: τίτλο και σύντομο απόσπασμα, πάντα με σύνδεσμο προς το πρωτότυπο.',
+    'Τίποτα δεν δημοσιεύεται χωρίς επώνυμη ανθρώπινη έγκριση. Κάθε άρθρο εγκρίνεται από επώνυμο μέλος της σύνταξης πριν εμφανιστεί σε οποιαδήποτε πρώτη σελίδα.',
+    'Κάθε άρθρο συνοδεύεται από το αρχείο του: στη σελίδα του βλέπετε την πηγή και τον χρόνο έγκρισης, ενώ το πλήρες πρωτόκολλο — άδεια χρήσης, μοντέλο μετάφρασης, έκδοση εντολής, εγκρίνων — καταγράφεται μόνιμα.',
+  ],
+  aboutTranslationHeading: 'Μηχανική μετάφραση, ανθρώπινη ευθύνη',
+  aboutTranslationParagraphs: [
+    'Οι μεταφράσεις γίνονται από μηχανή και ελέγχονται από επώνυμο μέλος της σύνταξης πριν από τη δημοσίευση. Το πρωτότυπο συνδέεται πάντα δίπλα στο απόσπασμα, ώστε να μπορείτε να ανατρέξετε στην πηγή.',
+  ],
+  aboutCorrectionsHeading: 'Διορθώσεις και αποσύρσεις',
+  aboutCorrectionsParagraphs: [
+    'Όταν κάνουμε λάθος, το διορθώνουμε. Όταν ένα άρθρο αποσυρθεί, η σελίδα του το δηλώνει καθαρά — δεν προσποιούμαστε ότι δεν υπήρξε ποτέ. Το αρχείο δημοσίευσης δεν σβήνεται ούτε ξαναγράφεται.',
+  ],
+  aboutPublishersHeading: 'Για εκδότες',
+  aboutPublishersParagraphs: [
+    'Χρησιμοποιούμε μόνο ό,τι επιτρέπει ρητά η εκάστοτε άδεια: απόσπασμα και σύνδεσμο, ποτέ πλήρες κείμενο χωρίς γραπτή άδεια. Αν είστε εκδότης και έχετε ερωτήσεις για την άδειά σας, τα στοιχεία επικοινωνίας θα δημοσιευθούν εδώ πριν από τη δημόσια κυκλοφορία.',
+  ],
   createAccount: 'Δημιουργία λογαριασμού',
   accountSubtitle:
     'Ο λογαριασμός θυμάται τη γλώσσα σας και τους τόπους που ακολουθείτε. Η ανάγνωση λειτουργεί και χωρίς αυτόν.',
@@ -225,6 +263,28 @@ const DE: UiStrings = {
   privacy: 'Datenschutz',
   contact: 'Kontakt',
   legalPending: 'vor dem öffentlichen Start erforderlich',
+  aboutLabel: 'Über epiloYES',
+  aboutHeading: 'Über epiloYES',
+  aboutIntro:
+    'epiloYES ist eine mehrsprachige Lokalzeitung für die griechischen Gemeinden im Ausland. Lesesprache und Orte sind zwei unabhängige Achsen: Sie lesen auf Griechisch oder Deutsch, über die Orte, die Sie betreffen — die eine Wahl berührt die andere nie.',
+  aboutPipelineHeading: 'Wie es funktioniert',
+  aboutPipelineParagraphs: [
+    'Wir beobachten lizenzierte Nachrichtenquellen und übernehmen nur, was die jeweilige Lizenz erlaubt: Überschrift und kurzen Auszug, stets mit Link zum Original.',
+    'Nichts wird ohne namentliche menschliche Freigabe veröffentlicht. Jeder Artikel wird von einem namentlich genannten Redaktionsmitglied freigegeben, bevor er auf irgendeiner Titelseite erscheint.',
+    'Jeder Artikel trägt sein Protokoll: Auf seiner Seite sehen Sie Quelle und Freigabezeitpunkt; das vollständige Protokoll — Lizenz, Übersetzungsmodell, Prompt-Version, Freigebende — wird dauerhaft festgehalten.',
+  ],
+  aboutTranslationHeading: 'Maschinelle Übersetzung, menschliche Verantwortung',
+  aboutTranslationParagraphs: [
+    'Übersetzungen entstehen maschinell und werden vor der Veröffentlichung von einem namentlich genannten Redaktionsmitglied geprüft. Das Original ist stets neben dem Auszug verlinkt, damit Sie zur Quelle gehen können.',
+  ],
+  aboutCorrectionsHeading: 'Korrekturen und Rücknahmen',
+  aboutCorrectionsParagraphs: [
+    'Wenn wir einen Fehler machen, korrigieren wir ihn. Wird ein Artikel zurückgezogen, sagt seine Seite das offen — wir tun nicht so, als hätte es ihn nie gegeben. Das Veröffentlichungsprotokoll wird weder gelöscht noch umgeschrieben.',
+  ],
+  aboutPublishersHeading: 'Für Verlage',
+  aboutPublishersParagraphs: [
+    'Wir nutzen nur, was die jeweilige Lizenz ausdrücklich erlaubt: Auszug und Link, nie den Volltext ohne schriftliche Erlaubnis. Wenn Sie Fragen zu Ihrer Lizenz haben: Die Kontaktdaten werden hier vor dem öffentlichen Start veröffentlicht.',
+  ],
   createAccount: 'Konto anlegen',
   accountSubtitle:
     'Ein Konto merkt sich Ihre Sprache und die Orte, denen Sie folgen. Lesen geht auch ohne.',
