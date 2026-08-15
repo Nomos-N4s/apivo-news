@@ -80,7 +80,13 @@ const activeCount = sources.filter((source) => source.active).length;
           <span class="banner-label">
             {outcome.recorded ? t.addSource : t.notRecordedTitle}
           </span>
-          <span class="banner-body">{outcome.reason}</span>
+          {/* A 201 carries an id, not prose, so success states itself
+              rather than rendering an optional reason that may be absent. */}
+          <span class="banner-body">
+            {outcome.recorded
+              ? t.sourceAdded(outcome.source_id ?? '')
+              : outcome.reason}
+          </span>
         </div>
       )
     }

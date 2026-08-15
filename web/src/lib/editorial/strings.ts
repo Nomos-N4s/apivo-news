@@ -95,6 +95,8 @@ export interface EditorialStrings {
   readonly usageRuleNotAnInput: string;
   readonly addSourceAndPoll: string;
   readonly sourcesEmpty: string;
+  /** Success confirmation; a 201 carries an id, not prose. */
+  readonly sourceAdded: (id: string) => string;
 }
 
 const EL: EditorialStrings = {
@@ -190,6 +192,7 @@ const EL: EditorialStrings = {
     'Ο κανόνας δεν είναι πεδίο της φόρμας: κάθε νέα πηγή είναι extract_and_link και η αναβάθμιση είναι ξεχωριστή διαδικασία με έγκριση ιδρυτή.',
   addSourceAndPoll: 'Προσθήκη πηγής και έναρξη λήψης',
   sourcesEmpty: 'Δεν έχει ρυθμιστεί καμία πηγή ακόμη.',
+  sourceAdded: (id) => `Η πηγή ρυθμίστηκε (${id}) και η λήψη ξεκίνησε.`,
 };
 
 const DE: EditorialStrings = {
@@ -285,6 +288,7 @@ const DE: EditorialStrings = {
     'Die Regel ist kein Formularfeld: jede neue Quelle ist extract_and_link, und eine Heraufstufung ist ein eigener, von der Gründung freigegebener Vorgang.',
   addSourceAndPoll: 'Quelle hinzufügen und Abruf starten',
   sourcesEmpty: 'Noch keine Quelle eingerichtet.',
+  sourceAdded: (id) => `Quelle eingerichtet (${id}); der Abruf läuft.`,
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, EditorialStrings>> = { el: EL, de: DE };
