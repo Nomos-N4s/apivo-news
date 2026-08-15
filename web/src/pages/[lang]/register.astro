@@ -1,0 +1,333 @@
+---
+import Masthead from '../../components/Masthead.astro';
+import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import {
+  CONSENT_PURPOSES,
+  createAccountApi,
+  historyNewestFirst,
+  isGranted,
+  type ConsentOutcome,
+  type ConsentPurpose,
+  type ConsentRecord,
+} from '../../lib/account/consent';
+import { DEFAULT_FRONT_PAGE, isReadingLanguage, PLACE_CATALOG } from '../../lib/reader/axes';
+import { formatItemDate } from '../../lib/reader/format';
+import { uiStrings } from '../../lib/reader/strings';
+
+// Registration and consent — mockup 1j (issue #73, toward T031 #34).
+//
+// US6 puts registration first on the cut list while the account and
+// consent capability ships in the schema regardless, so this screen is
+// deliberately plain. Its load-bearing half is the consent panel: FR-011
+// requires one dated record per purpose with grant/revoke history and
+// never a boolean flag, and the screen shows that literally — the history
+// lists more records than there are switches.
+//
+// The account form renders but cannot submit. Sign-up runs through
+// Supabase Auth (D7), which is not wired, so rather than posting a
+// password to a handler that would discard it, the form states what is
+// missing and transmits nothing.
+const langSegment = Astro.params['lang'];
+if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+  return Astro.rewrite('/404');
+}
+const lang = langSegment;
+const t = uiStrings(lang);
+const api = createAccountApi();
+
+let outcome: ConsentOutcome | null = null;
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const purpose = String(form.get('purpose') ?? '');
+  const granted = String(form.get('granted') ?? '') === 'true';
+  if ((CONSENT_PURPOSES as readonly string[]).includes(purpose)) {
+    outcome = await api.setConsent(purpose as ConsentPurpose, granted);
+  }
+}
+
+const history: readonly ConsentRecord[] = await api.consentHistory();
+const ordered = historyNewestFirst(history);
+const followed = PLACE_CATALOG.filter((place) => place.selectable);
+const here = `/${lang}/register`;
+---
+
+<ReaderLayout lang={lang} title={`epiloYES — ${t.createAccount}`} description={t.tagline}>
+  <Masthead homeHref={DEFAULT_FRONT_PAGE} />
+
+  <main class="page">
+    <header class="head">
+      <h2>{t.createAccount}</h2>
+      <p>{t.accountSubtitle}</p>
+    </header>
+
+    {
+      outcome !== null && (
+        <div class="banner">
+          <span class="banner-label">{t.notRecorded}</span>
+          <span class="banner-body">{outcome.reason}</span>
+        </div>
+      )
+    }
+
+    <div class="split">
+      <section class="account">
+        <div class="field">
+          <label for="r-name">{t.nameLabel}</label>
+          <input class="input" id="r-name" name="name" disabled />
+        </div>
+        <div class="field">
+          <label for="r-email">{t.emailLabel}</label>
+          <input class="input" id="r-email" name="email" type="email" disabled />
+        </div>
+        <div class="field">
+          <label for="r-pass">{t.passwordLabel}</label>
+          <input class="input" id="r-pass" name="password" type="password" disabled />
+        </div>
+
+        <h6>{t.placesToFollow}</h6>
+        <div class="places">
+          {followed.map((place) => <span class="tag tag-accent">{place.endonym}</span>)}
+          <a class="btn btn-ghost" href={`/${lang}/setup`}>{t.editPlaces}</a>
+        </div>
+        <p class="note">{t.followNote}</p>
+
+        <button class="btn btn-primary btn-block" type="button" disabled>
+          {t.createAccount}
+        </button>
+        <p class="pending">{t.registrationPending}</p>
+      </section>
+
+      <section class="consent">
+        <h6>{t.consentHeading}</h6>
+        <p class="note">{t.consentIntro}</p>
+
+        <div class="purposes">
+          {
+            CONSENT_PURPOSES.map((purpose) => {
+              const on = isGranted(history, purpose);
+              return (
+                <form class="purpose" method="post" action={here}>
+                  <input type="hidden" name="purpose" value={purpose} />
+                  <input type="hidden" name="granted" value={on ? 'false' : 'true'} />
+                  <button
+                    class:list={['switch', { 'switch-on': on }]}
+                    type="submit"
+                    aria-pressed={on ? 'true' : 'false'}
+                    aria-label={`${on ? t.revoke : t.grant}: ${t.purposeLabels[purpose] ?? purpose}`}
+                  >
+                    <span class="knob" aria-hidden="true" />
+                  </button>
+                  <div>
+                    <div class="purpose-title">{t.purposeLabels[purpose] ?? purpose}</div>
+                    <div class="purpose-meta">
+                      {t.purposeWord} <code>{purpose}</code> · {on ? t.granted : t.notGranted}
+                    </div>
+                  </div>
+                </form>
+              );
+            })
+          }
+        </div>
+
+        <div class="history">
+          <h6>{t.consentHistoryHeading}</h6>
+          <ol>
+            {
+              ordered.map((record) => (
+                <li>
+                  <span class="rec-purpose">{record.purpose}</span>{' '}
+                  <span class="rec-verb">{t.granted}</span>{' '}
+                  {formatItemDate(lang, new Date(record.granted_at))}
+                  {record.revoked_at === null ? (
+                    <span class="rec-current"> ← {t.current}</span>
+                  ) : (
+                    <>
+                      {' · '}
+                      <span class="rec-verb">{t.revoke.toLowerCase()}</span>{' '}
+                      {formatItemDate(lang, new Date(record.revoked_at))}
+                    </>
+                  )}
+                </li>
+              ))
+            }
+          </ol>
+          <p class="note">{t.recordCount(history.length)}</p>
+        </div>
+      </section>
+    </div>
+  </main>
+</ReaderLayout>
+
+<style>
+  .page {
+    flex: 1;
+  }
+  .head {
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1));
+    border-bottom: 2px solid var(--color-divider);
+  }
+  .head h2 {
+    font-size: 30px;
+    margin: 0 0 var(--space-2);
+  }
+  .head p {
+    margin: 0;
+    font-size: 14px;
+    max-width: 56ch;
+    color: color-mix(in srgb, var(--color-text) 70%, transparent);
+    text-wrap: pretty;
+  }
+
+  .banner {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    padding: var(--space-3) calc(var(--space-6) + var(--space-1));
+    background: var(--color-text);
+    color: var(--color-bg);
+  }
+  .banner-label {
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-accent-400);
+    flex: none;
+  }
+  .banner-body {
+    font-size: 13px;
+    max-width: 80ch;
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .account {
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1));
+    border-right: 1px solid var(--color-divider);
+  }
+  .account .field {
+    margin-bottom: var(--space-3);
+  }
+  .account h6 {
+    margin: var(--space-4) 0 var(--space-2);
+  }
+  .places {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: var(--space-2);
+  }
+  .places .tag {
+    font-size: 11.5px;
+  }
+  .note {
+    margin: 0 0 var(--space-4);
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    text-wrap: pretty;
+  }
+  .pending {
+    margin: var(--space-3) 0 0;
+    font-size: 11.5px;
+    color: var(--color-accent-800);
+    background: var(--color-accent-100);
+    border-left: 2px solid var(--color-accent);
+    padding: var(--space-2) var(--space-3);
+    text-wrap: pretty;
+  }
+
+  .consent {
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1));
+    background: var(--color-surface);
+  }
+  .purposes {
+    border-top: 1px solid var(--color-divider);
+  }
+  .purpose {
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-start;
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .switch {
+    width: 34px;
+    height: 18px;
+    flex: none;
+    position: relative;
+    padding: 0;
+    border: 0;
+    cursor: pointer;
+    background: var(--color-neutral-400);
+  }
+  .switch-on {
+    background: var(--color-accent);
+  }
+  .knob {
+    position: absolute;
+    left: 2px;
+    top: 2px;
+    width: 14px;
+    height: 14px;
+    background: var(--color-bg);
+  }
+  .switch-on .knob {
+    left: auto;
+    right: 2px;
+  }
+  .switch:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  .purpose-title {
+    font-size: 13.5px;
+    font-weight: 600;
+    text-wrap: pretty;
+  }
+  .purpose-meta {
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .purpose-meta code {
+    font-family: ui-monospace, Menlo, monospace;
+  }
+
+  .history {
+    margin-top: var(--space-6);
+    padding-top: var(--space-4);
+    border-top: 2px solid var(--color-divider);
+  }
+  .history h6 {
+    margin: 0 0 var(--space-2);
+  }
+  .history ol {
+    list-style: none;
+    margin: 0 0 var(--space-3);
+    padding: 0;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.9;
+    color: color-mix(in srgb, var(--color-text) 70%, transparent);
+  }
+  .rec-purpose {
+    color: var(--color-text);
+  }
+  .rec-current {
+    color: var(--color-accent-700);
+  }
+
+  @media (max-width: 860px) {
+    .split {
+      grid-template-columns: 1fr;
+    }
+    .account {
+      border-right: 0;
+      border-bottom: 1px solid var(--color-divider);
+    }
+  }
+</style>
