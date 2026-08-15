@@ -13,24 +13,46 @@ import (
 
 const withdrawArticle = `-- name: WithdrawArticle :one
 
-update article
-   set withdrawn_at = now(),
-       withdrawn_by = $1::uuid,
-       withdrawal_reason = $2::text
- where id = $3::uuid
-   and published_at is not null
-   and withdrawn_at is null
-returning id, withdrawn_at, withdrawn_by, withdrawal_reason
+with target as (
+    select id, published_at, withdrawn_at
+      from article
+     where id = $1::uuid
+       for update
+),
+withdrawn as (
+    update article
+       set withdrawn_at = now(),
+           withdrawn_by = $2::uuid,
+           withdrawal_reason = $3::text
+     where id = (
+        select id
+          from target
+         where published_at is not null
+           and withdrawn_at is null
+     )
+    returning id, withdrawn_at, withdrawn_by, withdrawal_reason
+)
+select
+    (t.published_at is not null)::boolean as was_published,
+    (t.withdrawn_at is not null)::boolean as was_withdrawn,
+    w.id                       as article_id,
+    w.withdrawn_at,
+    w.withdrawn_by,
+    w.withdrawal_reason
+from target t
+left join withdrawn w on w.id = t.id
 `
 
 type WithdrawArticleParams struct {
+	ArticleID   pgtype.UUID
 	WithdrawnBy pgtype.UUID
 	Reason      string
-	ArticleID   pgtype.UUID
 }
 
 type WithdrawArticleRow struct {
-	ID               pgtype.UUID
+	WasPublished     bool
+	WasWithdrawn     bool
+	ArticleID        pgtype.UUID
 	WithdrawnAt      pgtype.Timestamptz
 	WithdrawnBy      pgtype.UUID
 	WithdrawalReason pgtype.Text
@@ -47,21 +69,37 @@ type WithdrawArticleRow struct {
 // `article.withdrawn` by trigger, in the same transaction as the update, so
 // the record of who withdrew what and why cannot be lost to application
 // discipline - and must not be duplicated by it either.
-// The one-way withdrawal transition, expressed as a guarded UPDATE. The two
-// predicates carry the whole lifecycle rule: only a published article can be
-// withdrawn, and only once. Expressing them here rather than as a read
-// followed by a write means two concurrent withdrawals produce exactly one
-// 200 and one 409, decided by the database, and neither ever meets
-// article_guard's exception - the losing statement simply matches no row.
+// The one-way withdrawal transition and its verdict, in ONE statement.
+//
+// The lifecycle rule is that only a published article can be withdrawn, and
+// only once. Attempting the write and then reading back why it did nothing
+// would answer from a second snapshot: an article published in between
+// those two statements reads as published-and-not-withdrawn, and the
+// refusal would be reported as "already withdrawn", which is simply untrue.
+// So the attempt and the classification are one statement over one locked
+// row.
+//
+// `target` takes the row lock; under READ COMMITTED that also re-reads the
+// latest committed version, so the flags below describe the article as it
+// actually is, not as it was when the statement was planned. Holding the
+// lock is what makes them still true when the update runs, and what makes
+// two concurrent withdrawals produce exactly one 200 and one 409 without
+// either meeting article_guard's exception.
 //
 // The three withdrawal columns move together, which is what
 // `article_withdrawal_all_or_none` requires: a partial withdrawal is
 // unrepresentable.
+// No row at all means no such article. A row with was_published false is an
+// approval that was never released; with was_withdrawn true, one whose
+// publication has already ended. Otherwise the withdrawal happened and the
+// joined columns carry it.
 func (q *Queries) WithdrawArticle(ctx context.Context, arg WithdrawArticleParams) (WithdrawArticleRow, error) {
-	row := q.db.QueryRow(ctx, withdrawArticle, arg.WithdrawnBy, arg.Reason, arg.ArticleID)
+	row := q.db.QueryRow(ctx, withdrawArticle, arg.ArticleID, arg.WithdrawnBy, arg.Reason)
 	var i WithdrawArticleRow
 	err := row.Scan(
-		&i.ID,
+		&i.WasPublished,
+		&i.WasWithdrawn,
+		&i.ArticleID,
 		&i.WithdrawnAt,
 		&i.WithdrawnBy,
 		&i.WithdrawalReason,
