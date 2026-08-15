@@ -26,6 +26,7 @@ export default getViteConfig({
         'src/lib/editorial/api.ts',
         'src/lib/editorial/session.ts',
         'src/lib/editorial/strings.ts',
+        'src/lib/usage.ts',
       ],
       // Constitution: TypeScript coverage minimum is 80%, enforced in CI —
       // the build fails below these thresholds.

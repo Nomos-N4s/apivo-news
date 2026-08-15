@@ -1,5 +1,7 @@
 import { defineMiddleware, sequence } from 'astro:middleware';
 
+import { createUsageCounter } from './lib/usage';
+
 // The single crawler enforcement point (FR-013, research D6). Three fences,
 // one place, no per-route logic anywhere:
 //
@@ -117,4 +119,24 @@ const stampAdvisoryHeader = defineMiddleware(async (_context, next) => {
   return response;
 });
 
-export const onRequest = sequence(stampAdvisoryHeader, denyCrawlers, serveRobotsTxt);
+/**
+ * Aggregate usage counting (issue #91): one in-memory counter per server
+ * process, flushed as a `usage_rollup` structured log line on the request
+ * that finds the interval elapsed. Outermost in the sequence so the
+ * counted status is the one actually sent — crawler 403s and robots.txt
+ * hits included. The counter's API receives only the pathname and status;
+ * IPs, User-Agents and cookies never reach it.
+ */
+const usageCounter = createUsageCounter();
+
+const countUsage = defineMiddleware(async (context, next) => {
+  const response = await next();
+  const now = new Date();
+  usageCounter.record(now, context.url.pathname, response.status);
+  usageCounter.flushIfDue(now, (rollup) => {
+    console.log(JSON.stringify(rollup));
+  });
+  return response;
+});
+
+export const onRequest = sequence(countUsage, stampAdvisoryHeader, denyCrawlers, serveRobotsTxt);
