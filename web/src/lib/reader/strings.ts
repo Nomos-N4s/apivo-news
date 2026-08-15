@@ -83,6 +83,10 @@ export interface UiStrings {
   readonly current: string;
   readonly recordCount: (count: number) => string;
   readonly notRecorded: string;
+  /** Success: a consent record was actually written. */
+  readonly consentRecorded: string;
+  readonly consentGrantedNow: string;
+  readonly consentRevokedNow: string;
   /** The axis bar (mockup 1f) — chip actions and the independence line. */
   readonly addPlace: (placeName: string) => string;
   readonly removePlace: (placeName: string) => string;
@@ -165,6 +169,9 @@ const EL: UiStrings = {
   recordCount: (count) =>
     `${count} εγγραφές, όχι διακόπτες. Η εκ νέου παραχώρηση ανοίγει νέα εγγραφή και αφήνει την παλιά να στέκει.`,
   notRecorded: 'Δεν καταγράφηκε',
+  consentRecorded: 'Καταγράφηκε',
+  consentGrantedNow: 'Νέα εγγραφή συγκατάθεσης δημιουργήθηκε· η προηγούμενη διατηρείται.',
+  consentRevokedNow: 'Η συγκατάθεση ανακλήθηκε με ημερομηνία· η εγγραφή παραμένει.',
   addPlace: (placeName) => `Προσθήκη τόπου: ${placeName}`,
   removePlace: (placeName) => `Αφαίρεση τόπου: ${placeName}`,
   independenceLine: 'Η γλώσσα και ο τόπος δεν συνδυάζονται ποτέ σε μία ρύθμιση.',
@@ -246,6 +253,9 @@ const DE: UiStrings = {
   recordCount: (count) =>
     `${count} Einträge, keine Schalter. Eine erneute Erteilung öffnet einen neuen Eintrag und lässt den alten stehen.`,
   notRecorded: 'Nicht verzeichnet',
+  consentRecorded: 'Verzeichnet',
+  consentGrantedNow: 'Ein neuer Einwilligungseintrag wurde angelegt; der frühere bleibt erhalten.',
+  consentRevokedNow: 'Die Einwilligung wurde datiert widerrufen; der Eintrag bleibt bestehen.',
   addPlace: (placeName) => `Ort hinzufügen: ${placeName}`,
   removePlace: (placeName) => `Ort entfernen: ${placeName}`,
   independenceLine: 'Sprache und Ort werden nie zu einer Einstellung kombiniert.',
