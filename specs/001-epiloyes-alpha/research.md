@@ -198,12 +198,18 @@ Endpoints (all OpenAI-compatible): `api.groq.com/openai/v1`,
 
 ## D9 — Extract derivation rule
 
-- **Decision**: prefer the feed's own summary; when absent, take the
-  first sentences of the retrieved text up to 300 characters, cut at a
-  sentence boundary, always suffixed by the source link. The rule lives
-  in one deterministic function with table-driven tests; editors see the
-  extract before approval. It feeds two consumers: translation input, and
-  the read-time extract for untranslated (same-language) articles, whose
+- **Decision**: the feed's own summary is the preferred SOURCE of the
+  extract, and the body is used only when the feed supplies no summary;
+  whichever text is used is then reduced to plain prose (markup stripped,
+  entities decoded) and bounded to 300 characters, cut at a sentence
+  boundary, always suffixed by the source link. The 300-character bound
+  applies to both sources, not only to the body: description-only feeds
+  are common and carry the whole article in the summary, so returning a
+  summary verbatim would reproduce the article in full under a licence
+  that permits only an extract and a link (FR-004). The rule lives in one
+  deterministic function with table-driven tests; editors see the extract
+  before approval. It feeds two consumers: translation input, and the
+  read-time extract for untranslated (same-language) articles, whose
   headline is `source_item.original_title`.
 - **Rationale**: extract-and-link must stay defensibly "extract", and
   a human signs off every item regardless (I-1).

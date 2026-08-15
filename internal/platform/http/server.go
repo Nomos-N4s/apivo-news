@@ -14,26 +14,49 @@ import (
 // ReadinessCheck reports whether a dependency is ready to serve traffic.
 type ReadinessCheck func(ctx context.Context) error
 
+// Route pairs a ServeMux pattern with the handler a module contributed.
+// Modules build their handlers; the composition root in cmd passes them
+// here. The platform stays ignorant of what the routes do.
+type Route struct {
+	// Pattern is a net/http ServeMux pattern, e.g. "/api/v1/editorial/".
+	Pattern string
+	// Handler serves every request matching Pattern.
+	Handler http.Handler
+}
+
 // Server wraps the standard library HTTP server with health endpoints and
 // context-driven graceful shutdown.
 type Server struct {
 	log   *slog.Logger
+	mux   *http.ServeMux
 	inner *http.Server
 }
 
 // New builds a Server listening on addr. The ready check backs /readyz;
-// pass the database ping. A nil check reports always ready.
-func New(log *slog.Logger, addr string, ready ReadinessCheck) *Server {
-	s := &Server{log: log}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
-	mux.HandleFunc("GET /readyz", s.handleReadyz(ready))
+// pass the database ping. A nil check reports always ready. Any routes
+// given here are mounted on the same mux, sharing the noindex stamping;
+// Mount adds more later.
+func New(log *slog.Logger, addr string, ready ReadinessCheck, routes ...Route) *Server {
+	s := &Server{log: log, mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /readyz", s.handleReadyz(ready))
+	for _, r := range routes {
+		s.mux.Handle(r.Pattern, r.Handler)
+	}
 	s.inner = &http.Server{
 		Addr:              addr,
-		Handler:           noindex(mux),
+		Handler:           noindex(s.mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	return s
+}
+
+// Mount registers a module's route table on the server. This is how the
+// composition root in cmd contributes business routes: the module builds an
+// http.Handler, cmd mounts it here. Call before Run; mounted routes inherit
+// the server-wide headers (X-Robots-Tag on every response).
+func (s *Server) Mount(pattern string, handler http.Handler) {
+	s.mux.Handle(pattern, handler)
 }
 
 // noindex stamps every response with a robots-blocking header. The API is
