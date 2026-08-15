@@ -246,6 +246,8 @@ func TestReaderEndpoints(t *testing.T) {
 			{name: "limit not a number", query: valid + "&limit=twenty", detail: "invalid limit"},
 			{name: "cursor not base64", query: valid + "&cursor=%25%25", detail: "invalid cursor"},
 			{name: "cursor with garbage payload", query: valid + "&cursor=Z2FyYmFnZQ", detail: "invalid cursor"},
+			// Rejected on length, before anything is decoded.
+			{name: "oversized cursor", query: valid + "&cursor=" + strings.Repeat("A", 4096), detail: "invalid cursor"},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
@@ -303,11 +305,54 @@ func TestReaderEndpoints(t *testing.T) {
 		}
 	})
 
-	t.Run("front rejects non-GET methods", func(t *testing.T) {
+	// The contract has one error convention, so the responses nobody wrote a
+	// handler for have to honour it too - a wrong method and an unknown path
+	// are exactly the requests a confused client makes, and a text/plain body
+	// there is the one it cannot parse.
+	t.Run("unrouted requests are problem+json too", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			method    string
+			target    string
+			wantCode  int
+			wantAllow bool
+		}{
+			{
+				name: "wrong method on the feed", method: http.MethodPost,
+				target:   "/api/v1/front?lang=de&place=" + f.alphaSlug,
+				wantCode: http.StatusMethodNotAllowed, wantAllow: true,
+			},
+			{
+				name: "wrong method on an article", method: http.MethodDelete,
+				target:   "/api/v1/articles/" + uuidString(f.deNew),
+				wantCode: http.StatusMethodNotAllowed, wantAllow: true,
+			},
+			{
+				name: "unknown path under the api", method: http.MethodGet,
+				target: "/api/v1/nope", wantCode: http.StatusNotFound,
+			},
+			{
+				name: "unknown nested path", method: http.MethodGet,
+				target: "/api/v1/articles/one/two", wantCode: http.StatusNotFound,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, httptest.NewRequest(tt.method, tt.target, nil))
+				wantProblem(t, rec, tt.wantCode)
+				if got := rec.Header().Get("Allow"); tt.wantAllow && got == "" {
+					t.Error("405 response carries no Allow header")
+				}
+			})
+		}
+	})
+
+	t.Run("HEAD is served like GET", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/front?lang=de&place="+f.alphaSlug, nil))
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("POST /api/v1/front = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/api/v1/front?lang=de&place="+f.alphaSlug, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("HEAD /api/v1/front = %d, want %d", rec.Code, http.StatusOK)
 		}
 	})
 

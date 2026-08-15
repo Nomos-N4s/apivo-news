@@ -88,6 +88,56 @@ func TestDeriveExtract(t *testing.T) {
 			in:   strings.Repeat("ω", 250),
 			want: strings.Repeat("ω", 250),
 		},
+		{
+			name: "tags are dropped and block boundaries become spaces",
+			in:   "<p>Πρώτη πρόταση.</p><p>Δεύτερη πρόταση.</p>",
+			want: "Πρώτη πρόταση. Δεύτερη πρόταση.",
+		},
+		{
+			name: "attributes never leak into the extract",
+			in:   `<a href="https://example.test/x" title="ignored">Der Text</a>.`,
+			want: "Der Text.",
+		},
+		{
+			name: "a '>' inside a quoted attribute does not end the tag early",
+			in:   `<a title="a>b">Text</a>`,
+			want: "Text",
+		},
+		{
+			name: "character references are decoded",
+			in:   "Caf&eacute; &amp; Bar &lt;offen&gt;.",
+			want: "Café & Bar <offen>.",
+		},
+		{
+			name: "non-breaking space collapses like any other space",
+			in:   "Erste&nbsp;&nbsp;Zeile.",
+			want: "Erste Zeile.",
+		},
+		{
+			name: "a bare ampersand survives",
+			in:   "Fish & chips.",
+			want: "Fish & chips.",
+		},
+		{
+			name: "a bare less-than is content, not a tag",
+			in:   "a < b und b > c.",
+			want: "a < b und b > c.",
+		},
+		{
+			name: "comments are dropped",
+			in:   "Vorher<!-- ein Kommentar -->nachher.",
+			want: "Vorher nachher.",
+		},
+		{
+			name: "script and style content never reaches the reader",
+			in:   "<style>.a{color:red}</style>Echte Worte.<script>alert(1)</script>",
+			want: "Echte Worte.",
+		},
+		{
+			name: "unterminated markup swallows the rest rather than leaking a fragment",
+			in:   "Sichtbar. <a href=\"https://example.test/unterminated",
+			want: "Sichtbar.",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -98,6 +148,44 @@ func TestDeriveExtract(t *testing.T) {
 			}
 			if n := utf8.RuneCountInString(got); n > 300 {
 				t.Errorf("DeriveExtract() is %d runes, must never exceed 300", n)
+			}
+		})
+	}
+}
+
+// TestDeriveExtractNeverEmitsMarkupOrExceedsTheBound is the licensing guard,
+// stated as a property rather than as examples: whatever a feed puts in the
+// body, the extract stays a bounded piece of prose. An unbounded extract
+// would republish the article (extract-and-link permits no such thing), and a
+// rune-sliced one would emit mid-tag fragments into a reader payload. The
+// same two properties bind ingestion's write-time derivation of this rule;
+// the two implementations must not drift apart.
+func TestDeriveExtractNeverEmitsMarkupOrExceedsTheBound(t *testing.T) {
+	t.Parallel()
+
+	longProse := strings.Repeat("Πολύ μεγάλο άρθρο με πολλές προτάσεις. ", 200)
+	bodies := map[string]string{
+		"whole article in one paragraph": "<p>" + longProse + "</p>",
+		"article as many paragraphs":     strings.Repeat("<p>"+longProse+"</p>", 20),
+		"markup dense enough to land a tag on the boundary": strings.Repeat(
+			`<a href="https://example.test/some/fairly/long/link/target">Wort</a> `, 400),
+		"body that is entirely markup": strings.Repeat(`<div class="x">`, 500),
+		"unterminated tag at the end":  longProse + `<a href="https://example.test/`,
+		"script-heavy body":            strings.Repeat("<script>alert(1)</script>", 300) + "Worte.",
+	}
+
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := content.DeriveExtract(body)
+
+			if n := utf8.RuneCountInString(got); n > 300 {
+				t.Errorf("extract is %d runes; the 300-rune ceiling is the licensing bound, not a hint", n)
+			}
+			for _, marker := range []string{"<", ">", "href=", "alert(", "class="} {
+				if strings.Contains(got, marker) {
+					t.Errorf("extract contains %q - markup reached a reader payload: %q", marker, got)
+				}
 			}
 		})
 	}

@@ -25,6 +25,13 @@ import (
 const (
 	defaultLimit = 20
 	maxLimit     = 100
+	// maxCursorBytes bounds the encoded cursor the endpoint will even look
+	// at. A real one is an RFC 3339 timestamp, a separator and a UUID -
+	// comfortably under a hundred bytes - so anything larger is malformed by
+	// construction and is rejected before it is decoded. The transport caps
+	// header size too, but a value this cheap to state should not be left
+	// resting on a limit set somewhere else.
+	maxCursorBytes = 256
 )
 
 // feedItem is the reader item shape shared by the front page and the
@@ -66,7 +73,37 @@ func NewHandler(log *slog.Logger, db store.DBTX) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/front", h.handleFront)
 	mux.HandleFunc("GET /api/v1/articles/{id}", h.handleArticle)
+	// Every error under /api/v1 is problem+json, including the ones nobody
+	// wrote a handler for. Without this catch-all the ServeMux answers an
+	// unknown path or a wrong method with a text/plain body, which breaks
+	// the contract's single error convention for exactly the requests a
+	// confused client is most likely to make.
+	mux.HandleFunc("/api/v1/", h.handleUnrouted)
 	return mux
+}
+
+// handleUnrouted answers anything under /api/v1 that no route claimed. A
+// known path reached with the wrong method is 405 (with Allow, as HTTP
+// requires); anything else is 404.
+func (h *Handler) handleUnrouted(w http.ResponseWriter, r *http.Request) {
+	if isReaderPath(r.URL.Path) {
+		w.Header().Set("Allow", "GET, HEAD")
+		platformhttp.Problem(w, http.StatusMethodNotAllowed,
+			fmt.Sprintf("%s is not allowed on this endpoint; use GET", r.Method))
+		return
+	}
+	platformhttp.Problem(w, http.StatusNotFound, "no such endpoint")
+}
+
+// isReaderPath reports whether path is one this module serves - the test for
+// "wrong method" rather than "wrong address". It mirrors the patterns
+// registered above; a route added there belongs here too.
+func isReaderPath(path string) bool {
+	if path == "/api/v1/front" {
+		return true
+	}
+	id, ok := strings.CutPrefix(path, "/api/v1/articles/")
+	return ok && id != "" && !strings.Contains(id, "/")
 }
 
 // handleFront serves GET /api/v1/front: the locale-scoped front page feed.
@@ -225,6 +262,9 @@ func encodeCursor(publishedAt pgtype.Timestamptz, id pgtype.UUID) string {
 // decodeCursor is the inverse of encodeCursor. Any malformed cursor is an
 // error; the handler maps it to 400.
 func decodeCursor(s string) (pgtype.Timestamptz, pgtype.UUID, error) {
+	if len(s) > maxCursorBytes {
+		return pgtype.Timestamptz{}, pgtype.UUID{}, fmt.Errorf("content: cursor is %d bytes, over the %d-byte bound", len(s), maxCursorBytes)
+	}
 	raw, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
 		return pgtype.Timestamptz{}, pgtype.UUID{}, fmt.Errorf("content: cursor encoding: %w", err)
