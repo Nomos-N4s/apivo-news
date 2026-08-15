@@ -217,7 +217,7 @@ func TestTranslate(t *testing.T) {
 				Model:         hostModelID,
 				PromptVersion: translation.CurrentPromptVersion,
 				// 200 * 0.15 + 160 * 0.60 = 126 micro-USD.
-				CostMicroUSD: 126,
+				Spend: translation.Spend{CostMicroUSD: 126},
 			},
 			wantCalls: 1,
 		},
@@ -232,7 +232,7 @@ func TestTranslate(t *testing.T) {
 				Model:         hostModelID,
 				PromptVersion: translation.CurrentPromptVersion,
 				// 210 * 0.15 + 150 * 0.60 = 121.5 -> 122.
-				CostMicroUSD: 122,
+				Spend: translation.Spend{CostMicroUSD: 122},
 			},
 			wantCalls: 1,
 		},
@@ -248,7 +248,7 @@ func TestTranslate(t *testing.T) {
 				Model:         hostModelID,
 				PromptVersion: translation.CurrentPromptVersion,
 				// 190 * 0.15 + 170 * 0.60 = 130.5 -> 131 (half away from zero).
-				CostMicroUSD: 131,
+				Spend: translation.Spend{CostMicroUSD: 131},
 			},
 			wantCalls: 1,
 		},
@@ -264,7 +264,7 @@ func TestTranslate(t *testing.T) {
 				Model:         hostModelID,
 				PromptVersion: translation.CurrentPromptVersion,
 				// 100 * 0.15 + 100 * 0.60 = 75.
-				CostMicroUSD: 75,
+				Spend: translation.Spend{CostMicroUSD: 75},
 			},
 			wantCalls: 1,
 		},
@@ -280,7 +280,7 @@ func TestTranslate(t *testing.T) {
 				Model:         hostModelID,
 				PromptVersion: translation.CurrentPromptVersion,
 				// 120 * 0.15 + 130 * 0.60 = 96.
-				CostMicroUSD: 96,
+				Spend: translation.Spend{CostMicroUSD: 96},
 			},
 			wantCalls: 1,
 		},
@@ -300,7 +300,7 @@ func TestTranslate(t *testing.T) {
 				Model:         "configured-model",
 				PromptVersion: translation.CurrentPromptVersion,
 				// 80 * 0.15 + 60 * 0.60 = 48.
-				CostMicroUSD: 48,
+				Spend: translation.Spend{CostMicroUSD: 48},
 			},
 			wantCalls: 1,
 		},
@@ -319,7 +319,7 @@ func TestTranslate(t *testing.T) {
 				Extract:       wantExtract,
 				Model:         hostModelID,
 				PromptVersion: translation.CurrentPromptVersion,
-				CostMicroUSD:  0,
+				Spend:         translation.Spend{CostMicroUSD: 0},
 			},
 			wantCalls: 1,
 		},
@@ -477,7 +477,7 @@ func TestTranslate(t *testing.T) {
 				Extract:       wantExtract,
 				Model:         hostModelID,
 				PromptVersion: translation.CurrentPromptVersion,
-				CostMicroUSD:  0,
+				Spend:         translation.Spend{CostMicroUSD: 0},
 			},
 			wantCalls: 1,
 		},
@@ -540,7 +540,7 @@ func TestTranslate(t *testing.T) {
 				Model:         hostModelID,
 				PromptVersion: translation.CurrentPromptVersion,
 				// 205 * 0.15 + 155 * 0.60 = 123.75 -> 124.
-				CostMicroUSD: 124,
+				Spend: translation.Spend{CostMicroUSD: 124},
 			},
 			wantCalls: 2,
 			wantWaits: 1,
@@ -569,7 +569,7 @@ func TestTranslate(t *testing.T) {
 				Model:         hostModelID,
 				PromptVersion: translation.CurrentPromptVersion,
 				// 140 * 0.15 + 90 * 0.60 = 75.
-				CostMicroUSD: 75,
+				Spend: translation.Spend{CostMicroUSD: 75},
 			},
 			wantCalls: 2,
 			wantWaits: 1,
@@ -637,6 +637,126 @@ func TestTranslate(t *testing.T) {
 				t.Errorf("backed off %d time(s), want %d", n, tc.wantWaits)
 			}
 		})
+	}
+}
+
+// TestRefusedAnswerReportsWhatItCost: a 200 the adapter throws away was
+// still generated and billed. The cost has to reach the caller, or the
+// monthly ledger drifts below the real total by everything the refusals
+// cost (FR-006).
+func TestRefusedAnswerReportsWhatItCost(t *testing.T) {
+	t.Parallel()
+
+	host := newFakeHost(t, func(_ int, w http.ResponseWriter, _ *http.Request) {
+		answerJSON(w, http.StatusOK, completionWith(map[string]any{
+			"model": hostModelID,
+			"choices": []any{map[string]any{
+				"message":       map[string]any{"content": translationJSON(wantHeadline, wantExtract)},
+				"finish_reason": "length",
+			}},
+			"usage": map[string]any{"prompt_tokens": 200, "completion_tokens": 160},
+		}))
+	})
+	client, _ := newTestClient(t, testConfig(host.URL))
+
+	_, err := client.Translate(t.Context(), sampleRequest)
+	if !errors.Is(err, translation.ErrInvalidResponse) {
+		t.Fatalf("Translate() error = %v, want ErrInvalidResponse", err)
+	}
+
+	var spent *translation.SpendError
+	if !errors.As(err, &spent) {
+		t.Fatalf("Translate() error = %v, want a *translation.SpendError carrying the discarded attempt's cost", err)
+	}
+	// 200 * 0.15 + 160 * 0.60 = 126 micro-USD, generated and billed.
+	if spent.CostMicroUSD != 126 {
+		t.Errorf("discarded work cost %d micro-USD, want 126", spent.CostMicroUSD)
+	}
+	if spent.UnmeteredAttempts != 0 {
+		t.Errorf("unmetered attempts = %d, want 0: this attempt's usage was reported", spent.UnmeteredAttempts)
+	}
+	if !strings.Contains(spent.Error(), "126") {
+		t.Errorf("error message hides the cost: %v", spent)
+	}
+}
+
+// TestRetriedTimeoutsAreCountedAsUnmetered: a model that runs past the
+// timeout has generated tokens the host will charge for, on every attempt.
+// The amount cannot be known - no response arrived - but the caller must
+// learn that the ledger is undercounting.
+func TestRetriedTimeoutsAreCountedAsUnmetered(t *testing.T) {
+	t.Parallel()
+
+	host := newFakeHost(t, func(_ int, _ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+	cfg := testConfig(host.URL)
+	cfg.Timeout = 250 * time.Millisecond
+	cfg.MaxAttempts = 2
+	client, _ := newTestClient(t, cfg)
+
+	_, err := client.Translate(t.Context(), sampleRequest)
+	if !errors.Is(err, translation.ErrTimeout) {
+		t.Fatalf("Translate() error = %v, want ErrTimeout", err)
+	}
+
+	var spent *translation.SpendError
+	if !errors.As(err, &spent) {
+		t.Fatalf("Translate() error = %v, want a *translation.SpendError flagging the billed attempts", err)
+	}
+	if spent.UnmeteredAttempts != 2 {
+		t.Errorf("unmetered attempts = %d, want 2: both attempts were generating when they were abandoned", spent.UnmeteredAttempts)
+	}
+	if spent.CostMicroUSD != 0 {
+		t.Errorf("cost = %d, want 0: no attempt ever reported usage, so no amount is known", spent.CostMicroUSD)
+	}
+	if spent.IsZero() {
+		t.Error("Spend.IsZero() is true although two attempts were probably billed")
+	}
+}
+
+// TestSuccessCarriesTheDiscardedAttempts: a translation that succeeded on
+// the second attempt still cost whatever the first one did.
+func TestSuccessCarriesTheDiscardedAttempts(t *testing.T) {
+	t.Parallel()
+
+	host := newFakeHost(t, func(attempt int, w http.ResponseWriter, r *http.Request) {
+		if attempt == 1 {
+			<-r.Context().Done()
+			return
+		}
+		answerJSON(w, http.StatusOK, completion(translationJSON(wantHeadline, wantExtract), 200, 160))
+	})
+	cfg := testConfig(host.URL)
+	cfg.Timeout = 250 * time.Millisecond
+	client, _ := newTestClient(t, cfg)
+
+	got, err := client.Translate(t.Context(), sampleRequest)
+	if err != nil {
+		t.Fatalf("Translate(): %v", err)
+	}
+	if got.CostMicroUSD != 126 {
+		t.Errorf("cost = %d, want 126: the successful attempt's reported usage", got.CostMicroUSD)
+	}
+	if got.UnmeteredAttempts != 1 {
+		t.Errorf("unmetered attempts = %d, want 1: the abandoned first attempt was probably billed too", got.UnmeteredAttempts)
+	}
+}
+
+// TestFailureThatCostNothingIsAPlainError: a rejected key bought nothing,
+// so a caller should not have to unwrap an error to discover that.
+func TestFailureThatCostNothingIsAPlainError(t *testing.T) {
+	t.Parallel()
+
+	host := newFakeHost(t, func(_ int, w http.ResponseWriter, _ *http.Request) {
+		answerJSON(w, http.StatusUnauthorized, `{"error":{"message":"Invalid API Key"}}`)
+	})
+	client, _ := newTestClient(t, testConfig(host.URL))
+
+	_, err := client.Translate(t.Context(), sampleRequest)
+	var spent *translation.SpendError
+	if errors.As(err, &spent) {
+		t.Errorf("Translate() error = %v, want a plain error: a refused request generates nothing to bill", err)
 	}
 }
 

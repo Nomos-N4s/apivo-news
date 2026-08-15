@@ -247,33 +247,74 @@ func (c *Client) Translate(ctx context.Context, req translation.Request) (transl
 		return translation.Result{}, fmt.Errorf("openaicompat: encoding request: %w: %w", err, translation.ErrInvalidRequest)
 	}
 
-	var lastErr error
+	// spent accumulates what this translation has cost so far, including
+	// attempts that produced nothing. In practice at most one attempt is
+	// ever metered - a priced 200 is never retried - but a discarded
+	// attempt's cost belongs in the total either way.
+	var (
+		lastErr error
+		spent   translation.Spend
+	)
 	for attempt := 1; attempt <= c.cfg.MaxAttempts; attempt++ {
-		result, retryAfter, err := c.attempt(ctx, body, req.PromptVersion)
-		if err == nil {
+		out := c.attempt(ctx, body, req.PromptVersion)
+		spent.CostMicroUSD += out.spend.CostMicroUSD
+		spent.UnmeteredAttempts += out.spend.UnmeteredAttempts
+
+		if out.err == nil {
+			result := out.result
+			result.Spend = spent
 			return result, nil
 		}
-		lastErr = err
-		if attempt == c.cfg.MaxAttempts || !retryable(err) || ctx.Err() != nil {
+		lastErr = out.err
+		if attempt == c.cfg.MaxAttempts || !retryable(out.err) || ctx.Err() != nil {
 			break
 		}
-		if err := c.sleep(ctx, backoff(attempt, c.cfg.BaseBackoff, retryAfter)); err != nil {
-			return translation.Result{}, fmt.Errorf("openaicompat: waiting to retry: %w", err)
+		if err := c.sleep(ctx, backoff(attempt, c.cfg.BaseBackoff, out.retryAfter)); err != nil {
+			// Keep lastErr, and with it the sentinel that classified the
+			// provider's behaviour: a caller deciding whether to back off
+			// the whole pipeline needs to know it was being rate limited,
+			// not only that the context ended.
+			return translation.Result{}, withSpend(spent, fmt.Errorf("openaicompat: gave up while waiting to retry: %w: %w", err, lastErr))
 		}
 	}
-	return translation.Result{}, lastErr
+	return translation.Result{}, withSpend(spent, lastErr)
 }
 
-// attempt performs one call. It returns the wait a rate-limited host asked
-// for, when it asked for one, so the caller can honour it instead of
-// guessing.
-func (c *Client) attempt(ctx context.Context, body []byte, promptVersion string) (translation.Result, time.Duration, error) {
+// withSpend attaches spend to a failure, and only when there is spend to
+// report: a failure that cost nothing stays a plain error, so callers do
+// not have to unwrap one to learn that.
+func withSpend(spent translation.Spend, err error) error {
+	if spent.IsZero() {
+		return err
+	}
+	return &translation.SpendError{Spend: spent, Err: err}
+}
+
+// attemptResult is everything one attempt yields: a translation when it
+// worked, the spend it incurred whether or not it worked, the wait a
+// rate-limited host asked for, and why it failed.
+type attemptResult struct {
+	result     translation.Result
+	spend      translation.Spend
+	retryAfter time.Duration
+	err        error
+}
+
+// attempt performs one call.
+func (c *Client) attempt(ctx context.Context, body []byte, promptVersion string) attemptResult {
+	// A context that has already ended means the request never leaves, so
+	// nothing can have been billed for it. Checked here rather than left
+	// to the transport so that outcome is unambiguous.
+	if err := ctx.Err(); err != nil {
+		return attemptResult{err: contextError(err)}
+	}
+
 	attemptCtx, cancel := context.WithTimeout(ctx, c.cfg.Timeout)
 	defer cancel()
 
 	httpReq, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return translation.Result{}, 0, fmt.Errorf("openaicompat: building request: %w: %w", err, translation.ErrInvalidRequest)
+		return attemptResult{err: fmt.Errorf("openaicompat: building request: %w: %w", err, translation.ErrInvalidRequest)}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
@@ -283,39 +324,61 @@ func (c *Client) attempt(ctx context.Context, body []byte, promptVersion string)
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return translation.Result{}, 0, c.transportError(ctx, err)
+		return c.transportOutcome(ctx, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		return translation.Result{}, 0, c.transportError(ctx, err)
+		return c.transportOutcome(ctx, err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return translation.Result{}, retryAfter(resp.Header), statusError(resp.StatusCode, payload)
+		// A provider that refuses a request generates no completion, so
+		// there is nothing for it to bill.
+		return attemptResult{
+			retryAfter: retryAfter(resp.Header),
+			err:        statusError(resp.StatusCode, payload),
+		}
 	}
 
-	result, err := c.decode(payload, promptVersion)
-	if err != nil {
-		return translation.Result{}, 0, err
+	result, spend, err := c.decode(payload, promptVersion)
+	return attemptResult{result: result, spend: spend, err: err}
+}
+
+// transportOutcome classifies an exchange that never completed, and
+// decides whether the provider may already have billed for it.
+func (c *Client) transportOutcome(ctx context.Context, err error) attemptResult {
+	out := attemptResult{err: c.transportError(ctx, err)}
+	// The request was in flight when this failed, so the host may have
+	// generated - and charged for - a completion we will never see. The
+	// amount is unknowable here; the fact is not. Counting it errs
+	// towards believing we have spent more than the ledger shows, which
+	// is the safe direction for a spend cap.
+	if errors.Is(out.err, translation.ErrTimeout) || errors.Is(out.err, context.Canceled) {
+		out.spend.UnmeteredAttempts = 1
 	}
-	return result, 0, nil
+	return out
 }
 
 // transportError classifies a failure to complete the exchange, keeping
 // the caller's own cancellation distinct from our per-attempt deadline.
 func (c *Client) transportError(ctx context.Context, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		if errors.Is(ctxErr, context.DeadlineExceeded) {
-			return fmt.Errorf("openaicompat: caller deadline reached: %w: %w", ctxErr, translation.ErrTimeout)
-		}
-		return fmt.Errorf("openaicompat: translation cancelled: %w", ctxErr)
+		return contextError(ctxErr)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("openaicompat: no answer within %s: %w", c.cfg.Timeout, translation.ErrTimeout)
 	}
 	return fmt.Errorf("openaicompat: calling the provider: %w: %w", err, translation.ErrUnavailable)
+}
+
+// contextError renders the caller's own deadline or cancellation.
+func contextError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("openaicompat: caller deadline reached: %w: %w", err, translation.ErrTimeout)
+	}
+	return fmt.Errorf("openaicompat: translation cancelled: %w", err)
 }
 
 // statusError maps a non-200 status onto the translation module's
@@ -335,32 +398,44 @@ func statusError(status int, payload []byte) error {
 }
 
 // decode turns a 200 response into a Result, refusing anything it cannot
-// record honestly.
-func (c *Client) decode(payload []byte, promptVersion string) (translation.Result, error) {
+// record honestly - and reporting what the attempt cost either way.
+//
+// Pricing comes first deliberately. A 200 was generated and billed
+// whatever we go on to think of its content, so establishing the cost
+// before judging the answer is what lets a refusal carry its spend
+// instead of dropping it (FR-006). An answer whose cost cannot even be
+// established is an unmetered attempt: billed, probably, but unknowably.
+func (c *Client) decode(payload []byte, promptVersion string) (translation.Result, translation.Spend, error) {
+	unmetered := translation.Spend{UnmeteredAttempts: 1}
+
 	var resp chatResponse
 	if err := json.Unmarshal(payload, &resp); err != nil {
-		return translation.Result{}, fmt.Errorf("openaicompat: response is not JSON: %w: %w: %s", err, translation.ErrInvalidResponse, snippetOf(payload))
+		return translation.Result{}, unmetered, fmt.Errorf("openaicompat: response is not JSON: %w: %w: %s", err, translation.ErrInvalidResponse, snippetOf(payload))
 	}
+	reported, err := c.reportedUsage(resp.Usage)
+	if err != nil {
+		return translation.Result{}, unmetered, err
+	}
+	cost, err := costMicroUSD(reported, c.cfg.InputPricePerMillionUSD, c.cfg.OutputPricePerMillionUSD)
+	if err != nil {
+		return translation.Result{}, unmetered, err
+	}
+
+	// From here the attempt has a known price, and it stands whether or
+	// not the content survives the checks below.
+	spend := translation.Spend{CostMicroUSD: cost}
+
 	if len(resp.Choices) == 0 {
-		return translation.Result{}, fmt.Errorf("openaicompat: response carries no choices: %w: %s", translation.ErrInvalidResponse, snippetOf(payload))
+		return translation.Result{}, spend, fmt.Errorf("openaicompat: response carries no choices: %w: %s", translation.ErrInvalidResponse, snippetOf(payload))
 	}
 	choice := resp.Choices[0]
 	if choice.FinishReason == "length" {
-		return translation.Result{}, fmt.Errorf("openaicompat: answer was cut off at the output cap (%d tokens), so it is incomplete: %w", c.cfg.MaxOutputTokens, translation.ErrInvalidResponse)
+		return translation.Result{}, spend, fmt.Errorf("openaicompat: answer was cut off at the output cap (%d tokens), so it is incomplete: %w", c.cfg.MaxOutputTokens, translation.ErrInvalidResponse)
 	}
 
 	content, err := parseContent(choice.Message.Content)
 	if err != nil {
-		return translation.Result{}, err
-	}
-
-	reported, err := c.reportedUsage(resp.Usage)
-	if err != nil {
-		return translation.Result{}, err
-	}
-	cost, err := costMicroUSD(reported, c.cfg.InputPricePerMillionUSD, c.cfg.OutputPricePerMillionUSD)
-	if err != nil {
-		return translation.Result{}, err
+		return translation.Result{}, spend, err
 	}
 
 	model := strings.TrimSpace(resp.Model)
@@ -374,8 +449,8 @@ func (c *Client) decode(payload []byte, promptVersion string) (translation.Resul
 		Extract:       content.Extract,
 		Model:         model,
 		PromptVersion: promptVersion,
-		CostMicroUSD:  cost,
-	}, nil
+		Spend:         spend,
+	}, spend, nil
 }
 
 // reportedUsage returns the token counts a priced call must carry, and
