@@ -50,12 +50,13 @@ const sections: {
   <span class="tag tag-neutral">
     {active === 'audit' ? t.audit : active === 'sources' ? t.sources : t.editorial}
   </span>
+  {/* The identity is never replaced by a note: the approver is who this
+      chrome exists to name, so a screen-specific note sits beside it. */}
   <span class="who">
-    {note ?? (
-      <>
-        {t.signedInAs} <strong>{session.displayName}</strong> · {t.roleEditor}
-      </>
-    )}
+    {note !== undefined && <span class="who-note">{note}</span>}
+    <span>
+      {t.signedInAs} <strong>{session.displayName}</strong> · {t.roleEditor}
+    </span>
     {!session.authenticated && <span class="preview-flag">{t.previewSession}</span>}
   </span>
 </header>
@@ -143,6 +144,10 @@ const sections: {
   }
   .who strong {
     color: var(--color-text);
+  }
+  .who-note {
+    padding-right: var(--space-3);
+    border-right: 1px solid var(--color-divider);
   }
   .preview-flag {
     border: 1px solid var(--color-accent);

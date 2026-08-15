@@ -106,7 +106,13 @@ const initials = (record?.approval.approver_name ?? '')
     }
 
     {traceFailed && <p class="notice">{reader.unavailableBody}</p>}
-    {!traceFailed && record === null && <p class="notice">{t.traceNotFound}</p>}
+    {/* An id that matched nothing is "not found"; no id at all is simply
+        an empty field waiting for one. */}
+    {
+      !traceFailed && record === null && (
+        <p class="notice">{queryId === '' ? t.traceLabel : t.traceNotFound}</p>
+      )
+    }
 
     {
       record !== null && (
