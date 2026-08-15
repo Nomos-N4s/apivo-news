@@ -168,6 +168,9 @@ func New(cfg Config) (*Client, error) {
 	if strings.TrimSpace(cfg.Model) == "" {
 		return nil, errors.New("openaicompat: model is required")
 	}
+	if err := checkAPIKey(cfg.APIKey); err != nil {
+		return nil, err
+	}
 	if err := checkPrice("input", cfg.InputPricePerMillionUSD, cfg.FreeOfCharge); err != nil {
 		return nil, err
 	}
@@ -206,6 +209,31 @@ func New(cfg Config) (*Client, error) {
 		http:     httpClient,
 		sleep:    sleepContext,
 	}, nil
+}
+
+// checkAPIKey rejects a key that cannot be sent as a header value.
+//
+// A key pasted from a dashboard or read from a file arrives with a
+// trailing newline or a stray space often enough to be worth naming. Left
+// alone, whitespace and control characters surface much later as an
+// opaque transport error on the first article of a run - or, for a
+// newline, as a rejected request the operator has no way to explain. The
+// key is never echoed back, only described.
+func checkAPIKey(key string) error {
+	if key == "" {
+		// A self-hosted server started without a key expects no header at
+		// all; Translate omits it rather than sending an empty bearer.
+		return nil
+	}
+	if strings.TrimSpace(key) != key {
+		return errors.New("openaicompat: API key has leading or trailing whitespace, which is almost always a copy-and-paste artefact; trim it")
+	}
+	for i, r := range key {
+		if r < 0x20 || r > 0x7e {
+			return fmt.Errorf("openaicompat: API key contains a character at position %d that cannot be sent in an HTTP header", i)
+		}
+	}
+	return nil
 }
 
 // checkPrice rejects a price that cannot produce a recordable cost, and

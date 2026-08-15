@@ -1377,6 +1377,15 @@ func TestNewValidatesConfig(t *testing.T) {
 		{name: "unparsable base url", mutate: func(c *Config) { c.BaseURL = "http://a b.example/v1" }, wantErr: "not a URL"},
 		{name: "base url with a fragment", mutate: func(c *Config) { c.BaseURL = "https://api.groq.com/openai/v1#docs" }, wantErr: "carries a fragment"},
 		{name: "missing model", mutate: func(c *Config) { c.Model = "" }, wantErr: "model is required"},
+		// A key is pasted or read from a file; whitespace and control
+		// characters must fail here, not as an opaque transport error on
+		// the first article of a run.
+		{name: "api key with a trailing newline", mutate: func(c *Config) { c.APIKey = "gsk_abc123\n" }, wantErr: "whitespace"},
+		{name: "api key with a leading space", mutate: func(c *Config) { c.APIKey = " gsk_abc123" }, wantErr: "whitespace"},
+		{name: "api key with an embedded newline", mutate: func(c *Config) { c.APIKey = "gsk_abc\n123" }, wantErr: "cannot be sent in an HTTP header"},
+		{name: "api key with a non-ascii character", mutate: func(c *Config) { c.APIKey = "gsk_abcé123" }, wantErr: "cannot be sent in an HTTP header"},
+		{name: "api key absent for a self-hosted server", mutate: func(c *Config) { c.APIKey = "" }},
+		{name: "ordinary api key", mutate: func(c *Config) { c.APIKey = "gsk_aBc123-_." }},
 		{name: "negative input price", mutate: func(c *Config) { c.InputPricePerMillionUSD = -0.1 }, wantErr: "input price"},
 		{name: "negative output price", mutate: func(c *Config) { c.OutputPricePerMillionUSD = -0.1 }, wantErr: "output price"},
 		// A forgotten price line must never look like a free host.
