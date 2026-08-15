@@ -1,0 +1,850 @@
+diff --git a/go.mod b/go.mod
+index b2f3fdf..c3a4cb7 100644
+--- a/go.mod
++++ b/go.mod
+@@ -8,6 +8,7 @@ require (
+ 	github.com/jackc/pgx/v5 v5.10.0
+ 	github.com/lestrrat-go/httprc/v3 v3.0.6
+ 	github.com/lestrrat-go/jwx/v3 v3.2.0
++	github.com/mmcdole/gofeed v1.4.1
+ )
+ 
+ require (
+@@ -22,9 +23,11 @@ require (
+ 	github.com/lestrrat-go/dsig-secp256k1 v1.0.0 // indirect
+ 	github.com/lestrrat-go/httpcc v1.0.1 // indirect
+ 	github.com/lestrrat-go/option/v2 v2.0.0 // indirect
++	github.com/mmcdole/goxpp/v2 v2.0.0 // indirect
+ 	github.com/segmentio/asm v1.2.1 // indirect
+ 	github.com/valyala/fastjson v1.6.10 // indirect
+ 	golang.org/x/crypto v0.54.0 // indirect
++	golang.org/x/net v0.57.0 // indirect
+ 	golang.org/x/sync v0.22.0 // indirect
+ 	golang.org/x/sys v0.47.0 // indirect
+ 	golang.org/x/text v0.40.0 // indirect
+diff --git a/go.sum b/go.sum
+index 833c5f0..afa131c 100644
+--- a/go.sum
++++ b/go.sum
+@@ -61,6 +61,10 @@ github.com/lestrrat-go/option/v2 v2.0.0 h1:XxrcaJESE1fokHy3FpaQ/cXW8ZsIdWcdFzzLO
+ github.com/lestrrat-go/option/v2 v2.0.0/go.mod h1:oSySsmzMoR0iRzCDCaUfsCzxQHUEuhOViQObyy7S6Vg=
+ github.com/lib/pq v1.10.9 h1:YXG7RB+JIjhP29X+OtkiDnYaXQwpS4JEWq7dtCCRUEw=
+ github.com/lib/pq v1.10.9/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
++github.com/mmcdole/gofeed v1.4.1 h1:m7vd4YAukLvoqUQghaILKbqUquHyZq1jBYkeCke/Z3c=
++github.com/mmcdole/gofeed v1.4.1/go.mod h1:X5x1PyeibJi152VEya0AsV+PW4daYmCD4LJaJbeFkcs=
++github.com/mmcdole/goxpp/v2 v2.0.0 h1:HrSCflxerUEqZQNq3u7ldtmE/XkwnTx4Zpq2DW4i5rQ=
++github.com/mmcdole/goxpp/v2 v2.0.0/go.mod h1:CUduYMnO9JB6Z/uqDn9Ormk/r8E9BsLQxHPWDZ961Os=
+ github.com/moby/docker-image-spec v1.3.1 h1:jMKff3w6PgbfSa69GfNg+zN/XLhfXJGnEx3Nl2EsFP0=
+ github.com/moby/docker-image-spec v1.3.1/go.mod h1:eKmb5VW8vQEh/BAr2yvVNvuiJuY6UIocYsFu/DxxRpo=
+ github.com/moby/term v0.5.0 h1:xt8Q1nalod/v7BqbG21f8mQPqH+xAaC9C3N3wfWbVP0=
+@@ -98,6 +102,8 @@ go.opentelemetry.io/otel/trace v1.37.0 h1:HLdcFNbRQBE2imdSEgm/kwqmQj1Or1l/7bW6mx
+ go.opentelemetry.io/otel/trace v1.37.0/go.mod h1:TlgrlQ+PtQO5XFerSPUYG0JSgGyryXewPGyayAWSBS0=
+ golang.org/x/crypto v0.54.0 h1:YLIA59K4fiNzHzjnZt2tUJQjQtUWfWbeHBqKtk3eScw=
+ golang.org/x/crypto v0.54.0/go.mod h1:KWL8ny2AZdGR2cWmzeHrp2azQPGogOv+HeQaVEXC2dk=
++golang.org/x/net v0.57.0 h1:K5+3DljvIuDG9/Jv9rvyMywYNFCQ9RSUY6OOTTkT+tE=
++golang.org/x/net v0.57.0/go.mod h1:KpXc8iv+r3XplLAG/f7Jsf9RPszJzdR0f58q9vGOuEU=
+ golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
+ golang.org/x/sync v0.22.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
+ golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
+diff --git a/internal/ingestion/extract.go b/internal/ingestion/extract.go
+new file mode 100644
+index 0000000..9b1fddb
+--- /dev/null
++++ b/internal/ingestion/extract.go
+@@ -0,0 +1,111 @@
++package ingestion
++
++import (
++	"strings"
++	"unicode"
++)
++
++// extractMaxRunes bounds a body-derived extract (research D9): at most 300
++// characters, counted as runes so Greek text is measured in letters, not
++// UTF-8 bytes. Changing this bound is a founder decision, not a tuning knob.
++const extractMaxRunes = 300
++
++// sentenceEnds are the rune classes that close a sentence for the D9 cut.
++// The ASCII semicolon is included deliberately: Greek writes its question
++// mark as a semicolon (and U+037E normalises to it), so excluding it would
++// run Greek questions together. For German text a semicolon is a clause
++// boundary - an acceptable, still-deterministic cut.
++const sentenceEnds = ".!?…;;"
++
++// DeriveExtract implements the D9 extract-derivation rule as one
++// deterministic, pure function:
++//
++//  1. the feed's own summary, whenever it provides one, verbatim;
++//  2. otherwise the first sentences of the body, up to 300 characters, cut
++//     at the last sentence boundary inside that window;
++//  3. when no sentence ends inside the window, the cut falls back to the
++//     last word boundary, and only for unbroken text to a hard 300-rune cut.
++//
++// It operates on the text it is given and never reaches for more: an item
++// with neither summary nor body derives an empty extract. The source-link
++// suffix that D9 requires is presentation, applied where the extract is
++// rendered, so it is not baked into the derived text here.
++func DeriveExtract(summary, body string) string {
++	if s := strings.TrimSpace(summary); s != "" {
++		return s
++	}
++	text := strings.TrimSpace(body)
++	runes := []rune(text)
++	if len(runes) <= extractMaxRunes {
++		return text
++	}
++	if end := lastSentenceEnd(runes, extractMaxRunes); end >= 0 {
++		return strings.TrimSpace(string(runes[:end+1]))
++	}
++	if space := lastSpace(runes[:extractMaxRunes]); space >= 0 {
++		return strings.TrimSpace(string(runes[:space]))
++	}
++	return string(runes[:extractMaxRunes])
++}
++
++// sentenceTrailers are the runes that may sit between a sentence closer and
++// whatever follows it, and still belong to the sentence: the closing quotes
++// and brackets Greek, German and English feeds use.
++const sentenceTrailers = `"'”’»)]`
++
++// lastSentenceEnd returns the index of the last rune belonging to the last
++// complete sentence within runes[:limit], or -1. The returned index includes
++// any closing quote or bracket that trails the closer, so the extract keeps
++// the punctuation the author wrote.
++//
++// A closer only counts when the sentence genuinely ends there: whitespace or
++// a closing markup tag must follow, optionally past those trailers. Feed
++// bodies routinely carry HTML, where a sentence ends as ".</p>" with no
++// space at all, so requiring bare whitespace would miss most real boundaries
++// and fall back to a word cut. Requiring a CLOSING tag keeps an abbreviation
++// glued to inline markup ("z.B.<b>fett</b>") from ending a sentence, as does
++// the existing rule for a decimal point or "z.B. " mid-token.
++func lastSentenceEnd(runes []rune, limit int) int {
++	for i := limit - 1; i >= 0; i-- {
++		if !strings.ContainsRune(sentenceEnds, runes[i]) {
++			continue
++		}
++		if end, ok := sentenceEndsAt(runes, i); ok && end < limit {
++			return end
++		}
++	}
++	return -1
++}
++
++// sentenceEndsAt reports whether the closer at index i ends a sentence, and
++// returns the index of the last rune belonging to that sentence (the closer
++// itself, or the last trailing quote or bracket after it).
++func sentenceEndsAt(runes []rune, i int) (int, bool) {
++	end := i
++	for j := i + 1; j < len(runes); j++ {
++		switch {
++		case unicode.IsSpace(runes[j]):
++			return end, true
++		case runes[j] == '<':
++			// A closing tag ends the sentence; an inline opening tag
++			// ("z.B.<b>") continues it.
++			return end, j+1 < len(runes) && runes[j+1] == '/'
++		case strings.ContainsRune(sentenceTrailers, runes[j]):
++			end = j
++		default:
++			return end, false
++		}
++	}
++	// The text ends here, so the sentence does too.
++	return end, true
++}
++
++// lastSpace returns the index of the last whitespace rune, or -1.
++func lastSpace(runes []rune) int {
++	for i := len(runes) - 1; i >= 0; i-- {
++		if unicode.IsSpace(runes[i]) {
++			return i
++		}
++	}
++	return -1
++}
+diff --git a/internal/ingestion/extract_test.go b/internal/ingestion/extract_test.go
+new file mode 100644
+index 0000000..8b02d3a
+--- /dev/null
++++ b/internal/ingestion/extract_test.go
+@@ -0,0 +1,137 @@
++package ingestion_test
++
++// The D9 extract rule is exercised at its boundaries: summary preference,
++// the 300-character window (counted in runes, so Greek text measures in
++// letters), the sentence cut, and both fallbacks.
++
++import (
++	"strings"
++	"testing"
++	"unicode/utf8"
++
++	"github.com/Nomos-N4s/apivo-news/internal/ingestion"
++)
++
++func TestDeriveExtract(t *testing.T) {
++	t.Parallel()
++
++	tests := []struct {
++		name    string
++		summary string
++		body    string
++		want    string
++	}{
++		{
++			name:    "feed summary preferred over body",
++			summary: "  Η περίληψη της ροής.  ",
++			body:    strings.Repeat("κ", 500),
++			want:    "Η περίληψη της ροής.",
++		},
++		{
++			name:    "summary longer than the window stays verbatim",
++			summary: strings.Repeat("s", 400),
++			body:    "irrelevant",
++			want:    strings.Repeat("s", 400),
++		},
++		{
++			name:    "whitespace-only summary falls through to the body",
++			summary: "   \n\t ",
++			body:    "Ein kurzer Text.",
++			want:    "Ein kurzer Text.",
++		},
++		{
++			name: "neither summary nor body derives nothing",
++			want: "",
++		},
++		{
++			name: "short body returned whole",
++			body: "  Μικρό σώμα κειμένου.  ",
++			want: "Μικρό σώμα κειμένου.",
++		},
++		{
++			name: "body of exactly 300 runes returned whole",
++			body: strings.Repeat("αβγ", 100),
++			want: strings.Repeat("αβγ", 100),
++		},
++		{
++			name: "long body cut at the last sentence end in the window",
++			body: strings.Repeat("α", 250) + ". " + strings.Repeat("β", 100),
++			want: strings.Repeat("α", 250) + ".",
++		},
++		{
++			name: "sentence end on the very last rune of the window",
++			body: strings.Repeat("a", 299) + ". " + strings.Repeat("b", 50),
++			want: strings.Repeat("a", 299) + ".",
++		},
++		{
++			name: "greek question mark closes a sentence",
++			body: strings.Repeat("γ", 200) + "; " + strings.Repeat("δ", 200),
++			want: strings.Repeat("γ", 200) + ";",
++		},
++		{
++			name: "erotimatiko closes a sentence",
++			body: strings.Repeat("ε", 150) + "; " + strings.Repeat("ζ", 300),
++			want: strings.Repeat("ε", 150) + ";",
++		},
++		{
++			name: "decimal point does not end a sentence",
++			body: strings.Repeat("x", 295) + " 3.14159 and more trailing text",
++			want: strings.Repeat("x", 295),
++		},
++		{
++			name: "sentence end followed by markup closes the sentence",
++			body: strings.Repeat("α", 240) + ".</p><p>" + strings.Repeat("β", 100),
++			want: strings.Repeat("α", 240) + ".",
++		},
++		{
++			name: "closing quote between the sentence end and markup",
++			body: strings.Repeat("γ", 200) + `."</blockquote>` + strings.Repeat("δ", 200),
++			want: strings.Repeat("γ", 200) + `."`,
++		},
++		{
++			name: "greek closing quote before whitespace",
++			body: strings.Repeat("ε", 180) + ".» " + strings.Repeat("ζ", 200),
++			want: strings.Repeat("ε", 180) + ".»",
++		},
++		{
++			name: "closing bracket before markup",
++			body: strings.Repeat("h", 210) + ".) <br/>" + strings.Repeat("i", 200),
++			want: strings.Repeat("h", 210) + ".)",
++		},
++		{
++			// The period of "z.B." sits before an inline opening tag, so it
++			// closes nothing: the cut falls through to the word boundary
++			// after the markup instead of splitting the abbreviation.
++			name: "abbreviation glued to inline markup does not end a sentence",
++			body: strings.Repeat("x", 280) + " z.B.<b>fett</b> " + strings.Repeat("y", 100),
++			want: strings.Repeat("x", 280) + " z.B.<b>fett</b>",
++		},
++		{
++			name: "no sentence end falls back to the last word boundary",
++			body: strings.Repeat("ω", 280) + " " + strings.Repeat("ψ", 100),
++			want: strings.Repeat("ω", 280),
++		},
++		{
++			name: "unbroken text hard-cuts at 300 runes",
++			body: strings.Repeat("ω", 400),
++			want: strings.Repeat("ω", 300),
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++			got := ingestion.DeriveExtract(tt.summary, tt.body)
++			if got != tt.want {
++				t.Fatalf("DeriveExtract() = %q, want %q", got, tt.want)
++			}
++			// A body-derived extract never exceeds the D9 window; only a
++			// feed-authored summary may.
++			if strings.TrimSpace(tt.summary) == "" {
++				if n := utf8.RuneCountInString(got); n > 300 {
++					t.Fatalf("derived extract is %d runes, want <= 300", n)
++				}
++			}
++		})
++	}
++}
+diff --git a/internal/ingestion/normalise.go b/internal/ingestion/normalise.go
+new file mode 100644
+index 0000000..c01ad87
+--- /dev/null
++++ b/internal/ingestion/normalise.go
+@@ -0,0 +1,127 @@
++package ingestion
++
++import (
++	"bytes"
++	"errors"
++	"fmt"
++	"io"
++	"strings"
++	"time"
++
++	"github.com/mmcdole/gofeed"
++)
++
++// NormalizedItem is this module's own representation of one feed entry.
++// Feed dialects (RSS 2.0, Atom, RDF) are normalised into it at the boundary
++// (research D1) so nothing downstream ever sees a gofeed type.
++//
++// Absent feed fields stay absent: an empty Title or Author and a nil
++// Published mean the feed did not provide them, and the write path stores
++// them as NULL rather than inventing values (FR-002).
++type NormalizedItem struct {
++	// Title is the item title exactly as the feed provided it, or empty
++	// when the feed omitted one.
++	Title string
++	// Link is the item's own URL: where the content lives at the origin.
++	Link string
++	// Author is the stated author name (or address when the feed names
++	// nobody but gives an address), or empty when unstated.
++	Author string
++	// Published is the publication time the feed declared for this entry,
++	// nil when the feed declared none. For Atom entries that state only an
++	// updated time the parser reports that time - still a feed-stated
++	// timestamp for the entry, never one fabricated here (FR-002).
++	Published *time.Time
++	// Body is the fullest text the feed carried for this item: the content
++	// element when present, otherwise the description/summary. It is what
++	// the write path stores as the retrieved evidence.
++	Body string
++	// Summary is the feed's own summary/description element, or empty when
++	// the feed carried none. It is the preferred input of the D9 extract
++	// rule (DeriveExtract).
++	Summary string
++}
++
++// MaxFeedBytes bounds how much of a feed document ParseFeed will read. The
++// parser materialises the whole document in memory, so an oversized or
++// hostile response must not be allowed to exhaust the process: polling
++// continues for every other source instead. Generous for real feeds, which
++// run to tens of kilobytes.
++const MaxFeedBytes = 8 << 20 // 8 MiB
++
++// ErrFeedTooLarge reports a feed document exceeding MaxFeedBytes. The poll
++// loop logs it and moves on; nothing is stored from a truncated read.
++var ErrFeedTooLarge = errors.New("ingestion: feed exceeds the maximum accepted size")
++
++// ParseFeed parses one RSS 2.0, Atom or RDF document and normalises every
++// entry. The reader is consumed up to MaxFeedBytes; a longer document is
++// refused with ErrFeedTooLarge rather than parsed in part. Encoding
++// declarations other than UTF-8 (a reality of Greek feeds) are converted by
++// the parser. A feed with no entries parses to an empty, non-nil slice.
++func ParseFeed(r io.Reader) ([]NormalizedItem, error) {
++	// One byte beyond the bound distinguishes "exactly at the limit" from
++	// "truncated", so an oversized feed is never silently half-parsed.
++	limited := io.LimitReader(r, MaxFeedBytes+1)
++	document, err := io.ReadAll(limited)
++	if err != nil {
++		return nil, fmt.Errorf("ingestion: read feed: %w", err)
++	}
++	if len(document) > MaxFeedBytes {
++		return nil, ErrFeedTooLarge
++	}
++	feed, err := gofeed.NewParser().Parse(bytes.NewReader(document))
++	if err != nil {
++		return nil, fmt.Errorf("ingestion: parse feed: %w", err)
++	}
++	items := make([]NormalizedItem, 0, len(feed.Items))
++	for _, item := range feed.Items {
++		if item == nil {
++			continue
++		}
++		items = append(items, normalise(item))
++	}
++	return items, nil
++}
++
++// normalise maps one gofeed item into the module's own type. Surrounding
++// whitespace is trimmed everywhere: it is markup artefact (indented CDATA,
++// pretty-printed XML), not content, and trimming keeps the stored body - and
++// therefore the database-computed content fingerprint - stable across
++// cosmetic re-serialisations of the same feed.
++func normalise(item *gofeed.Item) NormalizedItem {
++	summary := strings.TrimSpace(item.Description)
++	body := strings.TrimSpace(item.Content)
++	if body == "" {
++		body = summary
++	}
++	var published *time.Time
++	if item.PublishedParsed != nil {
++		t := *item.PublishedParsed
++		published = &t
++	}
++	return NormalizedItem{
++		Title:     strings.TrimSpace(item.Title),
++		Link:      strings.TrimSpace(item.Link),
++		Author:    authorOf(item),
++		Published: published,
++		Body:      body,
++		Summary:   summary,
++	}
++}
++
++// authorOf returns the first stated author: the name when given, the email
++// address when the feed gives only that, empty when the feed names nobody.
++func authorOf(item *gofeed.Item) string {
++	for _, person := range item.Authors {
++		if person == nil {
++			continue
++		}
++		if name := strings.TrimSpace(person.Name); name != "" {
++			return name
++		}
++		if email := strings.TrimSpace(person.Email); email != "" {
++			return email
++		}
++	}
++	return ""
++}
+diff --git a/internal/ingestion/normalise_test.go b/internal/ingestion/normalise_test.go
+new file mode 100644
+index 0000000..30672b9
+--- /dev/null
++++ b/internal/ingestion/normalise_test.go
+@@ -0,0 +1,246 @@
++package ingestion_test
++
++// Parsing is tested against embedded fixtures shaped like real feeds: the
++// RSS 2.0 / Atom / RDF dialects, CDATA bodies, HTML entities, a legacy
++// ISO-8859-7 encoding, items missing optional fields, and an empty feed.
++// No test touches the network (research D1).
++
++import (
++	"embed"
++	"errors"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/Nomos-N4s/apivo-news/internal/ingestion"
++)
++
++//go:embed testdata/*.xml
++var fixtures embed.FS
++
++// ts parses an RFC 3339 timestamp into the pointer form NormalizedItem uses.
++func ts(t *testing.T, value string) *time.Time {
++	t.Helper()
++	parsed, err := time.Parse(time.RFC3339, value)
++	if err != nil {
++		t.Fatalf("bad test timestamp %q: %v", value, err)
++	}
++	return &parsed
++}
++
++func equalTime(a, b *time.Time) bool {
++	if a == nil || b == nil {
++		return a == b
++	}
++	return a.Equal(*b)
++}
++
++func TestParseFeedNormalisesRealWorldShapes(t *testing.T) {
++	t.Parallel()
++
++	tests := []struct {
++		name string
++		file string
++		want []ingestion.NormalizedItem
++	}{
++		{
++			name: "rss2 with cdata, entities and both author styles",
++			file: "testdata/rss2.xml",
++			want: []ingestion.NormalizedItem{
++				{
++					// &#8211; decodes to an en dash.
++					Title:     "Νέο πάρκο στο κέντρο – εγκαίνια τον Μάιο",
++					Link:      "https://news.example.test/articles/parko",
++					Author:    "Μαρία Παπαδοπούλου",
++					Published: ts(t, "2025-06-02T09:30:00+03:00"),
++					Body:      "<p>Το νέο πάρκο στο κέντρο της πόλης ανοίγει τον Μάιο, με παιδική χαρά και ποδηλατόδρομο.</p>",
++					Summary:   "Σύντομη περίληψη: το νέο πάρκο ανοίγει τον Μάιο.",
++				},
++				{
++					Title: "Stadtrat beschließt neue Radwege",
++					Link:  "https://news.example.test/articles/radwege",
++					// RSS "address (name)" author style: the name is what
++					// we surface.
++					Author:    "Redaktion",
++					Published: ts(t, "2025-06-03T08:00:00+02:00"),
++					Body:      "Der Stadtrat hat den Ausbau der Radwege beschlossen.",
++					Summary:   "Der Stadtrat hat den Ausbau der Radwege beschlossen.",
++				},
++			},
++		},
++		{
++			name: "atom with html content and an updated-only entry",
++			file: "testdata/atom.xml",
++			want: []ingestion.NormalizedItem{
++				{
++					Title:     "Neues Kulturzentrum eröffnet",
++					Link:      "https://atom.example.test/articles/kultur",
++					Author:    "Anna Beispiel",
++					Published: ts(t, "2025-06-04T10:15:00Z"),
++					Body:      "<p>Das neue Kulturzentrum wurde am Mittwoch feierlich eröffnet.</p>",
++					Summary:   "Das neue Kulturzentrum ist eröffnet.",
++				},
++				{
++					Title: "Nur aktualisiert, nie veröffentlicht",
++					Link:  "https://atom.example.test/articles/zwei",
++					// The entry states only <updated>; that feed-stated
++					// time is reported as the publication time.
++					Published: ts(t, "2025-06-06T09:00:00Z"),
++					Body:      "Nur eine Zusammenfassung, kein Volltext.",
++					Summary:   "Nur eine Zusammenfassung, kein Volltext.",
++				},
++			},
++		},
++		{
++			name: "rdf with dublin core creator and date",
++			file: "testdata/rdf.xml",
++			want: []ingestion.NormalizedItem{
++				{
++					Title:     "Παλαιό μορφότυπο, νέο περιεχόμενο",
++					Link:      "https://rdf.example.test/articles/a1",
++					Author:    "Γιώργος Οικονόμου",
++					Published: ts(t, "2025-06-01T07:45:00Z"),
++					Body:      "Η ροή RDF εξακολουθεί να υπάρχει και πρέπει να διαβάζεται.",
++					Summary:   "Η ροή RDF εξακολουθεί να υπάρχει και πρέπει να διαβάζεται.",
++				},
++			},
++		},
++		{
++			name: "missing title, author and date stay absent",
++			file: "testdata/rss2_sparse.xml",
++			want: []ingestion.NormalizedItem{
++				{
++					Link:    "https://sparse.example.test/articles/no-title",
++					Body:    "Χωρίς τίτλο, χωρίς συγγραφέα, χωρίς ημερομηνία.",
++					Summary: "Χωρίς τίτλο, χωρίς συγγραφέα, χωρίς ημερομηνία.",
++				},
++				{
++					Title: "Only content, no description",
++					Link:  "https://sparse.example.test/articles/content-only",
++					Body:  "<p>Body from content:encoded only.</p>",
++					// No description element: there is no feed summary.
++					Summary: "",
++				},
++				{
++					Title: "Author gives only an address",
++					Link:  "https://sparse.example.test/articles/email-only",
++					// A nameless author surfaces as the stated address.
++					Author:  "anonym@example.test",
++					Body:    "Kein Name, nur eine Adresse.",
++					Summary: "Kein Name, nur eine Adresse.",
++				},
++			},
++		},
++		{
++			name: "legacy iso-8859-7 encoding is converted",
++			file: "testdata/rss2_iso8859_7.xml",
++			want: []ingestion.NormalizedItem{
++				{
++					Title:   "Νέα",
++					Link:    "https://legacy.example.test/articles/nea",
++					Body:    "Ελλάδα",
++					Summary: "Ελλάδα",
++				},
++			},
++		},
++		{
++			name: "empty feed parses to zero items",
++			file: "testdata/rss2_empty.xml",
++			want: []ingestion.NormalizedItem{},
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++			f, err := fixtures.Open(tt.file)
++			if err != nil {
++				t.Fatalf("opening fixture: %v", err)
++			}
++			defer func() { _ = f.Close() }()
++
++			got, err := ingestion.ParseFeed(f)
++			if err != nil {
++				t.Fatalf("ParseFeed(%s) error: %v", tt.file, err)
++			}
++			if got == nil {
++				t.Fatal("ParseFeed() = nil slice, want non-nil")
++			}
++			if len(got) != len(tt.want) {
++				t.Fatalf("ParseFeed() yielded %d items, want %d: %+v", len(got), len(tt.want), got)
++			}
++			for i, want := range tt.want {
++				item := got[i]
++				if item.Title != want.Title {
++					t.Errorf("item %d Title = %q, want %q", i, item.Title, want.Title)
++				}
++				if item.Link != want.Link {
++					t.Errorf("item %d Link = %q, want %q", i, item.Link, want.Link)
++				}
++				if item.Author != want.Author {
++					t.Errorf("item %d Author = %q, want %q", i, item.Author, want.Author)
++				}
++				if !equalTime(item.Published, want.Published) {
++					t.Errorf("item %d Published = %v, want %v", i, item.Published, want.Published)
++				}
++				if item.Body != want.Body {
++					t.Errorf("item %d Body = %q, want %q", i, item.Body, want.Body)
++				}
++				if item.Summary != want.Summary {
++					t.Errorf("item %d Summary = %q, want %q", i, item.Summary, want.Summary)
++				}
++			}
++		})
++	}
++}
++
++// TestParseFeedBoundsDocumentSize asserts the parser refuses an oversized
++// document outright: the whole feed is materialised in memory, so an
++// unbounded read would let one hostile or runaway source exhaust the
++// process that is polling every other source.
++func TestParseFeedBoundsDocumentSize(t *testing.T) {
++	t.Parallel()
++
++	// A valid feed padded past the bound with comment bytes: the refusal
++	// must come from the size check, not from a parse failure.
++	oversized := `<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>` +
++		"<!--" + strings.Repeat("x", ingestion.MaxFeedBytes) + "-->" +
++		`<item><title>i</title><link>https://example.test/i</link></item></channel></rss>`
++
++	if _, err := ingestion.ParseFeed(strings.NewReader(oversized)); !errors.Is(err, ingestion.ErrFeedTooLarge) {
++		t.Fatalf("ParseFeed(oversized) error = %v, want ErrFeedTooLarge", err)
++	}
++
++	// A feed inside the bound still parses: the guard must not reject
++	// legitimate feeds.
++	items, err := ingestion.ParseFeed(strings.NewReader(
++		`<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>` +
++			`<item><title>i</title><link>https://example.test/i</link></item></channel></rss>`))
++	if err != nil {
++		t.Fatalf("ParseFeed(small feed): %v", err)
++	}
++	if len(items) != 1 {
++		t.Fatalf("ParseFeed(small feed) returned %d items, want 1", len(items))
++	}
++}
++
++func TestParseFeedRejectsNonFeeds(t *testing.T) {
++	t.Parallel()
++
++	tests := []struct {
++		name  string
++		input string
++	}{
++		{name: "not xml", input: "definitely not a feed"},
++		{name: "xml but not a feed", input: "<html><body>hello</body></html>"},
++		{name: "empty input", input: ""},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++			if _, err := ingestion.ParseFeed(strings.NewReader(tt.input)); err == nil {
++				t.Fatalf("ParseFeed(%q): want error, got nil", tt.input)
++			}
++		})
++	}
++}
+diff --git a/internal/ingestion/testdata/atom.xml b/internal/ingestion/testdata/atom.xml
+new file mode 100644
+index 0000000..42d959c
+--- /dev/null
++++ b/internal/ingestion/testdata/atom.xml
+@@ -0,0 +1,26 @@
++<?xml version="1.0" encoding="utf-8"?>
++<feed xmlns="http://www.w3.org/2005/Atom">
++  <title>Beispiel Nachrichten</title>
++  <id>urn:uuid:0e6b32a2-5f3e-4f8e-9a70-000000000000</id>
++  <updated>2025-06-05T12:00:00Z</updated>
++  <entry>
++    <title>Neues Kulturzentrum eröffnet</title>
++    <id>urn:uuid:0e6b32a2-5f3e-4f8e-9a70-000000000001</id>
++    <link rel="alternate" href="https://atom.example.test/articles/kultur"/>
++    <author>
++      <name>Anna Beispiel</name>
++      <email>anna@example.test</email>
++    </author>
++    <published>2025-06-04T10:15:00Z</published>
++    <updated>2025-06-05T12:00:00Z</updated>
++    <summary>Das neue Kulturzentrum ist eröffnet.</summary>
++    <content type="html">&lt;p&gt;Das neue Kulturzentrum wurde am Mittwoch feierlich eröffnet.&lt;/p&gt;</content>
++  </entry>
++  <entry>
++    <title>Nur aktualisiert, nie veröffentlicht</title>
++    <id>urn:uuid:0e6b32a2-5f3e-4f8e-9a70-000000000002</id>
++    <link href="https://atom.example.test/articles/zwei"/>
++    <updated>2025-06-06T09:00:00Z</updated>
++    <summary>Nur eine Zusammenfassung, kein Volltext.</summary>
++  </entry>
++</feed>
+diff --git a/internal/ingestion/testdata/rdf.xml b/internal/ingestion/testdata/rdf.xml
+new file mode 100644
+index 0000000..8ea3140
+--- /dev/null
++++ b/internal/ingestion/testdata/rdf.xml
+@@ -0,0 +1,22 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
++         xmlns="http://purl.org/rss/1.0/"
++         xmlns:dc="http://purl.org/dc/elements/1.1/">
++  <channel rdf:about="https://rdf.example.test/">
++    <title>RDF Feed</title>
++    <link>https://rdf.example.test/</link>
++    <description>RSS 1.0 still exists in the wild</description>
++    <items>
++      <rdf:Seq>
++        <rdf:li rdf:resource="https://rdf.example.test/articles/a1"/>
++      </rdf:Seq>
++    </items>
++  </channel>
++  <item rdf:about="https://rdf.example.test/articles/a1">
++    <title>Παλαιό μορφότυπο, νέο περιεχόμενο</title>
++    <link>https://rdf.example.test/articles/a1</link>
++    <dc:creator>Γιώργος Οικονόμου</dc:creator>
++    <dc:date>2025-06-01T07:45:00Z</dc:date>
++    <description>Η ροή RDF εξακολουθεί να υπάρχει και πρέπει να διαβάζεται.</description>
++  </item>
++</rdf:RDF>
+diff --git a/internal/ingestion/testdata/rss2.xml b/internal/ingestion/testdata/rss2.xml
+new file mode 100644
+index 0000000..751ebe7
+--- /dev/null
++++ b/internal/ingestion/testdata/rss2.xml
+@@ -0,0 +1,29 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<rss version="2.0"
++     xmlns:content="http://purl.org/rss/1.0/modules/content/"
++     xmlns:dc="http://purl.org/dc/elements/1.1/">
++  <channel>
++    <title>Δήμος Μονάχου — Νέα</title>
++    <link>https://news.example.test/</link>
++    <description>Municipal news for the alpha fixtures</description>
++    <item>
++      <title>Νέο πάρκο στο κέντρο &#8211; εγκαίνια τον Μάιο</title>
++      <link>https://news.example.test/articles/parko</link>
++      <dc:creator>Μαρία Παπαδοπούλου</dc:creator>
++      <pubDate>Mon, 02 Jun 2025 09:30:00 +0300</pubDate>
++      <description><![CDATA[
++        Σύντομη περίληψη: το νέο πάρκο ανοίγει τον Μάιο.
++      ]]></description>
++      <content:encoded><![CDATA[
++        <p>Το νέο πάρκο στο κέντρο της πόλης ανοίγει τον Μάιο, με παιδική χαρά και ποδηλατόδρομο.</p>
++      ]]></content:encoded>
++    </item>
++    <item>
++      <title>Stadtrat beschließt neue Radwege</title>
++      <link>https://news.example.test/articles/radwege</link>
++      <author>redaktion@example.test (Redaktion)</author>
++      <pubDate>Tue, 03 Jun 2025 08:00:00 +0200</pubDate>
++      <description>Der Stadtrat hat den Ausbau der Radwege beschlossen.</description>
++    </item>
++  </channel>
++</rss>
+diff --git a/internal/ingestion/testdata/rss2_empty.xml b/internal/ingestion/testdata/rss2_empty.xml
+new file mode 100644
+index 0000000..e79db2a
+--- /dev/null
++++ b/internal/ingestion/testdata/rss2_empty.xml
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<rss version="2.0">
++  <channel>
++    <title>Empty Feed</title>
++    <link>https://empty.example.test/</link>
++    <description>A healthy feed that currently has nothing to say</description>
++  </channel>
++</rss>
+diff --git a/internal/ingestion/testdata/rss2_iso8859_7.xml b/internal/ingestion/testdata/rss2_iso8859_7.xml
+new file mode 100644
+index 0000000..2a565ac
+--- /dev/null
++++ b/internal/ingestion/testdata/rss2_iso8859_7.xml
+@@ -0,0 +1,13 @@
++<?xml version="1.0" encoding="ISO-8859-7"?>
++<rss version="2.0">
++  <channel>
++    <title>Legacy Encoding Feed</title>
++    <link>https://legacy.example.test/</link>
++    <description>Declared ISO-8859-7, single-byte Greek</description>
++    <item>
++      <title>���</title>
++      <link>https://legacy.example.test/articles/nea</link>
++      <description>������</description>
++    </item>
++  </channel>
++</rss>
+diff --git a/internal/ingestion/testdata/rss2_sparse.xml b/internal/ingestion/testdata/rss2_sparse.xml
+new file mode 100644
+index 0000000..7d407b3
+--- /dev/null
++++ b/internal/ingestion/testdata/rss2_sparse.xml
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
++  <channel>
++    <title>Sparse Feed</title>
++    <link>https://sparse.example.test/</link>
++    <description>Items missing the optional fields real feeds omit</description>
++    <item>
++      <link>https://sparse.example.test/articles/no-title</link>
++      <description>Χωρίς τίτλο, χωρίς συγγραφέα, χωρίς ημερομηνία.</description>
++    </item>
++    <item>
++      <title>Only content, no description</title>
++      <link>https://sparse.example.test/articles/content-only</link>
++      <content:encoded><![CDATA[<p>Body from content:encoded only.</p>]]></content:encoded>
++    </item>
++    <item>
++      <title>Author gives only an address</title>
++      <link>https://sparse.example.test/articles/email-only</link>
++      <author>anonym@example.test</author>
++      <description>Kein Name, nur eine Adresse.</description>
++    </item>
++  </channel>
++</rss>
