@@ -1,7 +1,29 @@
 import { describe, expect, it } from 'vitest';
 
-import { createReaderApi, ReaderApiError, type FrontPageData } from './api';
+import {
+  createReaderApi,
+  probeEmptyPlaces,
+  ReaderApiError,
+  type FrontPageData,
+  type ReaderApi,
+} from './api';
+import type { Place } from './axes';
 import { FRONT_FIXTURES } from './fixtures';
+
+const MUNICH: Place = {
+  slug: 'munich',
+  endonym: 'München',
+  scope: 'city',
+  selectable: true,
+  parents: ['Bayern', 'Deutschland'],
+};
+const BAVARIA: Place = {
+  slug: 'bavaria',
+  endonym: 'Bayern',
+  scope: 'region',
+  selectable: false,
+  parents: ['Deutschland'],
+};
 
 describe('the fixture client (no API_BASE_URL)', () => {
   const api = createReaderApi(undefined);
@@ -139,5 +161,49 @@ describe('the HTTP client (API_BASE_URL set)', () => {
     const { fetchImpl } = respondingWith(jsonResponse({ nonsense: true }));
     const api = createReaderApi('http://api:8080', fetchImpl);
     await expect(api.article('anything')).rejects.toBeInstanceOf(ReaderApiError);
+  });
+});
+
+describe('probeEmptyPlaces', () => {
+  it('flags a followed place with nothing published at all (US1-AC3)', async () => {
+    const api = createReaderApi(undefined);
+    const { items } = await api.front({ lang: 'el', places: ['munich', 'bavaria'] });
+    const empty = await probeEmptyPlaces(api, 'el', [MUNICH, BAVARIA], items);
+    expect(empty.map((place) => place.slug)).toEqual(['bavaria']);
+  });
+
+  it('does not flag a place merely crowded out of the shared first page', async () => {
+    // Bavaria has content, but the combined first page happens to hold
+    // only Munich items — the probe must clear it.
+    const bavariaItem = { ...FRONT_FIXTURES[0], places: ['bavaria'] };
+    const crowded: ReaderApi = {
+      front: (query) =>
+        Promise.resolve({
+          items: query.places.includes('bavaria') ? [bavariaItem] : [],
+          next_cursor: null,
+        } as FrontPageData),
+      article: () => Promise.resolve(null),
+    };
+    const munichOnlyPage = (await createReaderApi(undefined).front({
+      lang: 'el',
+      places: ['munich'],
+    })).items;
+    const empty = await probeEmptyPlaces(crowded, 'el', [MUNICH, BAVARIA], munichOnlyPage);
+    expect(empty).toEqual([]);
+  });
+
+  it('never probes a place already visible on the page', async () => {
+    let probes = 0;
+    const counting: ReaderApi = {
+      front: () => {
+        probes += 1;
+        return Promise.resolve({ items: [], next_cursor: null });
+      },
+      article: () => Promise.resolve(null),
+    };
+    const page = (await createReaderApi(undefined).front({ lang: 'el', places: ['munich'] }))
+      .items;
+    await probeEmptyPlaces(counting, 'el', [MUNICH], page);
+    expect(probes).toBe(0);
   });
 });

@@ -5,12 +5,19 @@ import EmptyPlaceBand from '../../../components/EmptyPlaceBand.astro';
 import Masthead from '../../../components/Masthead.astro';
 import ProvenanceDisclosure from '../../../components/ProvenanceDisclosure.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
-import { createReaderApi, type FrontItem } from '../../../lib/reader/api';
-import { articlePath, frontPagePath, parseAxes, placeKicker } from '../../../lib/reader/axes';
+import { createReaderApi, probeEmptyPlaces, type FrontItem } from '../../../lib/reader/api';
+import {
+  articlePath,
+  frontPagePath,
+  parseAxes,
+  placeKicker,
+  type Place,
+} from '../../../lib/reader/axes';
 import {
   formatItemDate,
   formatMastheadDate,
   formatRecency,
+  safeSourceUrl,
   sourceHost,
 } from '../../../lib/reader/format';
 import { uiStrings } from '../../../lib/reader/strings';
@@ -28,61 +35,101 @@ const slugs = places.map((place) => place.slug);
 
 const t = uiStrings(lang);
 const api = createReaderApi(API_BASE_URL);
-const { items } = await api.front({ lang, places: slugs });
+
+// An API hiccup must degrade into the calm 503 band below, never into an
+// unhandled SSR exception: the page still renders its chrome and axes.
+let items: readonly FrontItem[] = [];
+let emptyPlaces: readonly Place[] = [];
+let apiUnavailable = false;
+try {
+  items = (await api.front({ lang, places: slugs })).items;
+  emptyPlaces = await probeEmptyPlaces(api, lang, places, items);
+} catch {
+  apiUnavailable = true;
+  Astro.response.status = 503;
+  Astro.response.headers.set('Retry-After', '60');
+}
 
 const lead = items.at(0);
 const rest = items.slice(1);
-const emptyPlaces = places.filter(
-  (place) => !items.some((item) => item.places.includes(place.slug)),
-);
 
 const now = new Date();
 const homeHref = frontPagePath(lang, slugs);
 
-const kicker = (item: FrontItem): string => placeKicker(item.places, t.scopeLabels);
+// Kicker: the endonym + scope label of the place that put the item on
+// THIS page (the first of the item's places the reader follows), falling
+// back to the item's own first place.
+const kicker = (item: FrontItem): string => {
+  const matched = item.places.find((candidate) => slugs.includes(candidate));
+  return placeKicker(matched === undefined ? item.places : [matched], t.scopeLabels);
+};
 
-const recordRows = (item: FrontItem): { term: string; value: string; href?: string }[] => [
-  { term: t.source, value: sourceHost(item.source_url), href: item.source_url },
-  { term: t.published, value: formatItemDate(lang, new Date(item.published_at)) },
-  { term: t.attribution, value: item.attribution },
-];
+// Feed URLs are external input: only http(s) renders as a link (a
+// javascript: URL must never become clickable); anything else shows the
+// host as plain text.
+const recordRows = (item: FrontItem): { term: string; value: string; href?: string }[] => {
+  const href = safeSourceUrl(item.source_url);
+  return [
+    { term: t.source, value: sourceHost(item.source_url), ...(href === null ? {} : { href }) },
+    { term: t.published, value: formatItemDate(lang, new Date(item.published_at)) },
+    { term: t.attribution, value: item.attribution },
+  ];
+};
 
 const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`;
 ---
 
 <ReaderLayout lang={lang} title={title} description={t.tagline}>
-  <Masthead homeHref={homeHref} dateText={formatMastheadDate(lang, now)} />
+  <Masthead homeHref={homeHref} dateText={formatMastheadDate(lang, now)}>
+    <button class="btn btn-secondary sign-in" disabled title={t.signInPending}>{t.signIn}</button>
+  </Masthead>
 
   <AxisBar lang={lang} places={places} />
 
   <main>
     {
+      apiUnavailable && (
+        <div class="unavailable">
+          <h6>{t.unavailableTitle}</h6>
+          <p>{t.unavailableBody}</p>
+        </div>
+      )
+    }
+
+    {
       lead !== undefined && (
         <article class="lead">
-          <div class="meta">
-            <span class="kicker">{kicker(lead)}</span>
-            <span class="meta-rule" aria-hidden="true" />
-            <span class="when">{formatRecency(lang, new Date(lead.published_at), now)}</span>
-          </div>
-          <h1><a class="headline-link" href={articlePath(lang, slugs, lead.id)}>{lead.headline}</a></h1>
-          <p class="lead-extract">{lead.extract}</p>
-          <div class="lead-record">
-            <p class="attribution">
-              {lead.attribution}
-              <a class="source-link" href={lead.source_url} rel="external noopener">
-                {sourceHost(lead.source_url)} ↗
-              </a>
-            </p>
-            <ProvenanceDisclosure
-              label={t.provenance}
-              rows={[
-                { term: t.source, value: sourceHost(lead.source_url), href: lead.source_url },
-                {
-                  term: t.published,
-                  value: formatItemDate(lang, new Date(lead.published_at)),
-                },
-              ]}
-            />
+          {/* The mockup's lead-photograph slot, held as composition: the
+              alpha is text-only (no image handling in the contract), so
+              the reserved cell renders as a quiet typographic tile until
+              publisher imagery is ever licensed. */}
+          <figure class="lead-figure grayscale" aria-hidden="true">
+            <span>{kicker(lead).split(' · ').at(0)}</span>
+          </figure>
+          <div class="lead-text">
+            <div class="meta">
+              <span class="kicker">{kicker(lead)}</span>
+              <span class="meta-rule" aria-hidden="true" />
+              <span class="when">{formatRecency(lang, new Date(lead.published_at), now)}</span>
+            </div>
+            <h1><a class="headline-link" href={articlePath(lang, slugs, lead.id)}>{lead.headline}</a></h1>
+            <p class="lead-extract">{lead.extract}</p>
+            <div class="lead-record">
+              <p class="attribution">
+                {lead.attribution}
+                {safeSourceUrl(lead.source_url) !== null ? (
+                  <a class="source-link" href={safeSourceUrl(lead.source_url)} rel="external noopener">
+                    {sourceHost(lead.source_url)} ↗
+                  </a>
+                ) : (
+                  <span class="source-host">{sourceHost(lead.source_url)}</span>
+                )}
+              </p>
+              <ProvenanceDisclosure
+                label={t.provenance}
+                rows={recordRows(lead).slice(0, 2)}
+              />
+            </div>
           </div>
         </article>
       )
@@ -97,9 +144,13 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
               <h3><a class="headline-link" href={articlePath(lang, slugs, item.id)}>{item.headline}</a></h3>
               <p class="cell-extract">{item.extract}</p>
               <div class="cell-record">
-                <a class="source-link" href={item.source_url} rel="external noopener">
-                  {sourceHost(item.source_url)} ↗
-                </a>
+                {safeSourceUrl(item.source_url) !== null ? (
+                  <a class="source-link" href={safeSourceUrl(item.source_url)} rel="external noopener">
+                    {sourceHost(item.source_url)} ↗
+                  </a>
+                ) : (
+                  <span class="source-host">{sourceHost(item.source_url)}</span>
+                )}
                 <ProvenanceDisclosure label={t.provenance} rows={recordRows(item)} />
               </div>
             </article>
@@ -133,11 +184,49 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
     color: var(--color-accent);
   }
 
-  /* — the lead: typographic (the alpha is text-only; the mockup's
-     photograph slot is out of scope — issue #51) — */
+  /* — the lead: the 1a two-cell composition, photograph slot left,
+     text right; the slot holds its place typographically until imagery
+     is ever licensed (issue #51) — */
   .lead {
-    padding: calc(var(--space-6) + var(--space-1));
+    display: grid;
+    grid-template-columns: 52fr 48fr;
     border-bottom: 2px solid var(--color-divider);
+  }
+  .lead-figure {
+    margin: 0;
+    padding: calc(var(--space-6) + var(--space-1));
+    border-right: 1px solid var(--color-divider);
+    display: flex;
+  }
+  .lead-figure span {
+    flex: 1;
+    min-height: 330px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-divider);
+    display: grid;
+    place-items: center;
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-text) 35%, transparent);
+  }
+  .lead-text {
+    padding: calc(var(--space-6) + var(--space-1));
+    display: flex;
+    flex-direction: column;
+  }
+  .lead-record {
+    margin-top: auto;
+  }
+  @media (max-width: 980px) {
+    .lead {
+      grid-template-columns: 1fr;
+    }
+    .lead-figure {
+      display: none;
+    }
   }
   .meta {
     display: flex;
@@ -163,7 +252,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
     color: color-mix(in srgb, var(--color-text) 50%, transparent);
   }
   .lead h1 {
-    font-size: clamp(28px, 4.5vw, 38px);
+    font-size: clamp(28px, 3vw, 38px);
     margin: 0 0 var(--space-3);
     max-width: 28ch;
     text-wrap: pretty;
@@ -179,6 +268,10 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
     padding-top: var(--space-4);
     border-top: 1px solid var(--color-divider);
   }
+  .sign-in {
+    font-size: 12.5px;
+    padding: 6px var(--space-3);
+  }
   .attribution {
     font-size: 12.5px;
     margin: 0 0 var(--space-3);
@@ -192,6 +285,27 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
   }
   .attribution .source-link {
     margin-left: var(--space-2);
+  }
+  .source-host {
+    font-weight: 600;
+    font-size: 12.5px;
+  }
+
+  /* — the calm degraded state: the API is away, the page is not — */
+  .unavailable {
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1));
+    border-bottom: 2px solid var(--color-divider);
+    background: var(--color-surface);
+    border-left: 2px solid var(--color-accent);
+  }
+  .unavailable h6 {
+    margin: 0 0 var(--space-1);
+    color: var(--color-accent);
+  }
+  .unavailable p {
+    margin: 0;
+    font-size: 13.5px;
+    max-width: 70ch;
   }
 
   /* — the item grid: equal cells, the rules visible — */

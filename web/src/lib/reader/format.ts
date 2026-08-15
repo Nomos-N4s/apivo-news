@@ -91,3 +91,18 @@ export function sourceHost(sourceUrl: string): string {
     return sourceUrl;
   }
 }
+
+/**
+ * A feed-provided URL vetted for use as a link target: only http(s) may
+ * render as an href. Feed data is external input — a `javascript:` URL
+ * must never reach the page as something clickable — so anything else
+ * answers null and the caller renders plain text instead.
+ */
+export function safeSourceUrl(sourceUrl: string): string | null {
+  try {
+    const url = new URL(sourceUrl);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}

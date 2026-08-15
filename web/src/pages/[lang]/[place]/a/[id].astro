@@ -1,7 +1,11 @@
 ---
 import { API_BASE_URL } from 'astro:env/server';
 import ReaderLayout from '../../../../layouts/ReaderLayout.astro';
-import { createReaderApi } from '../../../../lib/reader/api';
+import {
+  createReaderApi,
+  type ArticleDetail,
+  type FrontItem,
+} from '../../../../lib/reader/api';
 import {
   articlePath,
   frontPagePath,
@@ -12,6 +16,7 @@ import {
 import {
   extractParagraphs,
   formatDateTime,
+  safeSourceUrl,
   sourceHost,
 } from '../../../../lib/reader/format';
 import { uiStrings } from '../../../../lib/reader/strings';
@@ -32,7 +37,14 @@ const { lang, places } = axes;
 const slugs = places.map((place) => place.slug);
 
 const api = createReaderApi(API_BASE_URL);
-const article = await api.article(id);
+let article: ArticleDetail | null;
+try {
+  article = await api.article(id);
+} catch {
+  // The reader API is away; the article may well exist. Say
+  // "unavailable", never "not found".
+  return Astro.rewrite('/503');
+}
 // An article exists on one language axis only; an id under the wrong
 // language is as absent as an unknown one.
 if (article === null || article.lang !== lang) {
@@ -41,19 +53,35 @@ if (article === null || article.lang !== lang) {
 
 const t = uiStrings(lang);
 const host = sourceHost(article.source_url);
+// Feed URLs are external input: only http(s) may render as a link.
+const safeHref = safeSourceUrl(article.source_url);
 const paragraphs = extractParagraphs(article.extract);
 const backHref = frontPagePath(lang, slugs);
 const backPlace = places.at(0);
 
-// "More from {place}": the article's own first place, latest items, self
-// excluded.
-const railSlug = article.places.at(0) ?? slugs.at(0) ?? '';
+// The kicker names the place that brought the reader here (the first of
+// the article's places on the current axis), falling back to the
+// article's own first place.
+const kickerSlug = article.places.find((slug) => slugs.includes(slug));
+const kickerLabel = placeKicker(
+  kickerSlug === undefined ? article.places : [kickerSlug],
+  t.scopeLabels,
+);
+
+// "More from {place}": latest items for that place, self excluded. The
+// rail is optional — if its fetch fails, the article still reads.
+const railSlug = kickerSlug ?? article.places.at(0) ?? slugs.at(0) ?? '';
 const railPlaceName = placeKicker([railSlug], t.scopeLabels).split(' · ').at(0) ?? railSlug;
-const { items: railCandidates } = await api.front({ lang, places: [railSlug], limit: 4 });
-const related = railCandidates.filter((item) => item.id !== article.id).slice(0, 3);
+let related: readonly FrontItem[] = [];
+try {
+  const { items: railCandidates } = await api.front({ lang, places: [railSlug], limit: 4 });
+  related = railCandidates.filter((item) => item.id !== article.id).slice(0, 3);
+} catch {
+  related = [];
+}
 
 const recordRows: { term: string; value: string; href?: string }[] = [
-  { term: t.source, value: host, href: article.source_url },
+  { term: t.source, value: host, ...(safeHref === null ? {} : { href: safeHref }) },
   { term: t.approved, value: formatDateTime(lang, new Date(article.approved_at)) },
   { term: t.published, value: formatDateTime(lang, new Date(article.published_at)) },
 ];
@@ -69,17 +97,26 @@ const title = `${article.headline} · epiloYES`;
     <span class="head-axes">{LANGUAGE_ENDONYMS[lang]} · {places.map((place) => place.endonym).join(' · ')}</span>
     <!-- The language axis, still one link away: an article exists on one
          language axis only, so the other language leads to its front page
-         with the places untouched (FR-009). -->
+         with the places untouched (FR-009). The current language is state
+         and renders as a span, not an href-less anchor. -->
     <div class="seg head-seg" role="group">
-      <a class="seg-opt" aria-current={lang === 'el' ? 'true' : undefined} href={lang === 'el' ? undefined : frontPagePath('el', slugs)}>EL</a>
-      <a class="seg-opt" aria-current={lang === 'de' ? 'true' : undefined} href={lang === 'de' ? undefined : frontPagePath('de', slugs)}>DE</a>
+      {lang === 'el' ? (
+        <span class="seg-opt" aria-current="true">EL</span>
+      ) : (
+        <a class="seg-opt" href={frontPagePath('el', slugs)}>EL</a>
+      )}
+      {lang === 'de' ? (
+        <span class="seg-opt" aria-current="true">DE</span>
+      ) : (
+        <a class="seg-opt" href={frontPagePath('de', slugs)}>DE</a>
+      )}
     </div>
   </header>
 
   <div class="body">
     <article class="reading">
       <div class="meta">
-        <span class="kicker">{placeKicker(article.places, t.scopeLabels)}</span>
+        <span class="kicker">{kickerLabel}</span>
         <span class="meta-rule" aria-hidden="true"></span>
         <span class="when">
           {t.approved} {formatDateTime(lang, new Date(article.approved_at))} · {t.published}{' '}
@@ -93,9 +130,13 @@ const title = `${article.headline} · epiloYES`;
         <h6>{t.wholeExtractTitle}</h6>
         <p>{t.wholeExtractBody}</p>
         <div class="boundary-action">
-          <a class="btn btn-primary" href={article.source_url} rel="external noopener">
-            {t.continueAt(host)}
-          </a>
+          {
+            safeHref !== null && (
+              <a class="btn btn-primary" href={safeHref} rel="external noopener">
+                {t.continueAt(host)}
+              </a>
+            )
+          }
           <span class="boundary-note">{t.extractNote}</span>
         </div>
       </div>
