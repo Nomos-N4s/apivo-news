@@ -105,8 +105,15 @@ func DeriveExtract(rawBody string) string {
 // normalisePrefix walks rawBody once and returns at most limit runes of plain
 // text: markup dropped, character references decoded, whitespace runs
 // collapsed to single spaces, no leading or trailing space. It stops as soon
-// as it has limit runes, so the work is bounded by the limit rather than by
-// the size of the body.
+// as it has limit runes.
+//
+// Prose therefore costs the limit, not the body. Markup does not: finding the
+// terminator of a comment or of a script or style element means scanning to
+// it, and an unterminated one means scanning to the end. That scan is linear
+// overall - every byte it passes is a byte the walk then skips, so no byte is
+// examined more than a constant number of times - and it buys the guarantee
+// that no code ever reaches a reader. A body that opens with an unterminated
+// script is the worst case: one pass over a column already fetched.
 func normalisePrefix(rawBody string, limit int) []rune {
 	out := make([]rune, 0, limit)
 	// Whitespace is emitted lazily: a run of it becomes at most one space,
@@ -204,11 +211,13 @@ func skipMarkup(s string, i int) int {
 		return len(s)
 	}
 	if !isEndTag && (name == "script" || name == "style") {
-		if end := indexFold(s[after:], "</"+name); end >= 0 {
+		if end := indexEndTag(s[after:], name); end >= 0 {
 			// The recursion lands on the end tag, which the check above
 			// sends straight down the ordinary path.
 			return skipMarkup(s, after+end)
 		}
+		// No terminator anywhere: the remainder is script or style text,
+		// and none of it is content.
 		return len(s)
 	}
 	return after
@@ -273,6 +282,34 @@ func indexFold(haystack, needle string) int {
 		}
 	}
 	return -1
+}
+
+// indexEndTag returns the offset of the end tag closing element name, or -1.
+//
+// The name must be followed by a character that can actually terminate it:
+// per the HTML syntax an end tag ends at whitespace, '/' or '>'. Matching the
+// name as a bare substring would read "</scriptx>" - legal text inside a
+// script - as the close, and everything after it, real script code, would be
+// emitted to the reader as prose.
+func indexEndTag(haystack, name string) int {
+	needle := "</" + name
+	for i := 0; ; {
+		rel := indexFold(haystack[i:], needle)
+		if rel < 0 {
+			return -1
+		}
+		at := i + rel
+		next := at + len(needle)
+		if next >= len(haystack) {
+			// Truncated end tag: nothing usable follows it either way.
+			return at
+		}
+		if c := haystack[next]; c == '>' || c == '/' || c == ' ' || c == '\t' ||
+			c == '\n' || c == '\r' || c == '\f' {
+			return at
+		}
+		i = next
+	}
 }
 
 func isASCIILetter(c byte) bool {

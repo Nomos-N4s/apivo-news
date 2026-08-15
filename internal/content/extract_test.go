@@ -138,6 +138,29 @@ func TestDeriveExtract(t *testing.T) {
 			in:   "Sichtbar. <a href=\"https://example.test/unterminated",
 			want: "Sichtbar.",
 		},
+		{
+			// "</scriptx>" is ordinary text inside a script, not its end
+			// tag: reading it as one would emit the real code that follows.
+			name: "a near-miss end tag does not close a script",
+			in:   "Vorher. <script>var s = '</scriptx>'; alert('geheim');</script> Nachher.",
+			want: "Vorher. Nachher.",
+		},
+		{
+			name: "a near-miss end tag does not close a style",
+			in:   "Vorher. <style>.a::after{content:'</stylex>'}</style> Nachher.",
+			want: "Vorher. Nachher.",
+		},
+		{
+			// The end tag may carry attributes-like whitespace or a slash.
+			name: "end tag closing on whitespace still closes the script",
+			in:   "Vorher. <script>alert(1)</script > Nachher.",
+			want: "Vorher. Nachher.",
+		},
+		{
+			name: "an unterminated script never leaks its code",
+			in:   "Sichtbar. <script>var geheim = 1; alert(geheim);",
+			want: "Sichtbar.",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
