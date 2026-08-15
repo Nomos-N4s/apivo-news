@@ -1,4 +1,4 @@
-import type { ReadingLanguage } from './axes';
+import type { Place, ReadingLanguage } from './axes';
 import { FRONT_FIXTURES } from './fixtures';
 
 /**
@@ -120,4 +120,29 @@ export function createReaderApi(
     return fixtureApi();
   }
   return httpApi(baseUrl, fetchImpl);
+}
+
+/**
+ * The followed places with nothing published at all (US1-AC3). Absence
+ * from the combined first page is not evidence of emptiness — a prolific
+ * place can crowd another out of a shared, newest-first, limited page —
+ * so each absent place is probed with its own single-item query before
+ * the page claims "nothing published yet".
+ */
+export async function probeEmptyPlaces(
+  api: ReaderApi,
+  lang: ReadingLanguage,
+  followed: readonly Place[],
+  pageItems: readonly FrontItem[],
+): Promise<readonly Place[]> {
+  const absent = followed.filter(
+    (place) => !pageItems.some((item) => item.places.includes(place.slug)),
+  );
+  const probes = await Promise.all(
+    absent.map(async (place) => ({
+      place,
+      hasAny: (await api.front({ lang, places: [place.slug], limit: 1 })).items.length > 0,
+    })),
+  );
+  return probes.filter((probe) => !probe.hasAny).map((probe) => probe.place);
 }

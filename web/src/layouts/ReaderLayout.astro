@@ -3,7 +3,10 @@ import '../styles/modernist.css';
 import type { ReadingLanguage } from '../lib/reader/axes';
 
 // The shell every reader page shares: the document, the Modernist
-// stylesheet, and the ruled 1280 frame the mockups compose into.
+// stylesheet, and the page frame. The frame runs the full viewport width —
+// the mockups' 1280 canvas was the design surface, not a cap (founder
+// direction 2026-08-15); text measures are bounded per element with ch
+// widths, so wide screens gain grid, not unreadable lines.
 interface Props {
   lang: ReadingLanguage;
   title: string;
@@ -30,16 +33,8 @@ const { lang, title, description } = Astro.props;
 
 <style>
   .frame {
-    max-width: 1280px;
     min-height: 100dvh;
-    margin: 0 auto;
-    border-inline: 2px solid var(--color-divider);
     display: flex;
     flex-direction: column;
-  }
-  @media (max-width: 1320px) {
-    .frame {
-      border-inline: 0;
-    }
   }
 </style>
