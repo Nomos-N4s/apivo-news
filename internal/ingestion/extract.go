@@ -70,9 +70,17 @@ func lastSentenceEnd(runes []rune, limit int) int {
 		if !strings.ContainsRune(sentenceEnds, runes[i]) {
 			continue
 		}
-		if end, ok := sentenceEndsAt(runes, i); ok && end < limit {
-			return end
+		end, ok := sentenceEndsAt(runes, i)
+		if !ok {
+			continue
 		}
+		if end >= limit {
+			// The closer is inside the window but its trailing quote or
+			// bracket is not: cut at the closer rather than discarding a
+			// real sentence boundary for a character that does not fit.
+			return i
+		}
+		return end
 	}
 	return -1
 }

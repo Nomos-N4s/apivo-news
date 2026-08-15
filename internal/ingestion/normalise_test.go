@@ -8,12 +8,24 @@ package ingestion_test
 import (
 	"embed"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nomos-N4s/apivo-news/internal/ingestion"
 )
+
+// padding emits filler bytes forever, so an oversized document can be
+// streamed at the parser without the test holding one in memory.
+type padding struct{}
+
+func (padding) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	return len(p), nil
+}
 
 //go:embed testdata/*.xml
 var fixtures embed.FS
@@ -201,13 +213,17 @@ func TestParseFeedNormalisesRealWorldShapes(t *testing.T) {
 func TestParseFeedBoundsDocumentSize(t *testing.T) {
 	t.Parallel()
 
-	// A valid feed padded past the bound with comment bytes: the refusal
-	// must come from the size check, not from a parse failure.
-	oversized := `<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>` +
-		"<!--" + strings.Repeat("x", ingestion.MaxFeedBytes) + "-->" +
-		`<item><title>i</title><link>https://example.test/i</link></item></channel></rss>`
+	// A valid feed padded past the bound with comment bytes, streamed
+	// rather than materialised: the refusal must come from the size check,
+	// not from a parse failure, and the test must not itself hold a second
+	// copy of an oversized document in memory.
+	oversized := io.MultiReader(
+		strings.NewReader(`<?xml version="1.0"?><rss version="2.0"><channel><title>t</title><!--`),
+		io.LimitReader(padding{}, ingestion.MaxFeedBytes),
+		strings.NewReader(`--><item><title>i</title><link>https://example.test/i</link></item></channel></rss>`),
+	)
 
-	if _, err := ingestion.ParseFeed(strings.NewReader(oversized)); !errors.Is(err, ingestion.ErrFeedTooLarge) {
+	if _, err := ingestion.ParseFeed(oversized); !errors.Is(err, ingestion.ErrFeedTooLarge) {
 		t.Fatalf("ParseFeed(oversized) error = %v, want ErrFeedTooLarge", err)
 	}
 

@@ -59,6 +59,13 @@ func TestDeriveExtract(t *testing.T) {
 			want: strings.Repeat("α", 250) + ".",
 		},
 		{
+			// The closer fits, its closing quote does not: the sentence
+			// boundary still counts, cut at the closer.
+			name: "trailing quote falls outside the window",
+			body: strings.Repeat("α", 299) + `." ` + strings.Repeat("β", 100),
+			want: strings.Repeat("α", 299) + ".",
+		},
+		{
 			name: "sentence end on the very last rune of the window",
 			body: strings.Repeat("a", 299) + ". " + strings.Repeat("b", 50),
 			want: strings.Repeat("a", 299) + ".",
