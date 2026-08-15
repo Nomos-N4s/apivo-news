@@ -468,8 +468,10 @@ func refuseUnsafeLocation(req *http.Request, via []*http.Request) error {
 	// A chain this long is a loop or a trap - the comment on the constant
 	// says so - and both are properties of the source's configuration, not
 	// of its availability. Walking it again reproduces it, so it is a
-	// refusal: non-retried, escalated to a human.
-	if len(via) >= maxFeedRedirects {
+	// refusal: non-retried, escalated to a human. via counts the requests
+	// already made, the original included, so the strict comparison is what
+	// allows exactly maxFeedRedirects hops before refusing.
+	if len(via) > maxFeedRedirects {
 		return fmt.Errorf("ingestion: feed redirected more than %d times: %w", maxFeedRedirects, ErrRefused)
 	}
 	return nil
