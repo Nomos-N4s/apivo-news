@@ -29,6 +29,20 @@ func TestRequestValidate(t *testing.T) {
 		{name: "blank source language", mutate: func(r *Request) { r.SourceLanguage = "\t" }, wantErr: "source language"},
 		{name: "blank target language", mutate: func(r *Request) { r.TargetLanguage = "" }, wantErr: "target language"},
 		{name: "blank prompt version", mutate: func(r *Request) { r.PromptVersion = "" }, wantErr: "prompt version"},
+		// The bill is not allowed to be decided by whatever a feed put in
+		// a description field.
+		{name: "source title over the bound", mutate: func(r *Request) {
+			r.SourceTitle = strings.Repeat("α", MaxSourceTitleChars+1)
+		}, wantErr: "source title is 501 characters"},
+		{name: "source text over the bound", mutate: func(r *Request) {
+			r.SourceText = strings.Repeat("α", MaxSourceTextChars+1)
+		}, wantErr: "over the 20000-character limit"},
+		{name: "source title at the bound", mutate: func(r *Request) {
+			r.SourceTitle = strings.Repeat("α", MaxSourceTitleChars)
+		}},
+		{name: "source text at the bound", mutate: func(r *Request) {
+			r.SourceText = strings.Repeat("α", MaxSourceTextChars)
+		}},
 	}
 
 	for _, tc := range tests {

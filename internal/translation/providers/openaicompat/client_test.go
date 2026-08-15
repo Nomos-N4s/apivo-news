@@ -1184,6 +1184,18 @@ func TestTranslateRejectsUnusableRequests(t *testing.T) {
 				PromptVersion:  "v99",
 			},
 		},
+		{
+			// Input is billed too, so an item this size is refused before
+			// it can outspend the per-article ceiling.
+			name: "source text over the input bound",
+			req: translation.Request{
+				SourceTitle:    "title",
+				SourceText:     strings.Repeat("α", translation.MaxSourceTextChars+1),
+				SourceLanguage: "el",
+				TargetLanguage: "de",
+				PromptVersion:  translation.CurrentPromptVersion,
+			},
+		},
 	}
 
 	for _, tc := range tests {

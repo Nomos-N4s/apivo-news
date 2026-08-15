@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // Translator is the single seam between the pipeline and any machine
@@ -35,11 +36,15 @@ type Translator interface {
 // headline and text, the language pair, and which registered prompt to use.
 // It is pure data; nothing in it is provider-specific.
 type Request struct {
-	// SourceTitle is the item's original headline. Required.
+	// SourceTitle is the item's original headline. Required, and at most
+	// MaxSourceTitleChars characters.
 	SourceTitle string
 
-	// SourceText is the original text the extract is drawn from - the
-	// item's summary or body as retrieved. Required.
+	// SourceText is the original text the extract is drawn from: the
+	// item's summary, or the opening of its body. Required, and at most
+	// MaxSourceTextChars characters - a translated extract is drawn from
+	// the beginning of an item, so the whole of a long article is never
+	// what a caller needs to send.
 	SourceText string
 
 	// SourceLanguage is the ISO 639-1 code of the original, e.g. "el".
@@ -56,6 +61,26 @@ type Request struct {
 	PromptVersion string
 }
 
+// Input bounds on a request, in characters (runes).
+//
+// A provider charges by input tokens as well as output ones, and an
+// adapter can cap what a model writes but not what it is given. Without
+// these bounds a single long article could cost a multiple of the
+// per-article ceiling before any ceiling was consulted, and the size of
+// the bill would be decided by whatever a feed happened to put in a
+// description field (FR-006).
+//
+// The bounds are deliberately generous - a caller sending an item's
+// summary, or the extract already derived from it upstream, is nowhere
+// near them - so hitting one means something is wrong with the item, not
+// with the limit.
+const (
+	// MaxSourceTitleChars bounds the source headline.
+	MaxSourceTitleChars = 500
+	// MaxSourceTextChars bounds the source text the extract is drawn from.
+	MaxSourceTextChars = 20000
+)
+
 // Validate reports the first hole in the request. Adapters call it before
 // spending a provider round trip - and real money - on a call that cannot
 // produce a recordable translation.
@@ -65,6 +90,10 @@ func (r Request) Validate() error {
 		return fmt.Errorf("%w: source title is blank", ErrInvalidRequest)
 	case strings.TrimSpace(r.SourceText) == "":
 		return fmt.Errorf("%w: source text is blank", ErrInvalidRequest)
+	case utf8.RuneCountInString(r.SourceTitle) > MaxSourceTitleChars:
+		return fmt.Errorf("%w: source title is %d characters, over the %d-character limit", ErrInvalidRequest, utf8.RuneCountInString(r.SourceTitle), MaxSourceTitleChars)
+	case utf8.RuneCountInString(r.SourceText) > MaxSourceTextChars:
+		return fmt.Errorf("%w: source text is %d characters, over the %d-character limit: send the item's summary or the extract derived from it, not a whole article", ErrInvalidRequest, utf8.RuneCountInString(r.SourceText), MaxSourceTextChars)
 	case strings.TrimSpace(r.SourceLanguage) == "":
 		return fmt.Errorf("%w: source language is blank", ErrInvalidRequest)
 	case strings.TrimSpace(r.TargetLanguage) == "":
