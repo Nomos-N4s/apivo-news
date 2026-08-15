@@ -193,6 +193,20 @@ func TestPromptVersionsListsTheRegistry(t *testing.T) {
 	}
 }
 
+// TestBothTranslatedFieldsAreBounded: extract-and-link is a claim about
+// everything the module emits, so neither field may be left open. A
+// headline bound at or above the extract bound would defeat the point.
+func TestBothTranslatedFieldsAreBounded(t *testing.T) {
+	t.Parallel()
+
+	if MaxHeadlineChars <= 0 {
+		t.Fatalf("MaxHeadlineChars = %d; the headline must be bounded too", MaxHeadlineChars)
+	}
+	if MaxHeadlineChars >= MaxExtractChars {
+		t.Errorf("MaxHeadlineChars (%d) is not below MaxExtractChars (%d): a headline that may be as long as an extract is a second way to publish one", MaxHeadlineChars, MaxExtractChars)
+	}
+}
+
 // TestMaxExtractCharsIsCountedInRunes documents why the bound is a rune
 // count: Greek text measured in UTF-8 bytes would be cut at roughly half
 // the intended length.

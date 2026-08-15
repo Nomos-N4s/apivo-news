@@ -356,6 +356,33 @@ func TestTranslate(t *testing.T) {
 			wantCalls: 1,
 		},
 		{
+			// The whole article, moved into the field nobody was
+			// checking. Extract-and-link has to hold on both fields.
+			name: "headline over the character bound is refused",
+			handler: func(_ int, w http.ResponseWriter, _ *http.Request) {
+				wholeArticle := strings.Repeat("α", translation.MaxHeadlineChars+1)
+				answerJSON(w, http.StatusOK, completion(translationJSON(wholeArticle, wantExtract), 250, 400))
+			},
+			wantErr:     translation.ErrInvalidResponse,
+			wantErrText: "over the 200-character limit",
+			wantCalls:   1,
+		},
+		{
+			name: "a headline at the bound is accepted",
+			handler: func(_ int, w http.ResponseWriter, _ *http.Request) {
+				longest := strings.Repeat("α", translation.MaxHeadlineChars)
+				answerJSON(w, http.StatusOK, completion(translationJSON(longest, wantExtract), 100, 100))
+			},
+			want: translation.Result{
+				Headline:      strings.Repeat("α", translation.MaxHeadlineChars),
+				Extract:       wantExtract,
+				Model:         hostModelID,
+				PromptVersion: translation.CurrentPromptVersion,
+				Spend:         translation.Spend{CostMicroUSD: 75},
+			},
+			wantCalls: 1,
+		},
+		{
 			name: "extract over the character bound is refused",
 			handler: func(_ int, w http.ResponseWriter, _ *http.Request) {
 				answerJSON(w, http.StatusOK, completion(translationJSON(wantHeadline, overLongExtract), 250, 400))

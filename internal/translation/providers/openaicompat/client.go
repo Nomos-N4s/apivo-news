@@ -539,6 +539,16 @@ func parseContent(raw string) (translated, error) {
 			lastErr = fmt.Errorf("openaicompat: model returned a JSON object without both a headline and an extract: %w: %s", translation.ErrInvalidResponse, snippetOf([]byte(candidate)))
 			continue
 		}
+		if n := utf8.RuneCountInString(parsed.Headline); n > translation.MaxHeadlineChars {
+			// Both fields carry translated source text, so both are
+			// bounded. Bounding only the extract would leave the headline
+			// as a way to publish an entire translated article - by a
+			// model that ignored the prompt, or by an item whose text
+			// told it to - and the licence basis is extract-and-link on
+			// every field, not on the one that happens to be checked.
+			lastErr = fmt.Errorf("openaicompat: model returned a %d-character headline, over the %d-character limit: %w", n, translation.MaxHeadlineChars, translation.ErrInvalidResponse)
+			continue
+		}
 		if n := utf8.RuneCountInString(parsed.Extract); n > translation.MaxExtractChars {
 			// Truncating here would publish a sentence the model never
 			// wrote and hide a prompt that has stopped working. What we
