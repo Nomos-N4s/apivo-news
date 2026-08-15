@@ -84,7 +84,11 @@ export function extractParagraphs(extract: string): string[] {
  */
 export function sourceHost(sourceUrl: string): string {
   try {
-    return new URL(sourceUrl).hostname.replace(/^www\./, '');
+    const host = new URL(sourceUrl).hostname.replace(/^www\./, '');
+    // Schemes like javascript: parse with an empty hostname — the record
+    // must never show a blank Source; the raw stored value is the honest
+    // display (it renders as text, never as a link).
+    return host === '' ? sourceUrl : host;
   } catch {
     // A malformed source_url must not take the page down; the raw value
     // still names where the link goes.

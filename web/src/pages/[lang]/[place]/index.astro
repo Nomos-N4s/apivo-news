@@ -146,9 +146,13 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
                   <span class="source-host">{sourceHost(lead.source_url)}</span>
                 )}
               </p>
+              {/* The lead's attribution reads as prose directly above, so
+                  its disclosure repeats only the source and published
+                  rows — the grid cells, whose attribution is not visible,
+                  carry all three. */}
               <ProvenanceDisclosure
                 label={t.provenance}
-                rows={recordRows(lead).slice(0, 2)}
+                rows={recordRows(lead).filter((row) => row.term !== t.attribution)}
               />
             </div>
           </div>
