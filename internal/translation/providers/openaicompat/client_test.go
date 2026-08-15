@@ -295,6 +295,7 @@ func TestTranslate(t *testing.T) {
 			configure: func(c *Config) {
 				c.InputPricePerMillionUSD = 0
 				c.OutputPricePerMillionUSD = 0
+				c.FreeOfCharge = true
 			},
 			want: translation.Result{
 				Headline:      wantHeadline,
@@ -1022,6 +1023,17 @@ func TestNewValidatesConfig(t *testing.T) {
 		{name: "missing model", mutate: func(c *Config) { c.Model = "" }, wantErr: "model is required"},
 		{name: "negative input price", mutate: func(c *Config) { c.InputPricePerMillionUSD = -0.1 }, wantErr: "input price"},
 		{name: "negative output price", mutate: func(c *Config) { c.OutputPricePerMillionUSD = -0.1 }, wantErr: "output price"},
+		// A forgotten price line must never look like a free host.
+		{name: "unset input price", mutate: func(c *Config) { c.InputPricePerMillionUSD = 0 }, wantErr: "set FreeOfCharge"},
+		{name: "unset output price", mutate: func(c *Config) { c.OutputPricePerMillionUSD = 0 }, wantErr: "set FreeOfCharge"},
+		{name: "unset prices entirely", mutate: func(c *Config) {
+			c.InputPricePerMillionUSD, c.OutputPricePerMillionUSD = 0, 0
+		}, wantErr: "set FreeOfCharge"},
+		{name: "free host contradicted by a price", mutate: func(c *Config) { c.FreeOfCharge = true }, wantErr: "free or it is priced"},
+		{name: "free host with no prices", mutate: func(c *Config) {
+			c.FreeOfCharge = true
+			c.InputPricePerMillionUSD, c.OutputPricePerMillionUSD = 0, 0
+		}},
 		{name: "negative timeout", mutate: func(c *Config) { c.Timeout = -time.Second }, wantErr: "must not be negative"},
 		{name: "negative attempts", mutate: func(c *Config) { c.MaxAttempts = -1 }, wantErr: "must not be negative"},
 		{name: "negative backoff", mutate: func(c *Config) { c.BaseBackoff = -time.Second }, wantErr: "must not be negative"},
@@ -1059,13 +1071,24 @@ func TestNewRejectsUnpriceableConfig(t *testing.T) {
 	t.Parallel()
 
 	for _, price := range []float64{math.NaN(), math.Inf(1)} {
-		cfg := Config{
-			BaseURL:                 "https://api.together.ai/v1",
-			Model:                   "a-model",
-			InputPricePerMillionUSD: price,
+		input := Config{
+			BaseURL:                  "https://api.together.ai/v1",
+			Model:                    "a-model",
+			InputPricePerMillionUSD:  price,
+			OutputPricePerMillionUSD: 0.25,
 		}
-		if _, err := New(cfg); err == nil {
-			t.Errorf("New() accepted the input price %v; a cost that cannot be computed must not be configurable", price)
+		if _, err := New(input); err == nil || !strings.Contains(err.Error(), "input price") {
+			t.Errorf("New() error for the input price %v = %v, want it refused as unpriceable", price, err)
+		}
+
+		output := Config{
+			BaseURL:                  "https://api.together.ai/v1",
+			Model:                    "a-model",
+			InputPricePerMillionUSD:  0.17,
+			OutputPricePerMillionUSD: price,
+		}
+		if _, err := New(output); err == nil || !strings.Contains(err.Error(), "output price") {
+			t.Errorf("New() error for the output price %v = %v, want it refused as unpriceable", price, err)
 		}
 	}
 }
@@ -1074,8 +1097,9 @@ func TestNewAppliesDefaults(t *testing.T) {
 	t.Parallel()
 
 	client, err := New(Config{
-		BaseURL: "http://vllm.internal:8000/v1/",
-		Model:   "local-model",
+		BaseURL:      "http://vllm.internal:8000/v1/",
+		Model:        "local-model",
+		FreeOfCharge: true,
 	})
 	if err != nil {
 		t.Fatalf("New(): %v", err)
@@ -1107,9 +1131,11 @@ func TestNewUsesTheSuppliedHTTPClient(t *testing.T) {
 
 	supplied := &http.Client{Timeout: time.Minute}
 	client, err := New(Config{
-		BaseURL:    "https://api.deepinfra.com/v1/openai",
-		Model:      "a-model",
-		HTTPClient: supplied,
+		BaseURL:                  "https://api.deepinfra.com/v1/openai",
+		Model:                    "a-model",
+		InputPricePerMillionUSD:  0.037,
+		OutputPricePerMillionUSD: 0.17,
+		HTTPClient:               supplied,
 	})
 	if err != nil {
 		t.Fatalf("New(): %v", err)

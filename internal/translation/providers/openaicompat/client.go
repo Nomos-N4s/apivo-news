@@ -84,10 +84,22 @@ type Config struct {
 	// published prices in US dollars per million tokens - the unit every
 	// one of these hosts publishes. Hosts report tokens, not money, so
 	// these are what turn a usage block into the cost recorded with the
-	// translation (FR-006). Both must be finite and non-negative; zero is
-	// legal and means genuinely free (self-hosted, or included quota).
+	// translation (FR-006). Both must be finite and strictly positive
+	// unless FreeOfCharge says otherwise.
 	InputPricePerMillionUSD  float64
 	OutputPricePerMillionUSD float64
+
+	// FreeOfCharge declares that this host charges nothing per token - a
+	// self-hosted server, or quota already paid for - and is the only way
+	// to configure zero prices.
+	//
+	// Without it a forgotten price line would be indistinguishable from a
+	// genuinely free host, and every paid translation would be recorded
+	// as free: the row would say zero, the monthly ledger would never
+	// advance, and the cap could not trip however much was spent
+	// (FR-006). Being free is a claim an operator makes deliberately, not
+	// a default that a missing line produces.
+	FreeOfCharge bool
 
 	// Timeout bounds one attempt. Zero means DefaultTimeout.
 	Timeout time.Duration
@@ -144,10 +156,10 @@ func New(cfg Config) (*Client, error) {
 	if strings.TrimSpace(cfg.Model) == "" {
 		return nil, errors.New("openaicompat: model is required")
 	}
-	if err := checkPrice("input", cfg.InputPricePerMillionUSD); err != nil {
+	if err := checkPrice("input", cfg.InputPricePerMillionUSD, cfg.FreeOfCharge); err != nil {
 		return nil, err
 	}
-	if err := checkPrice("output", cfg.OutputPricePerMillionUSD); err != nil {
+	if err := checkPrice("output", cfg.OutputPricePerMillionUSD, cfg.FreeOfCharge); err != nil {
 		return nil, err
 	}
 	if cfg.Timeout < 0 || cfg.BaseBackoff < 0 || cfg.MaxAttempts < 0 || cfg.MaxOutputTokens < 0 {
@@ -179,10 +191,18 @@ func New(cfg Config) (*Client, error) {
 	}, nil
 }
 
-// checkPrice rejects a price that cannot produce a recordable cost.
-func checkPrice(side string, price float64) error {
+// checkPrice rejects a price that cannot produce a recordable cost, and
+// holds the free host and the priced host to opposite rules so neither can
+// be reached by forgetting something.
+func checkPrice(side string, price float64, freeOfCharge bool) error {
 	if math.IsNaN(price) || math.IsInf(price, 0) || price < 0 {
 		return fmt.Errorf("openaicompat: %s price per million tokens must be finite and non-negative, got %v", side, price)
+	}
+	if freeOfCharge && price != 0 {
+		return fmt.Errorf("openaicompat: FreeOfCharge is set but the %s price is %v: a host is free or it is priced, not both", side, price)
+	}
+	if !freeOfCharge && price == 0 {
+		return fmt.Errorf("openaicompat: %s price per million tokens is required: set the host's published price, or set FreeOfCharge to declare that it charges nothing", side)
 	}
 	return nil
 }
