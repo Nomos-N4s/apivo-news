@@ -14,6 +14,7 @@ package translation_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -25,29 +26,42 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/translation"
 )
 
-// ledgerPool connects to the migrated test database, skipping when none is
-// configured. DB-backed tests are never skipped in CI.
-func ledgerPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
+var ledgerTestPool *pgxpool.Pool
+
+// TestMain migrates the test database exactly once for the whole package
+// and shares one pool, following internal/platform/db. The integration
+// tests here run with t.Parallel(), and migrating from each test would
+// send every goroutine through the migrator at once, to serialise on its
+// lock for no benefit. DB-backed tests skip only when DATABASE_URL is
+// unset; they are never skipped in CI.
+func TestMain(m *testing.M) {
 	url := os.Getenv("DATABASE_URL")
-	if url == "" {
-		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise the spend ledger")
+	if url != "" {
+		if err := db.Migrate(url); err != nil {
+			fmt.Fprintln(os.Stderr, "migrating test database:", err)
+			os.Exit(1)
+		}
+		pool, err := pgxpool.New(context.Background(), url)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "connecting test database:", err)
+			os.Exit(1)
+		}
+		ledgerTestPool = pool
 	}
-	if err := db.Migrate(url); err != nil {
-		t.Fatalf("migrating: %v", err)
+	code := m.Run()
+	if ledgerTestPool != nil {
+		ledgerTestPool.Close()
 	}
-	pool, err := pgxpool.New(context.Background(), url)
-	if err != nil {
-		t.Fatalf("connecting: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
+	os.Exit(code)
 }
 
 // ledgerTx opens a transaction that is always rolled back.
 func ledgerTx(t *testing.T) pgx.Tx {
 	t.Helper()
-	tx, err := ledgerPool(t).Begin(context.Background())
+	if ledgerTestPool == nil {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise the spend ledger")
+	}
+	tx, err := ledgerTestPool.Begin(context.Background())
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
