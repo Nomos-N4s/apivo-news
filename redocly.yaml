@@ -1,0 +1,21 @@
+# Validation config for api/openapi.json. Applied by the "openapi" CI job and
+# by `make openapi-lint`, both of which run the pinned @redocly/cli.
+#
+# The recommended ruleset is kept whole - every structural rule stays an
+# error - with three of its style opinions switched off because they do not
+# describe this API:
+extends:
+  - recommended
+
+rules:
+  # The repository ships no licence file, so there is no licence to name in
+  # the document. Inventing one would be worse than the missing field.
+  info-license: off
+  # localhost:8080 is a real target here: the binary's default listen address
+  # when it is run outside a container. The rule assumes a public API whose
+  # servers are all remote.
+  no-server-example.com: off
+  # The probes and the document endpoint have no error of their own to
+  # describe: they read no input and touch nothing that can refuse. Every
+  # endpoint that can fail does document its 4xx responses.
+  operation-4xx-response: off

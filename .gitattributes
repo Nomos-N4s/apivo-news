@@ -6,3 +6,6 @@
 *.sql text eol=lf
 *.go text eol=lf
 Makefile text eol=lf
+# Embedded in the binary and served byte for byte, so its bytes must not
+# depend on which platform checked it out.
+api/openapi.json text eol=lf

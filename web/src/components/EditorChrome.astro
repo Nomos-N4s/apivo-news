@@ -1,0 +1,243 @@
+---
+import { formatSpend, spendPercent, type SpendLedger } from '../lib/editorial/api';
+import type { EditorSession } from '../lib/editorial/session';
+import { editorialStrings } from '../lib/editorial/strings';
+import type { ReadingLanguage } from '../lib/reader/axes';
+
+// The chrome every editorial screen shares: the bar naming who is signed
+// in (the approver is never anonymous), the section rail, and the
+// translation spend ledger, which stays in view on every screen because
+// FR-006 makes spend a standing constraint rather than a report.
+type Section = 'queue' | 'sources' | 'published' | 'audit';
+
+interface Props {
+  lang: ReadingLanguage;
+  session: EditorSession;
+  active: Section;
+  /** Shown beside the queue entry when the caller knows it. */
+  queueCount?: number | undefined;
+  /** Omitted when the screen could not read the ledger. */
+  spend?: SpendLedger | undefined;
+  /** Right-hand note in the bar — e.g. the audit's read-only statement. */
+  note?: string | undefined;
+}
+
+const { lang, session, active, queueCount, spend, note } = Astro.props;
+const t = editorialStrings(lang);
+
+// Sections whose screens exist; the rest are named but not linked, so the
+// rail never promises a route that 404s.
+const sections: {
+  key: Section;
+  label: string;
+  href: string | null;
+  count?: string | undefined;
+}[] = [
+  {
+    key: 'queue',
+    label: t.reviewQueue,
+    href: `/${lang}/editor`,
+    count: queueCount === undefined ? undefined : String(queueCount),
+  },
+  { key: 'sources', label: t.sources, href: `/${lang}/editor/sources` },
+  { key: 'published', label: t.published, href: null, count: t.pending },
+  { key: 'audit', label: t.audit, href: `/${lang}/editor/audit` },
+];
+---
+
+<header class="chrome">
+  <a class="brand" href={`/${lang}/editor`}>epilo<span class="brand-yes">YES</span></a>
+  <span class="tag tag-neutral">
+    {active === 'audit' ? t.audit : active === 'sources' ? t.sources : t.editorial}
+  </span>
+  {/* The identity is never replaced by a note: the approver is who this
+      chrome exists to name, so a screen-specific note sits beside it. */}
+  <span class="who">
+    {note !== undefined && <span class="who-note">{note}</span>}
+    <span>
+      {t.signedInAs} <strong>{session.displayName}</strong> · {t.roleEditor}
+    </span>
+    {!session.authenticated && <span class="preview-flag">{t.previewSession}</span>}
+  </span>
+</header>
+
+<div class="shell">
+  <nav class="rail">
+    {
+      sections.map((section) =>
+        section.key === active ? (
+          <span class="rail-item rail-current" aria-current="page">
+            {section.label}
+            {section.count !== undefined && <span class="count">{section.count}</span>}
+          </span>
+        ) : section.href === null ? (
+          <span class="rail-item rail-pending">
+            {section.label}
+            {section.count !== undefined && <span class="count">{section.count}</span>}
+          </span>
+        ) : (
+          <a class="rail-item rail-link" href={section.href}>
+            {section.label}
+            {section.count !== undefined && <span class="count">{section.count}</span>}
+          </a>
+        ),
+      )
+    }
+
+    {
+      spend !== undefined && (
+        <div class="spend">
+          <h6>{t.translationSpend}</h6>
+          <div class="spend-amount">{formatSpend(spend.spent_microusd)}</div>
+          <div
+            class="spend-bar"
+            role="meter"
+            aria-valuenow={Math.round(spendPercent(spend))}
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-label={t.translationSpend}
+          >
+            <div class="spend-fill" style={`width:${spendPercent(spend)}%`} />
+          </div>
+          <div class="spend-note">
+            {t.ofMonthlyCap(formatSpend(spend.cap_microusd), spend.month)}
+          </div>
+        </div>
+      )
+    }
+  </nav>
+
+  <div class="pane">
+    <slot />
+  </div>
+</div>
+
+<style>
+  .chrome {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-6);
+    border-bottom: 2px solid var(--color-divider);
+    flex-wrap: wrap;
+  }
+  .brand {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 18px;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  .brand-yes {
+    color: var(--color-accent);
+  }
+  .who {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  }
+  .who strong {
+    color: var(--color-text);
+  }
+  .who-note {
+    padding-right: var(--space-3);
+    border-right: 1px solid var(--color-divider);
+  }
+  .preview-flag {
+    border: 1px solid var(--color-accent);
+    color: var(--color-accent-800);
+    background: var(--color-accent-100);
+    padding: 2px var(--space-2);
+    font-size: 11px;
+  }
+
+  .shell {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 190px 1fr;
+    min-height: 0;
+  }
+  .rail {
+    border-right: 1px solid var(--color-divider);
+    padding: var(--space-4) 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .rail-item {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    font-size: 13.5px;
+    text-decoration: none;
+    color: var(--color-text);
+  }
+  .rail-current {
+    background: var(--color-accent);
+    color: var(--color-bg);
+    font-weight: 600;
+  }
+  .rail-link:hover {
+    background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  }
+  .rail-pending {
+    color: color-mix(in srgb, var(--color-text) 45%, transparent);
+  }
+  .count {
+    font-size: 11px;
+    opacity: 0.8;
+  }
+  .spend {
+    margin-top: auto;
+    padding: var(--space-4) var(--space-4) 0;
+    border-top: 1px solid var(--color-divider);
+  }
+  .spend h6 {
+    margin: 0 0 var(--space-2);
+    font-size: 10px;
+  }
+  .spend-amount {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 18px;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+  .spend-bar {
+    height: 6px;
+    background: var(--color-neutral-300);
+    margin-bottom: 6px;
+  }
+  .spend-fill {
+    height: 6px;
+    background: var(--color-accent);
+  }
+  .spend-note {
+    font-size: 11px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .pane {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  @media (max-width: 760px) {
+    .shell {
+      grid-template-columns: 1fr;
+    }
+    .rail {
+      border-right: 0;
+      border-bottom: 1px solid var(--color-divider);
+    }
+    .spend {
+      margin-top: var(--space-4);
+    }
+  }
+</style>

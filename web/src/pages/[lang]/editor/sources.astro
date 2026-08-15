@@ -1,0 +1,366 @@
+---
+import { API_BASE_URL } from 'astro:env/server';
+import EditorChrome from '../../../components/EditorChrome.astro';
+import ReaderLayout from '../../../layouts/ReaderLayout.astro';
+import {
+  createEditorialApi,
+  type SourceOutcome,
+  type SourcesPage,
+} from '../../../lib/editorial/api';
+import { editorSession } from '../../../lib/editorial/session';
+import { editorialStrings } from '../../../lib/editorial/strings';
+import { isReadingLanguage } from '../../../lib/reader/axes';
+import { formatDateTime } from '../../../lib/reader/format';
+import { uiStrings } from '../../../lib/reader/strings';
+
+// Source management — mockup 1i (issue #70, toward T014 #17). The screen
+// exists to make the licensing invariant visible rather than implicit:
+// ingestion happens only from configured RSS/Atom feeds and never by
+// scraping (FR-001); every new source is extract_and_link and a full-text
+// rule is impossible without recorded written permission (FR-004); and
+// repeated retrieval of identical content creates no duplicate (FR-014),
+// which is why the poll cycle reports what the fingerprint skipped.
+const langSegment = Astro.params['lang'];
+if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+  return Astro.rewrite('/404');
+}
+const lang = langSegment;
+const t = editorialStrings(lang);
+const reader = uiStrings(lang);
+const session = editorSession(Astro.request);
+const api = createEditorialApi(API_BASE_URL, session.token);
+
+const here = `/${lang}/editor/sources`;
+
+let outcome: SourceOutcome | null = null;
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const input = {
+    name: String(form.get('name') ?? ''),
+    url: String(form.get('url') ?? ''),
+    language: String(form.get('language') ?? ''),
+    jurisdiction: String(form.get('jurisdiction') ?? ''),
+    licence_terms: String(form.get('licence_terms') ?? ''),
+  };
+  if (input.name.trim() !== '' && input.url.trim() !== '') {
+    try {
+      outcome = await api.addSource(input);
+    } catch (error) {
+      outcome = {
+        recorded: false,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+}
+
+let page: SourcesPage | null = null;
+let failed = false;
+try {
+  page = await api.sources();
+} catch {
+  failed = true;
+  Astro.response.status = 503;
+}
+
+const sources = page?.sources ?? [];
+const activeCount = sources.filter((source) => source.active).length;
+---
+
+<ReaderLayout lang={lang} title={`epiloYES — ${t.sources}`} description={reader.tagline}>
+  <EditorChrome
+    lang={lang}
+    session={session}
+    active="sources"
+    note={t.sourcesSummary(sources.length, activeCount)}
+  >
+    {
+      outcome !== null && (
+        <div class:list={['banner', { 'banner-warn': !outcome.recorded }]}>
+          <span class="banner-label">
+            {outcome.recorded ? t.addSource : t.notRecordedTitle}
+          </span>
+          <span class="banner-body">{outcome.reason}</span>
+        </div>
+      )
+    }
+
+    <div class="split">
+      <div class="list">
+        {failed && <p class="notice">{reader.unavailableBody}</p>}
+        {!failed && sources.length === 0 && <p class="notice">{t.sourcesEmpty}</p>}
+
+        {
+          sources.length > 0 && (
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>{t.colSource}</th>
+                  <th>{t.colFeed}</th>
+                  <th>{t.colLang}</th>
+                  <th>{t.colUsageRule}</th>
+                  <th>{t.colLastPoll}</th>
+                  <th>{t.colState}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sources.map((source) => (
+                  <tr>
+                    <td class="strong">{source.name}</td>
+                    <td class="mono">{source.feed_path}</td>
+                    <td>{source.language}</td>
+                    <td>
+                      <span class="tag tag-accent">{source.usage_rule}</span>
+                    </td>
+                    <td class="small">
+                      {source.last_polled_at === null
+                        ? t.neverPolled
+                        : formatDateTime(lang, new Date(source.last_polled_at))}
+                    </td>
+                    <td class="small">
+                      {source.active ? (
+                        <span class="state-active">{t.stateActive}</span>
+                      ) : (
+                        <span class="state-paused">{t.statePaused}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        }
+
+        {
+          page !== null && (
+            <div class="cycle">
+              <div>
+                <h6>{t.lastPollCycle}</h6>
+                <p>{t.cycleSummary(page.cycle.retrieved, page.cycle.duplicates_skipped)}</p>
+              </div>
+              <div>
+                <h6>{t.failures}</h6>
+                {page.cycle.failures.length === 0 ? (
+                  <p>{t.noFailures}</p>
+                ) : (
+                  page.cycle.failures.map((failure) => <p>{failure}</p>)
+                )}
+              </div>
+            </div>
+          )
+        }
+      </div>
+
+      <form class="add" method="post" action={here}>
+        <h6>{t.addSource}</h6>
+        <div class="field">
+          <label for="s-name">{t.publisherName}</label>
+          <input class="input" id="s-name" name="name" required />
+        </div>
+        <div class="field">
+          <label for="s-url">{t.feedUrl}</label>
+          <input class="input" id="s-url" name="url" type="url" placeholder="https://…" required />
+        </div>
+        <div class="pair">
+          <div class="field">
+            <label for="s-lang">{t.languageField}</label>
+            <input class="input" id="s-lang" name="language" value="de" required />
+          </div>
+          <div class="field">
+            <label for="s-jur">{t.jurisdictionField}</label>
+            <input class="input" id="s-jur" name="jurisdiction" value="DE" required />
+          </div>
+        </div>
+        <div class="field">
+          <label for="s-terms">{t.licenceTerms}</label>
+          <textarea class="input" id="s-terms" name="licence_terms" required />
+        </div>
+
+        {/* The usage rule is stated, not chosen: the contract does not
+            accept it and the database defaults it, so offering it as a
+            control would imply an editorial choice that does not exist
+            (FR-004). */}
+        <h6 class="rule-heading">{t.usageRuleHeading}</h6>
+        <div class="rule rule-on">
+          <span class="mark" aria-hidden="true" />
+          <div>
+            <div class="rule-title">{t.extractAndLinkTitle}</div>
+            <p class="rule-body">{t.extractAndLinkBody}</p>
+          </div>
+        </div>
+        <div class="rule rule-off">
+          <span class="mark mark-off" aria-hidden="true" />
+          <div>
+            <div class="rule-title">{t.fullTextTitle}</div>
+            <p class="rule-body">{t.fullTextBody}</p>
+          </div>
+        </div>
+        <p class="rule-note">{t.usageRuleNotAnInput}</p>
+
+        <button class="btn btn-primary btn-block" type="submit">{t.addSourceAndPoll}</button>
+      </form>
+    </div>
+  </EditorChrome>
+</ReaderLayout>
+
+<style>
+  .banner {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    padding: var(--space-3) var(--space-6);
+    background: var(--color-accent);
+    color: var(--color-bg);
+  }
+  .banner-warn {
+    background: var(--color-text);
+  }
+  .banner-label {
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    flex: none;
+  }
+  .banner-warn .banner-label {
+    color: var(--color-accent-400);
+  }
+  .banner-body {
+    font-size: 13px;
+    max-width: 80ch;
+  }
+
+  .split {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 380px;
+  }
+  .list {
+    padding: var(--space-4) var(--space-6);
+    border-right: 1px solid var(--color-divider);
+    min-width: 0;
+    overflow-x: auto;
+  }
+  .notice {
+    margin: 0;
+    padding: var(--space-6) 0;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .strong {
+    font-weight: 600;
+  }
+  .mono {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+  }
+  .small {
+    font-size: 12px;
+  }
+  .table .tag {
+    font-size: 10px;
+  }
+  .state-active {
+    color: var(--color-accent-700);
+    font-weight: 600;
+  }
+  .state-paused {
+    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  }
+
+  .cycle {
+    display: flex;
+    gap: var(--space-8);
+    flex-wrap: wrap;
+    margin-top: var(--space-4);
+    padding-top: var(--space-4);
+    border-top: 2px solid var(--color-divider);
+  }
+  .cycle h6 {
+    margin: 0 0 6px;
+  }
+  .cycle p {
+    margin: 0;
+    font-size: 12.5px;
+    color: color-mix(in srgb, var(--color-text) 65%, transparent);
+    text-wrap: pretty;
+  }
+
+  .add {
+    padding: var(--space-4) var(--space-6);
+    background: var(--color-surface);
+  }
+  .add h6 {
+    margin: 0 0 var(--space-3);
+  }
+  .add .field {
+    margin-bottom: var(--space-3);
+  }
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-2);
+  }
+  .rule-heading {
+    margin-top: var(--space-4);
+  }
+  .rule {
+    display: flex;
+    gap: var(--space-2);
+    align-items: flex-start;
+    padding: var(--space-3);
+    margin-bottom: var(--space-2);
+    border: 1px solid var(--color-divider);
+  }
+  .rule-on {
+    border-color: var(--color-accent);
+    background: var(--color-accent-100);
+  }
+  .rule-off {
+    opacity: 0.5;
+  }
+  .mark {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    margin-top: 2px;
+    border: 1.5px solid var(--color-accent);
+    background: var(--color-accent);
+    box-shadow: inset 0 0 0 3px var(--color-accent-100);
+  }
+  .mark-off {
+    border-color: var(--color-divider);
+    background: transparent;
+    box-shadow: none;
+  }
+  .rule-title {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .rule-body {
+    margin: 2px 0 0;
+    font-size: 11.5px;
+    text-wrap: pretty;
+  }
+  .rule-on .rule-body {
+    color: var(--color-accent-800);
+  }
+  .rule-note {
+    margin: 0 0 var(--space-4);
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    text-wrap: pretty;
+  }
+
+  @media (max-width: 1000px) {
+    .split {
+      grid-template-columns: 1fr;
+    }
+    .list {
+      border-right: 0;
+      border-bottom: 2px solid var(--color-divider);
+    }
+  }
+</style>
