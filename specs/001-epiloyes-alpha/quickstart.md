@@ -34,12 +34,27 @@ authenticate as.
    and the screens say they are a preview.
 2. Create the person in Supabase Studio → Authentication → Users, and
    copy their user id.
-3. In Studio's SQL editor, run this once per editor:
+3. Run this once per editor **against the database `DATABASE_URL` points
+   at** — that is the database `identity.Authenticate` and the 0002
+   approver trigger actually read, and the only place an `account` row
+   counts. In the local topology above, `DATABASE_URL` points at the
+   compose Postgres, so:
+
+   ```sh
+   docker compose exec postgres psql -U apivo -d apivo
+   ```
 
    ```sql
    insert into account (id, email, display_name, role)
    values ('<the Supabase user id>', 'eleni@example.org', 'Eleni Papadaki', 'editor');
    ```
+
+   Supabase Studio's SQL editor targets the Supabase project's own
+   Postgres; it is the right place for this insert only when that *is*
+   the application database (`DATABASE_URL` pointing at the project's
+   connection string). Run the insert into any other database and
+   sign-in succeeds while every editorial call answers 401, indefinitely
+   — the exact symptom the paragraph above describes.
 
    `display_name` is the name `article_provenance` reports as the approver
    of everything this person ever approves (I-1), so it is a real human
