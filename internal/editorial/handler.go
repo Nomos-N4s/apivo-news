@@ -143,11 +143,17 @@ func queueItem(item QueueItem) queueItemResponse {
 //
 // Unknown parameters are rejected for the same reason the JSON decoder
 // rejects unknown fields: a misspelled `language=de` that silently returned
-// the whole unfiltered queue would read as acceptance of the filter.
+// the whole unfiltered queue would read as acceptance of the filter. A
+// repeated known parameter is rejected for that same reason - url.Values
+// keeps every value but Get returns only the first, so `?limit=10&limit=20`
+// would silently answer one of two contradictory requests.
 func parseQueueQuery(values url.Values) (query QueueQuery, detail string, ok bool) {
-	for name := range values {
+	for name, supplied := range values {
 		switch name {
 		case "lang", "limit", "cursor":
+			if len(supplied) > 1 {
+				return QueueQuery{}, "query parameter " + strconv.Quote(name) + " was supplied " + strconv.Itoa(len(supplied)) + " times; supply it at most once", false
+			}
 		default:
 			return QueueQuery{}, "unknown query parameter " + strconv.Quote(name) + "; this endpoint accepts lang, limit and cursor", false
 		}

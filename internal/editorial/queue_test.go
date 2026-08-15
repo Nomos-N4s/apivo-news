@@ -142,6 +142,11 @@ func TestReviewQueueQueryValidation(t *testing.T) {
 		{name: "cursor is base64 of nonsense", query: "?cursor=bm9uc2Vuc2U", detail: "cursor"},
 		{name: "unknown parameter", query: "?language=de", detail: "language"},
 		{name: "unknown parameter alongside a valid one", query: "?lang=de&offset=10", detail: "offset"},
+		// url.Values keeps both values but Get returns only the first, so
+		// answering a contradictory request would silently pick one of them.
+		{name: "limit is repeated", query: "?limit=10&limit=20", detail: "at most once"},
+		{name: "lang is repeated", query: "?lang=el&lang=de", detail: "at most once"},
+		{name: "cursor is repeated", query: "?cursor=a&cursor=b", detail: "at most once"},
 	}
 	for _, tc := range bad {
 		t.Run("400 when "+tc.name, func(t *testing.T) {
