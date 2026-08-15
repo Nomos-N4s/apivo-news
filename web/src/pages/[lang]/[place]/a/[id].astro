@@ -46,8 +46,12 @@ try {
   return Astro.rewrite('/503');
 }
 // An article exists on one language axis only; an id under the wrong
-// language is as absent as an unknown one.
-if (article === null || article.lang !== lang) {
+// language is as absent as an unknown one. The place axis binds the same
+// way: the chrome, back-link and rail all claim the article belongs to
+// the URL's places, so an id under a place it does not relate to is a
+// 404 too — each article has one canonical set of addresses.
+const kickerSlug = article?.places.find((slug) => slugs.includes(slug));
+if (article === null || article.lang !== lang || kickerSlug === undefined) {
   return Astro.rewrite('/404');
 }
 
@@ -59,18 +63,13 @@ const paragraphs = extractParagraphs(article.extract);
 const backHref = frontPagePath(lang, slugs);
 const backPlace = places.at(0);
 
-// The kicker names the place that brought the reader here (the first of
-// the article's places on the current axis), falling back to the
-// article's own first place.
-const kickerSlug = article.places.find((slug) => slugs.includes(slug));
-const kickerLabel = placeKicker(
-  kickerSlug === undefined ? article.places : [kickerSlug],
-  t.scopeLabels,
-);
+// The kicker and the rail speak for the place that brought the reader
+// here — the article's place on the current axis.
+const kickerLabel = placeKicker([kickerSlug], t.scopeLabels);
 
 // "More from {place}": latest items for that place, self excluded. The
 // rail is optional — if its fetch fails, the article still reads.
-const railSlug = kickerSlug ?? article.places.at(0) ?? slugs.at(0) ?? '';
+const railSlug = kickerSlug;
 const railPlaceName = placeKicker([railSlug], t.scopeLabels).split(' · ').at(0) ?? railSlug;
 let related: readonly FrontItem[] = [];
 try {

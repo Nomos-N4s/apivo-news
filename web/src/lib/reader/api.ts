@@ -1,4 +1,4 @@
-import type { Place, ReadingLanguage } from './axes';
+import { isReadingLanguage, type Place, type ReadingLanguage } from './axes';
 import { FRONT_FIXTURES } from './fixtures';
 
 /**
@@ -135,12 +135,37 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch): ReaderApi {
         );
       }
       const body: unknown = await response.json();
-      if (typeof body !== 'object' || body === null || !('id' in body)) {
-        throw new ReaderApiError('reader API answered without an article body');
+      if (!isArticleDetail(body)) {
+        throw new ReaderApiError('reader API answered with a malformed article body');
       }
-      return body as ArticleDetail;
+      return body;
     },
   };
+}
+
+/**
+ * Runtime check of the article payload — external JSON must not reach the
+ * page half-shaped and crash the render; a malformed body is the client's
+ * error (ReaderApiError), not a 500.
+ */
+function isArticleDetail(body: unknown): body is ArticleDetail {
+  if (typeof body !== 'object' || body === null) {
+    return false;
+  }
+  const record = body as Record<string, unknown>;
+  return (
+    typeof record['id'] === 'string' &&
+    typeof record['headline'] === 'string' &&
+    typeof record['extract'] === 'string' &&
+    typeof record['lang'] === 'string' &&
+    isReadingLanguage(record['lang']) &&
+    Array.isArray(record['places']) &&
+    record['places'].every((slug) => typeof slug === 'string') &&
+    typeof record['attribution'] === 'string' &&
+    typeof record['source_url'] === 'string' &&
+    typeof record['published_at'] === 'string' &&
+    typeof record['approved_at'] === 'string'
+  );
 }
 
 /**
