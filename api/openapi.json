@@ -452,8 +452,8 @@
           "editorial"
         ],
         "operationId": "createApproval",
-        "summary": "Approve an origin into an article",
-        "description": "Creates the article that carries the named editor as its approver (I-1). The approver is taken from the token, never from the body: an editor cannot approve in someone else's name.\n\nAn article has exactly one origin - `translation_id` or `source_item_id`, never both and never neither - which the database enforces again on insert. Approving the retrieved item directly is the untranslated path, and it is refused when the feed gave that item no title, because the article would have no headline.\n\n`publish: true` releases it in the same call; `publish: false` records the approval with a null `published_at`, to be released later through the publication endpoint. Either way the provenance is frozen at approval and the row cannot be repointed afterwards.\n\nThe whole `/api/v1/editorial/` prefix sits behind one auth gate, so a request without a usable token answers 401 whether or not the path exists.",
+        "summary": "Approve an origin, optionally publishing it",
+        "description": "Approval creates the article; this endpoint carries the intent and the database enforces the rules.\n\n**403 and 409 are the database's verdicts.** The insert trigger raises when the approver does not hold the editor role - the HTTP gate checked already, so a 403 here means the role changed under the request. The 409 comes from the one-per-origin unique indexes, with no application pre-check in front of them: a pre-check would disagree with the database exactly under the concurrency that makes the answer matter.\n\n**Withdrawn origins may be approved again.** Those indexes are partial on `withdrawn_at IS NULL`, so an origin whose only articles are withdrawn is free - that is the documented correction flow, not a loophole.\n\n**Side effects.** `article.approved`, and `article.published` when `publish` is true, are written to the append-only domain event stream in the same transaction as the article itself.",
         "security": [
           {
             "bearerAuth": []
@@ -467,19 +467,19 @@
                 "$ref": "#/components/schemas/NewApproval"
               },
               "examples": {
-                "approveTranslation": {
-                  "summary": "Approve a translation and publish it at once",
+                "translated": {
+                  "summary": "Approve a translation and publish it now",
                   "value": {
-                    "translation_id": "8f1b6c1e-1f5a-4a2f-9e1a-2b3c4d5e6f70",
-                    "attribution": "Example Weekly",
+                    "translation_id": "3f2a9c40-6d1e-4a7b-9f31-0c5d8e2b4a16",
+                    "attribution": "Example Weekly - extract and link",
                     "publish": true
                   }
                 },
-                "approveUntranslated": {
-                  "summary": "Approve the retrieved item itself, releasing it later",
+                "untranslated": {
+                  "summary": "Approve a same-language item, releasing it later",
                   "value": {
-                    "source_item_id": "3c9d0f2a-7b41-4c8e-9d5f-6a7b8c9d0e1f",
-                    "attribution": "Example Weekly",
+                    "source_item_id": "8f1b6c1e-1f5a-4a2f-9e1a-2b3c4d5e6f70",
+                    "attribution": "Example Weekly - extract and link",
                     "publish": false
                   }
                 }
@@ -489,7 +489,7 @@
         },
         "responses": {
           "201": {
-            "description": "The article as the database recorded it. `published_at` is null on the `publish: false` path.",
+            "description": "The article the approval created.",
             "content": {
               "application/json": {
                 "schema": {
@@ -499,14 +499,14 @@
             }
           },
           "400": {
-            "description": "Malformed JSON, an unknown field, both or neither origin, an origin id that is not a uuid, a blank `attribution`, an origin that does not exist, or an untitled item approved without a translation.",
+            "description": "Malformed JSON or an unknown field; both or neither origin supplied; an origin id that is not a UUID or names nothing; a blank attribution; or an untranslated origin whose feed provided no title, which would leave nothing to render as a headline.",
             "content": {
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
                 },
                 "examples": {
-                  "twoOrigins": {
+                  "bothOrigins": {
                     "summary": "Both origins supplied",
                     "value": {
                       "type": "about:blank",
@@ -515,8 +515,8 @@
                       "detail": "supply translation_id or source_item_id, not both: an article has exactly one origin"
                     }
                   },
-                  "untitledOrigin": {
-                    "summary": "The feed gave this item no title",
+                  "titlelessOrigin": {
+                    "summary": "An untranslated item with no title",
                     "value": {
                       "type": "about:blank",
                       "title": "Bad Request",
@@ -529,34 +529,34 @@
             }
           },
           "401": {
-            "description": "No usable bearer token.",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
+            "$ref": "#/components/responses/Unauthenticated"
           },
           "403": {
-            "description": "The account is not an editor. The database checks the role again on insert, so this also answers a role revoked between the gate and the write.",
+            "$ref": "#/components/responses/NotEditor"
+          },
+          "409": {
+            "description": "The origin already has a non-withdrawn article. Refused by the partial unique index, so two concurrent approvals of one origin produce exactly one 201 and one 409.",
             "content": {
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "alreadyApproved": {
+                    "summary": "The origin is already live",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Conflict",
+                      "status": 409,
+                      "detail": "this origin already has a published or approved article; withdraw it before approving a correction"
+                    }
+                  }
                 }
               }
             }
           },
-          "409": {
-            "description": "This origin already has a published or approved article. Corrections go through withdrawal first; approval never silently supersedes.",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
+          "500": {
+            "$ref": "#/components/responses/InternalError"
           }
         }
       }
@@ -568,7 +568,7 @@
         ],
         "operationId": "publishArticle",
         "summary": "Release an approved article",
-        "description": "Publishes an article that was approved with `publish: false`. Publication happens once and is never repeated: a second call is a 409, not a no-op, so a duplicated request cannot quietly move `published_at`.\n\nThe actor's editor role is rechecked in the database, under a row lock, inside the publishing transaction - a demotion between the HTTP gate and the write leaves nothing published.\n\nThe whole `/api/v1/editorial/` prefix sits behind one auth gate, so a request without a usable token answers 401 whether or not the path exists.",
+        "description": "Publishes an article approved with `publish: false`. The database permits `published_at` to be set exactly once, and the statement guards on it, so two concurrent callers produce exactly one 200 and one 409.\n\n**The actor must still be an editor at the moment of the write.** This is the one editorial write no trigger can guard - nothing on the article row records who released it - so the publishing transaction takes a locking read of the actor's account row and the UPDATE itself carries the editor predicate. A demotion and a publication therefore serialize rather than race, and a demoted account gets 403 with nothing published.\n\n**Side effect.** `article.published` in the same transaction.\n\nAn article that was approved and never released stays that way permanently unless this endpoint is called: a frozen record of an approval, which withdrawal does not apply to.",
         "security": [
           {
             "bearerAuth": []
@@ -579,7 +579,7 @@
             "name": "id",
             "in": "path",
             "required": true,
-            "description": "The approved article's id. Unlike the reader endpoint, a value that is not a UUID answers 400 rather than 404: behind the gate a malformed id is a client mistake worth naming.",
+            "description": "The article id. A value that is not a UUID answers 400 here - a malformed id is a client mistake worth naming, distinct from an article that does not exist.",
             "schema": {
               "type": "string",
               "format": "uuid"
@@ -603,34 +603,31 @@
             }
           },
           "400": {
-            "description": "The id in the path is not a uuid.",
+            "description": "The `{id}` path segment is not a UUID.",
             "content": {
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "malformedID": {
+                    "summary": "A path id that is not a UUID",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "the article id in the path must be a uuid"
+                    }
+                  }
                 }
               }
             }
           },
           "401": {
-            "description": "No usable bearer token.",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
+            "$ref": "#/components/responses/Unauthenticated"
           },
           "403": {
-            "description": "The account is not an editor, or was demoted before the write landed.",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
+            "$ref": "#/components/responses/NotEditor"
           },
           "404": {
             "description": "No article with this id.",
@@ -638,19 +635,44 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "unknownArticle": {
+                    "summary": "No such article",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Not Found",
+                      "status": 404,
+                      "detail": "no article with this id"
+                    }
+                  }
                 }
               }
             }
           },
           "409": {
-            "description": "This article is already published.",
+            "description": "The article is already published. Publication is one-way and happens once.",
             "content": {
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "alreadyPublished": {
+                    "summary": "Already released",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Conflict",
+                      "status": 409,
+                      "detail": "this article is already published; publication happens once and is never repeated"
+                    }
+                  }
                 }
               }
             }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
           }
         }
       }
@@ -1059,107 +1081,6 @@
           }
         }
       },
-      "NewApproval": {
-        "type": "object",
-        "title": "NewApproval",
-        "description": "An editorial approval. Exactly one origin is supplied; the approver is taken from the bearer token and is never accepted from the body.",
-        "required": [
-          "attribution"
-        ],
-        "properties": {
-          "translation_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "The translation to approve. Mutually exclusive with `source_item_id`; explicit null reads as not supplied."
-          },
-          "source_item_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "The retrieved item to approve untranslated. Refused when the feed provided no title. Mutually exclusive with `translation_id`."
-          },
-          "attribution": {
-            "type": "string",
-            "minLength": 1,
-            "description": "How the source is credited on the published article. Never blank; trimmed before storage.",
-            "examples": [
-              "Example Weekly"
-            ]
-          },
-          "publish": {
-            "type": "boolean",
-            "default": false,
-            "description": "Release it in the same call. When false the article is approved with a null `published_at`, awaiting the publication endpoint."
-          }
-        },
-        "additionalProperties": false
-      },
-      "Approval": {
-        "type": "object",
-        "title": "Approval",
-        "description": "The created article. `approved_by` is the named human the invariant requires (I-1) - an article cannot exist without one.",
-        "required": [
-          "article_id",
-          "approved_by",
-          "approved_at",
-          "published_at"
-        ],
-        "properties": {
-          "article_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "approved_by": {
-            "type": "string",
-            "format": "uuid",
-            "description": "The editor behind the token, as the database recorded it."
-          },
-          "approved_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "RFC 3339 in UTC, sub-second precision.",
-            "examples": [
-              "2026-08-15T09:12:44.481203Z"
-            ]
-          },
-          "published_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "Null when the article was approved but not released."
-          }
-        }
-      },
-      "Publication": {
-        "type": "object",
-        "title": "Publication",
-        "description": "A released article. Publication happens once, so `published_at` never moves after this.",
-        "required": [
-          "article_id",
-          "published_at"
-        ],
-        "properties": {
-          "article_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "published_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "RFC 3339 in UTC, sub-second precision.",
-            "examples": [
-              "2026-08-15T09:12:44.481203Z"
-            ]
-          }
-        }
-      },
       "Withdrawal": {
         "type": "object",
         "title": "Withdrawal",
@@ -1284,6 +1205,96 @@
               "null"
             ],
             "description": "Pass as cursor to fetch the next page. null on the last page - an absent cursor always means the queue is exhausted."
+          }
+        }
+      },
+      "NewApproval": {
+        "type": "object",
+        "title": "NewApproval",
+        "description": "An editorial decision to publish. Exactly one origin: `translation_id` for a translated article, `source_item_id` for an untranslated one, mirroring the database's `article_exactly_one_origin`. Supplying both, neither, or an explicit `null` for both is a 400. The approver is always the authenticated editor and is deliberately not a field here.",
+        "required": [
+          "attribution"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "translation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The translation being approved."
+          },
+          "source_item_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The retrieved item being approved untranslated. Its `original_title` becomes the headline, so an item whose feed provided no title is refused with 400."
+          },
+          "attribution": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The attribution block rendered with the article, pointing back to the original publisher. Stored trimmed; never blank."
+          },
+          "publish": {
+            "type": "boolean",
+            "default": false,
+            "description": "Publish in the same transaction as the approval. When false the article is an approved record awaiting release."
+          }
+        }
+      },
+      "Approval": {
+        "type": "object",
+        "title": "Approval",
+        "description": "The article the approval created. A row in `article` IS the approval (I-1): there is no draft state, and no path creates one without a named editor.",
+        "required": [
+          "article_id",
+          "approved_by",
+          "approved_at",
+          "published_at"
+        ],
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "approved_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The authenticated editor who approved it."
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When publication began, or null on the `publish: false` path."
+          }
+        }
+      },
+      "Publication": {
+        "type": "object",
+        "title": "Publication",
+        "description": "The released article.",
+        "required": [
+          "article_id",
+          "published_at"
+        ],
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }
