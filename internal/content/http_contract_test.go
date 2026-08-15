@@ -24,6 +24,7 @@ import (
 
 	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/db"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/text"
 )
 
 // itemJSON mirrors the contract's reader item; approved_at is present only
@@ -184,7 +185,7 @@ func TestReaderEndpoints(t *testing.T) {
 		if got.Headline != f.elTitle {
 			t.Errorf("headline = %q, want original_title %q", got.Headline, f.elTitle)
 		}
-		if want := content.DeriveExtract(f.elRawBody); got.Extract != want {
+		if want := text.DeriveExtract(f.elRawBody); got.Extract != want {
 			t.Errorf("extract = %q, want the D9 derivation %q", got.Extract, want)
 		}
 		if got.Lang != "el" {
@@ -283,7 +284,7 @@ func TestReaderEndpoints(t *testing.T) {
 		if untranslated.Headline != f.elTitle {
 			t.Errorf("headline = %q, want original_title %q", untranslated.Headline, f.elTitle)
 		}
-		if want := content.DeriveExtract(f.elRawBody); untranslated.Extract != want {
+		if want := text.DeriveExtract(f.elRawBody); untranslated.Extract != want {
 			t.Errorf("extract = %q, want the D9 derivation %q", untranslated.Extract, want)
 		}
 		if !slices.Equal(untranslated.Places, []string{f.alphaSlug, f.betaSlug}) {

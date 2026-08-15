@@ -1,11 +1,11 @@
-package content_test
+package text_test
 
 import (
 	"strings"
 	"testing"
 	"unicode/utf8"
 
-	"github.com/Nomos-N4s/apivo-news/internal/content"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/text"
 )
 
 func TestDeriveExtract(t *testing.T) {
@@ -165,7 +165,7 @@ func TestDeriveExtract(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := content.DeriveExtract(tt.in)
+			got := text.DeriveExtract(tt.in)
 			if got != tt.want {
 				t.Errorf("DeriveExtract() = %q, want %q", got, tt.want)
 			}
@@ -200,7 +200,7 @@ func TestDeriveExtractNeverEmitsMarkupOrExceedsTheBound(t *testing.T) {
 	for name, body := range bodies {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got := content.DeriveExtract(body)
+			got := text.DeriveExtract(body)
 
 			if n := utf8.RuneCountInString(got); n > 300 {
 				t.Errorf("extract is %d runes; the 300-rune ceiling is the licensing bound, not a hint", n)
