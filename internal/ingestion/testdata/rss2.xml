@@ -25,5 +25,13 @@
       <pubDate>Tue, 03 Jun 2025 08:00:00 +0200</pubDate>
       <description>Der Stadtrat hat den Ausbau der Radwege beschlossen.</description>
     </item>
+    <item>
+      <title>Bare author address alongside a named creator</title>
+      <link>https://news.example.test/articles/creator</link>
+      <author>desk@example.test</author>
+      <dc:creator>Ελένη Δημητρίου</dc:creator>
+      <pubDate>Wed, 04 Jun 2025 07:15:00 +0300</pubDate>
+      <description>Ο συντάκτης δηλώνεται και ως διεύθυνση και ως όνομα.</description>
+    </item>
   </channel>
 </rss>

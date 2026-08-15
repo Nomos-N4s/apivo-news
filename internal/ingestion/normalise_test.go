@@ -78,6 +78,17 @@ func TestParseFeedNormalisesRealWorldShapes(t *testing.T) {
 					Body:      "Der Stadtrat hat den Ausbau der Radwege beschlossen.",
 					Summary:   "Der Stadtrat hat den Ausbau der Radwege beschlossen.",
 				},
+				{
+					Title: "Bare author address alongside a named creator",
+					Link:  "https://news.example.test/articles/creator",
+					// dc:creator names the human; <author> carries only an
+					// address. The name wins - storing the address would
+					// drop the very thing the feed stated.
+					Author:    "Ελένη Δημητρίου",
+					Published: ts(t, "2025-06-04T07:15:00+03:00"),
+					Body:      "Ο συντάκτης δηλώνεται και ως διεύθυνση και ως όνομα.",
+					Summary:   "Ο συντάκτης δηλώνεται και ως διεύθυνση και ως όνομα.",
+				},
 			},
 		},
 		{
@@ -95,11 +106,25 @@ func TestParseFeedNormalisesRealWorldShapes(t *testing.T) {
 				{
 					Title: "Nur aktualisiert, nie veröffentlicht",
 					Link:  "https://atom.example.test/articles/zwei",
-					// The entry states only <updated>; that feed-stated
-					// time is reported as the publication time.
-					Published: ts(t, "2025-06-06T09:00:00Z"),
+					// The entry declares no <author>, so the feed-level
+					// author stands in.
+					Author: "Beispiel Redaktion",
+					// The entry states only <updated>. An edit time is not
+					// a publication date, so the field stays absent
+					// (FR-002) even though the parser offers the timestamp.
+					Published: nil,
 					Body:      "Nur eine Zusammenfassung, kein Volltext.",
 					Summary:   "Nur eine Zusammenfassung, kein Volltext.",
+				},
+				{
+					Title: "Nur ein self-Link",
+					// No alternate link: the self link is the only URL the
+					// entry offers, and it is still where the item lives.
+					Link:      "https://atom.example.test/articles/drei",
+					Author:    "Beispiel Redaktion",
+					Published: ts(t, "2025-06-07T06:00:00Z"),
+					Body:      "Kein alternate-Link, nur self.",
+					Summary:   "Kein alternate-Link, nur self.",
 				},
 			},
 		},
@@ -140,6 +165,26 @@ func TestParseFeedNormalisesRealWorldShapes(t *testing.T) {
 					Author:  "anonym@example.test",
 					Body:    "Kein Name, nur eine Adresse.",
 					Summary: "Kein Name, nur eine Adresse.",
+				},
+				{
+					Title: "Identified by permalink GUID, no link element",
+					// No <link>: the URL-shaped GUID is the origin link.
+					Link:    "https://sparse.example.test/articles/by-guid",
+					Body:    "Η ροή ταυτοποιεί τα άρθρα με GUID permalink.",
+					Summary: "Η ροή ταυτοποιεί τα άρθρα με GUID permalink.",
+				},
+				{
+					Title: "Opaque GUID is not a link",
+					// A urn: identifier is not a URL, so there is no link.
+					Link:    "",
+					Body:    "Ein undurchsichtiger Bezeichner ist kein Link.",
+					Summary: "Ein undurchsichtiger Bezeichner ist kein Link.",
+				},
+				{
+					Title:   "No text at all",
+					Link:    "https://sparse.example.test/articles/no-text",
+					Body:    "",
+					Summary: "",
 				},
 			},
 		},
@@ -227,9 +272,27 @@ func TestParseFeedBoundsDocumentSize(t *testing.T) {
 		t.Fatalf("ParseFeed(oversized) error = %v, want ErrFeedTooLarge", err)
 	}
 
+	// A document of EXACTLY MaxFeedBytes is legal: the bound counts one
+	// byte beyond itself precisely so the limit is inclusive, and a feed
+	// that happens to land on it must still be ingested.
+	prefix := `<?xml version="1.0"?><rss version="2.0"><channel><title>t</title><!--`
+	suffix := `--><item><title>i</title><link>https://example.test/i</link></item></channel></rss>`
+	atLimit := io.MultiReader(
+		strings.NewReader(prefix),
+		io.LimitReader(padding{}, int64(ingestion.MaxFeedBytes-len(prefix)-len(suffix))),
+		strings.NewReader(suffix),
+	)
+	items, err := ingestion.ParseFeed(atLimit)
+	if err != nil {
+		t.Fatalf("ParseFeed(exactly MaxFeedBytes) error = %v, want success", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("ParseFeed(exactly MaxFeedBytes) returned %d items, want 1", len(items))
+	}
+
 	// A feed inside the bound still parses: the guard must not reject
 	// legitimate feeds.
-	items, err := ingestion.ParseFeed(strings.NewReader(
+	items, err = ingestion.ParseFeed(strings.NewReader(
 		`<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>` +
 			`<item><title>i</title><link>https://example.test/i</link></item></channel></rss>`))
 	if err != nil {
@@ -237,6 +300,81 @@ func TestParseFeedBoundsDocumentSize(t *testing.T) {
 	}
 	if len(items) != 1 {
 		t.Fatalf("ParseFeed(small feed) returned %d items, want 1", len(items))
+	}
+}
+
+// TestNormalizedItemValidate pins the explicit outcomes for items that
+// cannot become retrieval evidence. Without them the write path would fail
+// on a NOT NULL or CHECK violation, reporting that a constraint was hit but
+// not which item was unusable or why.
+func TestNormalizedItemValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		item ingestion.NormalizedItem
+		want error
+	}{
+		{
+			name: "complete item is usable",
+			item: ingestion.NormalizedItem{Link: "https://example.test/a", Body: "text"},
+			want: nil,
+		},
+		{
+			name: "no link",
+			item: ingestion.NormalizedItem{Body: "text"},
+			want: ingestion.ErrNoLink,
+		},
+		{
+			name: "no body",
+			item: ingestion.NormalizedItem{Link: "https://example.test/a"},
+			want: ingestion.ErrNoBody,
+		},
+		{
+			name: "blank body is no body",
+			item: ingestion.NormalizedItem{Link: "https://example.test/a", Body: "  \n\t "},
+			want: ingestion.ErrNoBody,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if err := tt.item.Validate(); !errors.Is(err, tt.want) {
+				t.Fatalf("Validate() = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestParsedItemsCarryTheirVerdict walks the sparse fixture end to end: the
+// two unusable items must be diagnosable by name rather than reaching the
+// database and failing there.
+func TestParsedItemsCarryTheirVerdict(t *testing.T) {
+	t.Parallel()
+
+	f, err := fixtures.Open("testdata/rss2_sparse.xml")
+	if err != nil {
+		t.Fatalf("opening fixture: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	items, err := ingestion.ParseFeed(f)
+	if err != nil {
+		t.Fatalf("ParseFeed() error: %v", err)
+	}
+
+	verdicts := make(map[string]error, len(items))
+	for _, item := range items {
+		verdicts[item.Title] = item.Validate()
+	}
+	if err := verdicts["Opaque GUID is not a link"]; !errors.Is(err, ingestion.ErrNoLink) {
+		t.Errorf("opaque-GUID item Validate() = %v, want ErrNoLink", err)
+	}
+	if err := verdicts["No text at all"]; !errors.Is(err, ingestion.ErrNoBody) {
+		t.Errorf("text-free item Validate() = %v, want ErrNoBody", err)
+	}
+	if err := verdicts["Identified by permalink GUID, no link element"]; err != nil {
+		t.Errorf("permalink-GUID item Validate() = %v, want nil", err)
 	}
 }
 

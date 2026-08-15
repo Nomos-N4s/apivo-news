@@ -3,6 +3,10 @@
   <title>Beispiel Nachrichten</title>
   <id>urn:uuid:0e6b32a2-5f3e-4f8e-9a70-000000000000</id>
   <updated>2025-06-05T12:00:00Z</updated>
+  <!-- The newsroom shape: authorship declared once, for every entry. -->
+  <author>
+    <name>Beispiel Redaktion</name>
+  </author>
   <entry>
     <title>Neues Kulturzentrum eröffnet</title>
     <id>urn:uuid:0e6b32a2-5f3e-4f8e-9a70-000000000001</id>
@@ -22,5 +26,13 @@
     <link href="https://atom.example.test/articles/zwei"/>
     <updated>2025-06-06T09:00:00Z</updated>
     <summary>Nur eine Zusammenfassung, kein Volltext.</summary>
+  </entry>
+  <entry>
+    <title>Nur ein self-Link</title>
+    <id>urn:uuid:0e6b32a2-5f3e-4f8e-9a70-000000000003</id>
+    <link rel="self" href="https://atom.example.test/articles/drei"/>
+    <published>2025-06-07T06:00:00Z</published>
+    <updated>2025-06-07T06:00:00Z</updated>
+    <summary>Kein alternate-Link, nur self.</summary>
   </entry>
 </feed>

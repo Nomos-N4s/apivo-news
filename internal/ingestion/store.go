@@ -50,6 +50,13 @@ type RetrievalResult struct {
 // invented (FR-002). Re-retrieving identical content from the same source
 // is a no-op reported as Duplicate - no new row, no second event.
 func (s *Store) RecordRetrieval(ctx context.Context, sourceID uuid.UUID, item NormalizedItem) (RetrievalResult, error) {
+	// Checked before any database work: an item with no origin link or no
+	// text would otherwise fail deep inside the insert as a NOT NULL or
+	// CHECK violation, which reports that a constraint was hit but not
+	// which item was unusable or why.
+	if err := item.Validate(); err != nil {
+		return RetrievalResult{}, fmt.Errorf("ingestion: record retrieval: %w", err)
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return RetrievalResult{}, fmt.Errorf("ingestion: record retrieval: begin: %w", err)
