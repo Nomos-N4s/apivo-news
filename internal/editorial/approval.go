@@ -25,6 +25,12 @@ const (
 	eventArticlePublished = "article.published"
 )
 
+// roleEditor is the account.role value that carries editorial authority. It
+// mirrors the literal the 0002 triggers and is_entitled check; the database
+// remains the authority, this is the same question asked in the same
+// transaction.
+const roleEditor = "editor"
+
 // ErrOriginAlreadyApproved reports an origin that already has a
 // non-withdrawn article. Handlers map it to 409. It comes from the partial
 // unique indexes, never from an application pre-check: only the database
@@ -172,6 +178,15 @@ func (s *PGStore) Approve(ctx context.Context, a NewApproval) (Article, error) {
 
 // Publish releases an approved-but-unpublished article and records the
 // article.published event in the same transaction.
+//
+// Publication is the one editorial write no trigger can guard: nothing on
+// the article row records who released it, so the schema cannot know. The
+// authority is therefore established here, and established the way the
+// 0002 triggers do it - a locking read of the actor's account row, held for
+// the rest of the transaction, so a concurrent demotion of that account
+// serializes against this publication instead of racing it. The write
+// itself carries the editor predicate as well, so it cannot commit without
+// one even if this check were somehow bypassed.
 func (s *PGStore) Publish(ctx context.Context, articleID, editorID uuid.UUID) (Article, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -180,8 +195,15 @@ func (s *PGStore) Publish(ctx context.Context, articleID, editorID uuid.UUID) (A
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := s.q.WithTx(tx)
 
+	if err := lockEditorRole(ctx, q, editorID); err != nil {
+		return Article{}, err
+	}
+
 	id := pgtype.UUID{Bytes: articleID, Valid: true}
-	row, err := q.PublishArticle(ctx, id)
+	row, err := q.PublishArticle(ctx, store.PublishArticleParams{
+		ArticleID:   id,
+		PublishedBy: pgtype.UUID{Bytes: editorID, Valid: true},
+	})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		// The guarded UPDATE matched nothing: either there is no such
@@ -216,6 +238,29 @@ func (s *PGStore) Publish(ctx context.Context, articleID, editorID uuid.UUID) (A
 		return Article{}, fmt.Errorf("editorial: committing publication: %w", err)
 	}
 	return article, nil
+}
+
+// lockEditorRole takes the row lock on the actor's account and reports
+// ErrNotEditor unless it holds the editor role. Both verdicts are the same
+// answer to the caller: an account that has been deleted is no more an
+// editor than one that was demoted.
+//
+// The lock is what makes the check worth anything. It is released only when
+// the transaction ends, so between here and the commit no demotion of this
+// account can slip past: the demoting UPDATE blocks on the share lock, and
+// if it committed first this read - being a locking one - sees its result
+// rather than a stale snapshot.
+func lockEditorRole(ctx context.Context, q *store.Queries, editorID uuid.UUID) error {
+	role, err := q.LockActorRole(ctx, pgtype.UUID{Bytes: editorID, Valid: true})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return fmt.Errorf("%w: account %s no longer exists", ErrNotEditor, editorID)
+	case err != nil:
+		return fmt.Errorf("editorial: locking the actor's role: %w", err)
+	case role != roleEditor:
+		return fmt.Errorf("%w: account %s holds the %s role", ErrNotEditor, editorID, role)
+	}
+	return nil
 }
 
 // requireTitle refuses an untranslated origin the reader could not be shown:

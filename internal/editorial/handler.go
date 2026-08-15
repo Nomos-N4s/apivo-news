@@ -142,6 +142,13 @@ func (h *Handler) publishArticle(w http.ResponseWriter, r *http.Request) {
 		platformhttp.Problem(w, http.StatusConflict,
 			"this article is already published; publication happens once and is never repeated")
 		return
+	// The database checks the actor's role again, under a row lock, inside
+	// the publishing transaction. Reaching this arm means the caller passed
+	// the HTTP gate and the account was demoted before the write - the
+	// database wins, and no publication happened.
+	case errors.Is(err, ErrNotEditor):
+		platformhttp.Problem(w, http.StatusForbidden, "the editor role is required")
+		return
 	case err != nil:
 		h.internalError(w, r, "publishing article", err)
 		return

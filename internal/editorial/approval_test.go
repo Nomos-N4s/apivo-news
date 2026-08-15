@@ -347,6 +347,11 @@ func TestPublicationEndpoint(t *testing.T) {
 		h := editorial.NewHandler(discardLogger(), &approvalStore{err: editorial.ErrAlreadyPublished}, fakeAuth{})
 		wantProblem(t, postPublication(t, h, articleID.String()), http.StatusConflict, "already published")
 	})
+	t.Run("403 when the database refuses a non-editor at the write", func(t *testing.T) {
+		t.Parallel()
+		h := editorial.NewHandler(discardLogger(), &approvalStore{err: editorial.ErrNotEditor}, fakeAuth{})
+		wantProblem(t, postPublication(t, h, articleID.String()), http.StatusForbidden, "editor role")
+	})
 	t.Run("400 when the path id is not a uuid", func(t *testing.T) {
 		t.Parallel()
 		h := editorial.NewHandler(discardLogger(), &approvalStore{err: errUnexpectedCall}, fakeAuth{})
