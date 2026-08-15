@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomos-N4s/apivo-news/api"
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
 )
 
@@ -80,6 +82,67 @@ func TestMountedRoutes(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("healthz alongside mounted routes = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestServesTheEmbeddedOpenAPIDocument(t *testing.T) {
+	t.Parallel()
+	srv := platformhttp.New(discardLogger(), ":0", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	// The description of an uncrawlable API is itself uncrawlable.
+	if got := rec.Header().Get("X-Robots-Tag"); got != "noindex, nofollow" {
+		t.Errorf("X-Robots-Tag = %q, want %q", got, "noindex, nofollow")
+	}
+	if !bytes.Equal(rec.Body.Bytes(), api.OpenAPIJSON()) {
+		t.Error("served document differs from the embedded api/openapi.json")
+	}
+
+	var doc struct {
+		OpenAPI string `json:"openapi"`
+		Paths   map[string]any
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("served document is not valid JSON: %v", err)
+	}
+	if !strings.HasPrefix(doc.OpenAPI, "3.1.") {
+		t.Errorf("openapi = %q, want a 3.1.x document", doc.OpenAPI)
+	}
+	if len(doc.Paths) == 0 {
+		t.Error("served document describes no paths")
+	}
+}
+
+// TestPatternsAreRegistered proves Patterns is not a list that drifted away
+// from the mux: every pattern it reports is answered by a server built the
+// ordinary way.
+func TestPatternsAreRegistered(t *testing.T) {
+	t.Parallel()
+	patterns := platformhttp.Patterns()
+	if len(patterns) == 0 {
+		t.Fatal("Patterns() is empty")
+	}
+	for _, pattern := range patterns {
+		t.Run(pattern, func(t *testing.T) {
+			t.Parallel()
+			method, path, ok := strings.Cut(pattern, " ")
+			if !ok {
+				t.Fatalf("pattern %q is not %q", pattern, "METHOD /path")
+			}
+			srv := platformhttp.New(discardLogger(), ":0", nil)
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s = %d, want %d", pattern, rec.Code, http.StatusOK)
+			}
+		})
 	}
 }
 

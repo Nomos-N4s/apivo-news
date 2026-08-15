@@ -1,0 +1,1487 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "epiloYES internal HTTP API",
+    "version": "1.0.0-alpha",
+    "summary": "Public reader endpoints, editorial writes behind a bearer JWT, and the operational probes served by the Go binary.",
+    "description": "Machine-readable description of what the Go binary actually serves. It is written from the handlers, not from prose: where this document and `specs/001-epiloyes-alpha/contracts/http-api.md` disagree, the handlers won and this document follows them.\n\n**Topology.** The API is not publicly routable. In every deployment (compose, Cloudflare, Kubernetes) it listens on an internal network and the Astro server is the only public HTTP surface. As defence in depth every response - this document included - carries `X-Robots-Tag: noindex, nofollow`.\n\n**Errors.** Every handler-produced error is an RFC 9457 `application/problem+json` body: `type` (always `about:blank`), `title` (the plain rendering of the status code), `status`, and `detail` (omitted when empty). See the `Problem` schema.\n\n**Pagination.** Lists take `limit` (default 20) and `cursor` (opaque, keyset) and answer `{ items, next_cursor }`, where `next_cursor` is `null` on the last page. A `limit` outside 1-100 is rejected with 400 rather than clamped; a malformed or oversized `cursor` is rejected with 400.\n\n**Auth.** Only the editorial endpoints require authentication: `Authorization: Bearer <JWT>`, verified against the configured JWKS, and the subject's account must hold the editor role. The database enforces the same rule again on write. When `JWKS_URL` is unset the whole `/api/v1/editorial/` prefix is left unmounted deliberately, and those paths answer 404 instead of authenticating nobody.\n\n**Unrouted paths under `/api/v1/`.** The content module owns a catch-all across the whole namespace: a known reader path reached with the wrong method answers 405 with an `Allow` header, and anything else under `/api/v1/` answers 404, both in problem+json. Outside its reach - the editorial prefix - an unrouted path or a wrong method is answered by the router itself with a `text/plain` body. That is the one corner where the single error convention does not hold.\n\n**Completeness.** Every operation described here is served by the binary, and every route the binary registers is described here; a test in the composition root compares the two in both directions on every build. The one endpoint that exists in the contract but has no implementation - editorial provenance - is deliberately absent rather than described speculatively.\n\n**Availability.** The editorial routes are mounted only when the deployment configures JWKS verification; without it they answer 404 rather than authenticating nobody. The reader endpoints and the probes mount unconditionally."
+  },
+  "servers": [
+    {
+      "url": "http://api:8080",
+      "description": "The internal service address inside compose and Kubernetes; the Astro server reaches it as API_BASE_URL."
+    },
+    {
+      "url": "http://localhost:8080",
+      "description": "A locally run binary (HTTP_ADDR defaults to :8080)."
+    }
+  ],
+  "security": [],
+  "tags": [
+    {
+      "name": "reader",
+      "description": "Public, unauthenticated reads. Only published, non-withdrawn articles are visible."
+    },
+    {
+      "name": "editorial",
+      "description": "Editorial writes. Bearer JWT plus the editor role on the account behind the token."
+    },
+    {
+      "name": "operations",
+      "description": "Probes and tooling: liveness, readiness and this document."
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "getHealthz",
+        "summary": "Liveness",
+        "description": "Answers 200 as long as the process is serving. It touches no dependency, so it never reports the database's state - that is what /readyz is for.",
+        "responses": {
+          "200": {
+            "description": "The process is alive.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                },
+                "examples": {
+                  "alive": {
+                    "value": {
+                      "status": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "getReadyz",
+        "summary": "Readiness",
+        "description": "Pings the database. A failing ping answers 503 so an orchestrator stops routing traffic here without killing the process.",
+        "responses": {
+          "200": {
+            "description": "The database answered the ping.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                },
+                "examples": {
+                  "ready": {
+                    "value": {
+                      "status": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The readiness check failed; the body is the same shape, not problem+json.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                },
+                "examples": {
+                  "unavailable": {
+                    "value": {
+                      "status": "unavailable"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "getOpenAPIDocument",
+        "summary": "This document",
+        "description": "Serves the committed `api/openapi.json` verbatim - the bytes are embedded into the binary at build time, so the served document and the validated file can never differ.",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI 3.1 document describing this API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "An OpenAPI 3.1 document - this one, byte for byte."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/front": {
+      "get": {
+        "tags": [
+          "reader"
+        ],
+        "operationId": "getFrontPage",
+        "summary": "Front-page feed for one language and one or more places",
+        "description": "Published, non-withdrawn articles, newest first, keyset-paginated on (published_at, id). Both axes are required: a reader always reads one language, and follows at least one place (repeat `place` to follow several - a diaspora reader follows two).\n\nAn article whose origin was translated renders the translation's headline and extract; an untranslated (same-language) origin renders the feed-provided title with an extract derived from the retrieved body at read time. Either way `lang` on every returned item equals the requested language.\n\nAn empty result is an empty `items` array with a 200, never an error.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Lang"
+          },
+          {
+            "$ref": "#/components/parameters/Place"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the feed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown `lang`, missing or unknown `place`, a `limit` outside 1-100 or a non-integer one, or a malformed `cursor`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "unknownLang": {
+                    "summary": "Unknown language",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "unknown lang \"fr\": the reader languages are el and de"
+                    }
+                  },
+                  "noPlace": {
+                    "summary": "No place supplied",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "at least one place is required (repeat place= to follow several)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/articles/{id}": {
+      "get": {
+        "tags": [
+          "reader"
+        ],
+        "operationId": "getArticle",
+        "summary": "One published article",
+        "description": "The article page payload: the feed item shape plus `approved_at`.\n\nUnknown, unpublished, withdrawn and syntactically invalid ids are one indistinguishable 404 - the existence of unpublished work is not public, so a malformed id is not even answered with a 400.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The article id. A value that is not a UUID answers 404, not 400.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "examples": {
+              "id": {
+                "value": "8f1b6c1e-1f5a-4a2f-9e1a-2b3c4d5e6f70"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The article.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Article"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No article is visible under this id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "notFound": {
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Not Found",
+                      "status": 404,
+                      "detail": "no such article"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/editorial/sources": {
+      "post": {
+        "tags": [
+          "editorial"
+        ],
+        "operationId": "createSource",
+        "summary": "Register a licensed source",
+        "description": "Registers a feed the crawler may poll. The usage rule is not an input: every new source is `extract_and_link`, and upgrades are a separate founder-gated flow outside alpha scope. Sending `usage_rule` - any value, `null` included - is a 400 rather than a silently ignored field, as is any other unknown field.\n\nThe whole `/api/v1/editorial/` prefix sits behind one auth gate, so a request without a usable token answers 401 whether or not the path exists. Behind the gate the router answers a wrong method with a `text/plain` 405 carrying `Allow: POST`, and an unknown path with a `text/plain` 404 - neither is problem+json.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewSource"
+              },
+              "examples": {
+                "greekWeekly": {
+                  "value": {
+                    "name": "Example Weekly",
+                    "url": "https://example.org/feed.xml",
+                    "language": "el",
+                    "jurisdiction": "GR",
+                    "licence_terms": "Extract and link permitted with attribution."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The source as the database recorded it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Source"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON, an unknown field (`usage_rule` included), a blank required field, a `url` that is not an absolute http(s) URL with a host, or a language code the database does not know.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "usageRuleRejected": {
+                    "summary": "usage_rule supplied",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "usage_rule is not accepted: new sources are always extract_and_link; upgrades are a separate founder-gated flow"
+                    }
+                  },
+                  "unfetchableURL": {
+                    "summary": "A URL the crawler could never poll",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "url must be an absolute http or https URL with a host, e.g. https://example.org/feed.xml"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotEditor"
+          },
+          "409": {
+            "description": "A source with this feed URL is already registered.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "duplicate": {
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Conflict",
+                      "status": 409,
+                      "detail": "a source with this feed URL is already registered"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/editorial/queue": {
+      "get": {
+        "tags": [
+          "editorial"
+        ],
+        "operationId": "reviewQueue",
+        "summary": "List origins awaiting an editorial decision",
+        "description": "Retrieved items and their translations that have no non-withdrawn article. Origins whose only articles were withdrawn reappear here as correction candidates, carrying their withdrawal history.\n\nThe whole /api/v1/editorial/ prefix sits behind one auth gate, so a request without a usable token answers 401 whether or not the path exists.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "description": "Optional filter: only origins whose translation targets this language, plus untranslated origins in it.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "el",
+                "de"
+              ]
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the queue.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewQueue"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unparseable limit (outside 1-100), malformed lang, a cursor this endpoint did not issue, or an unrecognised query parameter.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No usable bearer token.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account is not an editor.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/editorial/approvals": {
+      "post": {
+        "tags": [
+          "editorial"
+        ],
+        "operationId": "createApproval",
+        "summary": "Approve an origin, optionally publishing it",
+        "description": "Approval creates the article; this endpoint carries the intent and the database enforces the rules.\n\n**403 and 409 are the database's verdicts.** The insert trigger raises when the approver does not hold the editor role - the HTTP gate checked already, so a 403 here means the role changed under the request. The 409 comes from the one-per-origin unique indexes, with no application pre-check in front of them: a pre-check would disagree with the database exactly under the concurrency that makes the answer matter.\n\n**Withdrawn origins may be approved again.** Those indexes are partial on `withdrawn_at IS NULL`, so an origin whose only articles are withdrawn is free - that is the documented correction flow, not a loophole.\n\n**Side effects.** `article.approved`, and `article.published` when `publish` is true, are written to the append-only domain event stream in the same transaction as the article itself.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewApproval"
+              },
+              "examples": {
+                "translated": {
+                  "summary": "Approve a translation and publish it now",
+                  "value": {
+                    "translation_id": "3f2a9c40-6d1e-4a7b-9f31-0c5d8e2b4a16",
+                    "attribution": "Example Weekly - extract and link",
+                    "publish": true
+                  }
+                },
+                "untranslated": {
+                  "summary": "Approve a same-language item, releasing it later",
+                  "value": {
+                    "source_item_id": "8f1b6c1e-1f5a-4a2f-9e1a-2b3c4d5e6f70",
+                    "attribution": "Example Weekly - extract and link",
+                    "publish": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The article the approval created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Approval"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON or an unknown field; both or neither origin supplied; an origin id that is not a UUID or names nothing; a blank attribution; or an untranslated origin whose feed provided no title, which would leave nothing to render as a headline.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "bothOrigins": {
+                    "summary": "Both origins supplied",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "supply translation_id or source_item_id, not both: an article has exactly one origin"
+                    }
+                  },
+                  "titlelessOrigin": {
+                    "summary": "An untranslated item with no title",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "this item's feed provided no title, so an untranslated approval would have no headline; approve a translation of it instead"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotEditor"
+          },
+          "409": {
+            "description": "The origin already has a non-withdrawn article. Refused by the partial unique index, so two concurrent approvals of one origin produce exactly one 201 and one 409.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "alreadyApproved": {
+                    "summary": "The origin is already live",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Conflict",
+                      "status": 409,
+                      "detail": "this origin already has a published or approved article; withdraw it before approving a correction"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/editorial/articles/{id}/publication": {
+      "post": {
+        "tags": [
+          "editorial"
+        ],
+        "operationId": "publishArticle",
+        "summary": "Release an approved article",
+        "description": "Publishes an article approved with `publish: false`. The database permits `published_at` to be set exactly once, and the statement guards on it, so two concurrent callers produce exactly one 200 and one 409.\n\n**The actor must still be an editor at the moment of the write.** This is the one editorial write no trigger can guard - nothing on the article row records who released it - so the publishing transaction takes a locking read of the actor's account row and the UPDATE itself carries the editor predicate. A demotion and a publication therefore serialize rather than race, and a demoted account gets 403 with nothing published.\n\n**Side effect.** `article.published` in the same transaction.\n\nAn article that was approved and never released stays that way permanently unless this endpoint is called: a frozen record of an approval, which withdrawal does not apply to.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The article id. A value that is not a UUID answers 400 here - a malformed id is a client mistake worth naming, distinct from an article that does not exist.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "examples": {
+              "id": {
+                "value": "8f1b6c1e-1f5a-4a2f-9e1a-2b3c4d5e6f70"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The released article.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Publication"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The `{id}` path segment is not a UUID.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "malformedID": {
+                    "summary": "A path id that is not a UUID",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "the article id in the path must be a uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotEditor"
+          },
+          "404": {
+            "description": "No article with this id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "unknownArticle": {
+                    "summary": "No such article",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Not Found",
+                      "status": 404,
+                      "detail": "no article with this id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The article is already published. Publication is one-way and happens once.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "alreadyPublished": {
+                    "summary": "Already released",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Conflict",
+                      "status": 409,
+                      "detail": "this article is already published; publication happens once and is never repeated"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/editorial/articles/{id}/withdrawal": {
+      "post": {
+        "tags": [
+          "editorial"
+        ],
+        "operationId": "withdrawArticle",
+        "summary": "End a publication, preserving every record",
+        "description": "Withdrawal ends publication and destroys nothing (FR-016, I-5). The article row, its approval, its approver, its attribution and the retrieved evidence stay exactly as they were; there is deliberately no way to erase an approval.\n\n**One guarded statement.** The update requires the article to be published and not yet withdrawn, so two concurrent withdrawals produce exactly one 200 and one 409 and neither meets the database's exception - the loser simply matches no row.\n\n**The origin comes back.** The one-per-origin indexes are partial on `withdrawn_at IS NULL`, so a withdrawn article frees its origin and it reappears in the review queue flagged as a correction candidate, carrying this withdrawal in its history.\n\n**Side effect.** `article.withdrawn`, carrying who and why, written by a database trigger in the same statement - so the audit record cannot be lost to application discipline, and the endpoint emits none of its own.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The article id. A value that is not a UUID answers 400 - a malformed id is a client mistake worth naming, distinct from an article that does not exist.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "examples": {
+              "id": {
+                "value": "8f1b6c1e-1f5a-4a2f-9e1a-2b3c4d5e6f70"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewWithdrawal"
+              },
+              "examples": {
+                "retraction": {
+                  "summary": "The source retracted the story",
+                  "value": {
+                    "reason": "the source retracted the story"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The recorded withdrawal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawalRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON or an unknown field, a blank reason, or an `{id}` path segment that is not a UUID.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "blankReason": {
+                    "summary": "No reason given",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "reason is required and must not be blank: a withdrawal is part of the audit record, and an unexplained one explains nothing"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotEditor"
+          },
+          "404": {
+            "description": "No article with this id, or one that was never published - withdrawal ends a publication, and an approval that was never released has none. Both answer 404: the existence of unpublished work is not something this endpoint confirms either.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "unknownArticle": {
+                    "summary": "No such article",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Not Found",
+                      "status": 404,
+                      "detail": "no article with this id"
+                    }
+                  },
+                  "neverPublished": {
+                    "summary": "Approved but never released",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Not Found",
+                      "status": 404,
+                      "detail": "no published article with this id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The article is already withdrawn. Withdrawal is one-way and final: who withdrew it, when and why is frozen once recorded.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "alreadyWithdrawn": {
+                    "summary": "Already withdrawn",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Conflict",
+                      "status": 409,
+                      "detail": "this article is already withdrawn; withdrawal is one-way and final, and who withdrew it, when and why is frozen"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "A JWT from the auth provider, verified against the configured JWKS. The subject must map to an account holding the editor role; the database enforces the same rule again on write."
+      }
+    },
+    "parameters": {
+      "Lang": {
+        "name": "lang",
+        "in": "query",
+        "required": true,
+        "description": "The reading language.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "el",
+            "de"
+          ]
+        }
+      },
+      "Place": {
+        "name": "place",
+        "in": "query",
+        "required": true,
+        "description": "Place slug to follow. Repeat the parameter to follow several places in one feed (`?place=thessaloniki&place=berlin`).",
+        "style": "form",
+        "explode": true,
+        "schema": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Page size. Absent means the default; anything that is not an integer in 1-100 is rejected with 400 rather than clamped.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "description": "Opaque page cursor: pass back the `next_cursor` of the previous page. Its encoding is an implementation detail and may change; clients must treat it as bytes. Values over 256 characters, or ones that do not decode, are rejected with 400.",
+        "schema": {
+          "type": "string",
+          "maxLength": 256
+        }
+      }
+    },
+    "responses": {
+      "Unauthenticated": {
+        "description": "No bearer token, or one that is invalid, expired or belongs to no account.",
+        "headers": {
+          "WWW-Authenticate": {
+            "description": "`Bearer realm=\"editorial\"`, with `error=\"invalid_token\"` appended when a token was supplied but rejected.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "examples": {
+              "missingToken": {
+                "value": {
+                  "type": "about:blank",
+                  "title": "Unauthorized",
+                  "status": 401,
+                  "detail": "a bearer token is required"
+                }
+              }
+            }
+          }
+        }
+      },
+      "NotEditor": {
+        "description": "The token authenticated, but the account behind it does not hold the editor role.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "examples": {
+              "notEditor": {
+                "value": {
+                  "type": "about:blank",
+                  "title": "Forbidden",
+                  "status": 403,
+                  "detail": "the editor role is required"
+                }
+              }
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "The request failed for a reason the caller cannot act on. Internals stay in the log: the body carries no database or stack detail, and `detail` may be absent entirely.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "examples": {
+              "opaque": {
+                "value": {
+                  "type": "about:blank",
+                  "title": "Internal Server Error",
+                  "status": 500
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Problem": {
+        "type": "object",
+        "title": "Problem",
+        "description": "RFC 9457 problem details, as every handler in this API writes them.",
+        "required": [
+          "type",
+          "title",
+          "status"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri-reference",
+            "description": "Always `about:blank`, which per RFC 9457 makes `title` the plain rendering of the status code. No problem-type URIs are minted for this API.",
+            "const": "about:blank"
+          },
+          "title": {
+            "type": "string",
+            "description": "The HTTP status text, e.g. `Bad Request`.",
+            "examples": [
+              "Bad Request"
+            ]
+          },
+          "status": {
+            "type": "integer",
+            "description": "The HTTP status code, repeated in the body.",
+            "minimum": 400,
+            "maximum": 599,
+            "examples": [
+              400
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "description": "Human-readable explanation of this occurrence. Omitted when the server has nothing safe to say (notably on 500)."
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "title": "Health",
+        "description": "The probe body. Not problem+json, even on 503: the probes predate the API surface and answer their own shape.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "unavailable"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "FeedItem": {
+        "type": "object",
+        "title": "FeedItem",
+        "description": "One published article as the reader surface renders it. Extract-and-link only: never the full body, always the outbound `source_url`.",
+        "required": [
+          "id",
+          "headline",
+          "extract",
+          "lang",
+          "places",
+          "attribution",
+          "source_url",
+          "published_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The article id; the path parameter of the article endpoint."
+          },
+          "headline": {
+            "type": "string",
+            "description": "The translation's headline, or the feed-provided title for an untranslated origin."
+          },
+          "extract": {
+            "type": "string",
+            "description": "The translation's extract, or one derived from the retrieved body at read time for an untranslated origin. May be empty when the feed carried no usable body."
+          },
+          "lang": {
+            "type": "string",
+            "description": "Language of the rendered text: the translation's target locale, or the source's language for an untranslated origin. On the front page it always equals the requested `lang`.",
+            "examples": [
+              "el"
+            ]
+          },
+          "places": {
+            "type": "array",
+            "description": "Slugs of every place the article is tagged to, sorted; an untagged article carries an empty array rather than null.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "attribution": {
+            "type": "string",
+            "description": "The composed attribution block, rendered verbatim."
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The original article at the publisher - the outbound link."
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC 3339 in UTC, sub-second precision.",
+            "examples": [
+              "2026-08-15T09:30:00Z"
+            ]
+          }
+        }
+      },
+      "Article": {
+        "title": "Article",
+        "description": "The article page payload: a feed item plus the moment an editor approved it.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/FeedItem"
+          },
+          {
+            "type": "object",
+            "required": [
+              "approved_at"
+            ],
+            "properties": {
+              "approved_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "RFC 3339 in UTC. Approval precedes publication and is never erased.",
+                "examples": [
+                  "2026-08-15T09:12:44Z"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "FrontPage": {
+        "type": "object",
+        "title": "FrontPage",
+        "description": "One page of the feed. Both fields are always present.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "Newest first. Empty when nothing is published for the requested axes.",
+            "items": {
+              "$ref": "#/components/schemas/FeedItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` to fetch the next page. `null` on the last page."
+          }
+        }
+      },
+      "NewSource": {
+        "type": "object",
+        "title": "NewSource",
+        "description": "A source registration. Unknown fields are rejected, so a misspelled key is a 400 rather than a silent omission.",
+        "required": [
+          "name",
+          "url",
+          "language",
+          "jurisdiction",
+          "licence_terms"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The publication's name, as attribution will render it. Must not be blank."
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The feed URL the crawler polls. Must be an absolute http or https URL carrying a host; it is also the uniqueness key for a source.",
+            "examples": [
+              "https://example.org/feed.xml"
+            ]
+          },
+          "language": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The language the source publishes in; must exist in the language reference table.",
+            "examples": [
+              "el"
+            ]
+          },
+          "jurisdiction": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The legal jurisdiction the source publishes under.",
+            "examples": [
+              "GR"
+            ]
+          },
+          "licence_terms": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The terms under which this material may be reused, recorded verbatim for the audit trail."
+          }
+        }
+      },
+      "Source": {
+        "type": "object",
+        "title": "Source",
+        "description": "A registered source.",
+        "required": [
+          "id",
+          "name",
+          "url",
+          "language",
+          "jurisdiction",
+          "licence_terms",
+          "usage_rule",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "language": {
+            "type": "string",
+            "examples": [
+              "el"
+            ]
+          },
+          "jurisdiction": {
+            "type": "string",
+            "examples": [
+              "GR"
+            ]
+          },
+          "licence_terms": {
+            "type": "string"
+          },
+          "usage_rule": {
+            "type": "string",
+            "description": "Always `extract_and_link` for a newly registered source - the endpoint does not accept any other value.",
+            "const": "extract_and_link"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC 3339 in UTC, sub-second precision.",
+            "examples": [
+              "2026-08-15T09:12:44.481203Z"
+            ]
+          }
+        }
+      },
+      "Withdrawal": {
+        "type": "object",
+        "title": "Withdrawal",
+        "description": "One ended publication in an origin's history. Withdrawal preserves every record (FR-016), so the entry stays queryable for good.",
+        "required": [
+          "article_id",
+          "withdrawn_at",
+          "withdrawn_by",
+          "reason"
+        ],
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "withdrawn_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "withdrawn_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The editor who withdrew it."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Stated at withdrawal; never blank."
+          }
+        }
+      },
+      "QueueItem": {
+        "type": "object",
+        "title": "QueueItem",
+        "description": "One origin awaiting an editorial decision: a retrieved item, with its translation when one exists. translation_id and the translated fields are null together, for an untranslated origin.",
+        "required": [
+          "source_item_id",
+          "translation_id",
+          "source_name",
+          "headline_original",
+          "headline_translated",
+          "extract_translated",
+          "retrieved_at",
+          "licence_snapshot",
+          "correction_candidate",
+          "withdrawals"
+        ],
+        "properties": {
+          "source_item_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "translation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "headline_original": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "source_item.original_title - null when the feed provided none."
+          },
+          "headline_translated": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "translation.headline."
+          },
+          "extract_translated": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "translation.extract."
+          },
+          "retrieved_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "licence_snapshot": {
+            "type": "string",
+            "description": "The licence terms in force when this item was retrieved (I-4), not the source row today."
+          },
+          "correction_candidate": {
+            "type": "boolean",
+            "description": "True exactly when withdrawals is non-empty: the origin is back in the queue because its only articles were withdrawn, so the editor is looking at a correction rather than a first approval."
+          },
+          "withdrawals": {
+            "type": "array",
+            "description": "Newest first; [] (never null) for a fresh origin.",
+            "items": {
+              "$ref": "#/components/schemas/Withdrawal"
+            }
+          }
+        }
+      },
+      "ReviewQueue": {
+        "type": "object",
+        "title": "ReviewQueue",
+        "description": "One page of the review queue. Both fields are always present.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as cursor to fetch the next page. null on the last page - an absent cursor always means the queue is exhausted."
+          }
+        }
+      },
+      "NewApproval": {
+        "type": "object",
+        "title": "NewApproval",
+        "description": "An editorial decision to publish. Exactly one origin: `translation_id` for a translated article, `source_item_id` for an untranslated one, mirroring the database's `article_exactly_one_origin`. Supplying both, neither, or an explicit `null` for both is a 400. The approver is always the authenticated editor and is deliberately not a field here.",
+        "required": [
+          "attribution"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "translation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The translation being approved."
+          },
+          "source_item_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The retrieved item being approved untranslated. Its `original_title` becomes the headline, so an item whose feed provided no title is refused with 400."
+          },
+          "attribution": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The attribution block rendered with the article, pointing back to the original publisher. Stored trimmed; never blank."
+          },
+          "publish": {
+            "type": "boolean",
+            "default": false,
+            "description": "Publish in the same transaction as the approval. When false the article is an approved record awaiting release."
+          }
+        }
+      },
+      "Approval": {
+        "type": "object",
+        "title": "Approval",
+        "description": "The article the approval created. A row in `article` IS the approval (I-1): there is no draft state, and no path creates one without a named editor.",
+        "required": [
+          "article_id",
+          "approved_by",
+          "approved_at",
+          "published_at"
+        ],
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "approved_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The authenticated editor who approved it."
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When publication began, or null on the `publish: false` path."
+          }
+        }
+      },
+      "Publication": {
+        "type": "object",
+        "title": "Publication",
+        "description": "The released article.",
+        "required": [
+          "article_id",
+          "published_at"
+        ],
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NewWithdrawal": {
+        "type": "object",
+        "title": "NewWithdrawal",
+        "description": "The decision to end a publication. Only the reason is supplied: who withdrew it comes from the bearer token, never from the body.",
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why publication is ending. Part of the audit record, so a blank one is refused - an unexplained withdrawal explains nothing. Stored trimmed."
+          }
+        }
+      },
+      "WithdrawalRecord": {
+        "type": "object",
+        "title": "WithdrawalRecord",
+        "description": "The recorded withdrawal. The article row, its approval, its attribution and the retrieved evidence all survive it (FR-016, I-5).",
+        "required": [
+          "article_id",
+          "withdrawn_at",
+          "withdrawn_by"
+        ],
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "withdrawn_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "withdrawn_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The authenticated editor who ended the publication."
+          }
+        }
+      }
+    }
+  }
+}

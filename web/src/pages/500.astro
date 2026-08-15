@@ -1,0 +1,48 @@
+---
+import Masthead from '../components/Masthead.astro';
+import ReaderLayout from '../layouts/ReaderLayout.astro';
+import { DEFAULT_FRONT_PAGE } from '../lib/reader/axes';
+import { uiStrings } from '../lib/reader/strings';
+
+// Astro renders this page for any unhandled SSR error — the last-resort
+// net under the per-page handling. It must not fetch anything: whatever
+// broke may still be broken.
+const el = uiStrings('el');
+const de = uiStrings('de');
+---
+
+<ReaderLayout lang="el" title="epiloYES — 500" description={el.tagline}>
+  <Masthead homeHref={DEFAULT_FRONT_PAGE} />
+  <main class="err">
+    <div class="pair">
+      <h1>{el.unavailableTitle}</h1>
+      <p>{el.unavailableBody}</p>
+    </div>
+    <div class="pair" lang="de">
+      <h2>{de.unavailableTitle}</h2>
+      <p>{de.unavailableBody}</p>
+    </div>
+    <a class="btn btn-primary" href={DEFAULT_FRONT_PAGE}>epiloYES →</a>
+  </main>
+</ReaderLayout>
+
+<style>
+  .err {
+    flex: 1;
+    padding: calc(var(--space-8) + var(--space-4)) calc(var(--space-6) + var(--space-1));
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    align-items: flex-start;
+  }
+  .pair p {
+    margin: 0;
+    max-width: 70ch;
+    color: color-mix(in srgb, var(--color-text) 65%, transparent);
+  }
+  .pair h1,
+  .pair h2 {
+    font-size: 32px;
+    margin: 0 0 var(--space-2);
+  }
+</style>

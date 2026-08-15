@@ -1,4 +1,4 @@
-import type { Place, ReadingLanguage } from './axes';
+import { isReadingLanguage, type Place, type ReadingLanguage } from './axes';
 import { FRONT_FIXTURES } from './fixtures';
 
 /**
@@ -34,6 +34,17 @@ export interface FrontPageData {
   readonly next_cursor: string | null;
 }
 
+/**
+ * The `GET /api/v1/articles/{id}` payload: the front-item shape plus the
+ * approval time. Withdrawn or unpublished articles are a 404 by contract —
+ * the existence of unpublished work is not public — so the client answers
+ * null and the page renders not-found, never a withdrawn state (issue #52).
+ */
+export interface ArticleDetail extends FrontItem {
+  /** ISO 8601 — when the named editor approved (the public record). */
+  readonly approved_at: string;
+}
+
 /** Query for the front-page feed; `places` maps to the repeatable `place` param. */
 export interface FrontQuery {
   readonly lang: ReadingLanguage;
@@ -55,6 +66,8 @@ export class ReaderApiError extends Error {
 /** The reader API surface the pages consume. */
 export interface ReaderApi {
   front(query: FrontQuery): Promise<FrontPageData>;
+  /** One published article; null when the contract answers 404. */
+  article(id: string): Promise<ArticleDetail | null>;
 }
 
 /** Contract default; the API caps at 100. */
@@ -71,6 +84,9 @@ function fixtureApi(): ReaderApi {
         .sort((a, b) => b.published_at.localeCompare(a.published_at))
         .slice(0, query.limit ?? DEFAULT_LIMIT);
       return Promise.resolve({ items, next_cursor: null });
+    },
+    article(id: string): Promise<ArticleDetail | null> {
+      return Promise.resolve(FRONT_FIXTURES.find((item) => item.id === id) ?? null);
     },
   };
 }
@@ -104,7 +120,52 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch): ReaderApi {
       }
       return body as FrontPageData;
     },
+    async article(id: string): Promise<ArticleDetail | null> {
+      const url = new URL(`${base}/api/v1/articles/${encodeURIComponent(id)}`);
+      const response = await fetchImpl(url, {
+        headers: { Accept: 'application/json' },
+      });
+      if (response.status === 404) {
+        return null;
+      }
+      if (!response.ok) {
+        throw new ReaderApiError(
+          `reader API answered ${response.status} for ${url.pathname}`,
+          response.status,
+        );
+      }
+      const body: unknown = await response.json();
+      if (!isArticleDetail(body)) {
+        throw new ReaderApiError('reader API answered with a malformed article body');
+      }
+      return body;
+    },
   };
+}
+
+/**
+ * Runtime check of the article payload — external JSON must not reach the
+ * page half-shaped and crash the render; a malformed body is the client's
+ * error (ReaderApiError), not a 500.
+ */
+function isArticleDetail(body: unknown): body is ArticleDetail {
+  if (typeof body !== 'object' || body === null) {
+    return false;
+  }
+  const record = body as Record<string, unknown>;
+  return (
+    typeof record['id'] === 'string' &&
+    typeof record['headline'] === 'string' &&
+    typeof record['extract'] === 'string' &&
+    typeof record['lang'] === 'string' &&
+    isReadingLanguage(record['lang']) &&
+    Array.isArray(record['places']) &&
+    record['places'].every((slug) => typeof slug === 'string') &&
+    typeof record['attribution'] === 'string' &&
+    typeof record['source_url'] === 'string' &&
+    typeof record['published_at'] === 'string' &&
+    typeof record['approved_at'] === 'string'
+  );
 }
 
 /**
