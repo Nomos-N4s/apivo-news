@@ -182,9 +182,12 @@ func TestTranslate(t *testing.T) {
 		// configure tweaks the base configuration.
 		configure func(*Config)
 		wantErr   error
-		want      translation.Result
-		wantCalls int
-		wantWaits int
+		// wantErrText pins WHICH guard rejected the response, for the
+		// cases that share a sentinel with several others.
+		wantErrText string
+		want        translation.Result
+		wantCalls   int
+		wantWaits   int
 	}{
 		{
 			name: "plain json content",
@@ -343,19 +346,25 @@ func TestTranslate(t *testing.T) {
 			wantCalls: 1,
 		},
 		{
+			// The content is deliberately complete and valid JSON: only
+			// the finish_reason guard can reject it, so the case cannot
+			// pass by accident through the parser. An answer that hit the
+			// cap is untrustworthy even when it happens to parse - the
+			// model was still writing when it was cut off.
 			name: "answer cut off at the output cap",
 			handler: func(_ int, w http.ResponseWriter, _ *http.Request) {
 				answerJSON(w, http.StatusOK, completionWith(map[string]any{
 					"model": hostModelID,
 					"choices": []any{map[string]any{
-						"message":       map[string]any{"content": `{"headline": "Neuer Park", "extract": "Der Park`},
+						"message":       map[string]any{"content": goodContent},
 						"finish_reason": "length",
 					}},
 					"usage": map[string]any{"prompt_tokens": 200, "completion_tokens": 600},
 				}))
 			},
-			wantErr:   translation.ErrInvalidResponse,
-			wantCalls: 1,
+			wantErr:     translation.ErrInvalidResponse,
+			wantErrText: "cut off at the output cap",
+			wantCalls:   1,
 		},
 		{
 			name: "response carries no choices",
@@ -529,6 +538,9 @@ func TestTranslate(t *testing.T) {
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("Translate() error = %v, want one matching %v", err, tc.wantErr)
+				}
+				if tc.wantErrText != "" && !strings.Contains(err.Error(), tc.wantErrText) {
+					t.Errorf("Translate() error = %v, want the guard that says %q", err, tc.wantErrText)
 				}
 			} else {
 				if err != nil {
