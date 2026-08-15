@@ -27,8 +27,8 @@ type QueueQuery struct {
 	// Lang filters to one language - a translation's target locale or, for
 	// an untranslated origin, its source's language. Empty means no filter.
 	Lang string
-	// Limit is the maximum number of items in the page. The endpoint bounds
-	// it to the contract's 1..100 before it reaches the store.
+	// Limit is the maximum number of items in the page. It must be within
+	// the contract's 1..100; the store checks rather than trusts it.
 	Limit int32
 	// Cursor positions the page; nil starts at the newest retrieval.
 	Cursor *QueueCursor
@@ -105,6 +105,13 @@ type QueuePage struct {
 // query, and it keeps NextCursor nil exactly when the queue is exhausted
 // rather than handing out a cursor that leads to an empty page.
 func (s *PGStore) ReviewQueue(ctx context.Context, q QueueQuery) (QueuePage, error) {
+	// The bound is re-checked here, not merely at the endpoint: Store is a
+	// seam other callers may reach directly, and the one-row overfetch below
+	// is int32 arithmetic - an unbounded Limit would overflow it into a
+	// negative LIMIT and turn a programming mistake into a database error.
+	if q.Limit < 1 || q.Limit > maxQueueLimit {
+		return QueuePage{}, fmt.Errorf("editorial: review queue limit %d is outside 1..%d", q.Limit, maxQueueLimit)
+	}
 	params := store.ListReviewQueueParams{RowLimit: q.Limit + 1}
 	if q.Lang != "" {
 		params.Lang = pgtype.Text{String: q.Lang, Valid: true}

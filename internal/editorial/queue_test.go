@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -653,6 +654,21 @@ func TestReviewQueueAgainstSchema(t *testing.T) {
 			t.Errorf("items = %d, want none", len(body.Items))
 		}
 	})
+}
+
+// TestReviewQueueRejectsAnUnboundedLimit covers the seam the endpoint does
+// not: Store is reachable directly, and the page's one-row overfetch is
+// int32 arithmetic, so an unbounded Limit would overflow into a negative
+// SQL LIMIT. The guard runs before any statement, which is why a store with
+// no database behind it is enough to prove it.
+func TestReviewQueueRejectsAnUnboundedLimit(t *testing.T) {
+	t.Parallel()
+	store := editorial.NewPGStore(nil)
+	for _, limit := range []int32{math.MaxInt32, 101, 0, -1} {
+		if _, err := store.ReviewQueue(t.Context(), editorial.QueueQuery{Limit: limit}); err == nil {
+			t.Errorf("ReviewQueue(limit=%d) = nil error, want a refusal before any query runs", limit)
+		}
+	}
 }
 
 // languageCodes returns two distinct private language codes: three
