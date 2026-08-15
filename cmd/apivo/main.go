@@ -37,6 +37,11 @@ import (
 // error before Docker gives up on it.
 const healthcheckTimeout = 3 * time.Second
 
+// editorialPrefix is where the editorial module's route table is mounted.
+// Every pattern the module registers lives under it, so mounting the prefix
+// mounts the module whole - and unsetting JWKS_URL unmounts it whole.
+const editorialPrefix = "/api/v1/editorial/"
+
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Getenv, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "apivo:", err)
@@ -126,7 +131,7 @@ func newEditorialRoute(ctx context.Context, cfg config.Config, log *slog.Logger,
 	}
 	auth := newEditorAuth(identity.New(verifier, pool), identity.NewAccountRoles(pool))
 	return platformhttp.Route{
-		Pattern: "/api/v1/editorial/",
+		Pattern: editorialPrefix,
 		Handler: editorial.NewHandler(log, editorial.NewPGStore(pool), auth),
 	}, func() { _ = verifier.Close(context.Background()) }, nil
 }
