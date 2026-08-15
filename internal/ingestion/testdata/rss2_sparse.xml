@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Sparse Feed</title>
+    <link>https://sparse.example.test/</link>
+    <description>Items missing the optional fields real feeds omit</description>
+    <item>
+      <link>https://sparse.example.test/articles/no-title</link>
+      <description>Χωρίς τίτλο, χωρίς συγγραφέα, χωρίς ημερομηνία.</description>
+    </item>
+    <item>
+      <title>Only content, no description</title>
+      <link>https://sparse.example.test/articles/content-only</link>
+      <content:encoded><![CDATA[<p>Body from content:encoded only.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>Author gives only an address</title>
+      <link>https://sparse.example.test/articles/email-only</link>
+      <author>anonym@example.test</author>
+      <description>Kein Name, nur eine Adresse.</description>
+    </item>
+    <item>
+      <title>Identified by permalink GUID, no link element</title>
+      <guid isPermaLink="true">https://sparse.example.test/articles/by-guid</guid>
+      <description>Η ροή ταυτοποιεί τα άρθρα με GUID permalink.</description>
+    </item>
+    <item>
+      <title>Opaque GUID is not a link</title>
+      <guid isPermaLink="false">urn:uuid:6f1d2c3b-0000-4000-8000-000000000001</guid>
+      <description>Ein undurchsichtiger Bezeichner ist kein Link.</description>
+    </item>
+    <item>
+      <title>No text at all</title>
+      <link>https://sparse.example.test/articles/no-text</link>
+    </item>
+  </channel>
+</rss>

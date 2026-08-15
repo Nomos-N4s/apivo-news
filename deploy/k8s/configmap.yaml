@@ -5,8 +5,26 @@
 #   APP_ENV    — .env.example uses "dev"; the cluster runs "prod" (the
 #                binary accepts exactly "dev" or "prod").
 #   LOG_LEVEL  — same default as .env.example.
+#   JWKS_URL   — the auth provider's JWKS endpoint. NOT a secret (public
+#                keys, published at a public URL), so it belongs here rather
+#                than in the Secret. It is required for the editorial
+#                endpoints: with it unset the api starts and serves readers
+#                normally, logs an ERROR line naming the consequence, and
+#                every /api/v1/editorial/ route answers 404.
+#   JWT_AUDIENCE — optional; when set, tokens must additionally carry this
+#                aud claim. Supabase access tokens carry "authenticated".
+#                Only meaningful alongside JWKS_URL - setting it alone fails
+#                startup.
 #   DATABASE_URL is deliberately absent: it is a credential and lives in the
 #   Secret (see secret.yaml).
+#
+# JWKS_URL and JWT_AUDIENCE ship EMPTY, and deliberately so. A placeholder
+# hostname would be worse than nothing: it is a real value as far as the
+# binary is concerned, so it selects the fail-fast verifier path and the api
+# would refuse to start until an operator edited it. Empty means exactly
+# "not configured yet" - the documented safe state - and there is no third
+# value that could fake a configuration. Set a real endpoint to enable the
+# editorial endpoints.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -18,3 +36,10 @@ data:
   HTTP_ADDR: ":8080"
   APP_ENV: "prod"
   LOG_LEVEL: "info"
+  # Empty = editorial endpoints unmounted (ERROR logged at startup, readers
+  # unaffected). Set to e.g.
+  # https://<project>.supabase.co/auth/v1/.well-known/jwks.json to enable them.
+  JWKS_URL: ""
+  # Optional, and only alongside a non-empty JWKS_URL (the binary rejects an
+  # audience without a verification endpoint). Supabase tokens: "authenticated".
+  JWT_AUDIENCE: ""

@@ -31,6 +31,13 @@ services:
       HTTP_ADDR: ":8080"
       APP_ENV: dev
       LOG_LEVEL: info
+      # JWT verification for the editorial endpoints. Taken from the host
+      # environment (or .env) so no placeholder is baked in: unset means the
+      # /api/v1/editorial/ routes are not mounted and the api logs an ERROR
+      # line saying so at startup. JWT_AUDIENCE is optional and only
+      # meaningful alongside JWKS_URL.
+      JWKS_URL: ${JWKS_URL:-}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-}
     depends_on:
       postgres:
         condition: service_healthy

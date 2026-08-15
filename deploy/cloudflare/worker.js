@@ -71,12 +71,32 @@ export class ApiContainer extends ContainerHost {
 				"DATABASE_URL secret is not set; run `npx wrangler secret put DATABASE_URL`",
 			);
 		}
-		return {
+		const containerEnv = {
 			DATABASE_URL: this.env.DATABASE_URL, // Cloudflare secret
 			HTTP_ADDR: ":8080",
 			APP_ENV: "prod",
 			LOG_LEVEL: "info",
 		};
+		// JWT verification for the editorial endpoints. Plain vars, not
+		// secrets: JWKS_URL names where PUBLIC keys are published. Missing
+		// JWKS_URL is deliberately NOT fatal here — the reader path needs no
+		// token, so an editorial-only misconfiguration must not take the
+		// public site down. The Go binary logs an ERROR line at startup and
+		// leaves every /api/v1/editorial/ route unmounted (404).
+		//
+		// Each var is forwarded INDEPENDENTLY. Gating the audience on the
+		// JWKS URL would quietly drop a configured JWT_AUDIENCE whenever
+		// JWKS_URL was absent — exactly the inconsistent pair that
+		// config.FromEnv is written to reject. Swallowing it here would
+		// convert a loud, documented startup error into a silent degrade to
+		// reader-only mode, hiding the operator's mistake.
+		if (this.env.JWKS_URL) {
+			containerEnv.JWKS_URL = this.env.JWKS_URL;
+		}
+		if (this.env.JWT_AUDIENCE) {
+			containerEnv.JWT_AUDIENCE = this.env.JWT_AUDIENCE;
+		}
+		return containerEnv;
 	}
 }
 
