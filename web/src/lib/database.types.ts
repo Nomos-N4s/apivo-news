@@ -443,6 +443,7 @@ export type Database = {
           prompt_version: string
           source_item_id: string
           target_locale: string
+          unmetered_attempts: number
         }
         Insert: {
           cost_microusd: number
@@ -454,6 +455,7 @@ export type Database = {
           prompt_version: string
           source_item_id: string
           target_locale: string
+          unmetered_attempts?: number
         }
         Update: {
           cost_microusd?: number
@@ -465,6 +467,7 @@ export type Database = {
           prompt_version?: string
           source_item_id?: string
           target_locale?: string
+          unmetered_attempts?: number
         }
         Relationships: [
           {
@@ -492,16 +495,22 @@ export type Database = {
       }
       translation_spend: {
         Row: {
+          halted_at: string | null
           month: string
           spent_microusd: number
+          unmetered_attempts: number
         }
         Insert: {
+          halted_at?: string | null
           month: string
           spent_microusd?: number
+          unmetered_attempts?: number
         }
         Update: {
+          halted_at?: string | null
           month?: string
           spent_microusd?: number
+          unmetered_attempts?: number
         }
         Relationships: []
       }

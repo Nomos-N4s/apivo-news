@@ -163,10 +163,16 @@ type Translation struct {
 	Extract       string
 	// Provider-reported cost of this translation in micro-USD, recorded explicitly at insert (FR-006). No default: an omitted cost is an error. An explicit 0 is legal only when the provider genuinely charged nothing (e.g. included quota).
 	CostMicrousd int64
+	// How many provider attempts on the way to this translation were accepted but never priced (a call that timed out mid-generation, an answer with no usable token usage). Non-zero means cost_microusd is a LOWER BOUND: the provider may well have billed for them and the amount cannot be known here.
+	UnmeteredAttempts int32
 }
 
-// Monthly translation spend ledger, updated in the same transaction as each translation insert. Caps (per-article ceiling, monthly cap) are configuration; the translation module refuses work once the ledger reaches the cap and emits a pipeline.halted domain event.
+// Monthly translation spend ledger. Every translation insert moves it by trigger, so a translation whose cost is not in the ledger is unrepresentable; spend from calls that were billed but produced no translation is added directly. Caps (per-article ceiling, monthly cap) remain configuration - the database supplies the atomic counter and the once-per-month halt latch, not the budget.
 type TranslationSpend struct {
 	Month         pgtype.Date
 	SpentMicrousd int64
+	// Unpriced provider attempts accumulated over the month. Non-zero means spent_microusd is a LOWER BOUND on what the month really cost, so the cap is nearer than the ledger says and an operator should see it.
+	UnmeteredAttempts int32
+	// When this month crossed the monthly cap and the pipeline stopped translating. Latched by a single conditional UPDATE, so exactly one transaction can set it and the halt is announced once per month, not once per tick.
+	HaltedAt pgtype.Timestamptz
 }
