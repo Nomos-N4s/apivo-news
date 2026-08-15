@@ -62,6 +62,27 @@ export interface UiStrings {
   readonly privacy: string;
   readonly contact: string;
   readonly legalPending: string;
+  /** Registration and consent (mockup 1j, US6/FR-011). */
+  readonly createAccount: string;
+  readonly accountSubtitle: string;
+  readonly nameLabel: string;
+  readonly emailLabel: string;
+  readonly passwordLabel: string;
+  readonly placesToFollow: string;
+  readonly followNote: string;
+  readonly registrationPending: string;
+  readonly consentHeading: string;
+  readonly consentIntro: string;
+  readonly purposeLabels: Readonly<Record<string, string>>;
+  readonly purposeWord: string;
+  readonly granted: string;
+  readonly notGranted: string;
+  readonly grant: string;
+  readonly revoke: string;
+  readonly consentHistoryHeading: string;
+  readonly current: string;
+  readonly recordCount: (count: number) => string;
+  readonly notRecorded: string;
   /** The axis bar (mockup 1f) — chip actions and the independence line. */
   readonly addPlace: (placeName: string) => string;
   readonly removePlace: (placeName: string) => string;
@@ -115,6 +136,35 @@ const EL: UiStrings = {
   privacy: 'Απόρρητο',
   contact: 'Επικοινωνία',
   legalPending: 'εκκρεμούν πριν από τη δημόσια κυκλοφορία',
+  createAccount: 'Δημιουργία λογαριασμού',
+  accountSubtitle:
+    'Ο λογαριασμός θυμάται τη γλώσσα σας και τους τόπους που ακολουθείτε. Η ανάγνωση λειτουργεί και χωρίς αυτόν.',
+  nameLabel: 'Όνομα (αυτό εμφανίζεται αν γράψετε ποτέ εδώ)',
+  emailLabel: 'Ηλεκτρονικό ταχυδρομείο',
+  passwordLabel: 'Κωδικός',
+  placesToFollow: 'Τόποι προς παρακολούθηση',
+  followNote:
+    'Ακολουθήστε όσους θέλετε. Η γλώσσα ανάγνωσης παραμένει ξεχωριστή ρύθμιση.',
+  registrationPending:
+    'Η εγγραφή ολοκληρώνεται μέσω Supabase Auth, που δεν έχει συνδεθεί ακόμη — κανένα στοιχείο δεν αποστέλλεται από αυτή τη φόρμα.',
+  consentHeading: 'Συγκατάθεση — μία εγγραφή ανά σκοπό',
+  consentIntro:
+    'Κάθε μία αποθηκεύεται ως δική της χρονολογημένη εγγραφή. Ανακαλέστε οποιαδήποτε ανά πάσα στιγμή· η προηγούμενη εγγραφή διατηρείται, δεν αντικαθίσταται.',
+  purposeLabels: {
+    newsletter: 'Εβδομαδιαίο email με όσα δημοσιεύθηκαν',
+    analytics: 'Ανώνυμα στατιστικά ανάγνωσης',
+    product_news: 'Ειδοποίηση όταν ανοίγουν νέες υπηρεσίες στους τόπους μου',
+  },
+  purposeWord: 'σκοπός',
+  granted: 'δόθηκε',
+  notGranted: 'δεν έχει δοθεί',
+  grant: 'Παραχώρηση',
+  revoke: 'Ανάκληση',
+  consentHistoryHeading: 'Το ιστορικό συγκαταθέσεών σας',
+  current: 'τρέχουσα',
+  recordCount: (count) =>
+    `${count} εγγραφές, όχι διακόπτες. Η εκ νέου παραχώρηση ανοίγει νέα εγγραφή και αφήνει την παλιά να στέκει.`,
+  notRecorded: 'Δεν καταγράφηκε',
   addPlace: (placeName) => `Προσθήκη τόπου: ${placeName}`,
   removePlace: (placeName) => `Αφαίρεση τόπου: ${placeName}`,
   independenceLine: 'Η γλώσσα και ο τόπος δεν συνδυάζονται ποτέ σε μία ρύθμιση.',
@@ -168,6 +218,34 @@ const DE: UiStrings = {
   privacy: 'Datenschutz',
   contact: 'Kontakt',
   legalPending: 'vor dem öffentlichen Start erforderlich',
+  createAccount: 'Konto anlegen',
+  accountSubtitle:
+    'Ein Konto merkt sich Ihre Sprache und die Orte, denen Sie folgen. Lesen geht auch ohne.',
+  nameLabel: 'Name (dieser Name erscheint, falls Sie hier je schreiben)',
+  emailLabel: 'E-Mail',
+  passwordLabel: 'Passwort',
+  placesToFollow: 'Orte, denen Sie folgen',
+  followNote: 'Folgen Sie so vielen, wie Sie mögen. Ihre Lesesprache bleibt eine eigene Einstellung.',
+  registrationPending:
+    'Die Registrierung läuft über Supabase Auth, das noch nicht angebunden ist — dieses Formular sendet nichts.',
+  consentHeading: 'Einwilligung — ein Eintrag je Zweck',
+  consentIntro:
+    'Jede wird als eigener datierter Eintrag gespeichert. Widerrufen Sie jederzeit; der frühere Eintrag bleibt erhalten und wird nicht überschrieben.',
+  purposeLabels: {
+    newsletter: 'Eine wöchentliche E-Mail über Veröffentlichtes',
+    analytics: 'Anonyme Lesestatistik',
+    product_news: 'Benachrichtigung, wenn neue Dienste an meinen Orten öffnen',
+  },
+  purposeWord: 'Zweck',
+  granted: 'erteilt',
+  notGranted: 'nicht erteilt',
+  grant: 'Erteilen',
+  revoke: 'Widerrufen',
+  consentHistoryHeading: 'Ihr Einwilligungsverlauf',
+  current: 'aktuell',
+  recordCount: (count) =>
+    `${count} Einträge, keine Schalter. Eine erneute Erteilung öffnet einen neuen Eintrag und lässt den alten stehen.`,
+  notRecorded: 'Nicht verzeichnet',
   addPlace: (placeName) => `Ort hinzufügen: ${placeName}`,
   removePlace: (placeName) => `Ort entfernen: ${placeName}`,
   independenceLine: 'Sprache und Ort werden nie zu einer Einstellung kombiniert.',
