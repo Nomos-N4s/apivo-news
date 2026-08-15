@@ -75,11 +75,17 @@ export interface SpendLedger {
   readonly cap_microusd: number;
 }
 
-/** A `GET /api/v1/editorial/queue` page, plus the states the screen needs. */
+/**
+ * A `GET /api/v1/editorial/queue` page, plus the states the screen needs.
+ *
+ * Only `items` is in the contract, so `holds` and `spend` are optional:
+ * a contract-compliant response carries neither, and the screen must
+ * render without them rather than throw on a missing ledger.
+ */
 export interface QueuePage {
   readonly items: readonly QueueItem[];
-  readonly holds: PipelineHolds;
-  readonly spend: SpendLedger;
+  readonly holds?: PipelineHolds;
+  readonly spend?: SpendLedger;
 }
 
 /**
@@ -112,11 +118,30 @@ export class EditorialApiError extends Error {
 /** The editorial API surface the pages consume. */
 export interface EditorialApi {
   queue(): Promise<QueuePage>;
-  approve(sourceItemId: string, translationId: string | null): Promise<ApprovalOutcome>;
+  /**
+   * Approval carries the attribution the contract requires (non-blank —
+   * it becomes `article.attribution_block`, which FR-008 renders on every
+   * published item).
+   */
+  approve(
+    sourceItemId: string,
+    translationId: string | null,
+    attribution: string,
+  ): Promise<ApprovalOutcome>;
 }
 
 const NOT_WIRED =
   'The editorial API is not implemented yet (T019/T020), so no article was created and no approval was recorded.';
+
+/**
+ * `API_BASE_URL` is one address for the whole Go API, but the reader and
+ * editorial endpoints land as separate tasks (T024 versus T019/T020). A
+ * deployment can therefore serve the reader while the editorial routes
+ * are still absent, and the editorial screens must not turn that into an
+ * error page: a 404 means "not deployed yet", which is exactly the state
+ * the fixtures describe.
+ */
+const NOT_DEPLOYED = 404;
 
 function fixtureApi(): EditorialApi {
   return {
@@ -142,9 +167,13 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
   if (token !== null) {
     headers['Authorization'] = `Bearer ${token}`;
   }
+  const fixtures = fixtureApi();
   return {
     async queue(): Promise<QueuePage> {
       const response = await fetchImpl(new URL(`${base}/api/v1/editorial/queue`), { headers });
+      if (response.status === NOT_DEPLOYED) {
+        return fixtures.queue();
+      }
       if (!response.ok) {
         throw new EditorialApiError(
           `editorial API answered ${response.status} for the queue`,
@@ -161,9 +190,14 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
       }
       return body as QueuePage;
     },
-    async approve(sourceItemId: string, translationId: string | null): Promise<ApprovalOutcome> {
+    async approve(
+      sourceItemId: string,
+      translationId: string | null,
+      attribution: string,
+    ): Promise<ApprovalOutcome> {
       // The contract takes exactly one origin: translation_id XOR
-      // source_item_id (400 if both or neither).
+      // source_item_id (400 if both or neither), plus a non-blank
+      // attribution, which becomes the article's attribution block.
       const origin =
         translationId === null
           ? { source_item_id: sourceItemId }
@@ -171,8 +205,11 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
       const response = await fetchImpl(new URL(`${base}/api/v1/editorial/approvals`), {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...origin, publish: true }),
+        body: JSON.stringify({ ...origin, attribution, publish: true }),
       });
+      if (response.status === NOT_DEPLOYED) {
+        return fixtures.approve(sourceItemId, translationId, attribution);
+      }
       if (!response.ok) {
         throw new EditorialApiError(
           `editorial API answered ${response.status} for the approval`,

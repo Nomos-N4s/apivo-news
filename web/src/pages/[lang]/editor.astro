@@ -9,10 +9,11 @@ import {
   type ApprovalOutcome,
   type QueuePage,
 } from '../../lib/editorial/api';
+import { isSameOrigin } from '../../lib/csrf';
 import { editorSession } from '../../lib/editorial/session';
 import { editorialStrings, languageName } from '../../lib/editorial/strings';
 import { findPlace, isReadingLanguage } from '../../lib/reader/axes';
-import { formatDateTime, safeSourceUrl } from '../../lib/reader/format';
+import { formatDateTime, formatItemDate, safeSourceUrl } from '../../lib/reader/format';
 import { uiStrings } from '../../lib/reader/strings';
 
 // The editorial review queue — mockup 1g, the approval gate (issue #61,
@@ -39,14 +40,24 @@ const api = createEditorialApi(API_BASE_URL, session.token);
 // screen says so — it never claims a record it did not create.
 let outcome: ApprovalOutcome | null = null;
 if (Astro.request.method === 'POST') {
+  // Approval is a privileged, named act. A cross-site form must never be
+  // able to drive it with a logged-in editor's browser — the check is in
+  // place before real approvals exist, so wiring auth cannot open the
+  // hole silently.
+  if (!isSameOrigin(Astro.request, Astro.url.origin)) {
+    return new Response('Forbidden', { status: 403 });
+  }
   const form = await Astro.request.formData();
   const sourceItemId = String(form.get('source_item_id') ?? '');
   const rawTranslationId = form.get('translation_id');
   const translationId =
     typeof rawTranslationId === 'string' && rawTranslationId !== '' ? rawTranslationId : null;
-  if (sourceItemId !== '') {
+  // The contract requires a non-blank attribution: it becomes the
+  // article's attribution block, which FR-008 renders on every item.
+  const attribution = String(form.get('attribution') ?? '').trim();
+  if (sourceItemId !== '' && attribution !== '') {
     try {
-      outcome = await api.approve(sourceItemId, translationId);
+      outcome = await api.approve(sourceItemId, translationId, attribution);
     } catch (error) {
       outcome = {
         recorded: false,
@@ -76,6 +87,17 @@ const placeName = (slugs: readonly string[] | undefined): string => {
   const slug = slugs?.at(0);
   return slug === undefined ? '' : (findPlace(slug)?.endonym ?? slug);
 };
+
+// The attribution the article will carry (FR-008), composed from what the
+// queue row states and left editable — the editor is the one who stands
+// behind the wording, so it is a field, not a hidden value.
+const defaultAttribution = (item: (typeof items)[number]): string => {
+  const published = item.original_published_at ?? item.retrieved_at;
+  return `${reader.originallyPublishedBy} ${item.source_name}, ${formatItemDate(
+    lang,
+    new Date(published),
+  )}.`;
+};
 ---
 
 <ReaderLayout lang={lang} title={`epiloYES — ${t.editorial}`} description={reader.tagline}>
@@ -97,8 +119,10 @@ const placeName = (slugs: readonly string[] | undefined): string => {
       <span class="rail-item rail-pending">{t.published} <span class="count">{t.pending}</span></span>
       <span class="rail-item rail-pending">{t.audit} <span class="count">{t.pending}</span></span>
 
+      {/* The ledger is a proposed addition, not contract — a compliant
+          response carries no spend, and the rail renders without it. */}
       {
-        queue !== null && (
+        queue?.spend !== undefined && (
           <div class="spend">
             <h6>{t.translationSpend}</h6>
             <div class="spend-amount">{formatSpend(queue.spend.spent_microusd)}</div>
@@ -162,7 +186,7 @@ const placeName = (slugs: readonly string[] | undefined): string => {
         }
 
         {
-          queue !== null && queue.holds.queued_untranslated > 0 && (
+          queue?.holds !== undefined && queue.holds.queued_untranslated > 0 && (
             <div class="hold">
               <h6>{t.queuedUntranslated}</h6>
               <p>{t.queuedUntranslatedBody(queue.holds.queued_untranslated)}</p>
@@ -170,7 +194,7 @@ const placeName = (slugs: readonly string[] | undefined): string => {
           )
         }
         {
-          queue !== null && queue.holds.skipped_over_ceiling > 0 && (
+          queue?.holds !== undefined && queue.holds.skipped_over_ceiling > 0 && (
             <p class="skip-note">{t.skippedOverCeiling(queue.holds.skipped_over_ceiling)}</p>
           )
         }
@@ -275,6 +299,16 @@ const placeName = (slugs: readonly string[] | undefined): string => {
                       name="translation_id"
                       value={selected.translation_id ?? ''}
                     />
+                    <div class="field attribution-field">
+                      <label for="attribution">{reader.attribution}</label>
+                      <input
+                        class="input"
+                        id="attribution"
+                        name="attribution"
+                        value={defaultAttribution(selected)}
+                        required
+                      />
+                    </div>
                     <label class="ack">
                       <input type="checkbox" name="acknowledged" required />
                       <span class="box" aria-hidden="true" />
@@ -627,6 +661,9 @@ const placeName = (slugs: readonly string[] | undefined): string => {
     margin-top: auto;
     border-top: 1px solid var(--color-divider);
     padding-top: var(--space-4);
+  }
+  .attribution-field {
+    margin-bottom: var(--space-3);
   }
   .ack {
     display: flex;

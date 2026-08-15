@@ -34,12 +34,12 @@ describe('the fixture client (no API_BASE_URL)', () => {
   it('answers the queue with the pipeline holds and the ledger', async () => {
     const page = await api.queue();
     expect(page.items.length).toBeGreaterThan(0);
-    expect(page.holds.queued_untranslated).toBeGreaterThan(0);
-    expect(page.spend.cap_microusd).toBeGreaterThan(0);
+    expect(page.holds?.queued_untranslated).toBeGreaterThan(0);
+    expect(page.spend?.cap_microusd).toBeGreaterThan(0);
   });
 
   it('never fakes an approval — nothing is recorded and it says why', async () => {
-    const outcome = await api.approve('any-source-item', 'any-translation');
+    const outcome = await api.approve('any-source-item', 'any-translation', 'attr');
     expect(outcome.recorded).toBe(false);
     expect(outcome.article_id).toBeUndefined();
     expect(outcome.reason).toContain('not implemented');
@@ -97,6 +97,7 @@ describe('the HTTP client (API_BASE_URL set)', () => {
     const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve(
       'src-1',
       'tr-1',
+      'Originally published by X.',
     );
 
     expect(outcome.recorded).toBe(true);
@@ -105,12 +106,14 @@ describe('the HTTP client (API_BASE_URL set)', () => {
     expect(body['translation_id']).toBe('tr-1');
     expect(body['source_item_id']).toBeUndefined();
     expect(body['publish']).toBe(true);
+    // The contract requires a non-blank attribution (FR-008).
+    expect(body['attribution']).toBe('Originally published by X.');
     expect(calls.at(0)?.init?.method).toBe('POST');
   });
 
   it('approves an untranslated origin with source_item_id only', async () => {
     const { calls, fetchImpl } = respondingWith(jsonResponse({ article_id: 'a2' }, 201));
-    await createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve('src-2', null);
+    await createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve('src-2', null, 'attr');
 
     const body = JSON.parse(String(calls.at(0)?.init?.body)) as Record<string, unknown>;
     expect(body['source_item_id']).toBe('src-2');
@@ -120,15 +123,52 @@ describe('the HTTP client (API_BASE_URL set)', () => {
   it('surfaces a 409 (origin already approved) rather than claiming success', async () => {
     const { fetchImpl } = respondingWith(jsonResponse({ title: 'conflict' }, 409));
     await expect(
-      createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve('src', null),
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve('src', null, 'attr'),
     ).rejects.toMatchObject({ status: 409 });
   });
 
   it('rejects an approval body without an article id', async () => {
     const { fetchImpl } = respondingWith(jsonResponse({ ok: true }, 201));
     await expect(
-      createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve('src', null),
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve('src', null, 'attr'),
     ).rejects.toBeInstanceOf(EditorialApiError);
+  });
+});
+
+describe('editorial endpoints not deployed yet', () => {
+  // API_BASE_URL is one address for the whole Go API, but the reader
+  // endpoints (T024) can ship before the editorial ones (T019/T020). A
+  // 404 must therefore mean "not deployed", not "the screen is broken".
+  it('falls back to fixtures when the queue endpoint 404s', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
+    const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).queue();
+    expect(page.items.length).toBeGreaterThan(0);
+  });
+
+  it('reports not-recorded rather than erroring when approvals 404', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve(
+      'src',
+      null,
+      'attr',
+    );
+    expect(outcome.recorded).toBe(false);
+  });
+
+  it('still surfaces a real failure (500) as an error', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'boom' }, 500));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).queue(),
+    ).rejects.toMatchObject({ status: 500 });
+  });
+
+  it('accepts a contract-compliant queue carrying only items', async () => {
+    // No holds, no spend — the screen must not assume the proposed fields.
+    const { fetchImpl } = respondingWith(jsonResponse({ items: [] }));
+    const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).queue();
+    expect(page.items).toEqual([]);
+    expect(page.spend).toBeUndefined();
+    expect(page.holds).toBeUndefined();
   });
 });
 
