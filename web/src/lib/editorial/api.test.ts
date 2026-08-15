@@ -162,6 +162,21 @@ describe('editorial endpoints not deployed yet', () => {
     ).rejects.toMatchObject({ status: 500 });
   });
 
+  it('falls back to fixtures when the source list 404s', async () => {
+    // POST /editorial/sources exists on the API; the list does not, so a
+    // 404 there must not take the screen down.
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
+    const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources();
+    expect(page.sources.length).toBeGreaterThan(0);
+  });
+
+  it('still surfaces 401 on the source list — that is a real answer', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'unauthorised' }, 401));
+    await expect(
+      createEditorialApi('http://api:8080', null, fetchImpl).sources(),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+
   it('accepts a contract-compliant queue carrying only items', async () => {
     // No holds, no spend — the screen must not assume the proposed fields.
     const { fetchImpl } = respondingWith(jsonResponse({ items: [] }));
@@ -275,5 +290,62 @@ describe('the audit trace', () => {
     expect(wd.calls.at(0)?.url.pathname).toBe('/api/v1/editorial/articles/x/withdrawal');
     expect(wd.calls.at(0)?.init?.method).toBe('POST');
     expect(JSON.parse(String(wd.calls.at(0)?.init?.body))['reason']).toBe('because');
+  });
+});
+
+describe('sources', () => {
+  it('lists configured feeds and the deduplicating poll cycle (FR-014)', async () => {
+    const page = await createEditorialApi(undefined).sources();
+    expect(page.sources.length).toBeGreaterThan(0);
+    expect(page.cycle.duplicates_skipped).toBeGreaterThan(0);
+    expect(page.cycle.failures.length).toBeGreaterThan(0);
+  });
+
+  it('shows no source with a full_text rule — unreachable without evidence (FR-004)', async () => {
+    const page = await createEditorialApi(undefined).sources();
+    for (const source of page.sources) {
+      expect(source.usage_rule).toBe('extract_and_link');
+      expect(source.permission_evidence).toBeNull();
+    }
+  });
+
+  it('never fakes a configured source', async () => {
+    const outcome = await createEditorialApi(undefined).addSource({
+      name: 'X',
+      url: 'https://x.example/rss',
+      language: 'de',
+      jurisdiction: 'DE',
+      licence_terms: 'terms',
+    });
+    expect(outcome.recorded).toBe(false);
+    expect(outcome.reason).toContain('no source was configured');
+  });
+
+  it('never sends a usage rule — the contract does not accept one', async () => {
+    const { calls, fetchImpl } = respondingWith(jsonResponse({ source_id: 's1' }, 201));
+    await createEditorialApi('http://api:8080', 'jwt', fetchImpl).addSource({
+      name: 'X',
+      url: 'https://x.example/rss',
+      language: 'de',
+      jurisdiction: 'DE',
+      licence_terms: 'terms',
+    });
+    const body = JSON.parse(String(calls.at(0)?.init?.body)) as Record<string, unknown>;
+    expect(body['usage_rule']).toBeUndefined();
+    expect(body['name']).toBe('X');
+    expect(calls.at(0)?.url.pathname).toBe('/api/v1/editorial/sources');
+  });
+
+  it('surfaces a 409 duplicate feed URL rather than claiming success', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'duplicate' }, 409));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).addSource({
+        name: 'X',
+        url: 'https://x.example/rss',
+        language: 'de',
+        jurisdiction: 'DE',
+        licence_terms: 't',
+      }),
+    ).rejects.toMatchObject({ status: 409 });
   });
 });

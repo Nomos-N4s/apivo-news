@@ -1,5 +1,11 @@
 import type { ReadingLanguage } from '../reader/axes';
-import { PROVENANCE_FIXTURES, QUEUE_FIXTURES, SPEND_FIXTURE } from './fixtures';
+import {
+  POLL_CYCLE_FIXTURE,
+  PROVENANCE_FIXTURES,
+  QUEUE_FIXTURES,
+  SOURCE_FIXTURES,
+  SPEND_FIXTURE,
+} from './fixtures';
 
 /**
  * Typed client for the editorial API
@@ -210,6 +216,69 @@ export interface DomainEvent {
   readonly detail: string;
 }
 
+/**
+ * A configured feed (mockup 1i) — a `source` row from migration 0001 plus
+ * `active` from 0002.
+ *
+ * No endpoint lists sources: the contract specifies only
+ * `POST /api/v1/editorial/sources`. The screen cannot exist without the
+ * list, so a read endpoint is a proposed addition (issue #70).
+ */
+export interface SourceRow {
+  readonly id: string;
+  readonly name: string;
+  /** The feed path shown in the table; the origin is the publisher's host. */
+  readonly feed_path: string;
+  readonly language: string;
+  readonly jurisdiction: string;
+  /** `extract_and_link` unless written permission is on record (FR-004). */
+  readonly usage_rule: 'extract_and_link' | 'full_text';
+  readonly permission_evidence: string | null;
+  /** `source.active` (0002): pausing a feed without deleting anything. */
+  readonly active: boolean;
+  /** ISO 8601; null when the feed has never been polled successfully. */
+  readonly last_polled_at: string | null;
+}
+
+/**
+ * The last poll cycle: how much was retrieved, how much the content
+ * fingerprint deduplicated (FR-014), and which feeds failed — the spec's
+ * unreachable-feed edge case, where nothing partial is stored. No endpoint
+ * carries this either (issue #70).
+ */
+export interface PollCycle {
+  readonly retrieved: number;
+  readonly duplicates_skipped: number;
+  readonly failures: readonly string[];
+}
+
+/** What the sources screen reads. */
+export interface SourcesPage {
+  readonly sources: readonly SourceRow[];
+  readonly cycle: PollCycle;
+}
+
+/** The outcome of configuring a source. */
+export interface SourceOutcome {
+  readonly recorded: boolean;
+  readonly source_id?: string;
+  readonly reason?: string;
+}
+
+/**
+ * The body `POST /api/v1/editorial/sources` accepts. The usage rule is
+ * deliberately absent: new sources are always `extract_and_link`, and an
+ * upgrade is a separate founder-gated flow (FR-004, contract). The screen
+ * must therefore state the rule, not offer it.
+ */
+export interface NewSource {
+  readonly name: string;
+  readonly url: string;
+  readonly language: string;
+  readonly jurisdiction: string;
+  readonly licence_terms: string;
+}
+
 /** A non-2xx answer or an unusable body from the editorial API. */
 export class EditorialApiError extends Error {
   readonly status: number | undefined;
@@ -249,10 +318,15 @@ export interface EditorialApi {
   /** The audit trace; null when the id matches no article. */
   provenance(articleId: string): Promise<ArticleProvenance | null>;
   withdraw(articleId: string, reason: string): Promise<WithdrawalOutcome>;
+  sources(): Promise<SourcesPage>;
+  addSource(input: NewSource): Promise<SourceOutcome>;
 }
 
 const NOT_WIRED_APPROVAL =
   'The editorial API is not implemented yet (T019/T020), so no article was created and no approval was recorded.';
+
+const NOT_WIRED_SOURCE =
+  'The editorial API is not implemented yet (T014), so no source was configured and no polling started.';
 
 const NOT_WIRED_WITHDRAWAL =
   'The editorial API is not implemented yet (T021), so publication did not end and nothing was written to the audit stream.';
@@ -299,6 +373,12 @@ function fixtureApi(): EditorialApi {
       // Withdrawal is audited (FR-016); with nothing to audit into, the
       // screen must not suggest publication ended.
       return Promise.resolve({ recorded: false, reason: NOT_WIRED_WITHDRAWAL });
+    },
+    sources(): Promise<SourcesPage> {
+      return Promise.resolve({ sources: SOURCE_FIXTURES, cycle: POLL_CYCLE_FIXTURE });
+    },
+    addSource(): Promise<SourceOutcome> {
+      return Promise.resolve({ recorded: false, reason: NOT_WIRED_SOURCE });
     },
   };
 }
@@ -407,6 +487,47 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
       }
       const body: unknown = await response.json();
       return { recorded: true, ...(body as Record<string, unknown>) } as WithdrawalOutcome;
+    },
+    async sources(): Promise<SourcesPage> {
+      const response = await fetchImpl(new URL(`${base}/api/v1/editorial/sources`), { headers });
+      // Only the POST exists on the API today; the list is a proposed
+      // addition, so a 404 here means the read is not deployed rather
+      // than that the screen is broken.
+      if (response.status === NOT_DEPLOYED) {
+        return fixtures.sources();
+      }
+      if (!response.ok) {
+        throw new EditorialApiError(
+          `editorial API answered ${response.status} for the source list`,
+          response.status,
+        );
+      }
+      const body: unknown = await response.json();
+      if (
+        typeof body !== 'object' ||
+        body === null ||
+        !Array.isArray((body as { sources?: unknown }).sources)
+      ) {
+        throw new EditorialApiError('editorial API answered without a sources array');
+      }
+      return body as SourcesPage;
+    },
+    async addSource(input: NewSource): Promise<SourceOutcome> {
+      // The usage rule is not sent: the contract does not accept it, and
+      // the database defaults it to extract_and_link (FR-004).
+      const response = await fetchImpl(new URL(`${base}/api/v1/editorial/sources`), {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) {
+        throw new EditorialApiError(
+          `editorial API answered ${response.status} for the new source`,
+          response.status,
+        );
+      }
+      const body: unknown = await response.json();
+      return { recorded: true, ...(body as Record<string, unknown>) } as SourceOutcome;
     },
   };
 }

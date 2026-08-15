@@ -66,6 +66,35 @@ export interface EditorialStrings {
   readonly requiresEditorRole: string;
   readonly withdrawnAlready: string;
   readonly traceNotFound: string;
+  /** Source management (mockup 1i) — the licensing invariant made visible. */
+  readonly sourcesSummary: (configured: number, active: number) => string;
+  readonly colSource: string;
+  readonly colFeed: string;
+  readonly colLang: string;
+  readonly colUsageRule: string;
+  readonly colLastPoll: string;
+  readonly colState: string;
+  readonly stateActive: string;
+  readonly statePaused: string;
+  readonly neverPolled: string;
+  readonly lastPollCycle: string;
+  readonly cycleSummary: (retrieved: number, duplicates: number) => string;
+  readonly failures: string;
+  readonly noFailures: string;
+  readonly addSource: string;
+  readonly publisherName: string;
+  readonly feedUrl: string;
+  readonly languageField: string;
+  readonly jurisdictionField: string;
+  readonly licenceTerms: string;
+  readonly usageRuleHeading: string;
+  readonly extractAndLinkTitle: string;
+  readonly extractAndLinkBody: string;
+  readonly fullTextTitle: string;
+  readonly fullTextBody: string;
+  readonly usageRuleNotAnInput: string;
+  readonly addSourceAndPoll: string;
+  readonly sourcesEmpty: string;
 }
 
 const EL: EditorialStrings = {
@@ -128,6 +157,39 @@ const EL: EditorialStrings = {
   requiresEditorRole: 'Απαιτεί ρόλο συντάκτη',
   withdrawnAlready: 'Έχει ήδη αποσυρθεί',
   traceNotFound: 'Δεν βρέθηκε άρθρο με αυτό το αναγνωριστικό.',
+  sourcesSummary: (configured, active) =>
+    `${configured} ρυθμισμένες · ${active} ενεργές · μόνο RSS και Atom, χωρίς σάρωση`,
+  colSource: 'Πηγή',
+  colFeed: 'Ροή',
+  colLang: 'Γλώσσα',
+  colUsageRule: 'Κανόνας χρήσης',
+  colLastPoll: 'Τελευταία λήψη',
+  colState: 'Κατάσταση',
+  stateActive: 'Ενεργή',
+  statePaused: 'Σε παύση',
+  neverPolled: 'ποτέ',
+  lastPollCycle: 'Τελευταίος κύκλος λήψης',
+  cycleSummary: (retrieved, duplicates) =>
+    `${retrieved} στοιχεία ανακτήθηκαν · ${duplicates} διπλότυπα παραλείφθηκαν από το αποτύπωμα`,
+  failures: 'Αστοχίες',
+  noFailures: 'Καμία στον τελευταίο κύκλο',
+  addSource: 'Προσθήκη πηγής',
+  publisherName: 'Όνομα εκδότη',
+  feedUrl: 'Διεύθυνση ροής (RSS ή Atom)',
+  languageField: 'Γλώσσα',
+  jurisdictionField: 'Δικαιοδοσία',
+  licenceTerms: 'Όροι άδειας που τηρούνται',
+  usageRuleHeading: 'Κανόνας χρήσης',
+  extractAndLinkTitle: 'extract_and_link',
+  extractAndLinkBody:
+    'Η προεπιλογή, και ο μόνος κανόνας που ισχύει χωρίς καταγεγραμμένη γραπτή άδεια.',
+  fullTextTitle: 'full_text',
+  fullTextBody:
+    'Μη διαθέσιμο. Απαιτείται πρώτα καταγεγραμμένη γραπτή άδεια· διαφορετικά η βάση δεδομένων το απορρίπτει.',
+  usageRuleNotAnInput:
+    'Ο κανόνας δεν είναι πεδίο της φόρμας: κάθε νέα πηγή είναι extract_and_link και η αναβάθμιση είναι ξεχωριστή διαδικασία με έγκριση ιδρυτή.',
+  addSourceAndPoll: 'Προσθήκη πηγής και έναρξη λήψης',
+  sourcesEmpty: 'Δεν έχει ρυθμιστεί καμία πηγή ακόμη.',
 };
 
 const DE: EditorialStrings = {
@@ -190,6 +252,39 @@ const DE: EditorialStrings = {
   requiresEditorRole: 'Erfordert die Redaktionsrolle',
   withdrawnAlready: 'Bereits zurückgezogen',
   traceNotFound: 'Zu dieser Kennung wurde kein Artikel gefunden.',
+  sourcesSummary: (configured, active) =>
+    `${configured} eingerichtet · ${active} aktiv · nur RSS und Atom, kein Scraping`,
+  colSource: 'Quelle',
+  colFeed: 'Feed',
+  colLang: 'Sprache',
+  colUsageRule: 'Nutzungsregel',
+  colLastPoll: 'Letzter Abruf',
+  colState: 'Status',
+  stateActive: 'Aktiv',
+  statePaused: 'Pausiert',
+  neverPolled: 'nie',
+  lastPollCycle: 'Letzter Abrufzyklus',
+  cycleSummary: (retrieved, duplicates) =>
+    `${retrieved} Beiträge abgerufen · ${duplicates} Dubletten per Fingerabdruck übersprungen`,
+  failures: 'Fehlschläge',
+  noFailures: 'Keine im letzten Zyklus',
+  addSource: 'Quelle hinzufügen',
+  publisherName: 'Name des Verlags',
+  feedUrl: 'Feed-URL (RSS oder Atom)',
+  languageField: 'Sprache',
+  jurisdictionField: 'Rechtsraum',
+  licenceTerms: 'Hinterlegte Lizenzbedingungen',
+  usageRuleHeading: 'Nutzungsregel',
+  extractAndLinkTitle: 'extract_and_link',
+  extractAndLinkBody:
+    'Die Vorgabe und die einzige Regel, die ohne hinterlegte schriftliche Erlaubnis gilt.',
+  fullTextTitle: 'full_text',
+  fullTextBody:
+    'Nicht verfügbar. Zuerst muss eine schriftliche Erlaubnis hinterlegt sein; sonst weist die Datenbank es zurück.',
+  usageRuleNotAnInput:
+    'Die Regel ist kein Formularfeld: jede neue Quelle ist extract_and_link, und eine Heraufstufung ist ein eigener, von der Gründung freigegebener Vorgang.',
+  addSourceAndPoll: 'Quelle hinzufügen und Abruf starten',
+  sourcesEmpty: 'Noch keine Quelle eingerichtet.',
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, EditorialStrings>> = { el: EL, de: DE };

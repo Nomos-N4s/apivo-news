@@ -1,4 +1,10 @@
-import type { ArticleProvenance, QueueItem, SpendLedger } from './api';
+import type {
+  ArticleProvenance,
+  PollCycle,
+  QueueItem,
+  SourceRow,
+  SpendLedger,
+} from './api';
 
 /**
  * Development fixtures for the editorial queue until the editorial
@@ -89,6 +95,78 @@ export const SPEND_FIXTURE: SpendLedger = {
   month: '2026-08',
   spent_microusd: 9_200_000,
   cap_microusd: 25_000_000,
+};
+
+/**
+ * Configured feeds (mockup 1i). Every one is `extract_and_link` with no
+ * permission evidence, because that is the only state reachable without a
+ * founder-gated upgrade (FR-004) — a fixture showing `full_text` would
+ * depict something the database rejects. One feed is paused and one has
+ * never polled successfully.
+ */
+export const SOURCE_FIXTURES: readonly SourceRow[] = [
+  {
+    id: '11111111-1111-4111-8111-111111111111',
+    name: 'Münchner Tagblatt',
+    feed_path: '/rss/muenchen',
+    language: 'de',
+    jurisdiction: 'DE',
+    usage_rule: 'extract_and_link',
+    permission_evidence: null,
+    active: true,
+    last_polled_at: '2026-08-14T06:12:00Z',
+  },
+  {
+    id: '22222222-2222-4222-8222-222222222222',
+    name: 'Isar Kurier',
+    feed_path: '/rss/lokales',
+    language: 'de',
+    jurisdiction: 'DE',
+    usage_rule: 'extract_and_link',
+    permission_evidence: null,
+    active: true,
+    last_polled_at: '2026-08-14T06:47:00Z',
+  },
+  {
+    id: '33333333-3333-4333-8333-333333333333',
+    name: 'Bayerischer Rundblick',
+    feed_path: '/nachrichten/bayern.xml',
+    language: 'de',
+    jurisdiction: 'DE',
+    usage_rule: 'extract_and_link',
+    permission_evidence: null,
+    active: true,
+    last_polled_at: '2026-08-14T07:02:00Z',
+  },
+  {
+    id: '44444444-4444-4444-8444-444444444444',
+    name: 'Πρωινός Τύπος',
+    feed_path: '/rss/politics',
+    language: 'el',
+    jurisdiction: 'GR',
+    usage_rule: 'extract_and_link',
+    permission_evidence: null,
+    active: true,
+    last_polled_at: '2026-08-14T05:41:00Z',
+  },
+  {
+    id: '55555555-5555-4555-8555-555555555555',
+    name: 'Αιγαίο Νέα',
+    feed_path: '/feed/general',
+    language: 'el',
+    jurisdiction: 'GR',
+    usage_rule: 'extract_and_link',
+    permission_evidence: null,
+    active: false,
+    last_polled_at: null,
+  },
+];
+
+/** The last poll cycle, including the deduplication FR-014 requires. */
+export const POLL_CYCLE_FIXTURE: PollCycle = {
+  retrieved: 14,
+  duplicates_skipped: 9,
+  failures: ['Αιγαίο Νέα unreachable at 06:20 — nothing partial stored'],
 };
 
 /**
