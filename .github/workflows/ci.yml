@@ -177,6 +177,21 @@ jobs:
           git add -A web/src/lib
           git diff --cached --exit-code -- web/src/lib
 
+  # Validates the committed OpenAPI document - the one the binary embeds and
+  # serves at /api/v1/openapi.json - against the OpenAPI 3.1 specification.
+  # The version is pinned so the ruleset cannot change under a green build;
+  # bump it together with the Makefile's OPENAPI_VALIDATOR_VERSION. Rule
+  # severities live in redocly.yaml; the job fails on any error.
+  openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Validate the OpenAPI document
+        run: npx --yes @redocly/cli@2.46.1 lint api/openapi.json
+
   # Validates the Cloudflare Containers configuration: full parse of
   # wrangler.jsonc plus Worker bundle and container/DO wiring checks.
   # --dry-run needs no Cloudflare credentials and uploads nothing;

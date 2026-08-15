@@ -1,0 +1,161 @@
+---
+import {
+  frontPagePath,
+  PLACE_CATALOG,
+  PLACE_SEPARATOR,
+  type Place,
+  type ReadingLanguage,
+} from '../lib/reader/axes';
+import { uiStrings } from '../lib/reader/strings';
+
+// The persistent axis bar (mockups 1a + 1f): the two reader axes in two
+// ruled cells, and every control a plain link to the URL with exactly one
+// axis changed — switching language never touches places, adding or
+// removing a place never touches language (FR-009). The URL is the only
+// state, so the bar needs no JavaScript.
+interface Props {
+  lang: ReadingLanguage;
+  places: readonly Place[];
+}
+
+const { lang, places } = Astro.props;
+const t = uiStrings(lang);
+const slugs = places.map((place) => place.slug);
+
+// Chips: the current places first (× removes, unless it is the last one —
+// a front page always has both axes), then the rest of the selectable
+// catalog (+ adds).
+const chips = [
+  ...places.map((place) => ({
+    place,
+    selected: true,
+    href:
+      places.length > 1
+        ? frontPagePath(lang, slugs.filter((slug) => slug !== place.slug))
+        : undefined,
+    label: t.removePlace(place.endonym),
+  })),
+  ...PLACE_CATALOG.filter((place) => place.selectable && !places.includes(place)).map(
+    (place) => ({
+      place,
+      selected: false,
+      href: frontPagePath(lang, [...slugs, place.slug]),
+      label: t.addPlace(place.endonym),
+    }),
+  ),
+];
+
+// Unlike in a path segment, a literal + in a QUERY string decodes to a
+// space — so the joined value must be encoded (%2B) to survive the round
+// trip through URLSearchParams.
+const setupHref = `/${lang}/setup?places=${encodeURIComponent(slugs.join(PLACE_SEPARATOR))}`;
+---
+
+<section class="axes" aria-label={`${t.readingLanguage} · ${t.places}`}>
+  <div class="axis axis-lang">
+    <h6>{t.readingLanguage}</h6>
+    {/* The current language is state, not a destination: it renders as a
+        span — an <a> without href fails accessibility checks. */}
+    <div class="seg" role="group">
+      {lang === 'el' ? (
+        <span class="seg-opt" aria-current="true">Ελληνικά</span>
+      ) : (
+        <a class="seg-opt" href={frontPagePath('el', slugs)}>Ελληνικά</a>
+      )}
+      {lang === 'de' ? (
+        <span class="seg-opt" aria-current="true">Deutsch</span>
+      ) : (
+        <a class="seg-opt" href={frontPagePath('de', slugs)}>Deutsch</a>
+      )}
+    </div>
+  </div>
+  <div class="axis axis-places">
+    <h6>{t.places}</h6>
+    {
+      chips.map((chip) =>
+        chip.href !== undefined ? (
+          <a
+            class:list={['chip', { 'chip-on': chip.selected }]}
+            href={chip.href}
+            aria-label={chip.label}
+          >
+            {chip.place.endonym} <span aria-hidden="true">{chip.selected ? '×' : '+'}</span>
+          </a>
+        ) : (
+          <span class="chip chip-on">{chip.place.endonym}</span>
+        ),
+      )
+    }
+    <a class="edit" href={setupHref}>{t.editPlaces}</a>
+  </div>
+</section>
+
+<style>
+  .axes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 2px solid var(--color-divider);
+  }
+  .axis {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) calc(var(--space-6) + var(--space-1));
+    flex-wrap: wrap;
+  }
+  .axis-lang {
+    border-right: 1px solid var(--color-divider);
+  }
+  .axis h6 {
+    margin: 0;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    flex: none;
+  }
+  .seg-opt {
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  .seg-opt[aria-current='true'] {
+    background: var(--color-accent);
+    color: var(--color-bg);
+  }
+  a.seg-opt:not([aria-current='true']):hover {
+    background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  }
+  .chip {
+    border: 1px solid var(--color-accent);
+    padding: 5px 11px;
+    font-size: 12.5px;
+    font-weight: 600;
+    text-decoration: none;
+    color: var(--color-text);
+  }
+  .chip-on {
+    background: var(--color-accent-100);
+    color: var(--color-accent-800);
+  }
+  a.chip:hover {
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  }
+  .edit {
+    font-size: 12.5px;
+    font-family: var(--font-heading);
+    font-weight: 600;
+    color: var(--color-accent);
+    text-decoration: none;
+    margin-left: auto;
+  }
+  .edit:hover {
+    color: var(--color-accent-600);
+  }
+
+  @media (max-width: 660px) {
+    .axes {
+      grid-template-columns: 1fr;
+    }
+    .axis-lang {
+      border-right: 0;
+      border-bottom: 1px solid var(--color-divider);
+    }
+  }
+</style>

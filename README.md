@@ -57,6 +57,21 @@ internal/
 sibling's internals — modules communicate through interfaces defined by the
 consumer, wired in `cmd`.
 
+## The HTTP API
+
+[api/openapi.json](api/openapi.json) is the machine-readable description of
+the HTTP surface: OpenAPI 3.1, written from the handlers rather than from
+the contract prose, so a client generator and the server agree. The binary
+embeds it and serves it at `GET /api/v1/openapi.json` — a consumer can ask
+the server it is actually talking to what it serves.
+
+Two gates keep it honest: CI validates the document against the
+specification with a pinned open-source validator (`make openapi-lint` runs
+the same check locally and needs only Node), and a test in the composition
+root compares the served document with the routes the modules register, in
+both directions — an undocumented route and a documented endpoint nobody
+serves both fail the build.
+
 ## Development
 
 Prerequisites: Go ≥ 1.26, Node ≥ 22, Docker.
@@ -83,7 +98,7 @@ DATABASE_URL="postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable" \
 cd web && npm ci && npm run check && npm run build
 ```
 
-`make setup db-up test cover lint sqlc web-check` wraps the same steps (see
+`make setup db-up test cover lint openapi-lint sqlc web-check` wraps the same steps (see
 the [Makefile](Makefile)). On Windows, `-race` needs a C toolchain; run
 `make test RACE=` or plain `go test` locally and let CI run the race
 detector.

@@ -24,6 +24,19 @@ export interface UiStrings {
   readonly source: string;
   readonly published: string;
   readonly attribution: string;
+  /** Record-row term for the approval time (public payload's approved_at). */
+  readonly approved: string;
+  /** The article page's Record rail heading (mockup 1c). */
+  readonly record: string;
+  /** The extract-boundary block (mockup 1c): the page is a doorway, and says so. */
+  readonly wholeExtractTitle: string;
+  readonly wholeExtractBody: string;
+  /** The primary CTA to the publisher: "Continue at {host} ↗" (SC-008). */
+  readonly continueAt: (host: string) => string;
+  /** 1d's plain-language note, adopted under the CTA. */
+  readonly extractNote: string;
+  /** The related rail heading: "More from {place}". */
+  readonly moreFrom: (placeName: string) => string;
   /** Empty-state band for a followed place with nothing published (US1-AC3). */
   readonly emptyPlaceTitle: string;
   readonly emptyPlaceBody: (placeName: string) => string;
@@ -38,6 +51,32 @@ export interface UiStrings {
   /** Masthead sign-in (mockup 1a) — disabled until registration ships (T031). */
   readonly signIn: string;
   readonly signInPending: string;
+  /**
+   * Site footer. The imprint and privacy notice are not decoration: a
+   * German-facing service owes an Impressum (TMG §5) and a GDPR privacy
+   * notice, so the footer carries their places and says openly that they
+   * are still owed rather than linking to pages that do not exist.
+   */
+  readonly alphaLabel: string;
+  readonly imprint: string;
+  readonly privacy: string;
+  readonly contact: string;
+  readonly legalPending: string;
+  /** The axis bar (mockup 1f) — chip actions and the independence line. */
+  readonly addPlace: (placeName: string) => string;
+  readonly removePlace: (placeName: string) => string;
+  readonly independenceLine: string;
+  /** The setup dialog (mockup 1e). */
+  readonly setupTitle: string;
+  readonly setupSubtitle: string;
+  readonly axisOneLabel: string;
+  readonly axisTwoLabel: string;
+  readonly alphaLanguagesNote: string;
+  readonly selectedCount: (count: number) => string;
+  readonly covers: (placeName: string) => string;
+  readonly frontPagePreviewLabel: string;
+  readonly later: string;
+  readonly startReading: string;
 }
 
 const EL: UiStrings = {
@@ -51,6 +90,14 @@ const EL: UiStrings = {
   source: 'Πηγή',
   published: 'Δημοσίευση',
   attribution: 'Απόδοση',
+  approved: 'Έγκριση',
+  record: 'Μητρώο',
+  wholeExtractTitle: 'Αυτό είναι ολόκληρο το απόσπασμα',
+  wholeExtractBody:
+    'Η άδεια με αυτόν τον εκδότη καλύπτει αποδιδόμενο τίτλο και σύντομο απόσπασμα. Το υπόλοιπο άρθρο παραμένει εκεί όπου γράφτηκε.',
+  continueAt: (host) => `Συνέχεια στο ${host} ↗`,
+  extractNote: 'Μόνο απόσπασμα, βάσει άδειας. Ένα κλικ έως τον εκδότη.',
+  moreFrom: (placeName) => `Περισσότερα από ${placeName}`,
   emptyPlaceTitle: 'Τόπος χωρίς δημοσιεύσεις ακόμη',
   emptyPlaceBody: (placeName) =>
     `Δεν έχει δημοσιευθεί ακόμη τίποτα για ${placeName}. Τα εγκεκριμένα άρθρα θα εμφανίζονται εδώ.`,
@@ -63,6 +110,26 @@ const EL: UiStrings = {
     'Δοκιμάστε ξανά σε λίγο. Δεν χάθηκε τίποτα — τα άρθρα θα εμφανιστούν μόλις αποκατασταθεί η σύνδεση.',
   signIn: 'Σύνδεση',
   signInPending: 'Διαθέσιμο με την εγγραφή',
+  alphaLabel: 'Άλφα',
+  imprint: 'Ταυτότητα',
+  privacy: 'Απόρρητο',
+  contact: 'Επικοινωνία',
+  legalPending: 'εκκρεμούν πριν από τη δημόσια κυκλοφορία',
+  addPlace: (placeName) => `Προσθήκη τόπου: ${placeName}`,
+  removePlace: (placeName) => `Αφαίρεση τόπου: ${placeName}`,
+  independenceLine: 'Η γλώσσα και ο τόπος δεν συνδυάζονται ποτέ σε μία ρύθμιση.',
+  setupTitle: 'Ρυθμίστε την ανάγνωσή σας',
+  setupSubtitle:
+    'Η γλώσσα σας και οι τόποι που ακολουθείτε είναι ξεχωριστές επιλογές. Αλλάξτε οποιαδήποτε από τις δύο οποτεδήποτε.',
+  axisOneLabel: 'Άξονας 1 — Διαβάζω στα',
+  axisTwoLabel: 'Άξονας 2 — Ακολουθώ',
+  alphaLanguagesNote:
+    'Μόνο οι γλώσσες της άλφα. Τα αγγλικά υπάρχουν στο σχήμα και δεν είναι προσβάσιμα.',
+  selectedCount: (count) => `Επιλεγμένοι: ${count}`,
+  covers: (placeName) => `καλύπτει ${placeName}`,
+  frontPagePreviewLabel: 'Πρώτη σελίδα:',
+  later: 'Αργότερα',
+  startReading: 'Έναρξη ανάγνωσης',
 };
 
 const DE: UiStrings = {
@@ -76,6 +143,14 @@ const DE: UiStrings = {
   source: 'Quelle',
   published: 'Veröffentlicht',
   attribution: 'Quellenvermerk',
+  approved: 'Freigabe',
+  record: 'Nachweis',
+  wholeExtractTitle: 'Das ist der ganze Auszug',
+  wholeExtractBody:
+    'Die Lizenz mit diesem Verlag deckt eine wiedergegebene Überschrift und einen kurzen Auszug. Der Rest des Artikels bleibt, wo er geschrieben wurde.',
+  continueAt: (host) => `Weiter bei ${host} ↗`,
+  extractNote: 'Nur Auszug, laut Lizenz. Ein Klick zum Verlag.',
+  moreFrom: (placeName) => `Mehr aus ${placeName}`,
   emptyPlaceTitle: 'Noch nichts veröffentlicht',
   emptyPlaceBody: (placeName) =>
     `Für ${placeName} wurde noch nichts veröffentlicht. Freigegebene Beiträge erscheinen hier.`,
@@ -88,6 +163,26 @@ const DE: UiStrings = {
     'Versuchen Sie es gleich noch einmal. Nichts ist verloren — die Beiträge erscheinen, sobald die Verbindung wieder steht.',
   signIn: 'Anmelden',
   signInPending: 'Verfügbar mit der Registrierung',
+  alphaLabel: 'Alpha',
+  imprint: 'Impressum',
+  privacy: 'Datenschutz',
+  contact: 'Kontakt',
+  legalPending: 'vor dem öffentlichen Start erforderlich',
+  addPlace: (placeName) => `Ort hinzufügen: ${placeName}`,
+  removePlace: (placeName) => `Ort entfernen: ${placeName}`,
+  independenceLine: 'Sprache und Ort werden nie zu einer Einstellung kombiniert.',
+  setupTitle: 'Richten Sie Ihr Lesen ein',
+  setupSubtitle:
+    'Ihre Sprache und die Orte, denen Sie folgen, sind getrennte Entscheidungen. Ändern Sie beides jederzeit.',
+  axisOneLabel: 'Achse 1 — Ich lese auf',
+  axisTwoLabel: 'Achse 2 — Ich folge',
+  alphaLanguagesNote:
+    'Nur die Alpha-Sprachen. Englisch existiert im Schema und ist nicht erreichbar.',
+  selectedCount: (count) => `Ausgewählt: ${count}`,
+  covers: (placeName) => `umfasst ${placeName}`,
+  frontPagePreviewLabel: 'Startseite:',
+  later: 'Später',
+  startReading: 'Lesen starten',
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, UiStrings>> = { el: EL, de: DE };

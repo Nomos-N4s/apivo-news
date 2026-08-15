@@ -7,8 +7,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 	"time"
+
+	"github.com/Nomos-N4s/apivo-news/api"
 )
 
 // ReadinessCheck reports whether a dependency is ready to serve traffic.
@@ -38,8 +42,9 @@ type Server struct {
 // Mount adds more later.
 func New(log *slog.Logger, addr string, ready ReadinessCheck, routes ...Route) *Server {
 	s := &Server{log: log, mux: http.NewServeMux()}
-	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
-	s.mux.HandleFunc("GET /readyz", s.handleReadyz(ready))
+	for pattern, handler := range s.builtin(ready) {
+		s.mux.HandleFunc(pattern, handler)
+	}
 	for _, r := range routes {
 		s.mux.Handle(r.Pattern, r.Handler)
 	}
@@ -57,6 +62,27 @@ func New(log *slog.Logger, addr string, ready ReadinessCheck, routes ...Route) *
 // the server-wide headers (X-Robots-Tag on every response).
 func (s *Server) Mount(pattern string, handler http.Handler) {
 	s.mux.Handle(pattern, handler)
+}
+
+// builtin maps every route the platform serves itself - the health pair and
+// the OpenAPI document - to its handler. New registers exactly this map and
+// Patterns reports exactly its keys, so the route table and the list of
+// routes cannot disagree about what exists.
+func (s *Server) builtin(ready ReadinessCheck) map[string]http.HandlerFunc {
+	return map[string]http.HandlerFunc{
+		"GET /healthz":             s.handleHealthz,
+		"GET /readyz":              s.handleReadyz(ready),
+		"GET /api/v1/openapi.json": s.handleOpenAPI,
+	}
+}
+
+// Patterns lists the ServeMux patterns ("METHOD /path") every Server
+// registers, sorted. The OpenAPI drift test reads it - together with the
+// patterns each module reports - to check the served document against the
+// routes that actually exist.
+func Patterns() []string {
+	var s Server
+	return slices.Sorted(maps.Keys(s.builtin(nil)))
 }
 
 // noindex stamps every response with a robots-blocking header. The API is
@@ -106,6 +132,19 @@ func (s *Server) handleReadyz(ready ReadinessCheck) http.HandlerFunc {
 			}
 		}
 		s.writeStatus(w, http.StatusOK, "ok")
+	}
+}
+
+// handleOpenAPI serves the embedded OpenAPI document. The bytes are the
+// committed api/openapi.json compiled into the binary, so what a client
+// reads here is exactly what CI validated - there is no generation step in
+// between that could serve something else. It is the one API route the
+// platform owns: tooling asks for the description of the whole surface, not
+// of whichever modules a given deployment happens to have mounted.
+func (s *Server) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := w.Write(api.OpenAPIJSON()); err != nil {
+		s.log.Warn("writing openapi document", "error", err)
 	}
 }
 

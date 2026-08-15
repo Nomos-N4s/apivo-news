@@ -1,0 +1,101 @@
+---
+import type { ReadingLanguage } from '../lib/reader/axes';
+import { DEFAULT_FRONT_PAGE } from '../lib/reader/axes';
+import { uiStrings } from '../lib/reader/strings';
+
+// The footer every screen shares. Beyond closing the page, it carries the
+// two statements this product owes its readers: what the licence permits
+// (passed as `note` on reader pages) and where the legal notices live.
+//
+// The imprint and privacy notice are legally owed, not decorative — a
+// German-facing service needs an Impressum (TMG §5) and a GDPR privacy
+// notice — so their places are held and named as still owed rather than
+// linked to pages that do not exist (issue #64).
+interface Props {
+  lang: ReadingLanguage;
+  note?: string | undefined;
+  /**
+   * Where the brand leads. Pages that hold both axes pass their own
+   * front page, so the footer never quietly changes the reader's
+   * language or followed places; screens with no axes of their own fall
+   * back to the flagship journey.
+   */
+  homeHref?: string | undefined;
+}
+
+const { lang, note, homeHref } = Astro.props;
+const home = homeHref ?? DEFAULT_FRONT_PAGE;
+const t = uiStrings(lang);
+const year = new Date().getUTCFullYear();
+---
+
+<footer class="site-footer">
+  {note !== undefined && <p class="note">{note}</p>}
+  <div class="row">
+    <a class="brand" href={home}>epilo<span class="brand-yes">YES</span></a>
+    <span class="tag tag-neutral alpha">{t.alphaLabel}</span>
+    <p class="legal">
+      <span>{t.imprint}</span>
+      <span aria-hidden="true">·</span>
+      <span>{t.privacy}</span>
+      <span aria-hidden="true">·</span>
+      <span>{t.contact}</span>
+      <em>— {t.legalPending}</em>
+    </p>
+    <span class="copy">© {year} epiloYES</span>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    border-top: 2px solid var(--color-divider);
+  }
+  .note {
+    margin: 0;
+    padding: var(--space-4) calc(var(--space-6) + var(--space-1));
+    border-bottom: 1px solid var(--color-divider);
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    text-wrap: pretty;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+    padding: var(--space-4) calc(var(--space-6) + var(--space-1));
+  }
+  .brand {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 15px;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  .brand-yes {
+    color: var(--color-accent);
+  }
+  .alpha {
+    font-size: 10px;
+  }
+  .legal {
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .legal em {
+    font-style: normal;
+    color: color-mix(in srgb, var(--color-text) 40%, transparent);
+  }
+  .copy {
+    margin-left: auto;
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 45%, transparent);
+  }
+</style>
