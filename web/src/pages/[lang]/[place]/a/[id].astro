@@ -236,6 +236,13 @@ const title = `${article.headline} · epiloYES`;
   .back:hover {
     color: var(--color-accent-700);
   }
+  .back {
+    /* 24px touch-target floor without moving the text (SC 2.5.8). */
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    min-height: 24px;
+  }
   .head-axes {
     margin-left: auto;
     font-size: 12px;
@@ -390,6 +397,13 @@ const title = `${article.headline} · epiloYES`;
     text-align: right;
     overflow-wrap: anywhere;
   }
+  .record-row a {
+    /* Grow the hit area to 24px inside the row's existing padding
+       (SC 2.5.8): the negative margin cancels the layout shift. */
+    display: inline-block;
+    padding-block: 6px;
+    margin-block: -6px;
+  }
   .more-list {
     display: flex;
     flex-direction: column;
@@ -412,6 +426,8 @@ const title = `${article.headline} · epiloYES`;
     font-weight: var(--font-heading-weight);
     font-size: 15px;
     line-height: 1.25;
+    overflow-wrap: break-word;
+    hyphens: auto;
   }
   .more-meta {
     font-size: 11px;

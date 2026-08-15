@@ -73,6 +73,10 @@ const year = new Date().getUTCFullYear();
     letter-spacing: -0.02em;
     color: var(--color-text);
     text-decoration: none;
+    /* 24px touch-target floor without moving the text (SC 2.5.8). */
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
   }
   .brand-yes {
     color: var(--color-accent);
