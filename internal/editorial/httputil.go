@@ -2,6 +2,8 @@ package editorial
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -24,8 +26,13 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 		platformhttp.Problem(w, http.StatusBadRequest, "request body is not valid JSON for this endpoint: "+err.Error())
 		return false
 	}
-	// A second document after the first is not a JSON body, it is two.
-	if dec.More() {
+	// Everything after the first document must be whitespace, and only a
+	// second Decode proves it. Decoder.More() answers a narrower question -
+	// "is another VALUE coming?" - so a stray closing delimiter (`}`, `]`)
+	// after a valid object reads as "no more values" and a malformed body
+	// would be accepted. Requiring io.EOF here rejects both a second
+	// document and trailing syntax errors.
+	if err := dec.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
 		platformhttp.Problem(w, http.StatusBadRequest, "request body must contain a single JSON document")
 		return false
 	}

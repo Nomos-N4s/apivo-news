@@ -236,10 +236,38 @@ func TestCreateSourceValidation(t *testing.T) {
 		rec := post(t, `{"name":"N","url":"https://example.test/f","language":"el","jurisdiction":"GR","licence_terms":"T","permission_evidence":"granted"}`)
 		wantProblem(t, rec, http.StatusBadRequest, "not valid JSON")
 	})
-	t.Run("400 on trailing garbage after the document", func(t *testing.T) {
+	// Everything after the first document must be whitespace. A stray
+	// closing delimiter is the interesting case: Decoder.More() answers
+	// "is another value coming?", which is false for `]` and `}`, so a
+	// More()-based check would wave these malformed bodies through.
+	trailing := []struct {
+		name    string
+		trailer string
+	}{
+		{name: "a second object", trailer: `{"again":true}`},
+		{name: "a stray closing bracket", trailer: `]`},
+		{name: "a stray closing brace", trailer: `}`},
+		{name: "a stray comma", trailer: `,`},
+		{name: "a bare token", trailer: `garbage`},
+	}
+	for _, tc := range trailing {
+		t.Run("400 on "+tc.name+" after the document", func(t *testing.T) {
+			t.Parallel()
+			rec := post(t, `{"name":"N","url":"https://example.test/f","language":"el","jurisdiction":"GR","licence_terms":"T"}`+tc.trailer)
+			wantProblem(t, rec, http.StatusBadRequest, "single JSON document")
+		})
+	}
+	t.Run("trailing whitespace is accepted", func(t *testing.T) {
 		t.Parallel()
-		rec := post(t, `{"name":"N","url":"https://example.test/f","language":"el","jurisdiction":"GR","licence_terms":"T"}{"again":true}`)
-		wantProblem(t, rec, http.StatusBadRequest, "single JSON document")
+		// Whitespace after the document is not trailing input; a body a
+		// pretty-printer produced must still be a valid request. The canned
+		// store answers, so reaching 201 proves decoding succeeded.
+		h := newHandler(t, okStore{src: editorial.Source{ID: uuid.New(), UsageRule: "extract_and_link"}})
+		rec := doJSON(t, h, http.MethodPost, "/api/v1/editorial/sources", editorToken,
+			`{"name":"N","url":"https://example.test/f","language":"el","jurisdiction":"GR","licence_terms":"T"}`+"\n\t \r\n")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusCreated, rec.Body.String())
+		}
 	})
 
 	blankCases := []struct {

@@ -85,7 +85,14 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// Without a verification endpoint no bearer token can be checked, so
 		// the authenticated routes are not mounted at all: a misconfigured
 		// deployment exposes nothing, rather than something unguarded.
-		log.WarnContext(ctx, "JWKS_URL not set; editorial endpoints are not mounted")
+		//
+		// This is loud but not fatal, deliberately. The reader-facing path
+		// needs no bearer token, so refusing to start would take the public
+		// site down over an editorial-only misconfiguration - a far worse
+		// failure than editorial endpoints answering 404. ERROR level and a
+		// named consequence make the cause obvious in the first log line
+		// rather than something to deduce from a 404 later.
+		log.ErrorContext(ctx, "JWKS_URL is not set: every /api/v1/editorial/ route is UNMOUNTED and will answer 404; reader endpoints are unaffected. Set JWKS_URL to the auth provider JWKS endpoint to enable editorial endpoints")
 	} else {
 		editorialRoute, closeVerifier, err := newEditorialRoute(ctx, cfg, log, pool)
 		if err != nil {
@@ -140,10 +147,16 @@ func (a editorAuth) AuthenticateEditor(ctx context.Context, token string) (edito
 	case err != nil:
 		return editorial.Editor{}, err
 	}
-	if err := identity.RequireEditor(ctx, id, a.roles); err != nil {
-		if errors.Is(err, identity.ErrNotEditor) {
-			return editorial.Editor{}, fmt.Errorf("%w: %w", editorial.ErrNotEditor, err)
-		}
+	switch err := identity.RequireEditor(ctx, id, a.roles); {
+	case errors.Is(err, identity.ErrNotEditor):
+		return editorial.Editor{}, fmt.Errorf("%w: %w", editorial.ErrNotEditor, err)
+	// Authentication and the role gate are two queries, so an account
+	// deleted between them surfaces as ErrUnknownAccount here as well. It
+	// means the same thing in both places - the caller holds no account -
+	// and so must map to the same 401, never a 500.
+	case errors.Is(err, identity.ErrUnknownAccount):
+		return editorial.Editor{}, fmt.Errorf("%w: %w", editorial.ErrUnauthenticated, err)
+	case err != nil:
 		return editorial.Editor{}, err
 	}
 	return editorial.Editor{ID: id.Subject, Email: id.Email, DisplayName: id.DisplayName}, nil

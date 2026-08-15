@@ -14,6 +14,7 @@ import (
 	"crypto/rsa"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -29,6 +30,8 @@ import (
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/lestrrat-go/jwx/v3/jwt"
 
+	"github.com/Nomos-N4s/apivo-news/internal/editorial"
+	"github.com/Nomos-N4s/apivo-news/internal/identity"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/db"
 )
@@ -209,6 +212,80 @@ func TestEditorialWiringAgainstSchema(t *testing.T) {
 	})
 }
 
+// vanishingRoles deletes the account row before delegating to the real
+// database-backed lookup, forcing the window between authentication and
+// the role gate: the token authenticated against an account that no longer
+// exists by the time its role is read.
+type vanishingRoles struct {
+	pool *pgxpool.Pool
+	real identity.RoleLookup
+	t    *testing.T
+}
+
+func (v vanishingRoles) Role(ctx context.Context, accountID uuid.UUID) (string, error) {
+	v.t.Helper()
+	if _, err := v.pool.Exec(ctx, `delete from account where id = $1`, accountID.String()); err != nil {
+		v.t.Fatalf("deleting account mid-request: %v", err)
+	}
+	return v.real.Role(ctx, accountID)
+}
+
+// TestEditorAuthMapsVanishedAccountTo401 covers the two-query window:
+// authentication and the role gate read the account separately, so an
+// account deleted in between surfaces as ErrUnknownAccount from the role
+// lookup. It means the same thing in both places - the caller holds no
+// account - and must be the documented 401, not a 500.
+func TestEditorAuthMapsVanishedAccountTo401(t *testing.T) {
+	t.Parallel()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise the adapter")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatalf("migrating: %v", err)
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("connecting: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	editorID := seedAccount(ctx, t, pool, "editor")
+	key := newSigningKey(t)
+	jwks := newJWKSServer(t, key)
+	verifier, err := identity.NewVerifier(ctx, identity.VerifierConfig{JWKSURL: jwks.URL})
+	if err != nil {
+		t.Fatalf("NewVerifier: %v", err)
+	}
+	t.Cleanup(func() { _ = verifier.Close(context.Background()) })
+
+	auth := editorAuth{
+		ids:   identity.New(verifier, pool),
+		roles: vanishingRoles{pool: pool, real: identity.NewAccountRoles(pool), t: t},
+	}
+
+	_, err = auth.AuthenticateEditor(ctx, mintBearer(t, key, editorID.String()))
+	if !errors.Is(err, editorial.ErrUnauthenticated) {
+		t.Fatalf("AuthenticateEditor error = %v, want errors.Is(err, editorial.ErrUnauthenticated)", err)
+	}
+	if errors.Is(err, editorial.ErrNotEditor) {
+		t.Error("a vanished account must not read as a role verdict")
+	}
+
+	// End to end, the middleware answers 401 rather than 500.
+	otherID := seedAccount(ctx, t, pool, "editor")
+	h := editorial.NewHandler(discardLogger(), editorial.NewPGStore(pool), auth)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/editorial/sources", strings.NewReader(
+		`{"name":"Vanished","url":"https://example.test/feed/`+randomHex(t)+`","language":"el","jurisdiction":"GR","licence_terms":"Terms"}`))
+	req.Header.Set("Authorization", "Bearer "+mintBearer(t, key, otherID.String()))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
 // TestRunServesWithEditorialRoutes proves serve() wires the verifier and
 // mounts the editorial routes when JWKS_URL is configured.
 func TestRunServesWithEditorialRoutes(t *testing.T) {
@@ -243,6 +320,63 @@ func TestRunServesWithEditorialRoutes(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "editorial endpoints are not mounted") {
 		t.Error("editorial endpoints reported unmounted despite JWKS_URL being set")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run() after cancel: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("run() did not return after context cancellation")
+	}
+}
+
+// TestRunWithoutJWKSStillServesLoudly pins the deliberate asymmetry:
+// missing JWKS_URL leaves the editorial routes unmounted but must NOT stop
+// the process - the reader path needs no bearer token, so an
+// editorial-only misconfiguration must not take the public site down. The
+// signal is an ERROR-level startup line naming the consequence, not a
+// crash and not a warning to be deduced from a later 404.
+func TestRunWithoutJWKSStillServesLoudly(t *testing.T) {
+	t.Parallel()
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise this test")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	env := map[string]string{
+		"DATABASE_URL": dbURL,
+		"HTTP_ADDR":    "127.0.0.1:0",
+		// JWKS_URL deliberately absent.
+	}
+
+	out := &syncBuffer{}
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, nil, envFrom(env), out) }()
+
+	deadline := time.Now().Add(30 * time.Second)
+	for !strings.Contains(out.String(), "starting") {
+		if time.Now().After(deadline) {
+			t.Fatalf("run() never reached the serving phase; output: %q", out.String())
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("run() exited before serving: %v; output: %q", err, out.String())
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+
+	logged := out.String()
+	if !strings.Contains(logged, "level=ERROR") {
+		t.Errorf("missing JWKS_URL must be logged at ERROR level; output: %q", logged)
+	}
+	for _, want := range []string{"JWKS_URL", "UNMOUNTED", "404"} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("startup log does not name %q as the consequence; output: %q", want, logged)
+		}
 	}
 	cancel()
 

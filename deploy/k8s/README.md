@@ -37,7 +37,7 @@ controllers later means changing only `web-ingress.yaml`.
 
 | File | Contents |
 |---|---|
-| `configmap.yaml` | Non-secret env for the api (`HTTP_ADDR`, `APP_ENV`, `LOG_LEVEL`) |
+| `configmap.yaml` | Non-secret env for the api (`HTTP_ADDR`, `APP_ENV`, `LOG_LEVEL`, `JWKS_URL`, `JWT_AUDIENCE`) |
 | `examples/secret.example.yaml` | **Structure-only stub** for `DATABASE_URL` — placeholder value, never a real credential, outside the applied set |
 | `api-deployment.yaml` / `api-service.yaml` | Go API, ClusterIP only |
 | `web-deployment.yaml` / `web-service.yaml` | Astro server, ClusterIP |
@@ -52,6 +52,8 @@ controllers later means changing only `web-ingress.yaml`.
 | `HTTP_ADDR` | `:8080` | `configmap.yaml` → api envFrom |
 | `APP_ENV` | `dev` | `configmap.yaml` (`prod` — the binary accepts exactly `dev` or `prod`) |
 | `LOG_LEVEL` | `info` | `configmap.yaml` |
+| `JWKS_URL` | commented placeholder in `.env.example`; from the host env in compose | `configmap.yaml` (CHANGE-ME placeholder — replace the project reference before applying). Not a credential: it names where the provider publishes its **public** keys. **Unset means every `/api/v1/editorial/` route is unmounted and answers 404**; the api still starts and serves readers, logging an ERROR line naming the consequence — an editorial misconfiguration must not take the public site down |
+| `JWT_AUDIENCE` | optional, commented in `.env.example` | `configmap.yaml` (`authenticated` — Supabase access tokens carry that `aud`). Optional; only meaningful alongside `JWKS_URL`, and setting it alone fails startup |
 | `DATABASE_URL` | local Postgres from `docker-compose.yml` | api `secretKeyRef` → the `apivo-secrets` Secret, created out of band; structure documented in `examples/secret.example.yaml`, which a plain `kubectl apply -f deploy/k8s/` never touches (apply does not recurse into subdirectories) |
 | `HOST` / `PORT` (web) | Astro defaults | Set inline in `web-deployment.yaml` (`0.0.0.0:4321` so the Node adapter binds the pod interface) |
 

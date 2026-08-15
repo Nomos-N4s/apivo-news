@@ -21,10 +21,29 @@
 //
 // Later phases add, through the same mechanism with no config change: the
 // translation-provider API key and the Supabase Auth keys for the web SSR.
+//
+// Non-secret vars — plain configuration in "vars" below, handed to the API
+// container by deploy/cloudflare/worker.js:
+//
+//   JWKS_URL       The auth provider's JWKS endpoint. NOT a secret: it names
+//                  where PUBLIC keys are published. Required for the
+//                  editorial endpoints — with it unset the API starts and
+//                  serves readers normally, logs an ERROR line naming the
+//                  consequence, and every /api/v1/editorial/ route answers
+//                  404. The value below is a CHANGE-ME placeholder; replace
+//                  the project reference before deploying.
+//   JWT_AUDIENCE   Optional. When set, tokens must additionally carry this
+//                  aud claim (Supabase access tokens carry "authenticated").
+//                  Only meaningful alongside JWKS_URL — setting it alone
+//                  fails startup.
 {
 	"name": "apivo-news",
 	"main": "deploy/cloudflare/worker.js",
 	"compatibility_date": "2026-08-01",
+	"vars": {
+		"JWKS_URL": "https://PLACEHOLDER_PROJECT.supabase.co/auth/v1/.well-known/jwks.json",
+		"JWT_AUDIENCE": "authenticated"
+	},
 	"containers": [
 		{
 			// Go API, built from the repo-root Dockerfile (T001). Internal
