@@ -54,6 +54,11 @@
   --ink-muted: color-mix(in srgb, #201e1d 70%, transparent);
   --ink-soft: color-mix(in srgb, #201e1d 65%, transparent);
 
+  /* Boundary for interactive controls (WCAG 1.4.11): 55% ink ≈ 3.66:1 on
+     --color-bg, 3.57:1 on --color-surface. --color-divider (40%) stays for
+     decorative rules and table lines, which carry no state. */
+  --border-strong: color-mix(in srgb, #201e1d 55%, transparent);
+
   /* Tonal ramps — generated in OKLCH on one shared lightness scale, so the
      same step of any role matches the others in visual value. */
   --color-neutral-100: #f8f4f4;
@@ -189,7 +194,7 @@ figcaption {
   width: 100%; min-height: 36px; padding: 6px 10px; font: inherit;
   font-size: 14px; color: var(--color-text); caret-color: var(--color-accent-700);
   background: var(--color-surface);
-  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-md);
 }
 .input:hover { border-color: var(--ink-soft); }
 .input:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
@@ -200,7 +205,7 @@ textarea.input { min-height: 90px; resize: vertical; }
 }
 .radio .dot {
   width: 16px; height: 16px; flex: none; border-radius: 50%;
-  border: 1.5px solid var(--color-divider);
+  border: 1.5px solid var(--border-strong);
 }
 .radio:hover .dot { border-color: var(--color-accent); }
 .radio input:checked + .dot {
@@ -214,13 +219,13 @@ textarea.input { min-height: 90px; resize: vertical; }
      :focus-visible ring — drawn 2px outside the border box — on the
      language switcher (WCAG 2.4.7/2.4.11). */
   display: inline-flex;
-  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-md);
 }
 .seg-opt {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 7px 12px; font-size: 13px; cursor: pointer;
 }
-.seg-opt + .seg-opt { border-left: 1px solid var(--color-divider); }
+.seg-opt + .seg-opt { border-left: 1px solid var(--border-strong); }
 .seg-opt:has(input:checked) { background: var(--color-accent-700); color: var(--color-bg); }
 .seg-opt:not(:has(input:checked)):hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
 .seg-opt:has(input:focus-visible) { outline: 2px solid var(--color-accent); outline-offset: -2px; }
