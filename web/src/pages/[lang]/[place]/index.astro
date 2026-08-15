@@ -88,9 +88,19 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
   <section class="axes" aria-label={`${t.readingLanguage} · ${t.places}`}>
     <div class="axis axis-lang">
       <h6>{t.readingLanguage}</h6>
+      {/* The current language is state, not a destination: it renders as
+          a span — an <a> without href fails accessibility checks. */}
       <div class="seg" role="group">
-        <a class="seg-opt" aria-current={lang === 'el' ? 'true' : undefined} href={lang === 'el' ? undefined : frontPagePath('el', slugs)}>Ελληνικά</a>
-        <a class="seg-opt" aria-current={lang === 'de' ? 'true' : undefined} href={lang === 'de' ? undefined : frontPagePath('de', slugs)}>Deutsch</a>
+        {lang === 'el' ? (
+          <span class="seg-opt" aria-current="true">Ελληνικά</span>
+        ) : (
+          <a class="seg-opt" href={frontPagePath('el', slugs)}>Ελληνικά</a>
+        )}
+        {lang === 'de' ? (
+          <span class="seg-opt" aria-current="true">Deutsch</span>
+        ) : (
+          <a class="seg-opt" href={frontPagePath('de', slugs)}>Deutsch</a>
+        )}
       </div>
     </div>
     <div class="axis axis-places">
