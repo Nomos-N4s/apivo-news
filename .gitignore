@@ -19,3 +19,7 @@ web/coverage/
 # OS / editor noise
 .DS_Store
 Thumbs.db
+
+# Local scratch: PR diffs pulled for review, and the editor launch config.
+*.diff
+.claude/launch.json
