@@ -66,9 +66,16 @@ history.
 - Query: `lang` (optional filter), `limit`, `cursor`.
 - 200: `{ items: [{ source_item_id, translation_id|null, source_name,
   headline_original|null, headline_translated|null, extract_translated|null,
-  retrieved_at, licence_snapshot }] }`. Column backing:
+  retrieved_at, licence_snapshot, correction_candidate,
+  withdrawals: [{ article_id, withdrawn_at, withdrawn_by, reason }] }],
+  next_cursor: string|null }`. Column backing:
   `headline_original` = `source_item.original_title`,
   `headline_translated`/`extract_translated` = `translation.headline`/`.extract`.
+  `correction_candidate` is true exactly when `withdrawals` is non-empty —
+  the origin is back in the queue because its only articles were withdrawn.
+  `withdrawals` is newest first, and `[]` (never null) for a fresh origin.
+- 400: unparseable `limit` (outside 1–100), malformed `lang`, a `cursor`
+  this endpoint did not issue, or an unrecognised query parameter.
 - 401 without token; 403 for non-editors.
 
 ### POST /api/v1/editorial/approvals

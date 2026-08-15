@@ -76,11 +76,19 @@ func (s errStore) CreateSource(context.Context, editorial.NewSource) (editorial.
 	return editorial.Source{}, s.err
 }
 
+func (s errStore) ReviewQueue(context.Context, editorial.QueueQuery) (editorial.QueuePage, error) {
+	return editorial.QueuePage{}, s.err
+}
+
 // okStore returns a canned created source.
 type okStore struct{ src editorial.Source }
 
 func (s okStore) CreateSource(context.Context, editorial.NewSource) (editorial.Source, error) {
 	return s.src, nil
+}
+
+func (s okStore) ReviewQueue(context.Context, editorial.QueueQuery) (editorial.QueuePage, error) {
+	return editorial.QueuePage{}, nil
 }
 
 // recordingStore captures what the handler actually asked to persist.
@@ -89,6 +97,10 @@ type recordingStore struct{ got editorial.NewSource }
 func (s *recordingStore) CreateSource(_ context.Context, src editorial.NewSource) (editorial.Source, error) {
 	s.got = src
 	return editorial.Source{ID: uuid.New(), URL: src.URL, UsageRule: "extract_and_link"}, nil
+}
+
+func (s *recordingStore) ReviewQueue(context.Context, editorial.QueueQuery) (editorial.QueuePage, error) {
+	return editorial.QueuePage{}, nil
 }
 
 func discardLogger() *slog.Logger {

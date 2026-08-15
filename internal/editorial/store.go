@@ -10,12 +10,20 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/Nomos-N4s/apivo-news/internal/editorial/store"
 )
 
 // DB is the narrow slice of database access this module needs, defined
 // here per the boundary rules (the consumer names its dependency). The
 // platform pool satisfies it; the composition root in cmd wires it in.
+//
+// The three methods are exactly sqlc's generated DBTX seam, so the same
+// value backs both the hand-written statements here and the generated
+// queries in the store subpackage.
 type DB interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
@@ -55,15 +63,17 @@ type Source struct {
 // failure paths no real database produces on demand.
 type Store interface {
 	CreateSource(ctx context.Context, src NewSource) (Source, error)
+	ReviewQueue(ctx context.Context, q QueueQuery) (QueuePage, error)
 }
 
 // PGStore is the Postgres-backed Store.
 type PGStore struct {
 	db DB
+	q  *store.Queries
 }
 
 // NewPGStore builds the Store the composition root wires.
-func NewPGStore(db DB) *PGStore { return &PGStore{db: db} }
+func NewPGStore(db DB) *PGStore { return &PGStore{db: db, q: store.New(db)} }
 
 // CreateSource registers a licensed source. The usage rule is not an
 // input: the column's default (extract_and_link) is the only value a
