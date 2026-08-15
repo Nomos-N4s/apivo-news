@@ -14,6 +14,16 @@ import (
 // ReadinessCheck reports whether a dependency is ready to serve traffic.
 type ReadinessCheck func(ctx context.Context) error
 
+// Route pairs a ServeMux pattern with the handler a module contributed.
+// Modules build their handlers; the composition root in cmd passes them
+// here. The platform stays ignorant of what the routes do.
+type Route struct {
+	// Pattern is a net/http ServeMux pattern, e.g. "/api/v1/editorial/".
+	Pattern string
+	// Handler serves every request matching Pattern.
+	Handler http.Handler
+}
+
 // Server wraps the standard library HTTP server with health endpoints and
 // context-driven graceful shutdown.
 type Server struct {
@@ -22,12 +32,16 @@ type Server struct {
 }
 
 // New builds a Server listening on addr. The ready check backs /readyz;
-// pass the database ping. A nil check reports always ready.
-func New(log *slog.Logger, addr string, ready ReadinessCheck) *Server {
+// pass the database ping. A nil check reports always ready. Any routes are
+// mounted on the same mux, sharing the noindex stamping.
+func New(log *slog.Logger, addr string, ready ReadinessCheck, routes ...Route) *Server {
 	s := &Server{log: log}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz(ready))
+	for _, r := range routes {
+		mux.Handle(r.Pattern, r.Handler)
+	}
 	s.inner = &http.Server{
 		Addr:              addr,
 		Handler:           noindex(mux),

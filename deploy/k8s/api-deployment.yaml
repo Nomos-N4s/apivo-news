@@ -49,8 +49,12 @@ spec:
           ports:
             - name: http
               containerPort: 8080
-          # Non-secret env (HTTP_ADDR, APP_ENV, LOG_LEVEL) — parity with
-          # .env.example, documented in configmap.yaml.
+          # Non-secret env (HTTP_ADDR, APP_ENV, LOG_LEVEL, JWKS_URL,
+          # JWT_AUDIENCE) — parity with .env.example, documented in
+          # configmap.yaml. JWKS_URL carries only public keys' location, so
+          # it is configuration, not a credential; without it the editorial
+          # routes are unmounted (the api logs an ERROR line and readers
+          # keep serving).
           envFrom:
             - configMapRef:
                 name: apivo-config

@@ -10,8 +10,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -21,6 +23,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Nomos-N4s/apivo-news/internal/editorial"
+	"github.com/Nomos-N4s/apivo-news/internal/identity"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 	platformdb "github.com/Nomos-N4s/apivo-news/internal/platform/db"
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
@@ -76,9 +80,91 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 	}
 	defer pool.Close()
 
-	srv := platformhttp.New(log, cfg.HTTPAddr, readiness(pool))
+	var routes []platformhttp.Route
+	if cfg.JWKSURL == "" {
+		// Without a verification endpoint no bearer token can be checked, so
+		// the authenticated routes are not mounted at all: a misconfigured
+		// deployment exposes nothing, rather than something unguarded.
+		//
+		// This is loud but not fatal, deliberately. The reader-facing path
+		// needs no bearer token, so refusing to start would take the public
+		// site down over an editorial-only misconfiguration - a far worse
+		// failure than editorial endpoints answering 404. ERROR level and a
+		// named consequence make the cause obvious in the first log line
+		// rather than something to deduce from a 404 later.
+		log.ErrorContext(ctx, "JWKS_URL is not set: every /api/v1/editorial/ route is UNMOUNTED and will answer 404; reader endpoints are unaffected. Set JWKS_URL to the auth provider JWKS endpoint to enable editorial endpoints")
+	} else {
+		editorialRoute, closeVerifier, err := newEditorialRoute(ctx, cfg, log, pool)
+		if err != nil {
+			return err
+		}
+		defer closeVerifier()
+		routes = append(routes, editorialRoute)
+	}
+
+	srv := platformhttp.New(log, cfg.HTTPAddr, readiness(pool), routes...)
 	log.InfoContext(ctx, "starting", "addr", cfg.HTTPAddr, "env", cfg.Env)
 	return srv.Run(ctx)
+}
+
+// newEditorialRoute wires the editorial module: JWT verification against
+// the configured JWKS, subject-to-account mapping and the account.role
+// lookup from identity, adapted behind editorial's consumer-defined auth
+// seam. The returned func stops the verifier's background JWKS refreshing.
+func newEditorialRoute(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool) (platformhttp.Route, func(), error) {
+	verifier, err := identity.NewVerifier(ctx, identity.VerifierConfig{
+		JWKSURL:  cfg.JWKSURL,
+		Audience: cfg.JWTAudience,
+	})
+	if err != nil {
+		return platformhttp.Route{}, nil, err
+	}
+	auth := newEditorAuth(identity.New(verifier, pool), identity.NewAccountRoles(pool))
+	return platformhttp.Route{
+		Pattern: "/api/v1/editorial/",
+		Handler: editorial.NewHandler(log, editorial.NewPGStore(pool), auth),
+	}, func() { _ = verifier.Close(context.Background()) }, nil
+}
+
+// newEditorAuth builds the identity-to-editorial adapter. It is the single
+// construction point for editorAuth, so callers - production wiring and
+// tests alike - go through the same path and a new dependency cannot be
+// wired one way here and another way there.
+func newEditorAuth(ids *identity.Service, roles identity.RoleLookup) editorAuth {
+	return editorAuth{ids: ids, roles: roles}
+}
+
+// editorAuth adapts the identity module to editorial's consumer-defined
+// EditorAuthenticator. The modules never import each other; this adapter
+// in the composition root is where their error vocabularies meet:
+// identity's "bad token" and "no account" both become editorial's 401, its
+// "not an editor" the 403, and everything else stays a failure.
+type editorAuth struct {
+	ids   *identity.Service
+	roles identity.RoleLookup
+}
+
+func (a editorAuth) AuthenticateEditor(ctx context.Context, token string) (editorial.Editor, error) {
+	id, err := a.ids.Authenticate(ctx, token)
+	switch {
+	case errors.Is(err, identity.ErrInvalidToken), errors.Is(err, identity.ErrUnknownAccount):
+		return editorial.Editor{}, fmt.Errorf("%w: %w", editorial.ErrUnauthenticated, err)
+	case err != nil:
+		return editorial.Editor{}, err
+	}
+	switch err := identity.RequireEditor(ctx, id, a.roles); {
+	case errors.Is(err, identity.ErrNotEditor):
+		return editorial.Editor{}, fmt.Errorf("%w: %w", editorial.ErrNotEditor, err)
+	// Authentication and the role gate are two queries, so an account
+	// deleted between them surfaces as ErrUnknownAccount here as well. It
+	// means the same thing in both places - the caller holds no account -
+	// and so must map to the same 401, never a 500.
+	case errors.Is(err, identity.ErrUnknownAccount):
+		return editorial.Editor{}, fmt.Errorf("%w: %w", editorial.ErrUnauthenticated, err)
+	case err != nil:
+		return editorial.Editor{}, err
+	}
+	return editorial.Editor{ID: id.Subject, Email: id.Email, DisplayName: id.DisplayName}, nil
 }
 
 // healthcheck performs one HTTP GET against the local /healthz endpoint and
