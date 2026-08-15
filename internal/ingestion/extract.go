@@ -48,18 +48,56 @@ func DeriveExtract(summary, body string) string {
 	return string(runes[:extractMaxRunes])
 }
 
-// lastSentenceEnd returns the index of the last sentence-closing rune within
-// runes[:limit], or -1. A closer only counts when whitespace follows it, so
-// a decimal point or an abbreviation glued to its next word ("z.B.") does
-// not end a sentence mid-token. Callers guarantee len(runes) > limit, so
-// runes[i+1] always exists.
+// sentenceTrailers are the runes that may sit between a sentence closer and
+// whatever follows it, and still belong to the sentence: the closing quotes
+// and brackets Greek, German and English feeds use.
+const sentenceTrailers = `"'”’»)]`
+
+// lastSentenceEnd returns the index of the last rune belonging to the last
+// complete sentence within runes[:limit], or -1. The returned index includes
+// any closing quote or bracket that trails the closer, so the extract keeps
+// the punctuation the author wrote.
+//
+// A closer only counts when the sentence genuinely ends there: whitespace or
+// a closing markup tag must follow, optionally past those trailers. Feed
+// bodies routinely carry HTML, where a sentence ends as ".</p>" with no
+// space at all, so requiring bare whitespace would miss most real boundaries
+// and fall back to a word cut. Requiring a CLOSING tag keeps an abbreviation
+// glued to inline markup ("z.B.<b>fett</b>") from ending a sentence, as does
+// the existing rule for a decimal point or "z.B. " mid-token.
 func lastSentenceEnd(runes []rune, limit int) int {
 	for i := limit - 1; i >= 0; i-- {
-		if strings.ContainsRune(sentenceEnds, runes[i]) && unicode.IsSpace(runes[i+1]) {
-			return i
+		if !strings.ContainsRune(sentenceEnds, runes[i]) {
+			continue
+		}
+		if end, ok := sentenceEndsAt(runes, i); ok && end < limit {
+			return end
 		}
 	}
 	return -1
+}
+
+// sentenceEndsAt reports whether the closer at index i ends a sentence, and
+// returns the index of the last rune belonging to that sentence (the closer
+// itself, or the last trailing quote or bracket after it).
+func sentenceEndsAt(runes []rune, i int) (int, bool) {
+	end := i
+	for j := i + 1; j < len(runes); j++ {
+		switch {
+		case unicode.IsSpace(runes[j]):
+			return end, true
+		case runes[j] == '<':
+			// A closing tag ends the sentence; an inline opening tag
+			// ("z.B.<b>") continues it.
+			return end, j+1 < len(runes) && runes[j+1] == '/'
+		case strings.ContainsRune(sentenceTrailers, runes[j]):
+			end = j
+		default:
+			return end, false
+		}
+	}
+	// The text ends here, so the sentence does too.
+	return end, true
 }
 
 // lastSpace returns the index of the last whitespace rune, or -1.

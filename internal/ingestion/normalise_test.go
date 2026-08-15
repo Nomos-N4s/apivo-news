@@ -7,6 +7,7 @@ package ingestion_test
 
 import (
 	"embed"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -190,6 +191,36 @@ func TestParseFeedNormalisesRealWorldShapes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestParseFeedBoundsDocumentSize asserts the parser refuses an oversized
+// document outright: the whole feed is materialised in memory, so an
+// unbounded read would let one hostile or runaway source exhaust the
+// process that is polling every other source.
+func TestParseFeedBoundsDocumentSize(t *testing.T) {
+	t.Parallel()
+
+	// A valid feed padded past the bound with comment bytes: the refusal
+	// must come from the size check, not from a parse failure.
+	oversized := `<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>` +
+		"<!--" + strings.Repeat("x", ingestion.MaxFeedBytes) + "-->" +
+		`<item><title>i</title><link>https://example.test/i</link></item></channel></rss>`
+
+	if _, err := ingestion.ParseFeed(strings.NewReader(oversized)); !errors.Is(err, ingestion.ErrFeedTooLarge) {
+		t.Fatalf("ParseFeed(oversized) error = %v, want ErrFeedTooLarge", err)
+	}
+
+	// A feed inside the bound still parses: the guard must not reject
+	// legitimate feeds.
+	items, err := ingestion.ParseFeed(strings.NewReader(
+		`<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>` +
+			`<item><title>i</title><link>https://example.test/i</link></item></channel></rss>`))
+	if err != nil {
+		t.Fatalf("ParseFeed(small feed): %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("ParseFeed(small feed) returned %d items, want 1", len(items))
 	}
 }
 

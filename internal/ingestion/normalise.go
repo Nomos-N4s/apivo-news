@@ -1,6 +1,8 @@
 package ingestion
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -40,12 +42,34 @@ type NormalizedItem struct {
 	Summary string
 }
 
+// MaxFeedBytes bounds how much of a feed document ParseFeed will read. The
+// parser materialises the whole document in memory, so an oversized or
+// hostile response must not be allowed to exhaust the process: polling
+// continues for every other source instead. Generous for real feeds, which
+// run to tens of kilobytes.
+const MaxFeedBytes = 8 << 20 // 8 MiB
+
+// ErrFeedTooLarge reports a feed document exceeding MaxFeedBytes. The poll
+// loop logs it and moves on; nothing is stored from a truncated read.
+var ErrFeedTooLarge = errors.New("ingestion: feed exceeds the maximum accepted size")
+
 // ParseFeed parses one RSS 2.0, Atom or RDF document and normalises every
-// entry. The reader is consumed fully; encoding declarations other than
-// UTF-8 (a reality of Greek feeds) are converted by the parser. A feed with
-// no entries parses to an empty, non-nil slice.
+// entry. The reader is consumed up to MaxFeedBytes; a longer document is
+// refused with ErrFeedTooLarge rather than parsed in part. Encoding
+// declarations other than UTF-8 (a reality of Greek feeds) are converted by
+// the parser. A feed with no entries parses to an empty, non-nil slice.
 func ParseFeed(r io.Reader) ([]NormalizedItem, error) {
-	feed, err := gofeed.NewParser().Parse(r)
+	// One byte beyond the bound distinguishes "exactly at the limit" from
+	// "truncated", so an oversized feed is never silently half-parsed.
+	limited := io.LimitReader(r, MaxFeedBytes+1)
+	document, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("ingestion: read feed: %w", err)
+	}
+	if len(document) > MaxFeedBytes {
+		return nil, ErrFeedTooLarge
+	}
+	feed, err := gofeed.NewParser().Parse(bytes.NewReader(document))
 	if err != nil {
 		return nil, fmt.Errorf("ingestion: parse feed: %w", err)
 	}

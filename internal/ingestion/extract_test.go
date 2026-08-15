@@ -79,6 +79,34 @@ func TestDeriveExtract(t *testing.T) {
 			want: strings.Repeat("x", 295),
 		},
 		{
+			name: "sentence end followed by markup closes the sentence",
+			body: strings.Repeat("α", 240) + ".</p><p>" + strings.Repeat("β", 100),
+			want: strings.Repeat("α", 240) + ".",
+		},
+		{
+			name: "closing quote between the sentence end and markup",
+			body: strings.Repeat("γ", 200) + `."</blockquote>` + strings.Repeat("δ", 200),
+			want: strings.Repeat("γ", 200) + `."`,
+		},
+		{
+			name: "greek closing quote before whitespace",
+			body: strings.Repeat("ε", 180) + ".» " + strings.Repeat("ζ", 200),
+			want: strings.Repeat("ε", 180) + ".»",
+		},
+		{
+			name: "closing bracket before markup",
+			body: strings.Repeat("h", 210) + ".) <br/>" + strings.Repeat("i", 200),
+			want: strings.Repeat("h", 210) + ".)",
+		},
+		{
+			// The period of "z.B." sits before an inline opening tag, so it
+			// closes nothing: the cut falls through to the word boundary
+			// after the markup instead of splitting the abbreviation.
+			name: "abbreviation glued to inline markup does not end a sentence",
+			body: strings.Repeat("x", 280) + " z.B.<b>fett</b> " + strings.Repeat("y", 100),
+			want: strings.Repeat("x", 280) + " z.B.<b>fett</b>",
+		},
+		{
 			name: "no sentence end falls back to the last word boundary",
 			body: strings.Repeat("ω", 280) + " " + strings.Repeat("ψ", 100),
 			want: strings.Repeat("ω", 280),
