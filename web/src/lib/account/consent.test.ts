@@ -50,6 +50,16 @@ describe('historyNewestFirst', () => {
     expect(dates).toEqual([...dates].sort().reverse());
   });
 
+  it('orders by instant, not by string — mixed offsets must not misorder', () => {
+    // 09:00Z is later than 09:30+01:00 (08:30Z), but sorts earlier as text.
+    const history: ConsentRecord[] = [
+      { purpose: 'newsletter', granted_at: '2026-03-02T09:30:00+01:00', revoked_at: null },
+      { purpose: 'analytics', granted_at: '2026-03-02T09:00:00Z', revoked_at: null },
+    ];
+    const ordered = historyNewestFirst(history);
+    expect(ordered.at(0)?.purpose).toBe('analytics');
+  });
+
   it('does not mutate the input', () => {
     const before = [...CONSENT_FIXTURE];
     historyNewestFirst(CONSENT_FIXTURE);
