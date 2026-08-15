@@ -39,7 +39,7 @@ const sections: {
     href: `/${lang}/editor`,
     count: queueCount === undefined ? undefined : String(queueCount),
   },
-  { key: 'sources', label: t.sources, href: null, count: t.pending },
+  { key: 'sources', label: t.sources, href: `/${lang}/editor/sources` },
   { key: 'published', label: t.published, href: null, count: t.pending },
   { key: 'audit', label: t.audit, href: `/${lang}/editor/audit` },
 ];
@@ -47,7 +47,9 @@ const sections: {
 
 <header class="chrome">
   <a class="brand" href={`/${lang}/editor`}>epilo<span class="brand-yes">YES</span></a>
-  <span class="tag tag-neutral">{active === 'audit' ? t.audit : t.editorial}</span>
+  <span class="tag tag-neutral">
+    {active === 'audit' ? t.audit : active === 'sources' ? t.sources : t.editorial}
+  </span>
   <span class="who">
     {note ?? (
       <>
