@@ -1,0 +1,101 @@
+---
+// The provenance disclosure (mockups 1a/1c): the record belongs on the item
+// itself, not in a footer. A native <details> keeps it keyboard-accessible
+// with no JavaScript. Rows carry whatever record fields the caller has —
+// today the public payload's, and the same component takes the full
+// article_provenance shape if a public provenance surface is ever decided
+// (issue #51).
+interface Row {
+  term: string;
+  value: string;
+  href?: string | undefined;
+}
+
+interface Props {
+  label: string;
+  rows: readonly Row[];
+}
+
+const { label, rows } = Astro.props;
+---
+
+<details class="prov">
+  <summary><span class="sign" aria-hidden="true"></span>{label}</summary>
+  <dl>
+    {
+      rows.map((row) => (
+        <Fragment>
+          <dt>{row.term}</dt>
+          <dd>
+            {row.href !== undefined ? (
+              <a href={row.href} rel="external noopener">
+                {row.value}
+              </a>
+            ) : (
+              row.value
+            )}
+          </dd>
+        </Fragment>
+      ))
+    }
+  </dl>
+</details>
+
+<style>
+  summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+    list-style: none;
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 11px;
+    line-height: 1;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary:hover {
+    color: var(--color-accent-600);
+  }
+  .sign {
+    display: inline-flex;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--color-accent);
+    align-items: center;
+    justify-content: center;
+  }
+  .sign::before {
+    content: '+';
+    font-size: 11px;
+    line-height: 1;
+  }
+  .prov[open] .sign::before {
+    content: '−';
+  }
+  dl {
+    margin: var(--space-3) 0 0;
+    padding: var(--space-4) calc(var(--space-4) + 2px);
+    background: var(--color-surface);
+    border-left: 2px solid var(--color-accent);
+    display: grid;
+    grid-template-columns: minmax(90px, 150px) 1fr;
+    row-gap: var(--space-2);
+    column-gap: var(--space-3);
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.6;
+  }
+  dt {
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+</style>

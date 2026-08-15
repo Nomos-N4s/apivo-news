@@ -1,5 +1,6 @@
 # Normalise line endings; shell scripts and hooks must stay LF to run on Linux CI.
 * text=auto
+*.woff2 binary
 *.sh text eol=lf
 .githooks/* text eol=lf
 *.sql text eol=lf

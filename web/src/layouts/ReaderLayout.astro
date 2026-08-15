@@ -1,0 +1,45 @@
+---
+import '../styles/modernist.css';
+import type { ReadingLanguage } from '../lib/reader/axes';
+
+// The shell every reader page shares: the document, the Modernist
+// stylesheet, and the ruled 1280 frame the mockups compose into.
+interface Props {
+  lang: ReadingLanguage;
+  title: string;
+  description: string;
+}
+
+const { lang, title, description } = Astro.props;
+---
+
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+  </head>
+  <body>
+    <div class="frame">
+      <slot />
+    </div>
+  </body>
+</html>
+
+<style>
+  .frame {
+    max-width: 1280px;
+    min-height: 100dvh;
+    margin: 0 auto;
+    border-inline: 2px solid var(--color-divider);
+    display: flex;
+    flex-direction: column;
+  }
+  @media (max-width: 1320px) {
+    .frame {
+      border-inline: 0;
+    }
+  }
+</style>

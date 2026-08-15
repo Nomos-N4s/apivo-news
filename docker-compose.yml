@@ -41,6 +41,9 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: "4321"
+      # Reader pages render server-side from the Go API by service name
+      # (contract topology). Unset it to preview from built-in fixtures.
+      API_BASE_URL: http://api:8080
     ports:
       - "127.0.0.1:4321:4321"
     depends_on:

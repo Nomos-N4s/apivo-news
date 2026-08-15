@@ -1,0 +1,49 @@
+---
+import Masthead from '../components/Masthead.astro';
+import ReaderLayout from '../layouts/ReaderLayout.astro';
+import { DEFAULT_FRONT_PAGE } from '../lib/reader/axes';
+import { uiStrings } from '../lib/reader/strings';
+
+// The calm not-found page. It cannot know the reader's language axis (the
+// URL that led here didn't parse), so it answers in both alpha languages,
+// Greek first — the flagship journey.
+Astro.response.status = 404;
+
+const el = uiStrings('el');
+const de = uiStrings('de');
+---
+
+<ReaderLayout lang="el" title="epiloYES — 404" description={el.tagline}>
+  <Masthead homeHref={DEFAULT_FRONT_PAGE} />
+  <main class="nf">
+    <div class="pair">
+      <h1>{el.notFoundTitle}</h1>
+      <p>{el.notFoundBody}</p>
+    </div>
+    <div class="pair" lang="de">
+      <h2>{de.notFoundTitle}</h2>
+      <p>{de.notFoundBody}</p>
+    </div>
+    <a class="btn btn-primary" href={DEFAULT_FRONT_PAGE}>epiloYES →</a>
+  </main>
+</ReaderLayout>
+
+<style>
+  .nf {
+    flex: 1;
+    padding: calc(var(--space-8) + var(--space-4)) calc(var(--space-6) + var(--space-1));
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    align-items: flex-start;
+  }
+  .pair p {
+    margin: 0;
+    color: color-mix(in srgb, var(--color-text) 65%, transparent);
+  }
+  .pair h1,
+  .pair h2 {
+    font-size: 32px;
+    margin: 0 0 var(--space-2);
+  }
+</style>
