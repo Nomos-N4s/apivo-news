@@ -1,20 +1,19 @@
 ---
 import { API_BASE_URL } from 'astro:env/server';
-import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import EditorChrome from '../../../components/EditorChrome.astro';
+import ReaderLayout from '../../../layouts/ReaderLayout.astro';
 import {
   createEditorialApi,
   formatItemCost,
-  formatSpend,
-  spendPercent,
   type ApprovalOutcome,
   type QueuePage,
-} from '../../lib/editorial/api';
-import { isSameOrigin } from '../../lib/csrf';
-import { editorSession } from '../../lib/editorial/session';
-import { editorialStrings, languageName } from '../../lib/editorial/strings';
-import { findPlace, isReadingLanguage } from '../../lib/reader/axes';
-import { formatDateTime, formatItemDate, safeSourceUrl } from '../../lib/reader/format';
-import { uiStrings } from '../../lib/reader/strings';
+} from '../../../lib/editorial/api';
+import { isSameOrigin } from '../../../lib/csrf';
+import { editorSession } from '../../../lib/editorial/session';
+import { editorialStrings, languageName } from '../../../lib/editorial/strings';
+import { findPlace, isReadingLanguage } from '../../../lib/reader/axes';
+import { formatDateTime, formatItemDate, safeSourceUrl } from '../../../lib/reader/format';
+import { uiStrings } from '../../../lib/reader/strings';
 
 // The editorial review queue — mockup 1g, the approval gate (issue #61,
 // toward T022 #25). Nothing publishes without a named editor (US4,
@@ -101,49 +100,16 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
 ---
 
 <ReaderLayout lang={lang} title={`epiloYES — ${t.editorial}`} description={reader.tagline}>
-  <header class="chrome">
-    <span class="brand">epilo<span class="brand-yes">YES</span></span>
-    <span class="tag tag-neutral">{t.editorial}</span>
-    <span class="who">
-      {t.signedInAs} <strong>{session.displayName}</strong> · {t.roleEditor}
-      {!session.authenticated && <span class="preview-flag">{t.previewSession}</span>}
-    </span>
-  </header>
-
-  <div class="shell">
-    <nav class="rail">
-      <span class="rail-item rail-current">
-        {t.reviewQueue} <span class="count">{items.length}</span>
-      </span>
-      <span class="rail-item rail-pending">{t.sources} <span class="count">{t.pending}</span></span>
-      <span class="rail-item rail-pending">{t.published} <span class="count">{t.pending}</span></span>
-      <span class="rail-item rail-pending">{t.audit} <span class="count">{t.pending}</span></span>
-
-      {/* The ledger is a proposed addition, not contract — a compliant
-          response carries no spend, and the rail renders without it. */}
-      {
-        queue?.spend !== undefined && (
-          <div class="spend">
-            <h6>{t.translationSpend}</h6>
-            <div class="spend-amount">{formatSpend(queue.spend.spent_microusd)}</div>
-            <div
-              class="spend-bar"
-              role="meter"
-              aria-valuenow={Math.round(spendPercent(queue.spend))}
-              aria-valuemin="0"
-              aria-valuemax="100"
-              aria-label={t.translationSpend}
-            >
-              <div class="spend-fill" style={`width:${spendPercent(queue.spend)}%`} />
-            </div>
-            <div class="spend-note">
-              {t.ofMonthlyCap(formatSpend(queue.spend.cap_microusd), queue.spend.month)}
-            </div>
-          </div>
-        )
-      }
-    </nav>
-
+  {/* The chrome, rail and ledger live in EditorChrome; the ledger is a
+      proposed addition, so it renders only when the response carries
+      one. */}
+  <EditorChrome
+    lang={lang}
+    session={session}
+    active="queue"
+    queueCount={items.length}
+    spend={queue?.spend}
+  >
     <div class="work">
       <div class="queue">
         <div class="queue-head">
@@ -328,108 +294,10 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
         }
       </div>
     </div>
-  </div>
+  </EditorChrome>
 </ReaderLayout>
 
 <style>
-  .chrome {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-    padding: var(--space-3) var(--space-6);
-    border-bottom: 2px solid var(--color-divider);
-  }
-  .brand {
-    font-family: var(--font-heading);
-    font-weight: var(--font-heading-weight);
-    font-size: 18px;
-    line-height: 1;
-    letter-spacing: -0.02em;
-  }
-  .brand-yes {
-    color: var(--color-accent);
-  }
-  .who {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    font-size: 12px;
-    color: color-mix(in srgb, var(--color-text) 60%, transparent);
-  }
-  .who strong {
-    color: var(--color-text);
-  }
-  .preview-flag {
-    border: 1px solid var(--color-accent);
-    color: var(--color-accent-800);
-    background: var(--color-accent-100);
-    padding: 2px var(--space-2);
-    font-size: 11px;
-  }
-
-  .shell {
-    flex: 1;
-    display: grid;
-    grid-template-columns: 190px 1fr;
-  }
-
-  /* — nav rail + the spend ledger, always in view (FR-006) — */
-  .rail {
-    border-right: 1px solid var(--color-divider);
-    padding: var(--space-4) 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .rail-item {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-4);
-    font-size: 13.5px;
-  }
-  .rail-current {
-    background: var(--color-accent);
-    color: var(--color-bg);
-    font-weight: 600;
-  }
-  .rail-pending {
-    color: color-mix(in srgb, var(--color-text) 45%, transparent);
-  }
-  .count {
-    font-size: 11px;
-    opacity: 0.8;
-  }
-  .spend {
-    margin-top: auto;
-    padding: var(--space-4) var(--space-4) 0;
-    border-top: 1px solid var(--color-divider);
-  }
-  .spend h6 {
-    margin: 0 0 var(--space-2);
-    font-size: 10px;
-  }
-  .spend-amount {
-    font-family: var(--font-heading);
-    font-weight: var(--font-heading-weight);
-    font-size: 18px;
-    line-height: 1;
-    margin-bottom: 6px;
-  }
-  .spend-bar {
-    height: 6px;
-    background: var(--color-neutral-300);
-    margin-bottom: 6px;
-  }
-  .spend-fill {
-    height: 6px;
-    background: var(--color-accent);
-  }
-  .spend-note {
-    font-size: 11px;
-    color: color-mix(in srgb, var(--color-text) 55%, transparent);
-  }
-
   .work {
     display: grid;
     grid-template-columns: 400px 1fr;

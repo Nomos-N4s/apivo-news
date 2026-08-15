@@ -1,4 +1,4 @@
-import type { QueueItem, SpendLedger } from './api';
+import type { ArticleProvenance, QueueItem, SpendLedger } from './api';
 
 /**
  * Development fixtures for the editorial queue until the editorial
@@ -90,3 +90,117 @@ export const SPEND_FIXTURE: SpendLedger = {
   spent_microusd: 9_200_000,
   cap_microusd: 25_000_000,
 };
+
+/**
+ * Audit traces (mockup 1h) — the `article_provenance` view's shape.
+ *
+ * The first is a translated Munich item; the second is an untranslated
+ * Greek item, whose `translation` is null because the target locale
+ * already matched. Both carry the retrieval-time snapshots, which are the
+ * legal basis — never the mutable source row.
+ */
+export const PROVENANCE_FIXTURES: readonly ArticleProvenance[] = [
+  {
+    article_id: 'a41e7c92-08d5-4d1b-9d6c-1f0b7e3a55c1',
+    headline: 'Το δημοτικό συμβούλιο ενέκρινε την επέκταση του τραμ προς το Freiham',
+    places: ['munich'],
+    source: {
+      name: 'Münchner Tagblatt',
+      feed_url: 'https://tagblatt-muenchen.example/rss/muenchen',
+      jurisdiction: 'DE',
+    },
+    source_item: {
+      source_url: 'https://tagblatt-muenchen.example/muenchen/tram-freiham-ausbau',
+      original_title: 'Stadtrat beschließt Tram-Verlängerung nach Freiham',
+      retrieved_at: '2026-08-14T06:12:04Z',
+      content_hash: '3f9c81b0a4d75e2c8f10b93a6e5d0c47a71b',
+      licence_snapshot:
+        'Feed reuse: headline + extract, attribution and link required. Full text prohibited.',
+      usage_rule_snapshot: 'extract_and_link',
+      permission_evidence_snapshot: null,
+      original_author: 'Katrin Vogel',
+    },
+    translation: {
+      model: 'translate-alpha-1',
+      prompt_version: 'v4',
+      target_locale: 'el',
+      generated_at: '2026-08-14T06:14:22Z',
+      cost_microusd: 4100,
+    },
+    approval: {
+      approver_name: 'Eleni Papadaki',
+      approver_email: 'eleni@epiloyes.example',
+      approved_at: '2026-08-14T06:31:09Z',
+    },
+    published_at: '2026-08-14T06:31:40Z',
+    withdrawal: null,
+    events: [
+      {
+        type: 'source_item.retrieved',
+        occurred_at: '2026-08-14T06:12:04Z',
+        detail: 'licence and usage rule snapshotted by trigger',
+      },
+      {
+        type: 'translation.created',
+        occurred_at: '2026-08-14T06:14:22Z',
+        detail: 'cost recorded, monthly ledger updated',
+      },
+      {
+        type: 'article.approved',
+        occurred_at: '2026-08-14T06:31:09Z',
+        detail: 'Eleni Papadaki',
+      },
+      {
+        type: 'article.published',
+        occurred_at: '2026-08-14T06:31:40Z',
+        detail: 'visible on /el/munich',
+      },
+    ],
+  },
+  {
+    article_id: 'd57b1f30-6c92-4a44-b8e1-95ac2f7d0e63',
+    headline: 'Τα δρομολόγια των πλοίων για τις Κυκλάδες επεκτείνονται έως τον Οκτώβριο',
+    places: ['greece'],
+    source: {
+      name: 'Αιγαίο Νέα',
+      feed_url: 'https://aigaionea.example/rss/aktoploia',
+      jurisdiction: 'GR',
+    },
+    source_item: {
+      source_url: 'https://aigaionea.example/aktoploia/kyklades-oktovrios',
+      original_title: 'Τα δρομολόγια των πλοίων για τις Κυκλάδες επεκτείνονται έως τον Οκτώβριο',
+      retrieved_at: '2026-08-14T05:20:00Z',
+      content_hash: '8b02fd1160ac7e4915d3b8f207c6a1e0c4e7',
+      licence_snapshot:
+        'Feed reuse: headline + extract, attribution and link required. Full text prohibited.',
+      usage_rule_snapshot: 'extract_and_link',
+      permission_evidence_snapshot: null,
+      original_author: null,
+    },
+    translation: null,
+    approval: {
+      approver_name: 'Dimitra Andreou',
+      approver_email: 'dimitra@epiloyes.example',
+      approved_at: '2026-08-14T05:31:00Z',
+    },
+    published_at: '2026-08-14T05:31:20Z',
+    withdrawal: null,
+    events: [
+      {
+        type: 'source_item.retrieved',
+        occurred_at: '2026-08-14T05:20:00Z',
+        detail: 'licence and usage rule snapshotted by trigger',
+      },
+      {
+        type: 'article.approved',
+        occurred_at: '2026-08-14T05:31:00Z',
+        detail: 'Dimitra Andreou',
+      },
+      {
+        type: 'article.published',
+        occurred_at: '2026-08-14T05:31:20Z',
+        detail: 'visible on /el/greece',
+      },
+    ],
+  },
+];

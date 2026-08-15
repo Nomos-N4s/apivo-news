@@ -1,5 +1,5 @@
 import type { ReadingLanguage } from '../reader/axes';
-import { QUEUE_FIXTURES, SPEND_FIXTURE } from './fixtures';
+import { PROVENANCE_FIXTURES, QUEUE_FIXTURES, SPEND_FIXTURE } from './fixtures';
 
 /**
  * Typed client for the editorial API
@@ -104,6 +104,112 @@ export interface ApprovalOutcome {
   readonly reason?: string;
 }
 
+/**
+ * `GET /api/v1/editorial/articles/{id}/provenance` — the five-minute audit
+ * (US5, FR-010), served from the `article_provenance` view (I-5).
+ *
+ * The legal basis always comes from the retrieval-time snapshots on
+ * `source_item`, never from the mutable `source` row: the defence rests on
+ * what applied at the time. The `source` object is identity only.
+ */
+export interface ArticleProvenance {
+  readonly article_id: string;
+  readonly headline: string;
+  readonly places: readonly string[];
+  readonly source: {
+    readonly name: string;
+    readonly feed_url: string;
+    readonly jurisdiction: string;
+  };
+  readonly source_item: {
+    readonly source_url: string;
+    readonly original_title: string | null;
+    readonly retrieved_at: string;
+    readonly content_hash: string;
+    readonly licence_snapshot: string;
+    readonly usage_rule_snapshot: string;
+    readonly permission_evidence_snapshot: string | null;
+    readonly original_author: string | null;
+  };
+  readonly translation: {
+    readonly model: string;
+    readonly prompt_version: string;
+    readonly target_locale: string;
+    readonly generated_at: string;
+    readonly cost_microusd?: number;
+  } | null;
+  readonly approval: {
+    readonly approver_name: string;
+    readonly approver_email: string;
+    readonly approved_at: string;
+  };
+  readonly published_at: string | null;
+  readonly withdrawal: {
+    readonly withdrawn_at: string;
+    readonly withdrawn_by: string;
+    readonly reason: string;
+  } | null;
+  /**
+   * The append-only `domain_event` rows for this article (FR-012). Not in
+   * the contract's provenance payload — the audit screen needs the chain
+   * as events, not only as final values, so this is a proposed addition
+   * recorded in issue #67.
+   */
+  readonly events?: readonly DomainEvent[];
+}
+
+/**
+ * Runtime check of a provenance payload. The audit screen dereferences
+ * nested objects and formats four timestamps, so a partial body would
+ * surface as `Invalid Date` or a thrown formatter mid-render. A
+ * malformed record is the client's error, not a crashed audit.
+ */
+function isArticleProvenance(body: unknown): body is ArticleProvenance {
+  if (typeof body !== 'object' || body === null) {
+    return false;
+  }
+  const record = body as Record<string, unknown>;
+  const source = record['source'] as Record<string, unknown> | undefined;
+  const item = record['source_item'] as Record<string, unknown> | undefined;
+  const approval = record['approval'] as Record<string, unknown> | undefined;
+  const translation = record['translation'] as Record<string, unknown> | null | undefined;
+  return (
+    typeof record['article_id'] === 'string' &&
+    typeof record['headline'] === 'string' &&
+    Array.isArray(record['places']) &&
+    typeof source === 'object' &&
+    source !== null &&
+    typeof source['name'] === 'string' &&
+    typeof item === 'object' &&
+    item !== null &&
+    typeof item['source_url'] === 'string' &&
+    isTimestamp(item['retrieved_at']) &&
+    typeof item['licence_snapshot'] === 'string' &&
+    typeof item['usage_rule_snapshot'] === 'string' &&
+    typeof approval === 'object' &&
+    approval !== null &&
+    typeof approval['approver_name'] === 'string' &&
+    isTimestamp(approval['approved_at']) &&
+    (translation === null ||
+      translation === undefined ||
+      (typeof translation === 'object' &&
+        typeof translation['model'] === 'string' &&
+        isTimestamp(translation['generated_at'])))
+  );
+}
+
+/** A value usable as a date — a string the Date constructor can read. */
+function isTimestamp(value: unknown): boolean {
+  return typeof value === 'string' && !Number.isNaN(new Date(value).getTime());
+}
+
+/** One append-only audit record (FR-012). */
+export interface DomainEvent {
+  readonly type: string;
+  readonly occurred_at: string;
+  readonly detail: string;
+}
+
 /** A non-2xx answer or an unusable body from the editorial API. */
 export class EditorialApiError extends Error {
   readonly status: number | undefined;
@@ -113,6 +219,18 @@ export class EditorialApiError extends Error {
     this.name = 'EditorialApiError';
     this.status = status;
   }
+}
+
+/**
+ * What `POST /api/v1/editorial/articles/{id}/withdrawal` answers.
+ * `recorded: false` carries the same meaning as on approval: the intent
+ * was expressed, nothing was written.
+ */
+export interface WithdrawalOutcome {
+  readonly recorded: boolean;
+  readonly withdrawn_at?: string;
+  readonly withdrawn_by?: string;
+  readonly reason?: string;
 }
 
 /** The editorial API surface the pages consume. */
@@ -128,10 +246,16 @@ export interface EditorialApi {
     translationId: string | null,
     attribution: string,
   ): Promise<ApprovalOutcome>;
+  /** The audit trace; null when the id matches no article. */
+  provenance(articleId: string): Promise<ArticleProvenance | null>;
+  withdraw(articleId: string, reason: string): Promise<WithdrawalOutcome>;
 }
 
-const NOT_WIRED =
+const NOT_WIRED_APPROVAL =
   'The editorial API is not implemented yet (T019/T020), so no article was created and no approval was recorded.';
+
+const NOT_WIRED_WITHDRAWAL =
+  'The editorial API is not implemented yet (T021), so publication did not end and nothing was written to the audit stream.';
 
 /**
  * `API_BASE_URL` is one address for the whole Go API, but the reader and
@@ -156,7 +280,25 @@ function fixtureApi(): EditorialApi {
       // Deliberately not a fake success. Approval is the one action whose
       // whole meaning is that a record exists; pretending otherwise would
       // misrepresent an invariant the database enforces.
-      return Promise.resolve({ recorded: false, reason: NOT_WIRED });
+      return Promise.resolve({ recorded: false, reason: NOT_WIRED_APPROVAL });
+    },
+    provenance(articleId: string): Promise<ArticleProvenance | null> {
+      // An empty id is the screen's first visit, with nothing typed yet:
+      // show a trace so the page has something to demonstrate. A given
+      // id that matches nothing is genuinely not found — falling back to
+      // an unrelated article would be the one thing an audit must never
+      // do, since the reader would be looking at another item's evidence.
+      if (articleId === '') {
+        return Promise.resolve(PROVENANCE_FIXTURES.at(0) ?? null);
+      }
+      return Promise.resolve(
+        PROVENANCE_FIXTURES.find((row) => row.article_id === articleId) ?? null,
+      );
+    },
+    withdraw(): Promise<WithdrawalOutcome> {
+      // Withdrawal is audited (FR-016); with nothing to audit into, the
+      // screen must not suggest publication ended.
+      return Promise.resolve({ recorded: false, reason: NOT_WIRED_WITHDRAWAL });
     },
   };
 }
@@ -221,6 +363,50 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
         throw new EditorialApiError('editorial API answered without an article id');
       }
       return { recorded: true, ...(body as Record<string, unknown>) } as ApprovalOutcome;
+    },
+    async provenance(articleId: string): Promise<ArticleProvenance | null> {
+      // No id means nothing to trace. Interpolating an empty segment
+      // would request /articles//provenance and turn a first visit into
+      // an error.
+      if (articleId === '') {
+        return null;
+      }
+      const url = new URL(
+        `${base}/api/v1/editorial/articles/${encodeURIComponent(articleId)}/provenance`,
+      );
+      const response = await fetchImpl(url, { headers });
+      if (response.status === 404) {
+        return null;
+      }
+      if (!response.ok) {
+        throw new EditorialApiError(
+          `editorial API answered ${response.status} for the provenance trace`,
+          response.status,
+        );
+      }
+      const body: unknown = await response.json();
+      if (!isArticleProvenance(body)) {
+        throw new EditorialApiError('editorial API answered with a malformed provenance record');
+      }
+      return body;
+    },
+    async withdraw(articleId: string, reason: string): Promise<WithdrawalOutcome> {
+      const url = new URL(
+        `${base}/api/v1/editorial/articles/${encodeURIComponent(articleId)}/withdrawal`,
+      );
+      const response = await fetchImpl(url, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      if (!response.ok) {
+        throw new EditorialApiError(
+          `editorial API answered ${response.status} for the withdrawal`,
+          response.status,
+        );
+      }
+      const body: unknown = await response.json();
+      return { recorded: true, ...(body as Record<string, unknown>) } as WithdrawalOutcome;
     },
   };
 }

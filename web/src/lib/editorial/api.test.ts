@@ -7,7 +7,7 @@ import {
   formatSpend,
   spendPercent,
 } from './api';
-import { QUEUE_FIXTURES } from './fixtures';
+import { PROVENANCE_FIXTURES, QUEUE_FIXTURES } from './fixtures';
 
 function respondingWith(response: Response): {
   calls: { url: URL; init: RequestInit | undefined }[];
@@ -194,5 +194,86 @@ describe('ledger formatting', () => {
 
   it('never divides by a zero cap', () => {
     expect(spendPercent({ month: 'm', spent_microusd: 1, cap_microusd: 0 })).toBe(0);
+  });
+});
+
+describe('the audit trace', () => {
+  it('answers a provenance record from fixtures', async () => {
+    const record = await createEditorialApi(undefined).provenance(
+      'a41e7c92-08d5-4d1b-9d6c-1f0b7e3a55c1',
+    );
+    expect(record?.approval.approver_name).not.toBe('');
+    expect(record?.source_item.usage_rule_snapshot).toBe('extract_and_link');
+    expect(record?.events?.length).toBeGreaterThan(0);
+  });
+
+  it('carries a null translation when the target locale already matched', async () => {
+    const record = await createEditorialApi(undefined).provenance(
+      'd57b1f30-6c92-4a44-b8e1-95ac2f7d0e63',
+    );
+    expect(record?.translation).toBeNull();
+  });
+
+  it('never fakes a withdrawal — publication cannot end unrecorded (FR-016)', async () => {
+    const outcome = await createEditorialApi(undefined).withdraw('any', 'publisher request');
+    expect(outcome.recorded).toBe(false);
+    expect(outcome.withdrawn_at).toBeUndefined();
+    // The reason must describe withdrawal, not approval.
+    expect(outcome.reason).toContain('publication did not end');
+  });
+
+  it('reads a 404 trace as null rather than throwing', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).provenance('missing'),
+    ).resolves.toBeNull();
+  });
+
+  it('returns null for an id that matches nothing, never another article', async () => {
+    const api = createEditorialApi(undefined);
+    await expect(api.provenance('00000000-0000-4000-8000-000000000000')).resolves.toBeNull();
+  });
+
+  it('shows a trace on first visit, when no id has been given yet', async () => {
+    const record = await createEditorialApi(undefined).provenance('');
+    expect(record?.article_id).not.toBe('');
+  });
+
+  it('makes no request for an empty id — no /articles//provenance', async () => {
+    const { calls, fetchImpl } = respondingWith(jsonResponse({}));
+    const record = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).provenance('');
+    expect(record).toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('rejects a half-shaped provenance rather than crashing the audit', async () => {
+    const partial = { article_id: 'x', approval: {}, source: {}, source_item: {} };
+    const { fetchImpl } = respondingWith(jsonResponse(partial));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).provenance('x'),
+    ).rejects.toBeInstanceOf(EditorialApiError);
+  });
+
+  it('rejects a record whose timestamps would format as Invalid Date', async () => {
+    const bad = {
+      ...PROVENANCE_FIXTURES[0],
+      approval: { approver_name: 'E', approver_email: 'e@x', approved_at: 'not a date' },
+    };
+    const { fetchImpl } = respondingWith(jsonResponse(bad));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).provenance('x'),
+    ).rejects.toBeInstanceOf(EditorialApiError);
+  });
+
+  it('calls the contract paths for trace and withdrawal', async () => {
+    const trace = respondingWith(jsonResponse(PROVENANCE_FIXTURES[0]));
+    await createEditorialApi('http://api:8080', 'jwt', trace.fetchImpl).provenance('x');
+    expect(trace.calls.at(0)?.url.pathname).toBe('/api/v1/editorial/articles/x/provenance');
+
+    const wd = respondingWith(jsonResponse({ article_id: 'x', withdrawn_at: 'now' }));
+    await createEditorialApi('http://api:8080', 'jwt', wd.fetchImpl).withdraw('x', 'because');
+    expect(wd.calls.at(0)?.url.pathname).toBe('/api/v1/editorial/articles/x/withdrawal');
+    expect(wd.calls.at(0)?.init?.method).toBe('POST');
+    expect(JSON.parse(String(wd.calls.at(0)?.init?.body))['reason']).toBe('because');
   });
 });

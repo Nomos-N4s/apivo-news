@@ -47,6 +47,25 @@ export interface EditorialStrings {
   readonly notRecordedTitle: string;
   readonly emptyQueue: string;
   readonly selectAnItem: string;
+  /** Provenance audit (mockup 1h) — the five-minute trace (US5, FR-010). */
+  readonly readOnlyAccess: string;
+  readonly traceLabel: string;
+  readonly trace: string;
+  readonly publishedItem: string;
+  readonly placesLabel: string;
+  readonly sourceAndLicence: string;
+  readonly snapshotNote: string;
+  readonly translationLineage: string;
+  readonly noTranslationLineage: string;
+  readonly namedApprover: string;
+  readonly eventStream: string;
+  readonly withdrawTitle: string;
+  readonly withdrawBody: string;
+  readonly withdrawReasonLabel: string;
+  readonly withdraw: string;
+  readonly requiresEditorRole: string;
+  readonly withdrawnAlready: string;
+  readonly traceNotFound: string;
 }
 
 const EL: EditorialStrings = {
@@ -89,6 +108,26 @@ const EL: EditorialStrings = {
   notRecordedTitle: 'Δεν καταγράφηκε',
   emptyQueue: 'Η ουρά είναι άδεια. Τίποτα δεν περιμένει έγκριση.',
   selectAnItem: 'Επιλέξτε ένα στοιχείο από την ουρά για έλεγχο.',
+  readOnlyAccess: 'Πρόσβαση μόνο για ανάγνωση · ιδρυτής, νομικός σύμβουλος, εκδότης που ρωτά',
+  traceLabel: 'Αναγνωριστικό άρθρου, διεύθυνση πηγής ή τίτλος',
+  trace: 'Ιχνηλάτηση',
+  publishedItem: 'Δημοσιευμένο στοιχείο',
+  placesLabel: 'τόποι',
+  sourceAndLicence: 'Πηγή και άδεια κατά την ανάκτηση',
+  snapshotNote:
+    'Αυτοί είναι οι όροι όπως ίσχυαν τότε, όχι οι όροι που είναι καταγεγραμμένοι σήμερα. Η υπεράσπιση στηρίζεται στο στιγμιότυπο.',
+  translationLineage: 'Καταγωγή μετάφρασης',
+  noTranslationLineage: 'καμία — η γλώσσα-στόχος ταυτίζεται',
+  namedApprover: 'Επώνυμος εγκρίνων',
+  eventStream: 'Ροή συμβάντων — μόνο προσθήκες',
+  withdrawTitle: 'Απόσυρση από τη δημοσίευση',
+  withdrawBody:
+    'Η απόσυρση τερματίζει τη δημοσίευση. Το άρθρο, η έγκρισή του και τα ανακτημένα τεκμήρια παραμένουν, και η ίδια η ενέργεια καταγράφεται. Τίποτα δεν διαγράφεται.',
+  withdrawReasonLabel: 'Αιτιολογία (καταγράφεται στη ροή συμβάντων)',
+  withdraw: 'Απόσυρση',
+  requiresEditorRole: 'Απαιτεί ρόλο συντάκτη',
+  withdrawnAlready: 'Έχει ήδη αποσυρθεί',
+  traceNotFound: 'Δεν βρέθηκε άρθρο με αυτό το αναγνωριστικό.',
 };
 
 const DE: EditorialStrings = {
@@ -131,6 +170,26 @@ const DE: EditorialStrings = {
   notRecordedTitle: 'Nicht verzeichnet',
   emptyQueue: 'Die Liste ist leer. Nichts wartet auf Freigabe.',
   selectAnItem: 'Wählen Sie einen Beitrag aus der Liste zur Prüfung.',
+  readOnlyAccess: 'Nur-Lese-Zugriff · Gründung, Rechtsberatung, anfragender Verlag',
+  traceLabel: 'Artikel-ID, Quell-URL oder Überschrift',
+  trace: 'Nachverfolgen',
+  publishedItem: 'Veröffentlichter Beitrag',
+  placesLabel: 'Orte',
+  sourceAndLicence: 'Quelle und Lizenz beim Abruf',
+  snapshotNote:
+    'Das sind die Bedingungen, wie sie damals galten, nicht die heute hinterlegten. Die Verteidigung stützt sich auf den Schnappschuss.',
+  translationLineage: 'Übersetzungsherkunft',
+  noTranslationLineage: 'keine — Zielsprache stimmt überein',
+  namedApprover: 'Namentliche Freigabe',
+  eventStream: 'Ereignisstrom — nur Anfügen',
+  withdrawTitle: 'Aus der Veröffentlichung zurückziehen',
+  withdrawBody:
+    'Der Rückzug beendet die Veröffentlichung. Der Artikel, seine Freigabe und die abgerufenen Nachweise bleiben erhalten, und der Vorgang selbst wird verzeichnet. Nichts wird gelöscht.',
+  withdrawReasonLabel: 'Begründung (wird im Ereignisstrom verzeichnet)',
+  withdraw: 'Zurückziehen',
+  requiresEditorRole: 'Erfordert die Redaktionsrolle',
+  withdrawnAlready: 'Bereits zurückgezogen',
+  traceNotFound: 'Zu dieser Kennung wurde kein Artikel gefunden.',
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, EditorialStrings>> = { el: EL, de: DE };
