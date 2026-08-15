@@ -56,6 +56,31 @@ spec:
               value: "0.0.0.0"
             - name: PORT
               value: "4321"
+            # Where the pages find the Go api: the ClusterIP Service in
+            # api-service.yaml, by name, on the port it declares. The api
+            # has no public route, so this internal address is the only
+            # one there is. Without it every page renders from built-in
+            # fixtures — a container that looks healthy and serves nothing
+            # real — so it is set here rather than left to a ConfigMap the
+            # deployment does not read.
+            - name: API_BASE_URL
+              value: "http://api:8080"
+            # Supabase Auth for the editorial sign-in. Neither is a
+            # credential: the anon key identifies the project and grants
+            # nothing on its own. They belong to the web container alone,
+            # which is why they sit here and not in apivo-config — that
+            # ConfigMap is the api's, and mounting it whole would hand the
+            # web the api's listen address.
+            #
+            # Both ship EMPTY, the same convention as the api's JWKS_URL:
+            # empty means exactly "not configured yet" — the sign-in page
+            # says so and the editorial screens stay a preview — and no
+            # placeholder can fake a configuration. Set them, together
+            # with the api's JWKS_URL, to let editors sign in.
+            - name: PUBLIC_SUPABASE_URL
+              value: ""
+            - name: PUBLIC_SUPABASE_ANON_KEY
+              value: ""
           resources:
             requests:
               cpu: 100m

@@ -37,9 +37,26 @@
 //                  Only meaningful alongside a non-empty JWKS_URL — setting
 //                  it alone fails startup, by design.
 //
-// Both ship EMPTY on purpose. A placeholder hostname is a real value to the
-// binary, so it would select the fail-fast verifier path and a fresh deploy
-// would crash-loop until someone edited it; empty means exactly "not
+// Handed to the WEB container by the same file:
+//
+//   API_BASE_URL   Where the Astro server finds the Go api. There is no
+//                  in-platform value for it: containers are reachable only
+//                  through their Durable Object binding, so the api container
+//                  has no address the web container can fetch, and the public
+//                  hostname routes to the web container. Set it only when the
+//                  api runs somewhere addressable; empty, the pages render
+//                  from built-in fixtures.
+//   PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY
+//                  Supabase Auth for the editorial sign-in — the other half
+//                  of JWKS_URL above, which verifies the tokens it issues.
+//                  NOT secrets: the anon key identifies the project and
+//                  grants nothing on its own. Empty, the sign-in page says
+//                  no auth is configured and the editorial screens stay a
+//                  preview.
+//
+// All of them ship EMPTY on purpose. A placeholder hostname is a real value
+// to the binary, so it would select the fail-fast verifier path and a fresh
+// deploy would crash-loop until someone edited it; empty means exactly "not
 // configured yet", and nothing in between can fake a configuration.
 {
 	"name": "apivo-news",
@@ -47,7 +64,10 @@
 	"compatibility_date": "2026-08-01",
 	"vars": {
 		"JWKS_URL": "",
-		"JWT_AUDIENCE": ""
+		"JWT_AUDIENCE": "",
+		"API_BASE_URL": "",
+		"PUBLIC_SUPABASE_URL": "",
+		"PUBLIC_SUPABASE_ANON_KEY": ""
 	},
 	"containers": [
 		{
