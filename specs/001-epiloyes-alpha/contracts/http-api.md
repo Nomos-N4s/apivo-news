@@ -86,8 +86,9 @@ rule; this endpoint merely carries the intent.
 - Body: `{ "translation_id": uuid }` XOR `{ "source_item_id": uuid }`,
   plus `{ "attribution": string, "publish": bool }`.
 - 201: `{ article_id, approved_by, approved_at, published_at|null }`.
-- 400: both or neither origin supplied; blank attribution; untranslated
-  origin whose feed provided no title.
+- 400: both or neither origin supplied; an origin id that is not a uuid or
+  names nothing; blank attribution; untranslated origin whose feed provided
+  no title.
 - 403: token subject is not an editor (mirrors the DB trigger).
 - 409: origin already has a **non-withdrawn** article. An origin whose
   only articles are withdrawn may be approved again — that is the
@@ -102,8 +103,10 @@ Publishes an approved-but-unpublished article (the `publish: false`
 path); the database permits `published_at` to be set exactly once.
 
 - 200: `{ article_id, published_at }`.
+- 400: the `{id}` path segment is not a uuid — a malformed id is a client
+  mistake worth naming, distinct from an article that does not exist.
 - 404: unknown article; 409: already published.
-- Side effect: `article.published` domain event.
+- Side effect: `article.published` domain event, in the same transaction.
 
 Lifecycle note: an approved article is either published (this endpoint or
 `publish: true` at approval) or remains permanently unpublished — a

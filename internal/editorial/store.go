@@ -18,13 +18,15 @@ import (
 // here per the boundary rules (the consumer names its dependency). The
 // platform pool satisfies it; the composition root in cmd wires it in.
 //
-// The three methods are exactly sqlc's generated DBTX seam, so the same
+// Three of the methods are exactly sqlc's generated DBTX seam, so the same
 // value backs both the hand-written statements here and the generated
-// queries in the store subpackage.
+// queries in the store subpackage. Begin is the fourth: an approval and its
+// domain events must commit together or not at all.
 type DB interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 // ErrDuplicateSourceURL reports a source registration whose feed URL is
@@ -64,6 +66,8 @@ type Source struct {
 type Store interface {
 	CreateSource(ctx context.Context, src NewSource) (Source, error)
 	ReviewQueue(ctx context.Context, q QueueQuery) (QueuePage, error)
+	Approve(ctx context.Context, a NewApproval) (Article, error)
+	Publish(ctx context.Context, articleID, editorID uuid.UUID) (Article, error)
 }
 
 // PGStore is the Postgres-backed Store.

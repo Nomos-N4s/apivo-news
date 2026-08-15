@@ -50,6 +50,10 @@ var testEditor = editorial.Editor{
 // errAuthDown simulates an authentication backend failure - not a verdict.
 var errAuthDown = errors.New("jwks unreachable")
 
+// errUnexpectedCall is what a fake answers for an operation the test under
+// way must never reach.
+var errUnexpectedCall = errors.New("this store operation must not be reached")
+
 // fakeAuth resolves the canned tokens: editorToken to testEditor,
 // readerToken to ErrNotEditor, "boom" to a backend failure, anything else
 // to ErrUnauthenticated.
@@ -80,6 +84,14 @@ func (s errStore) ReviewQueue(context.Context, editorial.QueueQuery) (editorial.
 	return editorial.QueuePage{}, s.err
 }
 
+func (s errStore) Approve(context.Context, editorial.NewApproval) (editorial.Article, error) {
+	return editorial.Article{}, s.err
+}
+
+func (s errStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editorial.Article, error) {
+	return editorial.Article{}, s.err
+}
+
 // okStore returns a canned created source.
 type okStore struct{ src editorial.Source }
 
@@ -89,6 +101,14 @@ func (s okStore) CreateSource(context.Context, editorial.NewSource) (editorial.S
 
 func (s okStore) ReviewQueue(context.Context, editorial.QueueQuery) (editorial.QueuePage, error) {
 	return editorial.QueuePage{}, nil
+}
+
+func (s okStore) Approve(context.Context, editorial.NewApproval) (editorial.Article, error) {
+	return editorial.Article{}, errUnexpectedCall
+}
+
+func (s okStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editorial.Article, error) {
+	return editorial.Article{}, errUnexpectedCall
 }
 
 // recordingStore captures what the handler actually asked to persist.
@@ -101,6 +121,14 @@ func (s *recordingStore) CreateSource(_ context.Context, src editorial.NewSource
 
 func (s *recordingStore) ReviewQueue(context.Context, editorial.QueueQuery) (editorial.QueuePage, error) {
 	return editorial.QueuePage{}, nil
+}
+
+func (s *recordingStore) Approve(context.Context, editorial.NewApproval) (editorial.Article, error) {
+	return editorial.Article{}, errUnexpectedCall
+}
+
+func (s *recordingStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editorial.Article, error) {
+	return editorial.Article{}, errUnexpectedCall
 }
 
 func discardLogger() *slog.Logger {
