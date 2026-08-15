@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  approvalRecordLine,
   createEditorialApi,
   EditorialApiError,
   formatItemCost,
@@ -403,5 +404,39 @@ describe('sources', () => {
         licence_terms: 't',
       }),
     ).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describe('approvalRecordLine', () => {
+  it('prints what the response recorded', () => {
+    expect(
+      approvalRecordLine({
+        recorded: true,
+        approved_by: 'Eleni Papadaki',
+        article_id: 'a1b2c3',
+      }),
+    ).toBe('approved_by = Eleni Papadaki · article a1b2c3');
+  });
+
+  it('names no approver at all when the response carried none (I-1)', () => {
+    // Not "approved_by = <whoever is signed in>". The approver is whoever
+    // the database wrote; borrowing another name would attribute one
+    // person's approval to another.
+    const line = approvalRecordLine({ recorded: true, article_id: 'a1b2c3' });
+    expect(line).toBe('article a1b2c3');
+    expect(line).not.toContain('approved_by');
+  });
+
+  it('treats a blank approver the same as a missing one', () => {
+    expect(approvalRecordLine({ recorded: true, approved_by: '', article_id: 'a1' })).toBe(
+      'article a1',
+    );
+  });
+
+  it('leaves out an article id the response did not carry', () => {
+    expect(approvalRecordLine({ recorded: true, approved_by: 'Markus Bauer' })).toBe(
+      'approved_by = Markus Bauer',
+    );
+    expect(approvalRecordLine({ recorded: true })).toBe('');
   });
 });

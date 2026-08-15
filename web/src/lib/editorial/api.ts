@@ -588,6 +588,28 @@ export function createEditorialApi(
 }
 
 /**
+ * The line the banner prints after an approval was recorded: what the
+ * response said, and nothing else.
+ *
+ * A missing `approved_by` renders as absent rather than as the signed-in
+ * person. They are not the same claim: the approver is whoever the
+ * database wrote into `article.approved_by` (I-1), and printing the name
+ * of whoever happened to submit the form over a field the server did not
+ * return would attribute one person's approval to another. If the field
+ * is missing, what the screen honestly knows is that it does not know.
+ */
+export function approvalRecordLine(outcome: ApprovalOutcome): string {
+  const parts: string[] = [];
+  if (outcome.approved_by !== undefined && outcome.approved_by !== '') {
+    parts.push(`approved_by = ${outcome.approved_by}`);
+  }
+  if (outcome.article_id !== undefined && outcome.article_id !== '') {
+    parts.push(`article ${outcome.article_id}`);
+  }
+  return parts.join(' · ');
+}
+
+/**
  * Formats a ledger amount — e.g. 9_200_000 → "$9.20".
  *
  * The column is `cost_microusd` and providers bill in dollars, so the

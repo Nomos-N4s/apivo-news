@@ -3,6 +3,7 @@ import { API_BASE_URL } from 'astro:env/server';
 import EditorChrome from '../../../components/EditorChrome.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
 import {
+  approvalRecordLine,
   createEditorialApi,
   formatItemCost,
   type ApprovalOutcome,
@@ -187,9 +188,7 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                 {outcome.recorded ? t.approvedTitle : t.notRecordedTitle}
               </span>
               <span class="banner-body">
-                {outcome.recorded
-                  ? `approved_by = ${outcome.approved_by ?? session.displayName} · article ${outcome.article_id ?? ''}`
-                  : outcome.reason}
+                {outcome.recorded ? approvalRecordLine(outcome) : outcome.reason}
               </span>
             </div>
           )
