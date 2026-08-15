@@ -11,11 +11,14 @@ import { getViteConfig } from 'astro/config';
 // signal without measuring anything we author. New source files with logic must
 // be added to `include` alongside their tests.
 //
-// src/lib/editorial/supabase.ts is excluded on the same grounds: it is the
-// adapter over @supabase/ssr and holds no decision of ours — every branch it
-// does make (is auth configured, did the auth server confirm the user) is a
-// pure function in session.ts, which is measured. Covering the wrapper would
-// mean asserting against a mocked SDK, which measures the mock.
+// src/lib/editorial/supabase.ts is excluded because it is the adapter over
+// @supabase/ssr: covering it would mean asserting against a mocked SDK,
+// which measures the mock. That exclusion is only honest because every
+// decision of ours is out of the file and measured in session.ts — the
+// config check, the claims mapping, and the cookie hardening
+// (astroCookieOptions forcing httpOnly and deriving secure), which are
+// security decisions and tested as such. A new branch in supabase.ts that
+// is more than SDK plumbing must move to tested code the same way.
 export default getViteConfig({
   test: {
     include: ['src/**/*.test.ts'],

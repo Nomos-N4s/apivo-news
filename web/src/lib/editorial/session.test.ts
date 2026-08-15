@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  astroCookieOptions,
   editorSession,
   editorSessionFrom,
   NO_EDITOR_SESSION,
@@ -114,6 +115,46 @@ describe('supabaseConfig', () => {
     expect(supabaseConfig('', '')).toBeNull();
     expect(supabaseConfig('  ', 'anon-key')).toBeNull();
     expect(supabaseConfig('https://project.supabase.co', '  ')).toBeNull();
+  });
+});
+
+describe('astroCookieOptions', () => {
+  it('forces httpOnly on, whatever the SDK asked', () => {
+    // The session cookie must stay out of page-script reach: no code in
+    // this application reads it from the browser, so an injected script
+    // must not be able to either. The SDK's own default is false.
+    expect(astroCookieOptions({}, true).httpOnly).toBe(true);
+    expect(astroCookieOptions({ httpOnly: false }, true).httpOnly).toBe(true);
+  });
+
+  it('derives secure from the request protocol rather than hard-coding it', () => {
+    // https deployments get an https-only cookie; the plain-http dev
+    // stack still works.
+    expect(astroCookieOptions({}, true).secure).toBe(true);
+    expect(astroCookieOptions({}, false).secure).toBe(false);
+    // And the SDK cannot opt the cookie out of it.
+    expect(astroCookieOptions({ secure: false }, true).secure).toBe(true);
+  });
+
+  it('passes through the options the SDK set and omits the ones it did not', () => {
+    const expires = new Date('2026-08-16T00:00:00Z');
+    expect(
+      astroCookieOptions(
+        { domain: 'epiloyes.example', path: '/', expires, maxAge: 3600, sameSite: 'lax' },
+        true,
+      ),
+    ).toEqual({
+      domain: 'epiloyes.example',
+      path: '/',
+      expires,
+      maxAge: 3600,
+      sameSite: 'lax',
+      httpOnly: true,
+      secure: true,
+    });
+    // An absent option stays absent rather than becoming `undefined`:
+    // Astro writes the keys it is given.
+    expect(Object.keys(astroCookieOptions({}, false))).toEqual(['httpOnly', 'secure']);
   });
 });
 

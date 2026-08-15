@@ -1,10 +1,11 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { AstroCookies, AstroCookieSetOptions } from 'astro';
+import type { AstroCookies } from 'astro';
 import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from 'astro:env/server';
 
 import type { Database } from '../database.types';
 import {
+  astroCookieOptions,
   editorSessionFrom,
   NO_EDITOR_SESSION,
   parseCookieHeader,
@@ -26,31 +27,6 @@ import {
 /** Whether this deployment has Supabase Auth configured at all. */
 export function authConfigured(): boolean {
   return supabaseConfig(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY) !== null;
-}
-
-/**
- * Translates the SDK's cookie options into the subset Astro writes,
- * then overrides two of them.
- *
- * `httpOnly` is forced on: nothing in this application is a Supabase
- * browser client, so no page script has any reason to read the session,
- * and an unreadable cookie is one fewer thing an injected script can
- * steal. The SDK's own default is false, for apps that do need it.
- *
- * `secure` follows the request rather than being hard-coded, so the
- * cookie is https-only wherever the site is https and still works on the
- * plain-http development stack.
- */
-function astroCookieOptions(options: CookieOptions, secure: boolean): AstroCookieSetOptions {
-  return {
-    ...(options.domain === undefined ? {} : { domain: options.domain }),
-    ...(options.path === undefined ? {} : { path: options.path }),
-    ...(options.expires === undefined ? {} : { expires: options.expires }),
-    ...(options.maxAge === undefined ? {} : { maxAge: options.maxAge }),
-    ...(options.sameSite === undefined ? {} : { sameSite: options.sameSite }),
-    httpOnly: true,
-    secure,
-  };
 }
 
 /**

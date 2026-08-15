@@ -127,6 +127,59 @@ export function editorSessionFrom(
   };
 }
 
+/** The SDK-shaped cookie options `astroCookieOptions` translates. */
+export interface SdkCookieOptions {
+  readonly domain?: string | undefined;
+  readonly path?: string | undefined;
+  readonly expires?: Date | undefined;
+  readonly maxAge?: number | undefined;
+  readonly sameSite?: boolean | 'lax' | 'strict' | 'none' | undefined;
+  readonly httpOnly?: boolean | undefined;
+  readonly secure?: boolean | undefined;
+}
+
+/** What Astro's cookie store is asked to write. */
+export interface AstroCookieWriteOptions {
+  readonly domain?: string;
+  readonly path?: string;
+  readonly expires?: Date;
+  readonly maxAge?: number;
+  readonly sameSite?: boolean | 'lax' | 'strict' | 'none';
+  readonly httpOnly: boolean;
+  readonly secure: boolean;
+}
+
+/**
+ * Translates the SDK's cookie options into the subset Astro writes,
+ * then overrides two of them. These two overrides are this product's own
+ * security decision, which is why the function lives here, in measured
+ * code, rather than in the SDK adapter.
+ *
+ * `httpOnly` is forced on — whatever the SDK asked: nothing in this
+ * application is a Supabase browser client, so no page script has any
+ * reason to read the session, and an unreadable cookie is one fewer
+ * thing an injected script can steal. The SDK's own default is false,
+ * for apps that do need it.
+ *
+ * `secure` follows the request rather than being hard-coded, so the
+ * cookie is https-only wherever the site is https and still works on the
+ * plain-http development stack.
+ */
+export function astroCookieOptions(
+  options: SdkCookieOptions,
+  secure: boolean,
+): AstroCookieWriteOptions {
+  return {
+    ...(options.domain === undefined ? {} : { domain: options.domain }),
+    ...(options.path === undefined ? {} : { path: options.path }),
+    ...(options.expires === undefined ? {} : { expires: options.expires }),
+    ...(options.maxAge === undefined ? {} : { maxAge: options.maxAge }),
+    ...(options.sameSite === undefined ? {} : { sameSite: options.sameSite }),
+    httpOnly: true,
+    secure,
+  };
+}
+
 /** Where the auth provider lives, once both halves are configured. */
 export interface SupabaseConfig {
   readonly url: string;
