@@ -1,20 +1,13 @@
 ---
-// Placeholder front page. The locale-scoped reader front page replaces this
-// when the reader pages land; until then the page states what this will be.
+import { DEFAULT_FRONT_PAGE } from '../lib/reader/axes';
+
+// `/` carries no axes, so it cannot be a front page itself (FR-009): it
+// forwards to the US1 flagship journey — Munich local + Greek national,
+// read in Greek. The template below is the 302's body, for clients that
+// show it instead of following the Location header.
+if (Astro.url.pathname === '/') {
+  return Astro.redirect(DEFAULT_FRONT_PAGE, 302);
+}
 ---
 
-<!doctype html>
-<html lang="el">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>epiloYES</title>
-  </head>
-  <body>
-    <main>
-      <h1>epiloYES</h1>
-      <p>Τοπικές ειδήσεις για τις ελληνικές κοινότητες του εξωτερικού.</p>
-      <p lang="de">Lokalnachrichten für die griechischen Gemeinden im Ausland.</p>
-    </main>
-  </body>
-</html>
+<a href={DEFAULT_FRONT_PAGE}>epiloYES</a>

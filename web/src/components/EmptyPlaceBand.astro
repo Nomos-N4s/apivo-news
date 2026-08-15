@@ -1,0 +1,35 @@
+---
+// The honest empty state (US1-AC3): a followed place with nothing published
+// says so plainly — no errors, no filler content.
+interface Props {
+  title: string;
+  body: string;
+}
+
+const { title, body } = Astro.props;
+---
+
+<div class="empty">
+  <h6>{title}</h6>
+  <p>{body}</p>
+</div>
+
+<style>
+  .empty {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1));
+    border-bottom: 2px solid var(--color-divider);
+  }
+  h6 {
+    margin: 0;
+    color: var(--color-accent);
+    flex: none;
+  }
+  p {
+    margin: 0;
+    font-size: 13.5px;
+  }
+</style>

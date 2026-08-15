@@ -1,0 +1,49 @@
+---
+import '../styles/modernist.css';
+import type { ReadingLanguage } from '../lib/reader/axes';
+
+// The shell every reader page shares: the document, the Modernist
+// stylesheet, and the ruled page frame. The frame scales with the
+// viewport instead of capping at the mockups' 1280 canvas: a small,
+// clamped margin keeps the 2px side rules visible while wide screens
+// gain grid, not white space (founder direction 2026-08-15). Text
+// measures stay bounded per element with ch widths.
+interface Props {
+  lang: ReadingLanguage;
+  title: string;
+  description: string;
+}
+
+const { lang, title, description } = Astro.props;
+---
+
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+  </head>
+  <body>
+    <div class="frame">
+      <slot />
+    </div>
+  </body>
+</html>
+
+<style>
+  .frame {
+    min-height: 100dvh;
+    margin-inline: clamp(16px, 3vw, 56px);
+    border-inline: 2px solid var(--color-divider);
+    display: flex;
+    flex-direction: column;
+  }
+  @media (max-width: 660px) {
+    .frame {
+      margin-inline: 0;
+      border-inline: 0;
+    }
+  }
+</style>

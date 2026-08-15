@@ -1,0 +1,113 @@
+/**
+ * The two reader axes — reading language and followed places — and the URL
+ * scheme that carries them: `/{lang}/{place[+place…]}`.
+ *
+ * FR-009: language and place are independent; no combined locale value
+ * exists anywhere, so the two axes travel as two separate URL segments and
+ * are parsed separately. FR-015: only the alpha languages mount; anything
+ * else is a 404, decided here.
+ */
+
+/** The alpha reading languages. `en` exists in the schema and is not reachable (FR-015). */
+export const READING_LANGUAGES = ['el', 'de'] as const;
+
+/** A mounted reading language. */
+export type ReadingLanguage = (typeof READING_LANGUAGES)[number];
+
+/** Reports whether a URL segment names a mounted reading language. */
+export function isReadingLanguage(value: string): value is ReadingLanguage {
+  return (READING_LANGUAGES as readonly string[]).includes(value);
+}
+
+/** Structural rank of a place in the hierarchy; the kicker scope label derives from it. */
+export type PlaceScope = 'city' | 'region' | 'country';
+
+/**
+ * A reader-addressable place. The catalog mirrors the 0002 migration seeds
+ * (Munich → Bavaria → Germany; Greece) because no public place-directory
+ * endpoint exists in the HTTP contract yet — recorded in issue #53; a
+ * future `GET /api/v1/places` replaces this module's data, not its shape.
+ */
+export interface Place {
+  /** `place.slug` — the stable URL address seeded by migration 0002. */
+  readonly slug: string;
+  /** The place's own-language name, shown regardless of reading language (mockup 1a). */
+  readonly endonym: string;
+  readonly scope: PlaceScope;
+  /**
+   * Whether the setup screen offers the place. Non-selectable places are
+   * hierarchy context (Bavaria "covers München") but stay addressable in
+   * the URL — the API knows their slugs and answers honestly.
+   */
+  readonly selectable: boolean;
+}
+
+/** The alpha place catalog, in display order. */
+export const PLACE_CATALOG: readonly Place[] = [
+  { slug: 'munich', endonym: 'München', scope: 'city', selectable: true },
+  { slug: 'greece', endonym: 'Ελλάδα', scope: 'country', selectable: true },
+  { slug: 'bavaria', endonym: 'Bayern', scope: 'region', selectable: false },
+  { slug: 'germany', endonym: 'Deutschland', scope: 'country', selectable: false },
+];
+
+/** Looks a place up by slug; undefined for slugs outside the catalog. */
+export function findPlace(slug: string): Place | undefined {
+  return PLACE_CATALOG.find((place) => place.slug === slug);
+}
+
+/**
+ * Joins place slugs inside the URL's place segment: `/el/munich+greece`.
+ * `+` is a literal plus in a path segment (only query strings read it as a
+ * space), and slugs are lowercase ASCII words, so the segment stays plain.
+ */
+export const PLACE_SEPARATOR = '+';
+
+/** Both axes, parsed and validated. */
+export interface Axes {
+  readonly lang: ReadingLanguage;
+  /** At least one place, deduplicated, in URL order. */
+  readonly places: readonly Place[];
+}
+
+/**
+ * Parses the two URL segments into validated axes. Returns null — meaning
+ * 404 — when the language is not mounted, any slug is unknown, or no place
+ * is present. Duplicate slugs collapse to their first occurrence so every
+ * axes value has one canonical URL.
+ */
+export function parseAxes(
+  langSegment: string | undefined,
+  placeSegment: string | undefined,
+): Axes | null {
+  if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+    return null;
+  }
+  if (placeSegment === undefined || placeSegment === '') {
+    return null;
+  }
+  const places: Place[] = [];
+  for (const slug of placeSegment.split(PLACE_SEPARATOR)) {
+    const place = findPlace(slug);
+    if (place === undefined) {
+      return null;
+    }
+    if (!places.includes(place)) {
+      places.push(place);
+    }
+  }
+  if (places.length === 0) {
+    return null;
+  }
+  return { lang: langSegment, places };
+}
+
+/** Composes the front-page path for a language and a non-empty slug list. */
+export function frontPagePath(lang: ReadingLanguage, slugs: readonly string[]): string {
+  if (slugs.length === 0) {
+    throw new Error('frontPagePath: at least one place slug is required');
+  }
+  return `/${lang}/${slugs.join(PLACE_SEPARATOR)}`;
+}
+
+/** The US1 flagship journey — where `/` lands: Munich local + Greek national, in Greek. */
+export const DEFAULT_FRONT_PAGE = frontPagePath('el', ['munich', 'greece']);

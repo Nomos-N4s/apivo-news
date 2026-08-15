@@ -1,0 +1,44 @@
+---
+// The reader masthead (mockup 1a): the wordmark, the day, and whatever the
+// page adds through the slot. The brand links to the page's own front page
+// so the axes in the URL survive the round trip.
+interface Props {
+  homeHref: string;
+  dateText?: string | undefined;
+}
+
+const { homeHref, dateText } = Astro.props;
+---
+
+<header class="masthead">
+  <a class="brand" href={homeHref}>epilo<span class="brand-yes">YES</span></a>
+  {dateText !== undefined && <span class="date">{dateText}</span>}
+  <slot />
+</header>
+
+<style>
+  .masthead {
+    display: flex;
+    align-items: center;
+    gap: var(--space-6);
+    padding: var(--space-4) calc(var(--space-6) + var(--space-1));
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .brand {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 26px;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: var(--color-text);
+    text-decoration: none;
+    margin-right: auto;
+  }
+  .brand-yes {
+    color: var(--color-accent);
+  }
+  .date {
+    font-size: 12px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+</style>

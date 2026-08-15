@@ -41,6 +41,12 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: "4321"
+      # Reader pages render server-side from the Go API by service name
+      # (contract topology). Uncomment once the reader endpoints land
+      # (T023/T024, issues #26/#27) — the Go server does not register
+      # /api/v1/front yet, and until it does the pages preview from
+      # built-in fixtures.
+      # API_BASE_URL: http://api:8080
     ports:
       - "127.0.0.1:4321:4321"
     depends_on:
