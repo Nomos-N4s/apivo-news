@@ -191,6 +191,67 @@ func TestASecondRecordOfTheSameItemAndLocaleIsRefusedAndStillCharged(t *testing.
 	}
 }
 
+// TestARetryOfAnAmbiguouslyCommittedWriteIsSuccessNotASecondCharge asserts
+// the 23505 row-match half of Record's retry contract. When a commit's
+// acknowledgement is lost, the caller retries and hits the unique index -
+// and the row that won carries this worker's exact result, so the earlier
+// write landed. Record answers with success and the landed row's id, and
+// books NOTHING: the trigger counted this spend when the row committed,
+// and a refusal booking here would put the same money on the month twice.
+func TestARetryOfAnAmbiguouslyCommittedWriteIsSuccessNotASecondCharge(t *testing.T) {
+	t.Parallel()
+	tx := ledgerTx(t)
+	ctx := context.Background()
+	itemID := seedItem(t, tx)
+
+	ledger := translation.NewLedger(tx)
+	before, err := ledger.RecordUnbilledSpend(ctx, translation.Spend{})
+	if err != nil {
+		t.Fatalf("reading the month under lock: %v", err)
+	}
+	writer := translation.NewWriter(tx, translation.Caps{PerArticleMicroUSD: 20_000, MonthlyMicroUSD: before + 10_000_000})
+
+	record := translation.Record{
+		SourceItemID: itemID,
+		TargetLocale: "de",
+		Result:       affordableResult(1_500, 1),
+	}
+	first, err := writer.Record(ctx, record)
+	if err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+
+	// The same worker retries the same Result - the shape of a lost commit
+	// acknowledgement.
+	retried, err := writer.Record(ctx, record)
+	if err != nil {
+		t.Fatalf("Record() on a retry of our own landed write = %v, want success: the translation is on record and the money is already counted", err)
+	}
+	if retried.TranslationID != first.TranslationID {
+		t.Errorf("the retry reported translation %s, want the landed row %s", retried.TranslationID, first.TranslationID)
+	}
+	if got := retried.MonthToDateMicroUSD - first.MonthToDateMicroUSD; got != 0 {
+		t.Errorf("the retry moved the month by %d micro-USD, want 0: the trigger already booked this spend when the row landed", got)
+	}
+	if n := translationCount(t, tx, itemID, "de"); n != 1 {
+		t.Errorf("translations on record = %d, want 1", n)
+	}
+
+	// The row-match is exact, not per-item: the same pair arriving with a
+	// DIFFERENT result is a rival translation, and stays a billed refusal.
+	second, err := writer.Record(ctx, translation.Record{
+		SourceItemID: itemID,
+		TargetLocale: "de",
+		Result:       affordableResult(1_700, 0),
+	})
+	if !errors.Is(err, translation.ErrAlreadyTranslated) {
+		t.Fatalf("Record() with a different result = %v, want ErrAlreadyTranslated", err)
+	}
+	if got := second.MonthToDateMicroUSD - first.MonthToDateMicroUSD; got != 1_700 {
+		t.Errorf("the rival's refusal moved the month by %d micro-USD, want 1700: that call was billed too", got)
+	}
+}
+
 // TestTheCrossingTranslationHaltsTheMonth asserts the cap end of the
 // budget: the translation that takes the month over is still recorded - the
 // money was spent before this module got a say - and the month is latched
