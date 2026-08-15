@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -71,8 +72,9 @@ type Handler struct {
 func NewHandler(log *slog.Logger, db store.DBTX) http.Handler {
 	h := &Handler{log: log, q: store.New(db)}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/front", h.handleFront)
-	mux.HandleFunc("GET /api/v1/articles/{id}", h.handleArticle)
+	for pattern, handler := range h.routes() {
+		mux.HandleFunc(pattern, handler)
+	}
 	// Every error under /api/v1 is problem+json, including the ones nobody
 	// wrote a handler for. Without this catch-all the ServeMux answers an
 	// unknown path or a wrong method with a text/plain body, which breaks
@@ -80,6 +82,25 @@ func NewHandler(log *slog.Logger, db store.DBTX) http.Handler {
 	// confused client is most likely to make.
 	mux.HandleFunc("/api/v1/", h.handleUnrouted)
 	return mux
+}
+
+// routes maps every reader endpoint to its handler. NewHandler registers
+// exactly this map and Patterns reports exactly its keys, so an endpoint
+// cannot exist without being listed - which is what lets the OpenAPI
+// document be checked against the routes rather than against memory.
+func (h *Handler) routes() map[string]http.HandlerFunc {
+	return map[string]http.HandlerFunc{
+		"GET /api/v1/front":         h.handleFront,
+		"GET /api/v1/articles/{id}": h.handleArticle,
+	}
+}
+
+// Patterns lists this module's ServeMux patterns ("METHOD /path"), sorted.
+// The catch-all is deliberately absent: it is the error convention for paths
+// nobody serves, not an endpoint a client can call.
+func Patterns() []string {
+	var h Handler
+	return slices.Sorted(maps.Keys(h.routes()))
 }
 
 // handleUnrouted answers anything under /api/v1 that no route claimed. A
