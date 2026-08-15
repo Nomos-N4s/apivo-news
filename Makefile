@@ -9,12 +9,15 @@ SQLC_VERSION ?= 1.31.1
 # job); bump them together.
 SUPABASE_VERSION ?= 2.114.0
 MIGRATE_VERSION ?= v4.19.1
+# Must match the version pinned in .github/workflows/ci.yml (openapi job);
+# bump them together.
+OPENAPI_VALIDATOR_VERSION ?= 2.46.1
 DATABASE_URL_TEST ?= postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
 # The race detector needs cgo; on Windows without a C toolchain, run
 # `make test RACE=` and let CI cover the race detection.
 RACE ?= -race
 
-.PHONY: setup db-up db-down test test-unit cover vet lint sqlc ts-types web-install web-check web-build
+.PHONY: setup db-up db-down test test-unit cover vet lint openapi-lint sqlc ts-types web-install web-check web-build
 
 ## setup: one-time developer setup - route git hooks through .githooks
 setup:
@@ -48,6 +51,11 @@ vet:
 ## lint: run golangci-lint in a container (matches CI)
 lint:
 	docker run --rm -v "$(CURDIR)":/src -w /src golangci/golangci-lint:$(GOLANGCI_LINT_VERSION) golangci-lint run
+
+## openapi-lint: validate api/openapi.json against the OpenAPI specification (matches CI)
+# Needs Node, not Docker: the same command the openapi CI job runs.
+openapi-lint:
+	npx --yes @redocly/cli@$(OPENAPI_VALIDATOR_VERSION) lint api/openapi.json
 
 ## sqlc: regenerate Go types from the schema migrations
 sqlc:

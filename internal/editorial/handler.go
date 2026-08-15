@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
@@ -30,8 +32,28 @@ type Handler struct {
 func NewHandler(log *slog.Logger, store Store, auth EditorAuthenticator) http.Handler {
 	h := &Handler{log: log, store: store, auth: auth}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/editorial/sources", h.createSource)
+	for pattern, handler := range h.routes() {
+		mux.HandleFunc(pattern, handler)
+	}
 	return h.requireEditor(mux)
+}
+
+// routes maps every editorial route to its handler. NewHandler registers
+// exactly this map and Patterns reports exactly its keys, so a route cannot
+// exist without being listed - which is what lets the OpenAPI document be
+// checked against the routes rather than against someone's memory of them.
+func (h *Handler) routes() map[string]http.HandlerFunc {
+	return map[string]http.HandlerFunc{
+		"POST /api/v1/editorial/sources": h.createSource,
+	}
+}
+
+// Patterns lists this module's ServeMux patterns ("METHOD /path"), sorted.
+// Every one of them sits under the prefix the composition root mounts, and
+// behind the requireEditor gate.
+func Patterns() []string {
+	var h Handler
+	return slices.Sorted(maps.Keys(h.routes()))
 }
 
 // sourceRequest is the source-registration payload. UsageRule is decoded
