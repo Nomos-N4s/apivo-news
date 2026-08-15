@@ -162,6 +162,21 @@ describe('the HTTP client (API_BASE_URL set)', () => {
     const api = createReaderApi('http://api:8080', fetchImpl);
     await expect(api.article('anything')).rejects.toBeInstanceOf(ReaderApiError);
   });
+
+  it('rejects a half-shaped article — every contract field is checked at runtime', async () => {
+    const detail = FRONT_FIXTURES[0];
+    const mistyped = { ...detail, headline: 42 };
+    const { fetchImpl } = respondingWith(jsonResponse(mistyped));
+    await expect(
+      createReaderApi('http://api:8080', fetchImpl).article('x'),
+    ).rejects.toBeInstanceOf(ReaderApiError);
+
+    const { places: _places, ...withoutPlaces } = detail as NonNullable<typeof detail>;
+    const { fetchImpl: fetchImpl2 } = respondingWith(jsonResponse(withoutPlaces));
+    await expect(
+      createReaderApi('http://api:8080', fetchImpl2).article('x'),
+    ).rejects.toBeInstanceOf(ReaderApiError);
+  });
 });
 
 describe('probeEmptyPlaces', () => {
