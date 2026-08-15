@@ -21,6 +21,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 	platformdb "github.com/Nomos-N4s/apivo-news/internal/platform/db"
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
@@ -77,6 +78,7 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 	defer pool.Close()
 
 	srv := platformhttp.New(log, cfg.HTTPAddr, readiness(pool))
+	srv.Mount("/api/v1/", content.NewHandler(log, pool))
 	log.InfoContext(ctx, "starting", "addr", cfg.HTTPAddr, "env", cfg.Env)
 	return srv.Run(ctx)
 }
