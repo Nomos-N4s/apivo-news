@@ -174,18 +174,25 @@ func TestNegativeUnmeteredAttemptsAreRejected(t *testing.T) {
 	}
 }
 
-// TestTwoConcurrentUpsertsBothLand asserts the one thing the database
-// contributes that application code cannot: an atomic counter. The
-// single-statement upsert takes the month row's lock and returns the
-// POST-increment total, so two workers crossing the month together each
-// see a different total and neither loses the other's money -
-// SELECT-then-INSERT would have both read the same number and written back
-// over each other.
+// TestTwoConcurrentTranslationInsertsBothReachTheLedger asserts the one
+// thing the database contributes that application code cannot - an atomic
+// month counter - and asserts it through the ONLY path production uses:
+// the 0005 trigger. A version of this test that ran its own copy of the
+// upsert SQL would keep passing if translation_record_spend() were
+// rewritten as SELECT-then-UPDATE, the exact lost-update shape the
+// migration exists to prevent. So the two sessions here INSERT real
+// translation rows concurrently, and the assertions are that the second
+// session serialises on the month row the trigger locked, and that the
+// committed month carries both costs.
 //
 // The race needs two real sessions and real commits; row locks are
-// invisible inside one rolled-back transaction. A far-future month keys the
-// test's own ledger row so it never collides with the suite's real spend.
-func TestTwoConcurrentUpsertsBothLand(t *testing.T) {
+// invisible inside one rolled-back transaction. That has a cost this test
+// accepts and the rest of the suite avoids: translation rows are immutable
+// and undeletable (I-3 tooling), so the two rows and their few thousand
+// micro-USD stay in the test database's current month. The suite's other
+// ledger tests are unaffected - they measure deltas under the month row's
+// lock, never absolute totals.
+func TestTwoConcurrentTranslationInsertsBothReachTheLedger(t *testing.T) {
 	t.Parallel()
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
@@ -193,10 +200,6 @@ func TestTwoConcurrentUpsertsBothLand(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// Closed by cleanup rather than by defer: deferred calls run when the
-	// test function returns, which is BEFORE its cleanups, and the cleanup
-	// below still needs a connection to tidy the test month with. Cleanups
-	// run last-registered-first, so it gets one.
 	connA, err := pgx.Connect(ctx, url)
 	if err != nil {
 		t.Fatalf("connect session A: %v", err)
@@ -208,24 +211,32 @@ func TestTwoConcurrentUpsertsBothLand(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = connB.Close(ctx) })
 
-	const month = "2099-06-01"
-	const upsert = `insert into translation_spend (month, spent_microusd, unmetered_attempts)
-	                values ($1::date, $2, 0)
-	                on conflict (month) do update
-	                   set spent_microusd = translation_spend.spent_microusd + excluded.spent_microusd,
-	                       unmetered_attempts = translation_spend.unmetered_attempts + excluded.unmetered_attempts
-	                returning spent_microusd`
-
-	// This month is the test's alone, so it is safe to clear before and
-	// after: unlike translation and article, the ledger is a counter, not
-	// a record of a decision.
-	clearMonth := func() {
-		if _, err := connA.Exec(ctx, `delete from translation_spend where month = $1::date`, month); err != nil {
-			t.Fatalf("clearing the test month: %v", err)
-		}
+	// The seeds are committed (autocommit) so session B can see them.
+	suffix := randomSuffix(t)
+	var sourceID string
+	if err := connA.QueryRow(ctx,
+		`insert into source (name, url, language_code, jurisdiction, licence_terms)
+		 values ($1, $2, 'el', 'GR', 'Extract and link permitted per feed terms') returning id`,
+		"Concurrent Spend Feed "+suffix, "https://example.test/feed/concurrent-"+suffix).Scan(&sourceID); err != nil {
+		t.Fatalf("seed source: %v", err)
 	}
-	clearMonth()
-	t.Cleanup(clearMonth)
+	seedItem := func(name string) string {
+		var itemID string
+		if err := connA.QueryRow(ctx,
+			`insert into source_item (source_id, source_url, raw_body) values ($1, $2, $3) returning id`,
+			sourceID, "https://example.test/articles/concurrent-"+name+"-"+suffix,
+			"σώμα "+name+" "+suffix).Scan(&itemID); err != nil {
+			t.Fatalf("seed source_item %s: %v", name, err)
+		}
+		return itemID
+	}
+	itemA, itemB := seedItem("a"), seedItem("b")
+
+	const costA, costB = 3_117, 4_529
+	const insert = `insert into translation (source_item_id, target_locale, model, prompt_version, headline, extract, cost_microusd)
+	                values ($1, 'de', 'test-model-1', 'prompt-v1', $2, $3, $4)`
+	const monthTotal = `select spent_microusd from translation_spend
+	                     where month = date_trunc('month', now() at time zone 'utc')::date`
 
 	txA, err := connA.Begin(ctx)
 	if err != nil {
@@ -233,60 +244,54 @@ func TestTwoConcurrentUpsertsBothLand(t *testing.T) {
 	}
 	defer func() { _ = txA.Rollback(ctx) }()
 
-	var totalA int64
-	if err := txA.QueryRow(ctx, upsert, month, 100).Scan(&totalA); err != nil {
-		t.Fatalf("session A upsert: %v", err)
+	if _, err := txA.Exec(ctx, insert, itemA, "Überschrift A "+suffix, "Auszug A "+suffix, costA); err != nil {
+		t.Fatalf("session A insert: %v", err)
 	}
 
-	done := make(chan int64, 1)
+	// Read the month under the lock the trigger's upsert just took: the
+	// total is the committed baseline plus this transaction's own cost,
+	// and nothing can move it until commit releases the lock.
+	var totalAfterA int64
+	if err := txA.QueryRow(ctx, monthTotal).Scan(&totalAfterA); err != nil {
+		t.Fatalf("reading the month under session A's lock: %v", err)
+	}
+
+	done := make(chan struct{})
 	fail := make(chan error, 1)
 	go func() {
-		var totalB int64
-		if err := connB.QueryRow(ctx, upsert, month, 250).Scan(&totalB); err != nil {
+		if _, err := connB.Exec(ctx, insert, itemB, "Überschrift B "+suffix, "Auszug B "+suffix, costB); err != nil {
 			fail <- err
 			return
 		}
-		done <- totalB
+		close(done)
 	}()
 
 	select {
-	case totalB := <-done:
-		t.Fatalf("session B finished (total %d) while session A held the month row: the counter is not serialising", totalB)
+	case <-done:
+		t.Fatal("session B's insert committed while session A held the month row: the trigger is not serialising on the counter")
 	case err := <-fail:
-		t.Fatalf("session B upsert: %v", err)
+		t.Fatalf("session B insert: %v", err)
 	case <-time.After(300 * time.Millisecond):
-		// Blocked on A's row lock, as required.
+		// Blocked on the month row the trigger locked, as required.
 	}
 
 	if err := txA.Commit(ctx); err != nil {
 		t.Fatalf("commit session A: %v", err)
 	}
 
-	var totalB int64
 	select {
-	case totalB = <-done:
+	case <-done:
 	case err := <-fail:
-		t.Fatalf("session B upsert after A committed: %v", err)
+		t.Fatalf("session B insert after A committed: %v", err)
 	case <-time.After(10 * time.Second):
 		t.Fatal("session B still blocked after session A committed")
 	}
 
-	if totalA != 100 {
-		t.Errorf("session A's post-increment total = %d, want 100", totalA)
-	}
-	if totalB != 350 {
-		t.Errorf("session B's post-increment total = %d, want 350 (its own 250 on top of A's committed 100)", totalB)
-	}
-	if totalA == totalB {
-		t.Error("both sessions saw the same total: the upsert is not returning the post-increment value")
-	}
-
 	var final int64
-	if err := connA.QueryRow(ctx,
-		`select spent_microusd from translation_spend where month = $1::date`, month).Scan(&final); err != nil {
-		t.Fatalf("reading the test month back: %v", err)
+	if err := connA.QueryRow(ctx, monthTotal).Scan(&final); err != nil {
+		t.Fatalf("reading the month back: %v", err)
 	}
-	if final != 350 {
-		t.Errorf("month total = %d, want 350: one session's spend was lost", final)
+	if final != totalAfterA+costB {
+		t.Errorf("month total = %d, want %d: a lost update - the trigger dropped one session's spend", final, totalAfterA+costB)
 	}
 }
