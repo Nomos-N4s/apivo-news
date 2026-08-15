@@ -28,14 +28,27 @@ var ErrAlreadyWithdrawn = errors.New("editorial: article is already withdrawn")
 // Every record survives (FR-016, I-5): the article row, its approval, its
 // attribution and the retrieved evidence are untouched.
 //
-// There is no explicit transaction here, and that is the point: migration
-// 0002 writes the article.withdrawn domain event by trigger, in the same
-// statement, so the audit record is atomic with the withdrawal by
-// construction rather than by application discipline. Emitting an event
-// here as well would duplicate it.
+// No domain event is written here, deliberately: migration 0002 writes
+// article.withdrawn by trigger, in the same statement as the update, so the
+// audit record is atomic with the withdrawal by construction rather than by
+// application discipline. Emitting one here would duplicate it.
+//
+// The transaction is not for atomicity, then, but for containment. The
+// database refuses a non-editor by raising, and a raise aborts the
+// transaction it happened in - so a caller that handed this store a
+// transaction of its own would find it poisoned by a refusal it asked for
+// and expected to handle. Running the statement in a transaction of this
+// method's own confines that to a savepoint the rollback releases.
 func (s *PGStore) Withdraw(ctx context.Context, articleID, editorID uuid.UUID, reason string) (Withdrawal, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return Withdrawal{}, fmt.Errorf("editorial: beginning withdrawal: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+
 	id := pgtype.UUID{Bytes: articleID, Valid: true}
-	row, err := s.q.WithdrawArticle(ctx, store.WithdrawArticleParams{
+	row, err := q.WithdrawArticle(ctx, store.WithdrawArticleParams{
 		ArticleID:   id,
 		WithdrawnBy: pgtype.UUID{Bytes: editorID, Valid: true},
 		Reason:      reason,
@@ -44,7 +57,7 @@ func (s *PGStore) Withdraw(ctx context.Context, articleID, editorID uuid.UUID, r
 	case errors.Is(err, pgx.ErrNoRows):
 		// The guarded UPDATE matched nothing. Which of the three reasons it
 		// was is a question only the database can answer.
-		return Withdrawal{}, s.withdrawalRefusal(ctx, articleID, id)
+		return Withdrawal{}, withdrawalRefusal(ctx, q, articleID, id)
 	case err != nil:
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && databaseRefusedEditor(pgErr) {
@@ -53,19 +66,23 @@ func (s *PGStore) Withdraw(ctx context.Context, articleID, editorID uuid.UUID, r
 		return Withdrawal{}, fmt.Errorf("editorial: withdrawing article: %w", err)
 	}
 
-	return Withdrawal{
+	withdrawal := Withdrawal{
 		ArticleID:   uuid.UUID(row.ID.Bytes),
 		WithdrawnAt: row.WithdrawnAt.Time,
 		WithdrawnBy: uuid.UUID(row.WithdrawnBy.Bytes),
 		Reason:      row.WithdrawalReason.String,
-	}, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Withdrawal{}, fmt.Errorf("editorial: committing withdrawal: %w", err)
+	}
+	return withdrawal, nil
 }
 
 // withdrawalRefusal names the reason the guarded update matched no row:
 // no such article, an article that was never published, or one whose
 // publication has already ended.
-func (s *PGStore) withdrawalRefusal(ctx context.Context, articleID uuid.UUID, id pgtype.UUID) error {
-	lifecycle, err := s.q.ArticleLifecycle(ctx, id)
+func withdrawalRefusal(ctx context.Context, q *store.Queries, articleID uuid.UUID, id pgtype.UUID) error {
+	lifecycle, err := q.ArticleLifecycle(ctx, id)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return fmt.Errorf("%w: %s", ErrArticleNotFound, articleID)
