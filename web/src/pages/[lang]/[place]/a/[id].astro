@@ -98,8 +98,17 @@ const title = `${article.headline} · epiloYES`;
   <header class="head">
     <a class="brand" href={backHref}>epilo<span class="brand-yes">YES</span></a>
     <span class="head-rule" aria-hidden="true"></span>
-    {backPlace !== undefined && <a class="back" href={backHref}>← {backPlace.endonym}</a>}
-    <span class="head-axes">{LANGUAGE_ENDONYMS[lang]} · {places.map((place) => place.endonym).join(' · ')}</span>
+    {backPlace !== undefined && (
+      <a class="back" href={backHref}>← <span lang={backPlace.endonymLang}>{backPlace.endonym}</span></a>
+    )}
+    {/* Endonyms keep their own language even in running chrome text
+        (WCAG 3.1.2) — "München" stays German inside a Greek page. */}
+    <span class="head-axes">
+      {LANGUAGE_ENDONYMS[lang]}
+      {places.map((place) => (
+        <> · <span lang={place.endonymLang}>{place.endonym}</span></>
+      ))}
+    </span>
     <!-- The language axis, still one link away: an article exists on one
          language axis only, so the other language leads to its front page
          with the places untouched (FR-009). The current language is state
@@ -225,12 +234,12 @@ const title = `${article.headline} · epiloYES`;
     color: var(--color-text);
   }
   .back:hover {
-    color: var(--color-accent);
+    color: var(--color-accent-700);
   }
   .head-axes {
     margin-left: auto;
     font-size: 12px;
-    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    color: var(--ink-soft);
   }
   .head-seg .seg-opt {
     color: var(--color-text);
@@ -241,7 +250,7 @@ const title = `${article.headline} · epiloYES`;
     padding: 5px 10px;
   }
   .head-seg .seg-opt[aria-current='true'] {
-    background: var(--color-accent);
+    background: var(--color-accent-700);
     color: var(--color-bg);
   }
   .head-seg a.seg-opt:not([aria-current='true']):hover {
@@ -268,7 +277,7 @@ const title = `${article.headline} · epiloYES`;
     font-size: 10.5px;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--color-accent);
+    color: var(--color-accent-700);
   }
   .meta-rule {
     width: 1px;
@@ -279,7 +288,7 @@ const title = `${article.headline} · epiloYES`;
     font-size: 11px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+    color: var(--ink-soft);
   }
   .reading h1 {
     font-size: clamp(30px, 4.8vw, 46px);
@@ -304,7 +313,7 @@ const title = `${article.headline} · epiloYES`;
   }
   .boundary h6 {
     margin: 0 0 var(--space-2);
-    color: var(--color-accent);
+    color: var(--color-accent-700);
   }
   .boundary p {
     font-size: 14.5px;
@@ -323,7 +332,7 @@ const title = `${article.headline} · epiloYES`;
   }
   .boundary-note {
     font-size: 12.5px;
-    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+    color: var(--ink-soft);
     max-width: 34ch;
   }
 
@@ -340,7 +349,7 @@ const title = `${article.headline} · epiloYES`;
     line-height: 1.6;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+    color: var(--ink-soft);
     flex: none;
     width: 96px;
   }
@@ -373,7 +382,7 @@ const title = `${article.headline} · epiloYES`;
     font-size: 12px;
   }
   .record-row dt {
-    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    color: var(--ink-soft);
     flex: none;
   }
   .record-row dd {
@@ -396,7 +405,7 @@ const title = `${article.headline} · epiloYES`;
     color: var(--color-text);
   }
   .more-item:hover .more-title {
-    color: var(--color-accent);
+    color: var(--color-accent-700);
   }
   .more-title {
     font-family: var(--font-heading);
@@ -406,7 +415,7 @@ const title = `${article.headline} · epiloYES`;
   }
   .more-meta {
     font-size: 11px;
-    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    color: var(--ink-soft);
   }
 
   @media (max-width: 900px) {

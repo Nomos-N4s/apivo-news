@@ -140,7 +140,7 @@ const sections: {
     gap: var(--space-3);
     flex-wrap: wrap;
     font-size: 12px;
-    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+    color: var(--ink-soft);
   }
   .who strong {
     color: var(--color-text);
@@ -179,7 +179,7 @@ const sections: {
     color: var(--color-text);
   }
   .rail-current {
-    background: var(--color-accent);
+    background: var(--color-accent-700);
     color: var(--color-bg);
     font-weight: 600;
   }
@@ -187,7 +187,7 @@ const sections: {
     background: color-mix(in srgb, var(--color-text) 7%, transparent);
   }
   .rail-pending {
-    color: color-mix(in srgb, var(--color-text) 45%, transparent);
+    color: var(--ink-soft);
   }
   .count {
     font-size: 11px;
@@ -210,17 +210,18 @@ const sections: {
     margin-bottom: 6px;
   }
   .spend-bar {
-    height: 6px;
+    height: 8px;
     background: var(--color-neutral-300);
+    border: 1px solid var(--border-strong);
     margin-bottom: 6px;
   }
   .spend-fill {
     height: 6px;
-    background: var(--color-accent);
+    background: var(--color-accent-700);
   }
   .spend-note {
     font-size: 11px;
-    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    color: var(--ink-soft);
   }
   .pane {
     min-width: 0;
