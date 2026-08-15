@@ -67,6 +67,23 @@ func completionWith(body map[string]any) string {
 	return string(payload)
 }
 
+// usageShapeHandler answers with a valid translation and the given usage
+// block verbatim, for the shapes a well-formed usage struct cannot
+// express: totals only, empty, another vendor's field names, or null.
+func usageShapeHandler(content string, reported map[string]any) func(int, http.ResponseWriter, *http.Request) {
+	return func(_ int, w http.ResponseWriter, _ *http.Request) {
+		body := map[string]any{
+			"model": hostModelID,
+			"choices": []any{map[string]any{
+				"message":       map[string]any{"content": content},
+				"finish_reason": "stop",
+			}},
+			"usage": reported,
+		}
+		answerJSON(w, http.StatusOK, completionWith(body))
+	}
+}
+
 // recordedCall is what the fake host saw.
 type recordedCall struct {
 	method      string
@@ -399,7 +416,69 @@ func TestTranslate(t *testing.T) {
 					}},
 				}))
 			},
+			wantErr:     translation.ErrInvalidResponse,
+			wantErrText: "reports no token usage",
+			wantCalls:   1,
+		},
+		{
+			name:      "usage reporting totals only",
+			handler:   usageShapeHandler(goodContent, map[string]any{"total_tokens": 365}),
 			wantErr:   translation.ErrInvalidResponse,
+			wantCalls: 1,
+		},
+		{
+			name:      "empty usage block",
+			handler:   usageShapeHandler(goodContent, map[string]any{}),
+			wantErr:   translation.ErrInvalidResponse,
+			wantCalls: 1,
+		},
+		{
+			name:      "another vendor's usage names behind a gateway",
+			handler:   usageShapeHandler(goodContent, map[string]any{"input_tokens": 210, "output_tokens": 155}),
+			wantErr:   translation.ErrInvalidResponse,
+			wantCalls: 1,
+		},
+		{
+			name:      "gemini-shaped usage names behind a gateway",
+			handler:   usageShapeHandler(goodContent, map[string]any{"promptTokenCount": 210, "candidatesTokenCount": 155}),
+			wantErr:   translation.ErrInvalidResponse,
+			wantCalls: 1,
+		},
+		{
+			name:      "usage null",
+			handler:   usageShapeHandler(goodContent, nil),
+			wantErr:   translation.ErrInvalidResponse,
+			wantCalls: 1,
+		},
+		{
+			name:      "zero prompt tokens on a priced host",
+			handler:   usageShapeHandler(goodContent, map[string]any{"prompt_tokens": 0, "completion_tokens": 155}),
+			wantErr:   translation.ErrInvalidResponse,
+			wantCalls: 1,
+		},
+		{
+			name:      "zero completion tokens on a priced host",
+			handler:   usageShapeHandler(goodContent, map[string]any{"prompt_tokens": 210, "completion_tokens": 0}),
+			wantErr:   translation.ErrInvalidResponse,
+			wantCalls: 1,
+		},
+		{
+			// The counts are not load-bearing on a host that charges
+			// nothing, so an odd usage shape is not a reason to throw a
+			// translation away there.
+			name:    "uninformative usage is tolerated on a free host",
+			handler: usageShapeHandler(goodContent, map[string]any{"total_tokens": 365}),
+			configure: func(c *Config) {
+				c.InputPricePerMillionUSD, c.OutputPricePerMillionUSD = 0, 0
+				c.FreeOfCharge = true
+			},
+			want: translation.Result{
+				Headline:      wantHeadline,
+				Extract:       wantExtract,
+				Model:         hostModelID,
+				PromptVersion: translation.CurrentPromptVersion,
+				CostMicroUSD:  0,
+			},
 			wantCalls: 1,
 		},
 		{

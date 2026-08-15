@@ -348,13 +348,11 @@ func (c *Client) decode(payload []byte, promptVersion string) (translation.Resul
 		return translation.Result{}, err
 	}
 
-	// No usage block means no cost, and translation.cost_microusd has no
-	// default: recording this translation would have to invent a number.
-	// Refusing is the honest outcome (FR-006).
-	if resp.Usage == nil {
-		return translation.Result{}, fmt.Errorf("openaicompat: response reports no token usage, so its cost is unknown: %w", translation.ErrInvalidResponse)
+	reported, err := c.reportedUsage(resp.Usage)
+	if err != nil {
+		return translation.Result{}, err
 	}
-	cost, err := costMicroUSD(*resp.Usage, c.cfg.InputPricePerMillionUSD, c.cfg.OutputPricePerMillionUSD)
+	cost, err := costMicroUSD(reported, c.cfg.InputPricePerMillionUSD, c.cfg.OutputPricePerMillionUSD)
 	if err != nil {
 		return translation.Result{}, err
 	}
@@ -372,6 +370,40 @@ func (c *Client) decode(payload []byte, promptVersion string) (translation.Resul
 		PromptVersion: promptVersion,
 		CostMicroUSD:  cost,
 	}, nil
+}
+
+// reportedUsage returns the token counts a priced call must carry, and
+// refuses the response otherwise.
+//
+// Testing the usage block for presence is not enough. Only the OpenAI
+// field names are decoded, so a response reporting totals only
+// ({"total_tokens": 365}), an empty block from a gateway or content
+// filter ({}), or another vendor's names behind an OpenAI-compatible
+// gateway (input_tokens/output_tokens, promptTokenCount) all decode to a
+// present block with both counters at zero - and would price at zero.
+// That is the exact failure translation.cost_microusd exists to prevent:
+// the row says free, the monthly ledger never advances, and the cap
+// cannot trip however many articles are translated (FR-006).
+//
+// A completion that returned content necessarily consumed prompt tokens
+// and produced completion tokens, so on a priced host a zero counter is
+// unreported usage, not free work. A host that genuinely charges nothing
+// is identified by its zero PRICES - declared with FreeOfCharge - and
+// its counts are not load-bearing there, so they are left alone.
+func (c *Client) reportedUsage(reported *usage) (usage, error) {
+	if reported == nil {
+		return usage{}, fmt.Errorf("openaicompat: response reports no token usage, so its cost is unknown: %w", translation.ErrInvalidResponse)
+	}
+	if c.cfg.FreeOfCharge {
+		return *reported, nil
+	}
+	if reported.PromptTokens <= 0 || reported.CompletionTokens <= 0 {
+		return usage{}, fmt.Errorf(
+			"openaicompat: response reports %d prompt and %d completion tokens, which a priced call cannot have consumed: its usage was not reported in the fields this API defines, so its cost is unknown: %w",
+			reported.PromptTokens, reported.CompletionTokens, translation.ErrInvalidResponse,
+		)
+	}
+	return *reported, nil
 }
 
 // translated is the JSON object the prompt asks the model for.
