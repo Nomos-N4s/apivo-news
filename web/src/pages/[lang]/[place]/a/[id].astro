@@ -94,6 +94,22 @@ const title = `${article.headline} · epiloYES`;
     <span class="head-rule" aria-hidden="true"></span>
     {backPlace !== undefined && <a class="back" href={backHref}>← {backPlace.endonym}</a>}
     <span class="head-axes">{LANGUAGE_ENDONYMS[lang]} · {places.map((place) => place.endonym).join(' · ')}</span>
+    <!-- The language axis, still one link away: an article exists on one
+         language axis only, so the other language leads to its front page
+         with the places untouched (FR-009). The current language is state
+         and renders as a span, not an href-less anchor. -->
+    <div class="seg head-seg" role="group">
+      {lang === 'el' ? (
+        <span class="seg-opt" aria-current="true">EL</span>
+      ) : (
+        <a class="seg-opt" href={frontPagePath('el', slugs)}>EL</a>
+      )}
+      {lang === 'de' ? (
+        <span class="seg-opt" aria-current="true">DE</span>
+      ) : (
+        <a class="seg-opt" href={frontPagePath('de', slugs)}>DE</a>
+      )}
+    </div>
   </header>
 
   <div class="body">
@@ -209,6 +225,21 @@ const title = `${article.headline} · epiloYES`;
     margin-left: auto;
     font-size: 12px;
     color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .head-seg .seg-opt {
+    color: var(--color-text);
+    text-decoration: none;
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 12px;
+    padding: 5px 10px;
+  }
+  .head-seg .seg-opt[aria-current='true'] {
+    background: var(--color-accent);
+    color: var(--color-bg);
+  }
+  .head-seg a.seg-opt:not([aria-current='true']):hover {
+    background: color-mix(in srgb, var(--color-text) 7%, transparent);
   }
 
   .body {

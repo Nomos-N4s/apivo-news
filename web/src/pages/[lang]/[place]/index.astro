@@ -1,5 +1,6 @@
 ---
 import { API_BASE_URL } from 'astro:env/server';
+import AxisBar from '../../../components/AxisBar.astro';
 import EmptyPlaceBand from '../../../components/EmptyPlaceBand.astro';
 import Masthead from '../../../components/Masthead.astro';
 import ProvenanceDisclosure from '../../../components/ProvenanceDisclosure.astro';
@@ -83,29 +84,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
     <button class="btn btn-secondary sign-in" disabled title={t.signInPending}>{t.signIn}</button>
   </Masthead>
 
-  <section class="axes" aria-label={`${t.readingLanguage} · ${t.places}`}>
-    <div class="axis axis-lang">
-      <h6>{t.readingLanguage}</h6>
-      {/* The current language is state, not a destination: it renders as
-          a span — an <a> without href fails accessibility checks. */}
-      <div class="seg" role="group">
-        {lang === 'el' ? (
-          <span class="seg-opt" aria-current="true">Ελληνικά</span>
-        ) : (
-          <a class="seg-opt" href={frontPagePath('el', slugs)}>Ελληνικά</a>
-        )}
-        {lang === 'de' ? (
-          <span class="seg-opt" aria-current="true">Deutsch</span>
-        ) : (
-          <a class="seg-opt" href={frontPagePath('de', slugs)}>Deutsch</a>
-        )}
-      </div>
-    </div>
-    <div class="axis axis-places">
-      <h6>{t.places}</h6>
-      {places.map((place) => <span class="tag tag-accent">{place.endonym}</span>)}
-    </div>
-  </section>
+  <AxisBar lang={lang} places={places} />
 
   <main>
     {
@@ -195,42 +174,6 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
 </ReaderLayout>
 
 <style>
-  /* — the axes row: two cells, one per axis, the vertical rule between
-     them doing the separating (the design argument made literal) — */
-  .axes {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    border-bottom: 2px solid var(--color-divider);
-  }
-  .axis {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3) calc(var(--space-6) + var(--space-1));
-  }
-  .axis-lang {
-    border-right: 1px solid var(--color-divider);
-  }
-  .axis h6 {
-    margin: 0;
-    color: color-mix(in srgb, var(--color-text) 55%, transparent);
-    flex: none;
-  }
-  .seg-opt {
-    color: var(--color-text);
-    text-decoration: none;
-  }
-  .seg-opt[aria-current='true'] {
-    background: var(--color-accent);
-    color: var(--color-bg);
-  }
-  a.seg-opt:not([aria-current='true']):hover {
-    background: color-mix(in srgb, var(--color-text) 7%, transparent);
-  }
-  .axis-places .tag {
-    font-size: 11.5px;
-  }
-
   main {
     flex: 1;
   }

@@ -10,8 +10,20 @@ import {
 import type { Place } from './axes';
 import { FRONT_FIXTURES } from './fixtures';
 
-const MUNICH: Place = { slug: 'munich', endonym: 'München', scope: 'city', selectable: true };
-const BAVARIA: Place = { slug: 'bavaria', endonym: 'Bayern', scope: 'region', selectable: false };
+const MUNICH: Place = {
+  slug: 'munich',
+  endonym: 'München',
+  scope: 'city',
+  selectable: true,
+  parents: ['Bayern', 'Deutschland'],
+};
+const BAVARIA: Place = {
+  slug: 'bavaria',
+  endonym: 'Bayern',
+  scope: 'region',
+  selectable: false,
+  parents: ['Deutschland'],
+};
 
 describe('the fixture client (no API_BASE_URL)', () => {
   const api = createReaderApi(undefined);

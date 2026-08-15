@@ -51,6 +51,21 @@ export interface UiStrings {
   /** Masthead sign-in (mockup 1a) — disabled until registration ships (T031). */
   readonly signIn: string;
   readonly signInPending: string;
+  /** The axis bar (mockup 1f) — chip actions and the independence line. */
+  readonly addPlace: (placeName: string) => string;
+  readonly removePlace: (placeName: string) => string;
+  readonly independenceLine: string;
+  /** The setup dialog (mockup 1e). */
+  readonly setupTitle: string;
+  readonly setupSubtitle: string;
+  readonly axisOneLabel: string;
+  readonly axisTwoLabel: string;
+  readonly alphaLanguagesNote: string;
+  readonly selectedCount: (count: number) => string;
+  readonly covers: (placeName: string) => string;
+  readonly frontPagePreviewLabel: string;
+  readonly later: string;
+  readonly startReading: string;
 }
 
 const EL: UiStrings = {
@@ -84,6 +99,21 @@ const EL: UiStrings = {
     'Δοκιμάστε ξανά σε λίγο. Δεν χάθηκε τίποτα — τα άρθρα θα εμφανιστούν μόλις αποκατασταθεί η σύνδεση.',
   signIn: 'Σύνδεση',
   signInPending: 'Διαθέσιμο με την εγγραφή',
+  addPlace: (placeName) => `Προσθήκη τόπου: ${placeName}`,
+  removePlace: (placeName) => `Αφαίρεση τόπου: ${placeName}`,
+  independenceLine: 'Η γλώσσα και ο τόπος δεν συνδυάζονται ποτέ σε μία ρύθμιση.',
+  setupTitle: 'Ρυθμίστε την ανάγνωσή σας',
+  setupSubtitle:
+    'Η γλώσσα σας και οι τόποι που ακολουθείτε είναι ξεχωριστές επιλογές. Αλλάξτε οποιαδήποτε από τις δύο οποτεδήποτε.',
+  axisOneLabel: 'Άξονας 1 — Διαβάζω στα',
+  axisTwoLabel: 'Άξονας 2 — Ακολουθώ',
+  alphaLanguagesNote:
+    'Μόνο οι γλώσσες της άλφα. Τα αγγλικά υπάρχουν στο σχήμα και δεν είναι προσβάσιμα.',
+  selectedCount: (count) => `Επιλεγμένοι: ${count}`,
+  covers: (placeName) => `καλύπτει ${placeName}`,
+  frontPagePreviewLabel: 'Πρώτη σελίδα:',
+  later: 'Αργότερα',
+  startReading: 'Έναρξη ανάγνωσης',
 };
 
 const DE: UiStrings = {
@@ -117,6 +147,21 @@ const DE: UiStrings = {
     'Versuchen Sie es gleich noch einmal. Nichts ist verloren — die Beiträge erscheinen, sobald die Verbindung wieder steht.',
   signIn: 'Anmelden',
   signInPending: 'Verfügbar mit der Registrierung',
+  addPlace: (placeName) => `Ort hinzufügen: ${placeName}`,
+  removePlace: (placeName) => `Ort entfernen: ${placeName}`,
+  independenceLine: 'Sprache und Ort werden nie zu einer Einstellung kombiniert.',
+  setupTitle: 'Richten Sie Ihr Lesen ein',
+  setupSubtitle:
+    'Ihre Sprache und die Orte, denen Sie folgen, sind getrennte Entscheidungen. Ändern Sie beides jederzeit.',
+  axisOneLabel: 'Achse 1 — Ich lese auf',
+  axisTwoLabel: 'Achse 2 — Ich folge',
+  alphaLanguagesNote:
+    'Nur die Alpha-Sprachen. Englisch existiert im Schema und ist nicht erreichbar.',
+  selectedCount: (count) => `Ausgewählt: ${count}`,
+  covers: (placeName) => `umfasst ${placeName}`,
+  frontPagePreviewLabel: 'Startseite:',
+  later: 'Später',
+  startReading: 'Lesen starten',
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, UiStrings>> = { el: EL, de: DE };
