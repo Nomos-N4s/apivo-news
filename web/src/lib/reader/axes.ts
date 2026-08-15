@@ -33,6 +33,12 @@ export interface Place {
   readonly slug: string;
   /** The place's own-language name, shown regardless of reading language (mockup 1a). */
   readonly endonym: string;
+  /**
+   * The language the endonym is written in, for `lang` attributes wherever
+   * the endonym appears inside a page of the other reading language
+   * (WCAG 3.1.2) — "München" is German on a Greek page and vice versa.
+   */
+  readonly endonymLang: ReadingLanguage;
   readonly scope: PlaceScope;
   /**
    * Whether the setup screen offers the place. Non-selectable places are
@@ -46,10 +52,10 @@ export interface Place {
 
 /** The alpha place catalog, in display order. */
 export const PLACE_CATALOG: readonly Place[] = [
-  { slug: 'munich', endonym: 'München', scope: 'city', selectable: true, parents: ['Bayern', 'Deutschland'] },
-  { slug: 'greece', endonym: 'Ελλάδα', scope: 'country', selectable: true, parents: [] },
-  { slug: 'bavaria', endonym: 'Bayern', scope: 'region', selectable: false, parents: ['Deutschland'] },
-  { slug: 'germany', endonym: 'Deutschland', scope: 'country', selectable: false, parents: [] },
+  { slug: 'munich', endonym: 'München', endonymLang: 'de', scope: 'city', selectable: true, parents: ['Bayern', 'Deutschland'] },
+  { slug: 'greece', endonym: 'Ελλάδα', endonymLang: 'el', scope: 'country', selectable: true, parents: [] },
+  { slug: 'bavaria', endonym: 'Bayern', endonymLang: 'de', scope: 'region', selectable: false, parents: ['Deutschland'] },
+  { slug: 'germany', endonym: 'Deutschland', endonymLang: 'de', scope: 'country', selectable: false, parents: [] },
 ];
 
 /** Looks a place up by slug; undefined for slugs outside the catalog. */

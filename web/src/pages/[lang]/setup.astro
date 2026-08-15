@@ -56,13 +56,13 @@ const title = `epiloYES — ${t.setupTitle}`;
           <legend>{t.axisOneLabel}</legend>
           <label class="lang-opt">
             <input type="radio" name="lang" value="el" checked={lang === 'el'} />
-            <span class="lang-name">Ελληνικά</span>
-            <span class="lang-sub">Greek — el</span>
+            <span class="lang-name" lang="el">Ελληνικά</span>
+            <span class="lang-sub" lang="en">Greek — el</span>
           </label>
           <label class="lang-opt">
             <input type="radio" name="lang" value="de" checked={lang === 'de'} />
-            <span class="lang-name">Deutsch</span>
-            <span class="lang-sub">German — de</span>
+            <span class="lang-name" lang="de">Deutsch</span>
+            <span class="lang-sub" lang="en">German — de</span>
           </label>
           <p class="axis-note">{t.alphaLanguagesNote}</p>
         </fieldset>
@@ -83,7 +83,7 @@ const title = `epiloYES — ${t.setupTitle}`;
                     checked={preselectedSlugs.includes(place.slug)}
                   />
                   <span class="box" aria-hidden="true" />
-                  <span class="place-name">{place.endonym}</span>
+                  <span class="place-name" lang={place.endonymLang}>{place.endonym}</span>
                   <span class="place-sub">
                     {place.parents.length > 0
                       ? place.parents.join(' · ')
@@ -96,7 +96,7 @@ const title = `epiloYES — ${t.setupTitle}`;
               contextRows.map((row) => (
                 <div class="place-row place-row-context">
                   <span class="box box-off" aria-hidden="true" />
-                  <span class="place-name">{row.place.endonym}</span>
+                  <span class="place-name" lang={row.place.endonymLang}>{row.place.endonym}</span>
                   <span class="place-sub">{row.note}</span>
                 </div>
               ))

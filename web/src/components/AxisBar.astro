@@ -55,17 +55,19 @@ const setupHref = `/${lang}/setup?places=${encodeURIComponent(slugs.join(PLACE_S
   <div class="axis axis-lang">
     <h6>{t.readingLanguage}</h6>
     {/* The current language is state, not a destination: it renders as a
-        span — an <a> without href fails accessibility checks. */}
+        span — an <a> without href fails accessibility checks. Each label is
+        written in the language it names, so it carries its own lang
+        attribute (WCAG 3.1.2). */}
     <div class="seg" role="group">
       {lang === 'el' ? (
-        <span class="seg-opt" aria-current="true">Ελληνικά</span>
+        <span class="seg-opt" aria-current="true" lang="el">Ελληνικά</span>
       ) : (
-        <a class="seg-opt" href={frontPagePath('el', slugs)}>Ελληνικά</a>
+        <a class="seg-opt" href={frontPagePath('el', slugs)} lang="el">Ελληνικά</a>
       )}
       {lang === 'de' ? (
-        <span class="seg-opt" aria-current="true">Deutsch</span>
+        <span class="seg-opt" aria-current="true" lang="de">Deutsch</span>
       ) : (
-        <a class="seg-opt" href={frontPagePath('de', slugs)}>Deutsch</a>
+        <a class="seg-opt" href={frontPagePath('de', slugs)} lang="de">Deutsch</a>
       )}
     </div>
   </div>
@@ -79,10 +81,11 @@ const setupHref = `/${lang}/setup?places=${encodeURIComponent(slugs.join(PLACE_S
             href={chip.href}
             aria-label={chip.label}
           >
-            {chip.place.endonym} <span aria-hidden="true">{chip.selected ? '×' : '+'}</span>
+            <span lang={chip.place.endonymLang}>{chip.place.endonym}</span>{' '}
+            <span aria-hidden="true">{chip.selected ? '×' : '+'}</span>
           </a>
         ) : (
-          <span class="chip chip-on">{chip.place.endonym}</span>
+          <span class="chip chip-on" lang={chip.place.endonymLang}>{chip.place.endonym}</span>
         ),
       )
     }

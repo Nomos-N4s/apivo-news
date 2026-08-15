@@ -130,7 +130,14 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                   {item.source_name} · {formatDateTime(lang, new Date(item.retrieved_at))}
                 </span>
               </span>
-              <span class="row-title">
+              <span
+                class="row-title"
+                lang={
+                  item.headline_translated == null && item.headline_original != null
+                    ? (item.source_lang ?? undefined)
+                    : undefined
+                }
+              >
                 {item.headline_translated ?? item.headline_original ?? item.source_item_id}
               </span>
               <span class="row-tags">
@@ -210,8 +217,17 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                       </a>
                     )}
                   </div>
-                  <div class="col-title">{selected.headline_original ?? '—'}</div>
-                  <p class="col-extract">{selected.extract_original ?? '—'}</p>
+                  {/* The original column is written in the source language;
+                      the lang attribute keeps screen readers from reading
+                      German headlines with Greek pronunciation rules
+                      (WCAG 3.1.2). Absent source_lang omits the attribute
+                      rather than guessing. */}
+                  <div class="col-title" lang={selected.source_lang ?? undefined}>
+                    {selected.headline_original ?? '—'}
+                  </div>
+                  <p class="col-extract" lang={selected.source_lang ?? undefined}>
+                    {selected.extract_original ?? '—'}
+                  </p>
                   <dl class="evidence">
                     <div>
                       <dt>original_author</dt>
@@ -250,10 +266,26 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                         : `${selected.model ?? '—'} · prompt ${selected.prompt_version ?? '—'}`}
                     </span>
                   </div>
-                  <div class="col-title">
+                  {/* When a field falls back to the untranslated original,
+                      it keeps the original's language. */}
+                  <div
+                    class="col-title"
+                    lang={
+                      selected.headline_translated == null && selected.headline_original != null
+                        ? (selected.source_lang ?? undefined)
+                        : undefined
+                    }
+                  >
                     {selected.headline_translated ?? selected.headline_original ?? '—'}
                   </div>
-                  <p class="col-extract">
+                  <p
+                    class="col-extract"
+                    lang={
+                      selected.extract_translated == null && selected.extract_original != null
+                        ? (selected.source_lang ?? undefined)
+                        : undefined
+                    }
+                  >
                     {selected.extract_translated ?? selected.extract_original ?? '—'}
                   </p>
                   <p class="muted extract-note">{t.extractOnlyNote}</p>

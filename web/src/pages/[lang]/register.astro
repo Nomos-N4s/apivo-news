@@ -115,7 +115,9 @@ const here = `/${lang}/register`;
 
         <h6>{t.placesToFollow}</h6>
         <div class="places">
-          {followed.map((place) => <span class="tag tag-accent">{place.endonym}</span>)}
+          {followed.map((place) => (
+            <span class="tag tag-accent" lang={place.endonymLang}>{place.endonym}</span>
+          ))}
           <a class="btn btn-ghost" href={`/${lang}/setup`}>{t.editPlaces}</a>
         </div>
         <p class="note">{t.followNote}</p>

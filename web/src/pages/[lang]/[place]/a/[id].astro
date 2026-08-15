@@ -98,8 +98,17 @@ const title = `${article.headline} · epiloYES`;
   <header class="head">
     <a class="brand" href={backHref}>epilo<span class="brand-yes">YES</span></a>
     <span class="head-rule" aria-hidden="true"></span>
-    {backPlace !== undefined && <a class="back" href={backHref}>← {backPlace.endonym}</a>}
-    <span class="head-axes">{LANGUAGE_ENDONYMS[lang]} · {places.map((place) => place.endonym).join(' · ')}</span>
+    {backPlace !== undefined && (
+      <a class="back" href={backHref}>← <span lang={backPlace.endonymLang}>{backPlace.endonym}</span></a>
+    )}
+    {/* Endonyms keep their own language even in running chrome text
+        (WCAG 3.1.2) — "München" stays German inside a Greek page. */}
+    <span class="head-axes">
+      {LANGUAGE_ENDONYMS[lang]}
+      {places.map((place) => (
+        <> · <span lang={place.endonymLang}>{place.endonym}</span></>
+      ))}
+    </span>
     <!-- The language axis, still one link away: an article exists on one
          language axis only, so the other language leads to its front page
          with the places untouched (FR-009). The current language is state

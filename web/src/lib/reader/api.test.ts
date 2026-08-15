@@ -13,6 +13,7 @@ import { FRONT_FIXTURES } from './fixtures';
 const MUNICH: Place = {
   slug: 'munich',
   endonym: 'München',
+  endonymLang: 'de',
   scope: 'city',
   selectable: true,
   parents: ['Bayern', 'Deutschland'],
@@ -20,6 +21,7 @@ const MUNICH: Place = {
 const BAVARIA: Place = {
   slug: 'bavaria',
   endonym: 'Bayern',
+  endonymLang: 'de',
   scope: 'region',
   selectable: false,
   parents: ['Deutschland'],
