@@ -1,0 +1,117 @@
+---
+import Masthead from '../../components/Masthead.astro';
+import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import { DEFAULT_FRONT_PAGE, isReadingLanguage } from '../../lib/reader/axes';
+import { uiStrings } from '../../lib/reader/strings';
+
+// The about page (issue #92): what epiloYES is, how the pipeline works,
+// the machine-translation disclosure, the corrections/withdrawal policy
+// (FR-016) and the licensing note for publishers. The copy lives in
+// strings.ts beside every other reader string; this page only lays it out.
+//
+// The page has a language axis but no place axis, so the switcher links
+// /el/about ↔ /de/about and the brand falls back to the flagship journey.
+const langSegment = Astro.params['lang'];
+if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+  return Astro.rewrite('/404');
+}
+const lang = langSegment;
+const t = uiStrings(lang);
+
+const sections = [
+  { heading: t.aboutPipelineHeading, paragraphs: t.aboutPipelineParagraphs },
+  { heading: t.aboutTranslationHeading, paragraphs: t.aboutTranslationParagraphs },
+  { heading: t.aboutCorrectionsHeading, paragraphs: t.aboutCorrectionsParagraphs },
+  { heading: t.aboutPublishersHeading, paragraphs: t.aboutPublishersParagraphs },
+];
+---
+
+<ReaderLayout lang={lang} title={`epiloYES — ${t.aboutLabel}`} description={t.tagline}>
+  <Masthead homeHref={DEFAULT_FRONT_PAGE}>
+    {/* The current language is state, not a destination (same rule as the
+        axis bar); each label carries its own lang (WCAG 3.1.2). */}
+    <div class="seg" role="group">
+      {lang === 'el' ? (
+        <span class="seg-opt" aria-current="true" lang="el">Ελληνικά</span>
+      ) : (
+        <a class="seg-opt" href="/el/about" lang="el">Ελληνικά</a>
+      )}
+      {lang === 'de' ? (
+        <span class="seg-opt" aria-current="true" lang="de">Deutsch</span>
+      ) : (
+        <a class="seg-opt" href="/de/about" lang="de">Deutsch</a>
+      )}
+    </div>
+  </Masthead>
+
+  <main class="page">
+    <header class="head">
+      <h2>{t.aboutHeading}</h2>
+      <p class="intro">{t.aboutIntro}</p>
+    </header>
+
+    {
+      sections.map((section) => (
+        <section class="block">
+          <h6>{section.heading}</h6>
+          {section.paragraphs.map((paragraph) => (
+            <p>{paragraph}</p>
+          ))}
+        </section>
+      ))
+    }
+  </main>
+</ReaderLayout>
+
+<style>
+  .page {
+    max-width: 720px;
+    padding: var(--space-7) calc(var(--space-6) + var(--space-1));
+  }
+  .head {
+    margin-bottom: var(--space-6);
+  }
+  .head h2 {
+    margin-bottom: var(--space-3);
+  }
+  .intro {
+    margin: 0;
+    font-size: 16px;
+    text-wrap: pretty;
+  }
+  .seg {
+    margin-left: auto;
+  }
+  .seg-opt {
+    color: var(--color-text);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+  .seg-opt[aria-current='true'] {
+    background: var(--color-accent-700);
+    color: var(--color-bg);
+  }
+  a.seg-opt:hover {
+    background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  }
+  .block {
+    padding-top: var(--space-5);
+    margin-top: var(--space-5);
+    border-top: 1px solid var(--color-divider);
+  }
+  .block h6 {
+    color: var(--color-accent-700);
+    margin-bottom: var(--space-3);
+  }
+  .block p {
+    font-size: 14.5px;
+    text-wrap: pretty;
+    max-width: 62ch;
+  }
+  .block p:last-child {
+    margin-bottom: 0;
+  }
+</style>
