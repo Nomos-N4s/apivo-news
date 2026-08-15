@@ -60,6 +60,12 @@ const (
 	// completionsPath is the OpenAI chat-completions path, appended to the
 	// configured base URL.
 	completionsPath = "/chat/completions"
+	// costOverflowsAt is 2^63, the first value an int64 cannot hold. The
+	// comparison must be against this and not against math.MaxInt64:
+	// converting MaxInt64 (2^63-1) to float64 rounds it UP to exactly
+	// 2^63, so a cost of 2^63 would pass a `> math.MaxInt64` test and
+	// then wrap to a large negative cost on conversion.
+	costOverflowsAt = float64(1 << 63)
 )
 
 // Config describes one OpenAI-compatible host. It is plain data so that
@@ -507,7 +513,7 @@ func costMicroUSD(u usage, inputPrice, outputPrice float64) (int64, error) {
 	}
 	micro := float64(u.PromptTokens)*inputPrice + float64(u.CompletionTokens)*outputPrice
 	rounded := math.Round(micro)
-	if math.IsNaN(rounded) || rounded < 0 || rounded > math.MaxInt64 {
+	if math.IsNaN(rounded) || rounded < 0 || rounded >= costOverflowsAt {
 		return 0, fmt.Errorf("openaicompat: reported usage (%d in, %d out) yields an unrepresentable cost: %w", u.PromptTokens, u.CompletionTokens, translation.ErrInvalidResponse)
 	}
 	return int64(rounded), nil

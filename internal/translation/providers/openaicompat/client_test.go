@@ -1055,6 +1055,32 @@ func TestCostMicroUSD(t *testing.T) {
 			outputPrice: 1000,
 			wantErr:     true,
 		},
+		{
+			// 2^62 tokens at 2 micro-USD each is exactly 2^63, one above
+			// the largest int64. float64(math.MaxInt64) rounds up to the
+			// same 2^63, so a guard written against MaxInt64 waves this
+			// through and the conversion wraps it negative - which would
+			// then fail the column's non-negative check, or worse, credit
+			// the ledger.
+			name:        "a cost of exactly 2^63 is refused",
+			usage:       usage{PromptTokens: 1 << 62, CompletionTokens: 0},
+			inputPrice:  2,
+			outputPrice: 0,
+			wantErr:     true,
+		},
+		{
+			// Half the boundary still has to work: the guard must reject
+			// what overflows and nothing else. (The nearest representable
+			// value to the boundary itself is the boundary, so the
+			// largest accepted cost cannot be expressed exactly in
+			// float64 - which is why the guard is an inequality against
+			// 2^63 rather than an attempt to name the last good value.)
+			name:        "a very large but representable cost is accepted",
+			usage:       usage{PromptTokens: 1 << 61, CompletionTokens: 0},
+			inputPrice:  2,
+			outputPrice: 0,
+			want:        1 << 62,
+		},
 	}
 
 	for _, tc := range tests {
