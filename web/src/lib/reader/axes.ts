@@ -40,14 +40,16 @@ export interface Place {
    * the URL — the API knows their slugs and answers honestly.
    */
   readonly selectable: boolean;
+  /** Endonyms of the hierarchy above, nearest first — "Bayern · Deutschland". */
+  readonly parents: readonly string[];
 }
 
 /** The alpha place catalog, in display order. */
 export const PLACE_CATALOG: readonly Place[] = [
-  { slug: 'munich', endonym: 'München', scope: 'city', selectable: true },
-  { slug: 'greece', endonym: 'Ελλάδα', scope: 'country', selectable: true },
-  { slug: 'bavaria', endonym: 'Bayern', scope: 'region', selectable: false },
-  { slug: 'germany', endonym: 'Deutschland', scope: 'country', selectable: false },
+  { slug: 'munich', endonym: 'München', scope: 'city', selectable: true, parents: ['Bayern', 'Deutschland'] },
+  { slug: 'greece', endonym: 'Ελλάδα', scope: 'country', selectable: true, parents: [] },
+  { slug: 'bavaria', endonym: 'Bayern', scope: 'region', selectable: false, parents: ['Deutschland'] },
+  { slug: 'germany', endonym: 'Deutschland', scope: 'country', selectable: false, parents: [] },
 ];
 
 /** Looks a place up by slug; undefined for slugs outside the catalog. */
@@ -148,6 +150,51 @@ export const LANGUAGE_ENDONYMS: Readonly<Record<ReadingLanguage, string>> = {
   el: 'Ελληνικά',
   de: 'Deutsch',
 };
+
+/**
+ * Parses a `?places=munich+greece` query value into selectable catalog
+ * places — the setup page's prefill. Unknown and non-selectable slugs are
+ * dropped rather than failing: the query is a convenience, not an address.
+ */
+export function parsePlacesParam(value: string | null): Place[] {
+  if (value === null || value === '') {
+    return [];
+  }
+  const places: Place[] = [];
+  for (const slug of value.split(PLACE_SEPARATOR)) {
+    const place = findPlace(slug);
+    if (place !== undefined && place.selectable && !places.includes(place)) {
+      places.push(place);
+    }
+  }
+  return places;
+}
+
+/**
+ * Composes the front-page path from raw form input — the `/go` endpoint's
+ * whole logic. `place` arrives repeated (`?place=munich&place=greece`).
+ * Null means the input names no mounted language or no selectable place;
+ * the caller decides where that lands.
+ */
+export function composeFrontPageTarget(
+  langParam: string | null,
+  placeParams: readonly string[],
+): string | null {
+  if (langParam === null || !isReadingLanguage(langParam)) {
+    return null;
+  }
+  const slugs: string[] = [];
+  for (const raw of placeParams) {
+    const place = findPlace(raw);
+    if (place !== undefined && place.selectable && !slugs.includes(place.slug)) {
+      slugs.push(place.slug);
+    }
+  }
+  if (slugs.length === 0) {
+    return null;
+  }
+  return frontPagePath(langParam, slugs);
+}
 
 /** The US1 flagship journey — where `/` lands: Munich local + Greek national, in Greek. */
 export const DEFAULT_FRONT_PAGE = frontPagePath('el', ['munich', 'greece']);

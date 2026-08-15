@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   articlePath,
+  composeFrontPageTarget,
   DEFAULT_FRONT_PAGE,
   findPlace,
   frontPagePath,
   isReadingLanguage,
   LANGUAGE_ENDONYMS,
   parseAxes,
+  parsePlacesParam,
   PLACE_CATALOG,
   placeKicker,
 } from './axes';
@@ -126,5 +128,53 @@ describe('the place catalog', () => {
     expect(findPlace('munich')?.endonym).toBe('München');
     expect(findPlace('greece')?.scope).toBe('country');
     expect(findPlace('münchen')).toBeUndefined();
+  });
+
+  it('carries the hierarchy as endonym chains', () => {
+    expect(findPlace('munich')?.parents).toEqual(['Bayern', 'Deutschland']);
+    expect(findPlace('greece')?.parents).toEqual([]);
+  });
+});
+
+describe('parsePlacesParam', () => {
+  it('reads a +-joined prefill, dropping junk and duplicates', () => {
+    expect(parsePlacesParam('munich+greece').map((place) => place.slug)).toEqual([
+      'munich',
+      'greece',
+    ]);
+    expect(parsePlacesParam('munich+atlantis+munich').map((place) => place.slug)).toEqual([
+      'munich',
+    ]);
+  });
+
+  it('drops non-selectable slugs — the query offers, the catalog decides', () => {
+    expect(parsePlacesParam('bavaria+greece').map((place) => place.slug)).toEqual(['greece']);
+  });
+
+  it('answers empty for nothing', () => {
+    expect(parsePlacesParam(null)).toEqual([]);
+    expect(parsePlacesParam('')).toEqual([]);
+  });
+});
+
+describe('composeFrontPageTarget', () => {
+  it('composes the front page from raw form input', () => {
+    expect(composeFrontPageTarget('el', ['munich', 'greece'])).toBe('/el/munich+greece');
+    expect(composeFrontPageTarget('de', ['greece', 'greece'])).toBe('/de/greece');
+  });
+
+  it('drops junk slugs and answers null when nothing valid remains', () => {
+    expect(composeFrontPageTarget('el', ['munich', 'atlantis'])).toBe('/el/munich');
+    expect(composeFrontPageTarget('el', ['atlantis'])).toBeNull();
+    expect(composeFrontPageTarget('el', [])).toBeNull();
+  });
+
+  it('refuses an unmounted language outright (FR-015)', () => {
+    expect(composeFrontPageTarget('en', ['munich'])).toBeNull();
+    expect(composeFrontPageTarget(null, ['munich'])).toBeNull();
+  });
+
+  it('refuses non-selectable places as form input', () => {
+    expect(composeFrontPageTarget('el', ['bavaria'])).toBeNull();
   });
 });

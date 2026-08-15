@@ -45,6 +45,21 @@ export interface UiStrings {
   /** Calm not-found copy. */
   readonly notFoundTitle: string;
   readonly notFoundBody: string;
+  /** The axis bar (mockup 1f) — chip actions and the independence line. */
+  readonly addPlace: (placeName: string) => string;
+  readonly removePlace: (placeName: string) => string;
+  readonly independenceLine: string;
+  /** The setup dialog (mockup 1e). */
+  readonly setupTitle: string;
+  readonly setupSubtitle: string;
+  readonly axisOneLabel: string;
+  readonly axisTwoLabel: string;
+  readonly alphaLanguagesNote: string;
+  readonly selectedCount: (count: number) => string;
+  readonly covers: (placeName: string) => string;
+  readonly frontPagePreviewLabel: string;
+  readonly later: string;
+  readonly startReading: string;
 }
 
 const EL: UiStrings = {
@@ -73,6 +88,21 @@ const EL: UiStrings = {
     'Κάθε άρθρο προέρχεται από αδειοδοτημένη ροή, αποδίδεται μόνο ως τίτλος και απόσπασμα — ποτέ πλήρες κείμενο — και εγκρίνεται από επώνυμο συντάκτη πριν εμφανιστεί.',
   notFoundTitle: 'Δεν υπάρχει κάτι εδώ.',
   notFoundBody: 'Η διεύθυνση δεν αντιστοιχεί σε δημοσιευμένη σελίδα.',
+  addPlace: (placeName) => `Προσθήκη τόπου: ${placeName}`,
+  removePlace: (placeName) => `Αφαίρεση τόπου: ${placeName}`,
+  independenceLine: 'Η γλώσσα και ο τόπος δεν συνδυάζονται ποτέ σε μία ρύθμιση.',
+  setupTitle: 'Ρυθμίστε την ανάγνωσή σας',
+  setupSubtitle:
+    'Η γλώσσα σας και οι τόποι που ακολουθείτε είναι ξεχωριστές επιλογές. Αλλάξτε οποιαδήποτε από τις δύο οποτεδήποτε.',
+  axisOneLabel: 'Άξονας 1 — Διαβάζω στα',
+  axisTwoLabel: 'Άξονας 2 — Ακολουθώ',
+  alphaLanguagesNote:
+    'Μόνο οι γλώσσες της άλφα. Τα αγγλικά υπάρχουν στο σχήμα και δεν είναι προσβάσιμα.',
+  selectedCount: (count) => `Επιλεγμένοι: ${count}`,
+  covers: (placeName) => `καλύπτει ${placeName}`,
+  frontPagePreviewLabel: 'Πρώτη σελίδα:',
+  later: 'Αργότερα',
+  startReading: 'Έναρξη ανάγνωσης',
 };
 
 const DE: UiStrings = {
@@ -101,6 +131,21 @@ const DE: UiStrings = {
     'Jeder Beitrag stammt aus einem lizenzierten Feed, wird nur als Überschrift und Auszug wiedergegeben — nie im Volltext — und vor der Veröffentlichung von einer namentlich genannten Redaktion freigegeben.',
   notFoundTitle: 'Hier gibt es nichts.',
   notFoundBody: 'Diese Adresse führt zu keiner veröffentlichten Seite.',
+  addPlace: (placeName) => `Ort hinzufügen: ${placeName}`,
+  removePlace: (placeName) => `Ort entfernen: ${placeName}`,
+  independenceLine: 'Sprache und Ort werden nie zu einer Einstellung kombiniert.',
+  setupTitle: 'Richten Sie Ihr Lesen ein',
+  setupSubtitle:
+    'Ihre Sprache und die Orte, denen Sie folgen, sind getrennte Entscheidungen. Ändern Sie beides jederzeit.',
+  axisOneLabel: 'Achse 1 — Ich lese auf',
+  axisTwoLabel: 'Achse 2 — Ich folge',
+  alphaLanguagesNote:
+    'Nur die Alpha-Sprachen. Englisch existiert im Schema und ist nicht erreichbar.',
+  selectedCount: (count) => `Ausgewählt: ${count}`,
+  covers: (placeName) => `umfasst ${placeName}`,
+  frontPagePreviewLabel: 'Startseite:',
+  later: 'Später',
+  startReading: 'Lesen starten',
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, UiStrings>> = { el: EL, de: DE };
