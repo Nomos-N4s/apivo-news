@@ -11,6 +11,11 @@
 # names the registry so a genuine failure is never mistaken for one.
 set -eu
 
+if [ "$#" -ne 1 ]; then
+    echo "usage: $0 <image-ref>" >&2
+    exit 2
+fi
+
 IMAGE="$1"
 ATTEMPTS=${PULL_ATTEMPTS:-5}
 

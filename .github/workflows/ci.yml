@@ -162,11 +162,15 @@ jobs:
       - name: Regenerate types from schema
         # Written to a temporary file first: a failed generation must not
         # truncate the committed types and make the drift check below report
-        # a difference that does not exist.
+        # a difference that does not exist. The temporary file sits in the
+        # destination directory so the replacement is a rename within one
+        # filesystem - from /tmp it could degrade to copy-then-delete, which
+        # is exactly the partial write being guarded against.
         run: |
           npx --yes supabase@2.114.0 gen types typescript \
-            --db-url "postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable" > /tmp/database.types.ts
-          mv /tmp/database.types.ts web/src/lib/database.types.ts
+            --db-url "postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable" \
+            > web/src/lib/database.types.ts.new
+          mv web/src/lib/database.types.ts.new web/src/lib/database.types.ts
       - name: Fail on drift between schema and committed generated code
         run: |
           # git add first so brand-new generated files count as drift too.
