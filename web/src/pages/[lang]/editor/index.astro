@@ -5,6 +5,7 @@ import ReaderLayout from '../../../layouts/ReaderLayout.astro';
 import {
   approvalRecordLine,
   createEditorialApi,
+  EditorialApiError,
   formatItemCost,
   type ApprovalOutcome,
   type QueuePage,
@@ -95,11 +96,25 @@ if (Astro.request.method === 'POST') {
 
 let queue: QueuePage | null = null;
 let queueFailed = false;
+let notProvisioned = false;
 try {
   queue = await api.queue();
-} catch {
-  queueFailed = true;
-  Astro.response.status = 503;
+} catch (error) {
+  if (
+    session.authenticated &&
+    error instanceof EditorialApiError &&
+    (error.status === 401 || error.status === 403)
+  ) {
+    // Signed in, yet refused: the quickstart's documented first-run
+    // state, where no account row was provisioned for this person. The
+    // service is not down, and saying it is would send the operator
+    // hunting for an outage instead of at the provisioning step.
+    notProvisioned = true;
+    Astro.response.status = 403;
+  } else {
+    queueFailed = true;
+    Astro.response.status = 503;
+  }
 }
 
 const items = queue?.items ?? [];
@@ -140,6 +155,14 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
     spend={queue?.spend}
     authConfigured={configured}
   >
+    {
+      notProvisioned && (
+        <div class="provision">
+          <h6>{t.notProvisionedTitle}</h6>
+          <p>{t.notProvisionedBody}</p>
+        </div>
+      )
+    }
     <div class="work">
       <div class="queue">
         <div class="queue-head">
@@ -195,7 +218,11 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
           )
         }
         {queueFailed && <p class="skip-note">{reader.unavailableBody}</p>}
-        {!queueFailed && items.length === 0 && <p class="skip-note">{t.emptyQueue}</p>}
+        {/* An unprovisioned account could not read the queue at all, so
+            the screen must not claim it is empty. */}
+        {!queueFailed && !notProvisioned && items.length === 0 && (
+          <p class="skip-note">{t.emptyQueue}</p>
+        )}
       </div>
 
       <div class="review">
@@ -347,6 +374,23 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
 </ReaderLayout>
 
 <style>
+  /* — the unprovisioned-account guidance — */
+  .provision {
+    padding: var(--space-4) var(--space-6);
+    border-bottom: 2px solid var(--color-divider);
+    background: var(--color-accent-100);
+  }
+  .provision h6 {
+    margin: 0 0 var(--space-2);
+    color: var(--color-accent-800);
+  }
+  .provision p {
+    margin: 0;
+    font-size: 13px;
+    max-width: 90ch;
+    text-wrap: pretty;
+  }
+
   .work {
     display: grid;
     grid-template-columns: 400px 1fr;
