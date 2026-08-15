@@ -9,8 +9,20 @@ export interface EditorialStrings {
   readonly editorial: string;
   readonly signedInAs: string;
   readonly roleEditor: string;
+  /** The other value of `account.role`; the chrome names what it found. */
+  readonly roleReader: string;
   /** Shown while the identity is a placeholder rather than a real sign-in. */
   readonly previewSession: string;
+  /** The chrome when nobody is signed in — it names no one. */
+  readonly notSignedIn: string;
+  readonly signIn: string;
+  readonly signOut: string;
+  /** The sign-in screen. */
+  readonly signInTitle: string;
+  readonly signInIntro: string;
+  readonly signInFailed: string;
+  readonly signInUnavailable: string;
+  readonly signedOutNow: string;
   /** Nav rail. */
   readonly reviewQueue: string;
   readonly sources: string;
@@ -103,7 +115,18 @@ const EL: EditorialStrings = {
   editorial: 'Σύνταξη',
   signedInAs: 'Συνδεδεμένος ως',
   roleEditor: 'ρόλος συντάκτη',
-  previewSession: 'Προεπισκόπηση — δεν έχει γίνει πραγματική σύνδεση',
+  roleReader: 'ρόλος αναγνώστη',
+  previewSession: 'Προεπισκόπηση — δεν έχει ρυθμιστεί σύνδεση',
+  notSignedIn: 'Καμία σύνδεση',
+  signIn: 'Σύνδεση',
+  signOut: 'Αποσύνδεση',
+  signInTitle: 'Σύνδεση συντάκτη',
+  signInIntro:
+    'Η έγκριση καταγράφει το όνομά σας μόνιμα δίπλα στο άρθρο. Συνδεθείτε με τον δικό σας λογαριασμό — ποτέ κοινόχρηστο.',
+  signInFailed: 'Η σύνδεση δεν έγινε δεκτή. Ελέγξτε το ηλεκτρονικό ταχυδρομείο και τον κωδικό.',
+  signInUnavailable:
+    'Δεν έχει ρυθμιστεί υπηρεσία ταυτοποίησης σε αυτή την εγκατάσταση, οπότε η φόρμα δεν στέλνει τίποτα. Οι συντακτικές οθόνες δείχνουν δείγματα δεδομένων.',
+  signedOutNow: 'Αποσυνδεθήκατε.',
   reviewQueue: 'Ουρά ελέγχου',
   sources: 'Πηγές',
   published: 'Δημοσιευμένα',
@@ -199,7 +222,18 @@ const DE: EditorialStrings = {
   editorial: 'Redaktion',
   signedInAs: 'Angemeldet als',
   roleEditor: 'Rolle Redaktion',
-  previewSession: 'Vorschau — keine echte Anmeldung',
+  roleReader: 'Rolle Lesen',
+  previewSession: 'Vorschau — keine Anmeldung eingerichtet',
+  notSignedIn: 'Nicht angemeldet',
+  signIn: 'Anmelden',
+  signOut: 'Abmelden',
+  signInTitle: 'Anmeldung Redaktion',
+  signInIntro:
+    'Eine Freigabe verzeichnet Ihren Namen dauerhaft neben dem Artikel. Melden Sie sich mit Ihrem eigenen Konto an — niemals mit einem geteilten.',
+  signInFailed: 'Die Anmeldung wurde nicht angenommen. Prüfen Sie E-Mail und Passwort.',
+  signInUnavailable:
+    'In dieser Installation ist kein Anmeldedienst eingerichtet, dieses Formular sendet also nichts. Die Redaktionsansichten zeigen Beispieldaten.',
+  signedOutNow: 'Sie sind abgemeldet.',
   reviewQueue: 'Prüfliste',
   sources: 'Quellen',
   published: 'Veröffentlicht',

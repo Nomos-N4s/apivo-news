@@ -11,6 +11,7 @@ import {
 import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings, languageName } from '../../../lib/editorial/strings';
+import { authConfigured } from '../../../lib/editorial/supabase';
 import { findPlace, isReadingLanguage } from '../../../lib/reader/axes';
 import { formatDateTime, formatItemDate, safeSourceUrl } from '../../../lib/reader/format';
 import { uiStrings } from '../../../lib/reader/strings';
@@ -31,6 +32,15 @@ const lang = langSegment;
 const t = editorialStrings(lang);
 const reader = uiStrings(lang);
 const session = editorSession(Astro.request);
+
+// With an auth provider configured, a visitor nobody signed in belongs on
+// the sign-in screen: this page offers approval, and approval needs a
+// named editor's own token. Without a provider there is nothing to sign
+// in to, and the screen stays the fixture preview it has been.
+const configured = authConfigured();
+if (configured && !session.authenticated) {
+  return Astro.redirect(`/${lang}/editor/signin`);
+}
 
 const api = createEditorialApi(API_BASE_URL, session.token);
 
@@ -109,6 +119,7 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
     active="queue"
     queueCount={items.length}
     spend={queue?.spend}
+    authConfigured={configured}
   >
     <div class="work">
       <div class="queue">

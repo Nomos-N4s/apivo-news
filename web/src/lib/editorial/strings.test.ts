@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { READING_LANGUAGES } from '../reader/axes';
 import { editorialStrings, languageName } from './strings';
-import { editorSession } from './session';
 
 describe('editorialStrings', () => {
   it('answers in the language asked', () => {
@@ -37,7 +36,16 @@ describe('editorialStrings', () => {
       expect(t.approveAndPublish).not.toBe('');
       expect(t.previewSession).not.toBe('');
       expect(t.notRecordedTitle).not.toBe('');
+      expect(t.notSignedIn).not.toBe('');
+      expect(t.signInTitle).not.toBe('');
+      expect(t.signInFailed).not.toBe('');
+      expect(t.roleReader).not.toBe('');
     }
+  });
+
+  it('says the sign-in names the person the approval will record (FR-007)', () => {
+    expect(editorialStrings('el').signInIntro).toContain('όνομά σας');
+    expect(editorialStrings('de').signInIntro).toContain('Namen');
   });
 });
 
@@ -50,15 +58,5 @@ describe('languageName', () => {
   it('passes an unknown code through rather than inventing a name', () => {
     expect(languageName('el', 'fr')).toBe('fr');
     expect(languageName('de', '')).toBe('');
-  });
-});
-
-describe('editorSession', () => {
-  it('names an editor and marks the session as not really authenticated', () => {
-    const session = editorSession(new Request('http://localhost/el/editor'));
-    expect(session.displayName).not.toBe('');
-    expect(session.role).toBe('editor');
-    expect(session.authenticated).toBe(false);
-    expect(session.token).toBeNull();
   });
 });

@@ -3,14 +3,17 @@
  *
  * The approver is never anonymous: `article.approved_by` is NOT NULL and
  * migration 0002 additionally requires that account to hold the editor
- * role, so every editorial screen names who is signed in. Today that name
- * comes from a fixture — Supabase Auth and the JWT round trip are T022's
- * other half (research D7), and `internal/identity` already validates
- * tokens although no endpoint consumes them yet.
+ * role, so every editorial screen names who is signed in. That name now
+ * comes from Supabase Auth (research D7): the middleware resolves the
+ * cookie-backed session once per request, against the auth server, and
+ * this module maps what it answered onto the shape the screens read.
  *
- * This module is the single seam: when auth lands, `editorSession()` reads
- * the Supabase session and returns the real account and access token, and
- * nothing else on the screens changes.
+ * `editorSession()` is unchanged for its callers — still synchronous,
+ * still taking the request — because the request object is the key the
+ * middleware filed the resolved identity under. Resolution needs to write
+ * cookies (a refreshed token has to land back in the browser) and a page
+ * is the wrong place for that, which is why it happens in middleware and
+ * this seam is a lookup.
  */
 
 /** The signed-in person, as the editorial screens need them. */
@@ -19,29 +22,189 @@ export interface EditorSession {
   readonly email: string;
   /** Mirrors `account.role`; only 'editor' may approve (0002 trigger). */
   readonly role: 'editor' | 'reader';
-  /** The bearer token for the editorial API; null while auth is unwired. */
+  /** The bearer token for the editorial API; null when nobody is signed in. */
   readonly token: string | null;
   /**
-   * False while the identity is a local placeholder. The screens surface
-   * this rather than implying a real sign-in — a named approver that
-   * nobody authenticated is exactly the claim this product must not make.
+   * Whether a Supabase session actually backs this identity. The screens
+   * surface this rather than implying a real sign-in — a named approver
+   * that nobody authenticated is exactly the claim this product must not
+   * make.
    */
   readonly authenticated: boolean;
 }
 
-/** The placeholder editor: one of the mockups' fictional names. */
-const PREVIEW_EDITOR: EditorSession = {
-  displayName: 'Eleni Papadaki',
-  email: 'eleni@epiloyes.example',
-  role: 'editor',
+/**
+ * Nobody is signed in: no name to show, no token to send.
+ *
+ * There is deliberately no placeholder name here. A screen that prints a
+ * name is stating who is at the keyboard, and this value is what it says
+ * when it does not know.
+ */
+export const NO_EDITOR_SESSION: EditorSession = {
+  displayName: '',
+  email: '',
+  role: 'reader',
   token: null,
   authenticated: false,
 };
 
 /**
- * The current editor session. Takes the request so the Supabase
- * implementation can read cookies without changing any caller.
+ * The part of a Supabase user the screens read. Narrower than the SDK's
+ * type on purpose: this module maps claims, and stating which ones keeps
+ * the mapping honest about what it depends on.
  */
-export function editorSession(_request: Request): EditorSession {
-  return PREVIEW_EDITOR;
+export interface SupabaseUserClaims {
+  readonly email?: string | null | undefined;
+  readonly user_metadata?: Record<string, unknown> | null | undefined;
+  readonly app_metadata?: Record<string, unknown> | null | undefined;
+}
+
+/** A metadata entry, when it is a non-blank string. */
+function metadataString(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string,
+): string | null {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+/**
+ * The name to print. Supabase spells the display name three ways
+ * depending on how the user was created, and the email is the last
+ * resort — an address is at least genuinely this person's.
+ */
+function displayNameOf(user: SupabaseUserClaims, email: string): string {
+  return (
+    metadataString(user.user_metadata, 'display_name') ??
+    metadataString(user.user_metadata, 'full_name') ??
+    metadataString(user.user_metadata, 'name') ??
+    email
+  );
+}
+
+/**
+ * The role, from the auth user's app metadata.
+ *
+ * `account.role` is the authority and the database enforces it; the web
+ * container never reads that table, so this is what the token asserts,
+ * not what the schema decided. Anything other than an explicit 'editor'
+ * reads as 'reader': under-claiming authority is safe, and claiming it is
+ * the failure this product cannot afford. The screens use it to name the
+ * role, never to permit anything — the approval gate is the trigger in
+ * migration 0002.
+ */
+function roleOf(user: SupabaseUserClaims): 'editor' | 'reader' {
+  return metadataString(user.app_metadata, 'role') === 'editor' ? 'editor' : 'reader';
+}
+
+/**
+ * Maps a resolved Supabase user and its access token onto the session.
+ *
+ * A user without a token is not a session: the screens would name a
+ * person while every call to the editorial API went out unauthenticated
+ * and came back 401. Either both are present or nobody is signed in.
+ */
+export function editorSessionFrom(
+  user: SupabaseUserClaims | null | undefined,
+  accessToken: string | null | undefined,
+): EditorSession {
+  if (
+    user === null ||
+    user === undefined ||
+    accessToken === null ||
+    accessToken === undefined ||
+    accessToken === ''
+  ) {
+    return NO_EDITOR_SESSION;
+  }
+  const email = typeof user.email === 'string' ? user.email : '';
+  return {
+    displayName: displayNameOf(user, email),
+    email,
+    role: roleOf(user),
+    token: accessToken,
+    authenticated: true,
+  };
+}
+
+/** Where the auth provider lives, once both halves are configured. */
+export interface SupabaseConfig {
+  readonly url: string;
+  readonly anonKey: string;
+}
+
+/**
+ * The auth configuration, or null when this deployment has none.
+ *
+ * Half a configuration is no configuration: a project URL without a key
+ * cannot authenticate anyone, and treating it as "configured" would send
+ * editors to a sign-in page that can only fail.
+ */
+export function supabaseConfig(
+  url: string | undefined,
+  anonKey: string | undefined,
+): SupabaseConfig | null {
+  const trimmedUrl = url?.trim() ?? '';
+  const trimmedKey = anonKey?.trim() ?? '';
+  if (trimmedUrl === '' || trimmedKey === '') {
+    return null;
+  }
+  return { url: trimmedUrl, anonKey: trimmedKey };
+}
+
+/**
+ * Reads the request's `Cookie` header as name/value pairs.
+ *
+ * Astro's cookie store can be asked for a name but not enumerated, and
+ * the Supabase client needs every cookie it might have written — the
+ * session is chunked across several when the token is large.
+ */
+export function parseCookieHeader(header: string | null): { name: string; value: string }[] {
+  if (header === null || header.trim() === '') {
+    return [];
+  }
+  return header
+    .split(';')
+    .map((pair) => {
+      const separator = pair.indexOf('=');
+      if (separator < 1) {
+        return null;
+      }
+      const name = pair.slice(0, separator).trim();
+      // Values are written percent-encoded; a malformed one is a cookie
+      // we did not write, so it passes through rather than throwing.
+      const raw = pair.slice(separator + 1).trim();
+      let value = raw;
+      try {
+        value = decodeURIComponent(raw);
+      } catch {
+        value = raw;
+      }
+      return name === '' ? null : { name, value };
+    })
+    .filter((cookie): cookie is { name: string; value: string } => cookie !== null);
+}
+
+/**
+ * Identities resolved during this request, keyed by the request itself.
+ *
+ * Weak so an entry lives exactly as long as the request does; nothing has
+ * to remember to clear it, and no session can outlive its exchange.
+ */
+const RESOLVED = new WeakMap<Request, EditorSession>();
+
+/** Files the identity the middleware resolved, for this request only. */
+export function rememberEditorSession(request: Request, session: EditorSession): void {
+  RESOLVED.set(request, session);
+}
+
+/**
+ * The current editor session.
+ *
+ * An unresolved request answers "nobody is signed in" rather than
+ * throwing: failing closed keeps a missing middleware from becoming a
+ * screen that names an approver it cannot vouch for.
+ */
+export function editorSession(request: Request): EditorSession {
+  return RESOLVED.get(request) ?? NO_EDITOR_SESSION;
 }

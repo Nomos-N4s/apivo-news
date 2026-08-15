@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { APIContext, MiddlewareNext } from 'astro';
+import { editorSession } from './lib/editorial/session';
 import {
   CRAWLER_SIGNATURES,
   ROBOTS_TXT_BODY,
   X_ROBOTS_TAG_VALUE,
+  isEditorialPath,
   matchesCrawlerSignature,
   onRequest,
 } from './middleware';
@@ -278,5 +280,41 @@ describe('Vary: User-Agent cache safety', () => {
     if (result instanceof Response) {
       expect(result.headers.get('vary')).toBe('*');
     }
+  });
+});
+
+describe('isEditorialPath', () => {
+  it('matches the editorial screens under any language segment', () => {
+    expect(isEditorialPath('/el/editor')).toBe(true);
+    expect(isEditorialPath('/de/editor/')).toBe(true);
+    expect(isEditorialPath('/el/editor/audit')).toBe(true);
+    expect(isEditorialPath('/de/editor/signin')).toBe(true);
+  });
+
+  it('leaves the reader pages alone, so they never pay for an auth round trip', () => {
+    expect(isEditorialPath('/')).toBe(false);
+    expect(isEditorialPath('/el/munich')).toBe(false);
+    expect(isEditorialPath('/el/editorial')).toBe(false);
+    expect(isEditorialPath('/editor')).toBe(false);
+  });
+});
+
+describe('the editor identity', () => {
+  it('marks an editorial response uncacheable — it carries one editor session', async () => {
+    const { response } = await run({ path: '/el/editor' });
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+  });
+
+  it('leaves the reader pages alone', async () => {
+    const { response } = await run({ path: '/el/munich' });
+    expect(response.headers.get('cache-control')).toBeNull();
+  });
+
+  it('resolves nobody when the deployment has no auth provider', async () => {
+    const context = makeContext({ path: '/el/editor' });
+    await onRequest(context, makeNext().next);
+    const session = editorSession(context.request);
+    expect(session.authenticated).toBe(false);
+    expect(session.token).toBeNull();
   });
 });
