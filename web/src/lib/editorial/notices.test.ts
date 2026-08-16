@@ -63,7 +63,7 @@ describe('noticeForApproval', () => {
     expect(notice.body).toBe('');
   });
 
-  it('an unreadable published_at costs a record line, never the confirmation', () => {
+  it('an unreadable published_at claims neither a date nor a publication', () => {
     const throwing = (iso: string): string => {
       // What Intl actually does with an unparseable date.
       if (Number.isNaN(new Date(iso).getTime())) {
@@ -76,10 +76,11 @@ describe('noticeForApproval', () => {
       t,
       throwing,
     );
+    // The approval is still confirmed — it was recorded — but a value the
+    // screen cannot read is no evidence of publication.
     expect(notice.tone).toBe('recorded');
-    // The server sent a publication value, so the body still reports it…
-    expect(notice.body).toBe(t.approvalPublishedBody);
-    // …while the line that cannot be rendered is simply absent.
+    expect(notice.body).toBe(t.approvalRecordedBody);
+    expect(notice.body).not.toBe(t.approvalPublishedBody);
     expect(notice.record).toEqual(['article a1']);
   });
 });

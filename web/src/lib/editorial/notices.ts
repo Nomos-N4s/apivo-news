@@ -64,23 +64,22 @@ export function noticeForApproval(
   if (line !== '') {
     record.push(line);
   }
-  // Only a readable timestamp is formatted: Intl throws on anything else,
-  // and an approval that WAS recorded must not become an error page
-  // because its confirmation carried an unreadable date. The body below
-  // still reports publication — the server sent a value for it — but the
-  // record line states only what can be rendered.
+  // A readable timestamp is publication stated and datable; an explicit
+  // null is publication withheld. Anything else — the field absent, or a
+  // value the formatter cannot read — is a publication status the screen
+  // cannot report, and saying "published" over an unreadable date would
+  // assert a fact on the strength of garbage.
   if (isTimestamp(outcome.published_at)) {
     record.push(`published_at = ${formatDate(outcome.published_at)}`);
   }
   return {
     tone: 'recorded',
     label: t.approvedTitle,
-    body:
-      typeof outcome.published_at === 'string'
-        ? t.approvalPublishedBody
-        : outcome.published_at === null
-          ? t.approvalNotPublishedBody
-          : t.approvalRecordedBody,
+    body: isTimestamp(outcome.published_at)
+      ? t.approvalPublishedBody
+      : outcome.published_at === null
+        ? t.approvalNotPublishedBody
+        : t.approvalRecordedBody,
     record,
   };
 }

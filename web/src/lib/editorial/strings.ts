@@ -258,7 +258,7 @@ const EL: EditorialStrings = {
   approvalNotPublishedBody:
     'Η έγκριση καταγράφηκε μόνιμα· το άρθρο δεν έχει δημοσιευθεί ακόμη.',
   approvalRecordedBody:
-    'Η έγκριση καταγράφηκε μόνιμα. Ο διακομιστής δεν δήλωσε κατάσταση δημοσίευσης.',
+    'Η έγκριση καταγράφηκε μόνιμα. Ο διακομιστής δεν δήλωσε αναγνώσιμη κατάσταση δημοσίευσης.',
   emptyQueue: 'Η ουρά είναι άδεια. Τίποτα δεν περιμένει έγκριση.',
   selectAnItem: 'Επιλέξτε ένα στοιχείο από την ουρά για έλεγχο.',
   readOnlyAccess: 'Πρόσβαση μόνο για ανάγνωση · ιδρυτής, νομικός σύμβουλος, εκδότης που ρωτά',
@@ -392,7 +392,7 @@ const DE: EditorialStrings = {
   approvalNotPublishedBody:
     'Die Freigabe ist dauerhaft verzeichnet; der Artikel ist noch nicht veröffentlicht.',
   approvalRecordedBody:
-    'Die Freigabe ist dauerhaft verzeichnet. Der Server hat keinen Veröffentlichungsstand genannt.',
+    'Die Freigabe ist dauerhaft verzeichnet. Der Server hat keinen lesbaren Veröffentlichungsstand genannt.',
   emptyQueue: 'Die Liste ist leer. Nichts wartet auf Freigabe.',
   selectAnItem: 'Wählen Sie einen Beitrag aus der Liste zur Prüfung.',
   readOnlyAccess: 'Nur-Lese-Zugriff · Gründung, Rechtsberatung, anfragender Verlag',
