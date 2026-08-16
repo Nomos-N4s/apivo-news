@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseApprovalForm } from './approvalForm';
+import { PLACE_CATALOG } from '../reader/axes';
+import { APPROVAL_PLACES, parseApprovalForm } from './approvalForm';
 
 function approvalForm(entries: readonly (readonly [string, string])[]): FormData {
   const form = new FormData();
@@ -9,6 +10,17 @@ function approvalForm(entries: readonly (readonly [string, string])[]): FormData
   }
   return form;
 }
+
+describe('APPROVAL_PLACES', () => {
+  it('offers exactly the places a reader can follow', () => {
+    // Same filter as register.astro: hierarchy-only entries (bavaria,
+    // germany) would satisfy the API and the database, yet an article
+    // tagged only to one is unreachable through the follow flow — the
+    // unreachability FR-009 exists to end.
+    expect(APPROVAL_PLACES).toEqual(PLACE_CATALOG.filter((place) => place.selectable));
+    expect(APPROVAL_PLACES.map((place) => place.slug)).toEqual(['munich', 'greece']);
+  });
+});
 
 describe('parseApprovalForm', () => {
   const complete: readonly (readonly [string, string])[] = [

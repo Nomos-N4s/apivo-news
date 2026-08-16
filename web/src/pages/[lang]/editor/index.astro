@@ -10,12 +10,12 @@ import {
   type ApprovalOutcome,
   type QueuePage,
 } from '../../../lib/editorial/api';
-import { parseApprovalForm } from '../../../lib/editorial/approvalForm';
+import { APPROVAL_PLACES, parseApprovalForm } from '../../../lib/editorial/approvalForm';
 import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings, languageName } from '../../../lib/editorial/strings';
 import { authConfigured } from '../../../lib/editorial/supabase';
-import { findPlace, isReadingLanguage, PLACE_CATALOG } from '../../../lib/reader/axes';
+import { findPlace, isReadingLanguage } from '../../../lib/reader/axes';
 import { formatDateTime, formatItemDate, safeSourceUrl } from '../../../lib/reader/format';
 import { uiStrings } from '../../../lib/reader/strings';
 
@@ -403,13 +403,17 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                         handling above answers the empty selection with the
                         not-recorded banner, since plain HTML cannot express
                         "at least one of these" and this screen carries no
-                        client JavaScript. Pre-checked from the queue row's
-                        own places, when it names any. */}
+                        client JavaScript. Only reader-selectable places are
+                        offered (APPROVAL_PLACES): a hierarchy-only tag like
+                        Bavaria would satisfy the database yet leave the
+                        article unreachable through the follow flow.
+                        Pre-checked from the queue row's own places, when it
+                        names any. */}
                     <fieldset class="field places-field">
                       <legend>{t.publishTo}</legend>
                       <div class="place-options">
                         {
-                          PLACE_CATALOG.map((place) => (
+                          APPROVAL_PLACES.map((place) => (
                             <label class="place-option">
                               <input
                                 type="checkbox"

@@ -10,6 +10,22 @@
  * guarantee.
  */
 
+import { PLACE_CATALOG, type Place } from '../reader/axes';
+
+/**
+ * The places the approval form offers: the reader vocabulary, exactly.
+ * Non-selectable catalog entries (Bavaria, Germany) are hierarchy context —
+ * setup and register never offer them and the axes parser drops them from
+ * URLs, so an article tagged only to one would satisfy the API and the
+ * database yet stay unreachable through the product's own follow flow: a
+ * quieter version of the unreachability FR-009 exists to end. Same filter
+ * as register.astro; publishing to hierarchy places would be a front-page
+ * roll-up decision for the spec, not a checkbox default.
+ */
+export const APPROVAL_PLACES: readonly Place[] = PLACE_CATALOG.filter(
+  (place) => place.selectable,
+);
+
 /** A submission the API client can carry as-is. */
 export interface ApprovalSubmission {
   readonly sourceItemId: string;
