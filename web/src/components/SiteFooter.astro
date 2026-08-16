@@ -1,4 +1,5 @@
 ---
+import { PUBLIC_APP_VERSION } from 'astro:env/server';
 import type { ReadingLanguage } from '../lib/reader/axes';
 import { DEFAULT_FRONT_PAGE } from '../lib/reader/axes';
 import { uiStrings } from '../lib/reader/strings';
@@ -27,6 +28,12 @@ const { lang, note, homeHref } = Astro.props;
 const home = homeHref ?? DEFAULT_FRONT_PAGE;
 const t = uiStrings(lang);
 const year = new Date().getUTCFullYear();
+
+// The deployed release version (issue #119), handed to the container by the
+// release pipeline. Absent means this deployment was not cut by a release
+// tag, and the footer stays silent about it — rendering a placeholder would
+// claim a release that never happened.
+const version = PUBLIC_APP_VERSION;
 ---
 
 <footer class="site-footer">
@@ -43,7 +50,9 @@ const year = new Date().getUTCFullYear();
       <span>{t.contact}</span>
       <em>— {t.legalPending}</em>
     </p>
-    <span class="copy">© {year} epiloYES</span>
+    <span class="copy">
+      © {year} epiloYES{version !== undefined && <span class="version">· {version}</span>}
+    </span>
   </div>
 </footer>
 
@@ -109,5 +118,9 @@ const year = new Date().getUTCFullYear();
     margin-left: auto;
     font-size: 11.5px;
     color: var(--ink-soft);
+  }
+  .version {
+    font-family: var(--font-mono, monospace);
+    font-size: 10.5px;
   }
 </style>
