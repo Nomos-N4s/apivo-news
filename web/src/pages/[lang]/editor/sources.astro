@@ -412,7 +412,13 @@ const views: readonly { key: SourceView; label: string }[] = [
                     </tr>
                   </thead>
                   <tbody>
-                    {shown.map((source) => (
+                    {shown.map((source) => {
+                      // One lookup, narrowed once: the cast this replaces was
+                      // the file's only unchecked assertion, and it was
+                      // guarded by a different expression than the one it
+                      // narrowed.
+                      const refusal = refusedById.get(source.id);
+                      return (
                       <>
                         <tr>
                           <td class="check-col">
@@ -446,10 +452,12 @@ const views: readonly { key: SourceView; label: string }[] = [
                             <a href={pageURL({ edit: source.id })}>{t.editSource}</a>
                           </td>
                         </tr>
-                        {refusedById.has(source.id) && (
+                        {refusal !== undefined && (
                           <tr class="row-refusal">
-                            <td />
-                            <td colspan="7">
+                            {/* One cell across all eight columns: a leading
+                                empty cell would cut an untinted notch out of
+                                the left edge of the notice's band. */}
+                            <td colspan="8">
                               {/* The API's own words — a refused delete names
                                   the evidence count — followed by what the
                                   refusal means. Deactivation is offered as a
@@ -459,12 +467,9 @@ const views: readonly { key: SourceView; label: string }[] = [
                                   choose, and the audited PATCH stays the one
                                   path that changes a source. */}
                               <RecordNotice
-                                notice={noticeForRowRefusal(
-                                  refusedById.get(source.id) as SourceActionOutcome,
-                                  t,
-                                )}
+                                notice={noticeForRowRefusal(refusal, t)}
                                 action={
-                                  refusedById.get(source.id)?.status === 409 && source.active
+                                  refusal.status === 409 && source.active
                                     ? {
                                         href: pageURL({ edit: source.id }),
                                         label: t.deactivateInstead,
@@ -476,7 +481,8 @@ const views: readonly { key: SourceView; label: string }[] = [
                           </tr>
                         )}
                       </>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
