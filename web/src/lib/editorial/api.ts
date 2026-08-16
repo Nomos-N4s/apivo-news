@@ -359,14 +359,51 @@ export class EditorialApiError extends Error {
  * `reason` is dual-purpose by construction: on a recorded withdrawal it is
  * the justification the database froze (`article.withdrawal_reason`), and
  * on a refused one it is why nothing was written. Either way it is the one
- * line the banner renders.
+ * line the banner renders — which is why the recorded arm requires it: a
+ * confirmation without the frozen reason is not a usable record, and the
+ * client refuses it rather than letting the banner render a blank box.
  */
-export interface WithdrawalOutcome {
-  readonly recorded: boolean;
-  readonly article_id?: string;
+export type WithdrawalOutcome =
+  | {
+      readonly recorded: true;
+      readonly article_id: string;
+      readonly withdrawn_at?: string;
+      readonly withdrawn_by?: string;
+      /** The justification the database froze into `article.withdrawal_reason`. */
+      readonly reason: string;
+    }
+  | {
+      readonly recorded: false;
+      /** Why nothing was written. */
+      readonly reason?: string;
+    };
+
+/** The wire shape of a recorded withdrawal (`WithdrawalRecord`). */
+interface WithdrawalRecordBody {
+  readonly article_id: string;
   readonly withdrawn_at?: string;
   readonly withdrawn_by?: string;
-  readonly reason?: string;
+  readonly reason: string;
+}
+
+/**
+ * Runtime check of a 2xx withdrawal body. The banner's only text is the
+ * recorded reason, so a confirmation that lacks it — an API one deploy
+ * behind this client still answering the old `{article_id, withdrawn_at,
+ * withdrawn_by}` shape — must be refused, not spread into a success state
+ * with nothing to show (#85).
+ */
+function isWithdrawalRecord(body: unknown): body is WithdrawalRecordBody {
+  if (typeof body !== 'object' || body === null) {
+    return false;
+  }
+  const record = body as Record<string, unknown>;
+  return (
+    typeof record['article_id'] === 'string' &&
+    record['article_id'] !== '' &&
+    typeof record['reason'] === 'string' &&
+    record['reason'].trim() !== ''
+  );
 }
 
 /** The editorial API surface the pages consume. */
@@ -411,6 +448,37 @@ const NOT_WIRED_WITHDRAWAL =
  * the fixtures describe.
  */
 const NOT_DEPLOYED = 404;
+
+/**
+ * True when the response declares the RFC 9457 problem+json content type —
+ * the shape every deployed editorial endpoint answers its errors in. A 404
+ * without it is the mux's bare not-found, i.e. the route itself is absent.
+ */
+function isProblemJson(response: Response): boolean {
+  return (response.headers.get('Content-Type') ?? '').includes('application/problem+json');
+}
+
+/** The problem body's own words, with a generic line when it has none. */
+async function problemDetail(response: Response, subject: string): Promise<string> {
+  try {
+    const body: unknown = await response.json();
+    if (typeof body === 'object' && body !== null) {
+      const problem = body as Record<string, unknown>;
+      const detail = problem['detail'];
+      if (typeof detail === 'string' && detail !== '') {
+        return detail;
+      }
+      const title = problem['title'];
+      if (typeof title === 'string' && title !== '') {
+        return title;
+      }
+    }
+  } catch {
+    // An unreadable problem body still identified itself as a refusal;
+    // fall through to the generic line.
+  }
+  return `editorial API answered ${response.status} for ${subject}`;
+}
 
 function fixtureApi(): EditorialApi {
   return {
@@ -555,11 +623,20 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason }),
       });
-      // The one editorial method that lacked this branch: with the reader
-      // deployed but editorial unmounted, its siblings fall back to the
-      // fixtures' honest not-recorded answer while withdraw() threw. A 404
-      // here means "not deployed", and publication did not end.
+      // A 404 carries two meanings on this route. The endpoint itself
+      // answers 404 as a domain outcome — no article with this id, or an
+      // approved article that never published — and those arrive as RFC
+      // 9457 problem+json with the refusal in `detail`. An unmounted
+      // editorial prefix (reader deployed, editorial not — the state the
+      // fixtures describe) answers the mux's bare 404 instead. Only the
+      // bare 404 takes the fixtures' fallback — the same branch queue(),
+      // approve() and sources() take, while provenance() maps its 404 to
+      // null and addSource() throws. A problem 404 is the deployed API
+      // refusing, and its own words are the honest not-recorded reason.
       if (response.status === NOT_DEPLOYED) {
+        if (isProblemJson(response)) {
+          return { recorded: false, reason: await problemDetail(response, 'the withdrawal') };
+        }
         return fixtures.withdraw(articleId, reason);
       }
       if (!response.ok) {
@@ -569,7 +646,12 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
         );
       }
       const body: unknown = await response.json();
-      return { recorded: true, ...(body as Record<string, unknown>) } as WithdrawalOutcome;
+      if (!isWithdrawalRecord(body)) {
+        throw new EditorialApiError(
+          'editorial API confirmed the withdrawal without the recorded reason',
+        );
+      }
+      return { recorded: true, ...body };
     },
     async sources(): Promise<SourcesPage> {
       const response = await fetchImpl(new URL(`${base}/api/v1/editorial/sources`), { headers });
@@ -671,7 +753,10 @@ export function withdrawalBanner(
   return {
     recorded: outcome.recorded,
     label: outcome.recorded ? t.withdraw : t.notRecordedTitle,
-    body: outcome.reason ?? '',
+    // A recorded outcome carries its reason by type: the client refuses a
+    // confirmation without one, so no fallback exists on that branch. Only
+    // a refusal may arrive without words.
+    body: outcome.recorded ? outcome.reason : (outcome.reason ?? ''),
   };
 }
 
