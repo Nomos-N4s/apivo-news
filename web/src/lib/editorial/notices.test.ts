@@ -236,11 +236,12 @@ describe('noticeForBulk', () => {
   it('never lets a consequence speak for rows that refused', () => {
     // "Polling has stopped" is a statement about the action, so a mixed
     // result must not carry it: for the refused rows polling carries on.
-    // The caller withholds it; the builder must not resurrect it.
-    expect(noticeForBulk(t.bulkDeactivate, '3 · 2', 2, undefined).body).toBe('3 · 2');
-    expect(noticeForBulk(t.bulkDeactivate, '3 · 2', 2).body).not.toContain(
-      t.deactivationKeepsRecord,
+    // The builder drops it even when a caller passes one — the rule holds
+    // here, not in whoever remembers to gate the argument.
+    expect(noticeForBulk(t.bulkDeactivate, '3 · 2', 2, t.deactivationKeepsRecord).body).toBe(
+      '3 · 2',
     );
+    expect(noticeForBulk(t.bulkDeactivate, '3 · 2', 2, undefined).body).toBe('3 · 2');
   });
 
   it('takes the attention tone as soon as one row refused', () => {

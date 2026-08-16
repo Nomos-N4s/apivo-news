@@ -214,20 +214,21 @@ export function noticeForBulk(
   refused: number,
   /**
    * What the action did and did not do, when that is worth saying — a
-   * deactivation stops polling and keeps everything else. These sentences
-   * speak about the action as a whole, so the caller passes one only when
-   * the whole action succeeded: over a mixed result it would claim the
-   * consequence for rows where nothing was recorded.
+   * deactivation stops polling and keeps everything else.
+   *
+   * These sentences speak about the action as a whole, so one refused row
+   * makes them false. The builder holds that rule itself rather than
+   * asking callers to remember it: it already knows the refusal count,
+   * and a rule enforced only by a doc comment is one refactor away from
+   * a screen claiming a consequence for rows where nothing happened.
    */
   consequence?: string,
 ): RecordNoticeModel {
+  const speaksForEveryRow = refused === 0 && consequence !== undefined && consequence !== '';
   return {
     tone: refused > 0 ? 'refused' : 'recorded',
     label,
-    body:
-      consequence === undefined || consequence === ''
-        ? summary
-        : `${summary} — ${consequence}`,
+    body: speaksForEveryRow ? `${summary} — ${consequence}` : summary,
     record: [],
   };
 }
