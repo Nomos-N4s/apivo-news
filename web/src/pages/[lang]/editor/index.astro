@@ -20,7 +20,7 @@ import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings, languageName } from '../../../lib/editorial/strings';
 import { authConfigured } from '../../../lib/editorial/supabase';
 import { findPlace, isReadingLanguage } from '../../../lib/reader/axes';
-import { formatDateTime, formatItemDate, safeSourceUrl } from '../../../lib/reader/format';
+import { formatDateTime, safeSourceUrl } from '../../../lib/reader/format';
 import { uiStrings } from '../../../lib/reader/strings';
 
 // The editorial review queue — mockup 1g, the approval gate (issue #61,
@@ -166,6 +166,14 @@ const placeName = (slugs: readonly string[] | undefined): string => {
 // the one the feed DECLARED; when it declared none, the gap is said out
 // loud rather than papered over with the retrieval date, which
 // article_guard would freeze into the attribution permanently (#87).
+//
+// Date AND time, deliberately: the instant renders in the reader zone
+// (Europe/Berlin), so a Greek item published just after midnight Athens
+// time carries the previous calendar date here — with the clock beside it,
+// that boundary is visible to the editor before the wording freezes,
+// instead of a silently shifted date. The honest fix — preserving the
+// feed's declared offset at ingestion and formatting in it — is a schema
+// addition, tracked as issue #114.
 const defaultAttribution = (item: (typeof items)[number]): string =>
   attributionDefault(
     item,
@@ -173,7 +181,7 @@ const defaultAttribution = (item: (typeof items)[number]): string =>
       originallyPublishedBy: reader.originallyPublishedBy,
       publicationDateNotSupplied: t.publicationDateNotSupplied,
     },
-    (iso) => formatItemDate(lang, new Date(iso)),
+    (iso) => formatDateTime(lang, new Date(iso)),
   );
 ---
 
