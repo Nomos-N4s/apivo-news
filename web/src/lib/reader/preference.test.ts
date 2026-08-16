@@ -160,6 +160,17 @@ describe('the preference cookie', () => {
     expect(second.writes.at(0)?.value).toBe(first.writes.at(0)?.value);
   });
 
+  // "Verbatim" has to be true on the wire, not merely after a decode:
+  // Astro's default encoder would store `%2Fde%2Fmunich%2Bgreece`, which
+  // is no longer a sentence the reader can read in their own browser and
+  // check against the address bar.
+  it('is stored exactly as the front-page path, not percent-encoded', () => {
+    const { encode } = preferenceCookieOptions(true);
+    for (const value of ['/de/munich+greece', '/el/munich', '/el/munich+greece']) {
+      expect(encode(value), value).toBe(value);
+    }
+  });
+
   it('is unreadable to page script, first-party, and expires on its own', () => {
     const options = preferenceCookieOptions(true);
     expect(options.httpOnly).toBe(true);

@@ -56,6 +56,8 @@ export interface PreferenceCookieOptions {
   readonly sameSite: 'lax';
   readonly httpOnly: boolean;
   readonly secure: boolean;
+  /** How the value is serialised — identity here; see below. */
+  readonly encode: (value: string) => string;
 }
 
 /**
@@ -85,6 +87,20 @@ export function preferenceCookieOptions(secure: boolean): PreferenceCookieOption
     sameSite: 'lax',
     httpOnly: true,
     secure,
+    // Identity, because "verbatim" above has to be true on the wire and
+    // not merely after a decode. Astro's default encoder is
+    // encodeURIComponent, which would store `%2Fde%2Fmunich%2Bgreece` —
+    // still only the two axes, but no longer the sentence a reader can
+    // read in their own browser and check against the address bar.
+    //
+    // Safe precisely because the value is not free text: rememberPreference
+    // refuses anything readPreference cannot parse back, so what is stored
+    // is always a reading language and catalog slugs joined by `/` and `+`,
+    // every one of them a legal cookie octet (RFC 6265). Reading is
+    // unaffected either way — Astro decodes, and a value with no escape
+    // sequences decodes to itself, so a cookie written before this still
+    // reads correctly.
+    encode: (value: string): string => value,
   };
 }
 
