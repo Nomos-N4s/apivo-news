@@ -1356,7 +1356,8 @@
         "title": "NewApproval",
         "description": "An editorial decision to publish. Exactly one origin: `translation_id` for a translated article, `source_item_id` for an untranslated one, mirroring the database's `article_exactly_one_origin`. Supplying both, neither, or an explicit `null` for both is a 400. The approver is always the authenticated editor and is deliberately not a field here.",
         "required": [
-          "attribution"
+          "attribution",
+          "places"
         ],
         "additionalProperties": false,
         "properties": {
@@ -1385,6 +1386,15 @@
             "type": "boolean",
             "default": false,
             "description": "Publish in the same transaction as the approval. When false the article is an approved record awaiting release."
+          },
+          "places": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": "Place slugs the article publishes to - the front page is scoped by place, so an article tagged to no place can never appear on any of them, and the database refuses such an article at commit. An unknown or repeated slug is a 400 naming it."
           }
         }
       },

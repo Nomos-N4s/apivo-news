@@ -59,6 +59,14 @@ export interface EditorialStrings {
   readonly openSource: string;
   readonly extractOnlyNote: string;
   readonly licenceAtRetrieval: string;
+  /**
+   * The place checkbox group's heading. The front page is scoped by place
+   * (FR-009), so where an article publishes to is part of the approval —
+   * an article tagged to no place could never appear anywhere.
+   */
+  readonly publishTo: string;
+  /** The not-recorded reason when the form arrives with no place checked. */
+  readonly atLeastOnePlace: string;
   readonly acknowledgement: string;
   readonly approveAndPublish: string;
   readonly reject: string;
@@ -171,6 +179,9 @@ const EL: EditorialStrings = {
   extractOnlyNote:
     'Μόνο τίτλος και απόσπασμα — πλήρης μετάφραση δεν επιτρέπεται για αυτή την πηγή.',
   licenceAtRetrieval: 'Άδεια κατά την ανάκτηση',
+  publishTo: 'Δημοσίευση σε',
+  atLeastOnePlace:
+    'Επιλέξτε τουλάχιστον έναν τόπο: η πρώτη σελίδα φιλτράρεται ανά τόπο, οπότε ένα άρθρο χωρίς τόπο δεν θα εμφανιζόταν πουθενά. Τίποτα δεν καταγράφηκε.',
   acknowledgement:
     'Διάβασα το απόσπασμα και τους όρους της άδειας. Η έγκριση με καταγράφει ως τον επώνυμο εγκρίνοντα· η εγγραφή δεν μπορεί να τροποποιηθεί μετά.',
   approveAndPublish: 'Έγκριση και δημοσίευση',
@@ -283,6 +294,9 @@ const DE: EditorialStrings = {
   extractOnlyNote:
     'Nur Überschrift und Auszug — eine Volltextübersetzung ist für diese Quelle nicht zulässig.',
   licenceAtRetrieval: 'Lizenz beim Abruf',
+  publishTo: 'Veröffentlichen in',
+  atLeastOnePlace:
+    'Wählen Sie mindestens einen Ort: die Titelseite ist nach Ort gefiltert, ein Artikel ohne Ort erschiene also nirgends. Es wurde nichts verzeichnet.',
   acknowledgement:
     'Ich habe den Auszug und die Lizenzbedingungen gelesen. Die Freigabe verzeichnet mich namentlich als freigebende Person; der Eintrag kann danach nicht geändert werden.',
   approveAndPublish: 'Freigeben und veröffentlichen',

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -105,7 +106,7 @@ func decodeInto(t *testing.T, rec *httptest.ResponseRecorder, dst any) {
 func TestApprovalAuth(t *testing.T) {
 	t.Parallel()
 	h := newHandler(t, errStore{err: errUnexpectedCall})
-	body := `{"translation_id":"11111111-1111-4111-8111-111111111111","attribution":"Source: Feed","publish":false}`
+	body := `{"translation_id":"11111111-1111-4111-8111-111111111111","attribution":"Source: Feed","publish":false,"places":["munich"]}`
 
 	t.Run("401 without a token", func(t *testing.T) {
 		t.Parallel()
@@ -167,13 +168,28 @@ func TestApprovalValidation(t *testing.T) {
 		},
 		{
 			name:   "translation_id is not a uuid",
-			body:   `{"translation_id":"not-a-uuid","attribution":"Source: Feed"}`,
+			body:   `{"translation_id":"not-a-uuid","attribution":"Source: Feed","places":["munich"]}`,
 			detail: "translation_id",
 		},
 		{
 			name:   "source_item_id is not a uuid",
-			body:   `{"source_item_id":"not-a-uuid","attribution":"Source: Feed"}`,
+			body:   `{"source_item_id":"not-a-uuid","attribution":"Source: Feed","places":["munich"]}`,
 			detail: "source_item_id",
+		},
+		{
+			name:   "empty places",
+			body:   `{"translation_id":"` + someUUID + `","attribution":"Source: Feed","places":[]}`,
+			detail: "at least one place",
+		},
+		{
+			name:   "a blank place slug",
+			body:   `{"translation_id":"` + someUUID + `","attribution":"Source: Feed","places":["munich","  "]}`,
+			detail: "blank slug",
+		},
+		{
+			name:   "a place supplied twice",
+			body:   `{"translation_id":"` + someUUID + `","attribution":"Source: Feed","places":["munich","munich"]}`,
+			detail: `place "munich" was supplied more than once`,
 		},
 		{
 			name:   "malformed JSON",
@@ -200,7 +216,7 @@ func TestApprovalValidation(t *testing.T) {
 // the contract's status codes.
 func TestApprovalStoreVerdicts(t *testing.T) {
 	t.Parallel()
-	body := `{"source_item_id":"11111111-1111-4111-8111-111111111111","attribution":"Source: Feed"}`
+	body := `{"source_item_id":"11111111-1111-4111-8111-111111111111","attribution":"Source: Feed","places":["munich"]}`
 
 	cases := []struct {
 		name   string
@@ -248,7 +264,7 @@ func TestApprovalResponseShape(t *testing.T) {
 			ApprovedAt: approvedAt,
 		}}
 		h := editorial.NewHandler(discardLogger(), store, fakeAuth{})
-		rec := postApproval(t, h, `{"translation_id":"`+originID.String()+`","attribution":"  Source: Feed  ","publish":false}`)
+		rec := postApproval(t, h, `{"translation_id":"`+originID.String()+`","attribution":"  Source: Feed  ","publish":false,"places":["munich","greece"]}`)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status = %d, want 201 (body %q)", rec.Code, rec.Body.String())
 		}
@@ -282,6 +298,9 @@ func TestApprovalResponseShape(t *testing.T) {
 		if store.gotApproval.SourceItemID != nil {
 			t.Errorf("source_item_id reaching the store = %v, want none", *store.gotApproval.SourceItemID)
 		}
+		if want := []string{"munich", "greece"}; !slices.Equal(store.gotApproval.Places, want) {
+			t.Errorf("places reaching the store = %v, want %v", store.gotApproval.Places, want)
+		}
 	})
 
 	t.Run("publish true carries published_at", func(t *testing.T) {
@@ -294,7 +313,7 @@ func TestApprovalResponseShape(t *testing.T) {
 			PublishedAt: &publishedAt,
 		}}
 		h := editorial.NewHandler(discardLogger(), store, fakeAuth{})
-		rec := postApproval(t, h, `{"source_item_id":"`+originID.String()+`","attribution":"Source: Feed","publish":true}`)
+		rec := postApproval(t, h, `{"source_item_id":"`+originID.String()+`","attribution":"Source: Feed","publish":true,"places":["munich"]}`)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status = %d, want 201 (body %q)", rec.Code, rec.Body.String())
 		}
@@ -491,7 +510,7 @@ func TestApprovalAgainstSchema(t *testing.T) {
 	var approvedUnpublished string
 
 	t.Run("201 approving an untranslated origin without publishing", func(t *testing.T) {
-		rec := postApproval(t, h, `{"source_item_id":"`+f.titled+`","attribution":`+jsonString(t, f.attribution)+`,"publish":false}`)
+		rec := postApproval(t, h, `{"source_item_id":"`+f.titled+`","attribution":`+jsonString(t, f.attribution)+`,"publish":false,"places":["munich"]}`)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status = %d, want 201 (body %q)", rec.Code, rec.Body.String())
 		}
@@ -558,7 +577,7 @@ func TestApprovalAgainstSchema(t *testing.T) {
 	})
 
 	t.Run("201 with publish true sets published_at and both events", func(t *testing.T) {
-		rec := postApproval(t, h, `{"source_item_id":"`+f.titledAgain+`","attribution":`+jsonString(t, f.attribution)+`,"publish":true}`)
+		rec := postApproval(t, h, `{"source_item_id":"`+f.titledAgain+`","attribution":`+jsonString(t, f.attribution)+`,"publish":true,"places":["munich"]}`)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status = %d, want 201 (body %q)", rec.Code, rec.Body.String())
 		}
@@ -576,7 +595,7 @@ func TestApprovalAgainstSchema(t *testing.T) {
 	})
 
 	t.Run("201 approving a translation", func(t *testing.T) {
-		rec := postApproval(t, h, `{"translation_id":"`+f.translation+`","attribution":`+jsonString(t, f.attribution)+`}`)
+		rec := postApproval(t, h, `{"translation_id":"`+f.translation+`","attribution":`+jsonString(t, f.attribution)+`,"places":["munich"]}`)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status = %d, want 201 (body %q)", rec.Code, rec.Body.String())
 		}
@@ -592,7 +611,7 @@ func TestApprovalAgainstSchema(t *testing.T) {
 	})
 
 	t.Run("409 when the origin already has a live article", func(t *testing.T) {
-		rec := postApproval(t, h, `{"translation_id":"`+f.translation+`","attribution":`+jsonString(t, f.attribution)+`}`)
+		rec := postApproval(t, h, `{"translation_id":"`+f.translation+`","attribution":`+jsonString(t, f.attribution)+`,"places":["munich"]}`)
 		wantProblem(t, rec, http.StatusConflict, "already has")
 	})
 
@@ -608,7 +627,7 @@ func TestApprovalAgainstSchema(t *testing.T) {
 			f.raced, f.editorID, f.attribution).Scan(&racedArticle); err != nil {
 			t.Fatalf("inserting the racing article: %v", err)
 		}
-		rec := postApproval(t, h, `{"source_item_id":"`+f.raced+`","attribution":`+jsonString(t, f.attribution)+`}`)
+		rec := postApproval(t, h, `{"source_item_id":"`+f.raced+`","attribution":`+jsonString(t, f.attribution)+`,"places":["munich"]}`)
 		wantProblem(t, rec, http.StatusConflict, "already has")
 
 		// The losing approval left nothing behind: no second article, and
@@ -640,24 +659,24 @@ func TestApprovalAgainstSchema(t *testing.T) {
 			  where id = $1`, first, f.editorID); err != nil {
 			t.Fatalf("withdrawing: %v", err)
 		}
-		rec := postApproval(t, h, `{"source_item_id":"`+f.withdrawnSI+`","attribution":`+jsonString(t, f.attribution)+`,"publish":true}`)
+		rec := postApproval(t, h, `{"source_item_id":"`+f.withdrawnSI+`","attribution":`+jsonString(t, f.attribution)+`,"publish":true,"places":["greece"]}`)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status = %d, want 201 - a withdrawn origin is free for a correction (body %q)", rec.Code, rec.Body.String())
 		}
 	})
 
 	t.Run("400 approving an untranslated origin with no title", func(t *testing.T) {
-		rec := postApproval(t, h, `{"source_item_id":"`+f.untitled+`","attribution":`+jsonString(t, f.attribution)+`}`)
+		rec := postApproval(t, h, `{"source_item_id":"`+f.untitled+`","attribution":`+jsonString(t, f.attribution)+`,"places":["munich"]}`)
 		wantProblem(t, rec, http.StatusBadRequest, "no title")
 	})
 
 	t.Run("400 naming an origin that does not exist", func(t *testing.T) {
 		unknown := uuid.NewString()
 		wantProblem(t, postApproval(t, h,
-			`{"source_item_id":"`+unknown+`","attribution":`+jsonString(t, f.attribution)+`}`),
+			`{"source_item_id":"`+unknown+`","attribution":`+jsonString(t, f.attribution)+`,"places":["munich"]}`),
 			http.StatusBadRequest, "does not exist")
 		wantProblem(t, postApproval(t, h,
-			`{"translation_id":"`+unknown+`","attribution":`+jsonString(t, f.attribution)+`}`),
+			`{"translation_id":"`+unknown+`","attribution":`+jsonString(t, f.attribution)+`,"places":["munich"]}`),
 			http.StatusBadRequest, "does not exist")
 	})
 
@@ -669,7 +688,7 @@ func TestApprovalAgainstSchema(t *testing.T) {
 		readerHandler := editorial.NewHandler(discardLogger(), editorial.NewPGStore(tx),
 			staticAuth{editor: editorial.Editor{ID: uuid.MustParse(f.readerID)}})
 		rec := doJSON(t, readerHandler, http.MethodPost, "/api/v1/editorial/approvals", editorToken,
-			`{"source_item_id":"`+f.forReader+`","attribution":`+jsonString(t, f.attribution)+`}`)
+			`{"source_item_id":"`+f.forReader+`","attribution":`+jsonString(t, f.attribution)+`,"places":["munich"]}`)
 		wantProblem(t, rec, http.StatusForbidden, "editor role")
 
 		// The refusal left no article behind: the guard runs before the row
@@ -682,4 +701,114 @@ func TestApprovalAgainstSchema(t *testing.T) {
 			t.Errorf("articles on the origin a reader tried to approve = %d, want none", articles)
 		}
 	})
+}
+
+// TestApprovalWithNoPlaceIsRejected pins the placeless approval to a 400
+// answered before any write: the front page is scoped by place, so an
+// article tagged to no place is one no reader can ever reach, and the
+// database would refuse it at commit anyway (the 0006 trigger). The store
+// here fails the test if it is touched at all.
+func TestApprovalWithNoPlaceIsRejected(t *testing.T) {
+	t.Parallel()
+	h := newHandler(t, errStore{err: errUnexpectedCall})
+
+	t.Run("absent places", func(t *testing.T) {
+		t.Parallel()
+		rec := postApproval(t, h,
+			`{"translation_id":"11111111-1111-4111-8111-111111111111","attribution":"Source: Feed"}`)
+		wantProblem(t, rec, http.StatusBadRequest, "at least one place")
+	})
+	t.Run("empty places", func(t *testing.T) {
+		t.Parallel()
+		rec := postApproval(t, h,
+			`{"translation_id":"11111111-1111-4111-8111-111111111111","attribution":"Source: Feed","places":[]}`)
+		wantProblem(t, rec, http.StatusBadRequest, "at least one place")
+	})
+}
+
+// approvalSchemaFixture opens a rolled-back transaction against the real,
+// migrated schema and seeds the approval world in it, for the tests below
+// that need the database's own verdicts on places.
+func approvalSchemaFixture(ctx context.Context, t *testing.T) (pgx.Tx, approvalFixture, http.Handler) {
+	t.Helper()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise approvals against Postgres")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatalf("migrating: %v", err)
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("connecting: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+
+	f := seedApprovalFixture(ctx, t, tx)
+	h := editorial.NewHandler(discardLogger(), editorial.NewPGStore(tx),
+		staticAuth{editor: editorial.Editor{ID: uuid.MustParse(f.editorID), Email: "editor@example.test", DisplayName: "Approval Editor"}})
+	return tx, f, h
+}
+
+// TestApprovalWithAnUnknownPlaceIsRejected pins the 400 for a slug the
+// place table does not know - named, in the same vocabulary the reader's
+// front page uses - and that the failed approval rolled back whole.
+func TestApprovalWithAnUnknownPlaceIsRejected(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tx, f, h := approvalSchemaFixture(ctx, t)
+
+	rec := postApproval(t, h,
+		`{"source_item_id":"`+f.titled+`","attribution":`+jsonString(t, f.attribution)+`,"places":["munich","atlantis"]}`)
+	wantProblem(t, rec, http.StatusBadRequest, `unknown place "atlantis"`)
+
+	// Nothing survived the refusal: no article, and with it no
+	// article_place rows for the known slug either - the approval is one
+	// transaction, and it rolled back whole.
+	var articles int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from article where source_item_id = $1`, f.titled).Scan(&articles); err != nil {
+		t.Fatalf("counting articles: %v", err)
+	}
+	if articles != 0 {
+		t.Errorf("articles left behind by the refused approval = %d, want none", articles)
+	}
+}
+
+// TestApprovalTagsEveryPlaceItWasGiven pins the write itself: every slug
+// the approval names becomes an article_place row in the approving
+// transaction, which is what the 0006 trigger demands at commit and what
+// the front page's EXISTS reads.
+func TestApprovalTagsEveryPlaceItWasGiven(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tx, f, h := approvalSchemaFixture(ctx, t)
+
+	rec := postApproval(t, h,
+		`{"source_item_id":"`+f.titled+`","attribution":`+jsonString(t, f.attribution)+`,"publish":true,"places":["munich","greece"]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body %q)", rec.Code, rec.Body.String())
+	}
+	var body approvalBody
+	decodeInto(t, rec, &body)
+
+	rows, err := tx.Query(ctx,
+		`select p.slug from article_place ap join place p on p.id = ap.place_id
+		  where ap.article_id = $1 order by p.slug`, body.ArticleID)
+	if err != nil {
+		t.Fatalf("reading article places: %v", err)
+	}
+	slugs, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("collecting article places: %v", err)
+	}
+	if want := []string{"greece", "munich"}; !slices.Equal(slugs, want) {
+		t.Errorf("article_place slugs = %v, want %v", slugs, want)
+	}
 }

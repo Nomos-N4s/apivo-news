@@ -39,6 +39,18 @@ values (
 )
 returning id, approved_by, approved_at, published_at;
 
+-- name: TagArticlePlaces :execrows
+-- The places the approval names, resolved to article_place rows inside the
+-- approving transaction - the 0006 constraint trigger checks at COMMIT that
+-- at least one exists, so the article and its reachability are one atomic
+-- fact. The row count is the verdict on the slugs: fewer rows than slugs
+-- supplied means one of them names no place, and the caller answers 400
+-- with the same vocabulary the reader's front page uses.
+insert into article_place (article_id, place_id)
+select sqlc.arg(article_id)::uuid, p.id
+from place p
+where p.slug = any (sqlc.arg(slugs)::text[]);
+
 -- name: LockActorRole :one
 -- The acting account's role, read WITH A ROW LOCK (FOR SHARE) inside the
 -- transaction that is about to write - the same technique, for the same

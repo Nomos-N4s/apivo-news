@@ -85,6 +85,11 @@ type approvalRequest struct {
 	SourceItemID  *string `json:"source_item_id"`
 	Attribution   string  `json:"attribution"`
 	Publish       bool    `json:"publish"`
+	// Places is where the article publishes to, as place slugs - at least
+	// one, because the front page is scoped by place and an article tagged
+	// to no place is unreachable by every reader (the 0006 trigger refuses
+	// it at commit; this field is validated before any write).
+	Places []string `json:"places"`
 }
 
 // approvalResponse is the created article. published_at is null for the
@@ -115,7 +120,14 @@ func (h *Handler) createApproval(w http.ResponseWriter, r *http.Request) {
 	}
 
 	article, err := h.store.Approve(r.Context(), approval)
+	var unknownPlace UnknownPlaceError
 	switch {
+	// The place table is the vocabulary, and the same 400 the reader's
+	// front page answers for a slug it does not know. The failed approval
+	// rolled back whole: no article, no places, no events.
+	case errors.As(err, &unknownPlace):
+		platformhttp.Problem(w, http.StatusBadRequest, "unknown place "+strconv.Quote(unknownPlace.Slug))
+		return
 	case errors.Is(err, ErrOriginAlreadyApproved):
 		platformhttp.Problem(w, http.StatusConflict,
 			"this origin already has a published or approved article; withdraw it before approving a correction")
@@ -257,6 +269,24 @@ func newApproval(req approvalRequest, editor Editor) (approval NewApproval, deta
 		return NewApproval{}, "supply translation_id or source_item_id: an article has exactly one origin", false
 	case blank(req.Attribution):
 		return NewApproval{}, "attribution is required and must not be blank", false
+	// The front page is scoped by place, so an article tagged to no place
+	// is invisible to every reader - the database refuses it at commit, and
+	// this earlier answer names the field before anything is written.
+	case len(req.Places) == 0:
+		return NewApproval{}, "places is required with at least one place slug: an article tagged to no place can never appear on any front page", false
+	}
+	seen := make(map[string]bool, len(req.Places))
+	for _, slug := range req.Places {
+		if blank(slug) {
+			return NewApproval{}, "places must not contain a blank slug", false
+		}
+		// Rejected rather than collapsed, for the reason the queue rejects
+		// a repeated parameter: silently deduplicating would read as
+		// acceptance of a list this endpoint did not record.
+		if seen[slug] {
+			return NewApproval{}, "place " + strconv.Quote(slug) + " was supplied more than once; supply each place at most once", false
+		}
+		seen[slug] = true
 	}
 
 	origin, field := req.TranslationID, "translation_id"
@@ -271,6 +301,7 @@ func newApproval(req approvalRequest, editor Editor) (approval NewApproval, deta
 	approval = NewApproval{
 		Attribution: strings.TrimSpace(req.Attribution),
 		Publish:     req.Publish,
+		Places:      req.Places,
 		ApprovedBy:  editor.ID,
 	}
 	if req.SourceItemID != nil {

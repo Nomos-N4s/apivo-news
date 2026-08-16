@@ -363,12 +363,16 @@ export interface EditorialApi {
   /**
    * Approval carries the attribution the contract requires (non-blank —
    * it becomes `article.attribution_block`, which FR-008 renders on every
-   * published item).
+   * published item) and the places the article publishes to (at least one
+   * place slug — the front page is scoped by place, so an article tagged
+   * to no place can never appear on any of them, and the API refuses the
+   * approval with 400).
    */
   approve(
     sourceItemId: string,
     translationId: string | null,
     attribution: string,
+    places: readonly string[],
   ): Promise<ApprovalOutcome>;
   /** The audit trace; null when the id matches no article. */
   provenance(articleId: string): Promise<ArticleProvenance | null>;
@@ -473,10 +477,13 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
       sourceItemId: string,
       translationId: string | null,
       attribution: string,
+      places: readonly string[],
     ): Promise<ApprovalOutcome> {
       // The contract takes exactly one origin: translation_id XOR
       // source_item_id (400 if both or neither), plus a non-blank
-      // attribution, which becomes the article's attribution block.
+      // attribution, which becomes the article's attribution block, and
+      // at least one place slug, which decides whose front pages the
+      // article can appear on.
       const origin =
         translationId === null
           ? { source_item_id: sourceItemId }
@@ -484,10 +491,10 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
       const response = await fetchImpl(new URL(`${base}/api/v1/editorial/approvals`), {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...origin, attribution, publish: true }),
+        body: JSON.stringify({ ...origin, attribution, publish: true, places }),
       });
       if (response.status === NOT_DEPLOYED) {
-        return fixtures.approve(sourceItemId, translationId, attribution);
+        return fixtures.approve(sourceItemId, translationId, attribution, places);
       }
       if (!response.ok) {
         throw new EditorialApiError(
