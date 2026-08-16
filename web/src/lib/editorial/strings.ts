@@ -229,6 +229,12 @@ export interface EditorialStrings {
    */
   readonly editFormIncomplete: string;
   /**
+   * The add form arrived without a name or a feed URL — a space is not a
+   * name, and the trim that catches it must not also swallow the fact
+   * that nothing was recorded (#121).
+   */
+  readonly sourceNeedsNameAndUrl: string;
+  /**
    * A delete the database refused because evidence exists (409). The API
    * names the count; this says what that means and points at the action
    * that does work — offered as a way in, never performed for the editor
@@ -406,6 +412,8 @@ const EL: EditorialStrings = {
     'Κανένα πεδίο δεν άλλαξε σε σχέση με αυτό που εμφάνιζε η φόρμα, οπότε δεν στάλθηκε τίποτα και δεν καταγράφηκε καμία αλλαγή.',
   editFormIncomplete:
     'Η φόρμα δεν έφερε τις τιμές με τις οποίες εμφανίστηκε, οπότε δεν ήταν δυνατό να ξεχωριστεί τι άλλαξε. Δεν στάλθηκε τίποτα — δοκιμάστε ξανά από τη λίστα.',
+  sourceNeedsNameAndUrl:
+    'Η πηγή χρειάζεται όνομα και διεύθυνση ροής· τα κενά δεν μετρούν. Τίποτα δεν στάλθηκε και τίποτα δεν καταγράφηκε — τα στοιχεία που πληκτρολογήσατε παραμένουν στη φόρμα.',
   deleteRefusedBody:
     'Τα ανακτημένα τεκμήρια αυτής της πηγής είναι μέρος της μόνιμης εγγραφής και δεν καταστρέφονται: η αλυσίδα προέλευσης κάθε δημοσιευμένου άρθρου ξεκινά από αυτά. Η απενεργοποίηση σταματά τη λήψη και τα κρατά.',
   deactivateInstead: 'Απενεργοποίηση αντ’ αυτού',
@@ -575,6 +583,8 @@ const DE: EditorialStrings = {
     'Kein Feld weicht von dem ab, was das Formular anzeigte; es wurde nichts gesendet und nichts verzeichnet.',
   editFormIncomplete:
     'Das Formular trug die Werte nicht mit, mit denen es angezeigt wurde, also ließ sich nicht unterscheiden, was geändert wurde. Es wurde nichts gesendet — bitte erneut aus der Liste heraus bearbeiten.',
+  sourceNeedsNameAndUrl:
+    'Die Quelle braucht einen Namen und eine Feed-Adresse; Leerzeichen zählen nicht. Es wurde nichts gesendet und nichts verzeichnet — was Sie eingegeben haben, steht weiter im Formular.',
   deleteRefusedBody:
     'Die abgerufenen Nachweise dieser Quelle sind Teil des dauerhaften Registers und werden nicht zerstört: die Herkunftskette jedes veröffentlichten Artikels beginnt bei ihnen. Deaktivieren stoppt den Abruf und behält sie.',
   deactivateInstead: 'Stattdessen deaktivieren',

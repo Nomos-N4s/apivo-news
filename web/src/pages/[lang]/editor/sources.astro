@@ -156,6 +156,14 @@ if (Astro.request.method === 'POST') {
           reason: error instanceof Error ? error.message : String(error),
         };
       }
+    } else {
+      // A single space satisfies the browser's `required` check and this
+      // trim, so the form can arrive with nothing usable in it. Saying
+      // nothing at all would leave the editor looking at an unchanged
+      // screen with no idea their source was never sent — and the typed
+      // licensing details go back into the form, not into the void.
+      outcome = { recorded: false, reason: t.sourceNeedsNameAndUrl };
+      submitted = input;
     }
   } else if (intent === 'update') {
     // The row edit sends only the fields whose value differs from the one
