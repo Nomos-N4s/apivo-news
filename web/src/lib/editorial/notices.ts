@@ -111,7 +111,11 @@ export function noticeForWithdrawal(
   if (isTimestamp(outcome.withdrawn_at)) {
     record.push(`withdrawn_at = ${formatDate(outcome.withdrawn_at)}`);
   }
-  if (outcome.withdrawn_by !== undefined && outcome.withdrawn_by !== '') {
+  // A type is not a validator: `withdrawn_by` is spread straight from the
+  // wire, so a JSON null would satisfy "not undefined, not empty" and
+  // print the word null as the person who withdrew the article. Only a
+  // non-empty string names anybody.
+  if (typeof outcome.withdrawn_by === 'string' && outcome.withdrawn_by !== '') {
     record.push(`withdrawn_by = ${outcome.withdrawn_by}`);
   }
   if (outcome.article_id !== '') {

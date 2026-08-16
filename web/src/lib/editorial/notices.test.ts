@@ -118,6 +118,17 @@ describe('noticeForWithdrawal', () => {
     expect(notice.record).toEqual(['article art-9']);
   });
 
+  it('names nobody when the wire sent no name', () => {
+    for (const withdrawn_by of [null as unknown as string, '', 42 as unknown as string]) {
+      const notice = noticeForWithdrawal(
+        { recorded: true, article_id: 'art-9', withdrawn_by, reason: 'why' },
+        t,
+        stampDate,
+      );
+      expect(notice.record.join(' ')).not.toContain('withdrawn_by');
+    }
+  });
+
   it('refuses to render an unreadable or null withdrawn_at as a frozen fact', () => {
     for (const withdrawn_at of ['not a date', null as unknown as string]) {
       const notice = noticeForWithdrawal(
