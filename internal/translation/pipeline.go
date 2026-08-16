@@ -37,10 +37,12 @@ import (
 )
 
 const (
-	// DefaultCycleLimit bounds how many items one cycle considers. The
-	// bound exists so a fresh deployment pointed at a backlog of items
+	// DefaultCycleLimit bounds how many provider calls one cycle makes.
+	// The bound exists so a fresh deployment pointed at a backlog of items
 	// spends at a rate an operator can watch and stop, rather than racing
-	// the whole backlog to the monthly cap in one cycle.
+	// the whole backlog to the monthly cap in one cycle. It counts CALLS,
+	// not items considered: skipping an item costs nothing and so consumes
+	// nothing, only money leaving does.
 	DefaultCycleLimit = 10
 
 	// recordAttempts bounds the ErrRetryable contract's retries: the
@@ -69,8 +71,9 @@ type PipelineConfig struct {
 	// means it is never constructed at all.
 	Interval time.Duration
 
-	// Limit bounds the items one cycle considers, newest first. Zero
-	// means DefaultCycleLimit.
+	// Limit bounds the provider calls one cycle makes, and sizes the
+	// pages its work list is read in, newest first. Zero means
+	// DefaultCycleLimit.
 	Limit int
 
 	// ReaderLocales are the languages readers read in; every item is
@@ -142,11 +145,13 @@ func (p *Pipeline) Run(ctx context.Context) {
 	}
 }
 
-// RunOnce runs one cycle: check the budget, list the eligible work, and
-// translate pair by pair until the list, the budget or the context runs
-// out. Only infrastructure failures surface as its error; a single item
-// failing is logged and stepped over, because one unusable item must not
-// stop every other translation.
+// RunOnce runs one cycle: check the budget, then walk the eligible
+// backlog newest first - keyset page by keyset page - translating pair by
+// pair until the cycle has made its bound of provider calls, or the
+// backlog, the budget or the context runs out. Only infrastructure
+// failures surface as its error; a single item failing is logged and
+// stepped over, because one unusable item must not stop every other
+// translation.
 func (p *Pipeline) RunOnce(ctx context.Context) error {
 	// The pre-flight read (Ledger.ThisMonth's contract): a halted or
 	// capped month means NO provider call, and finding that out costs one
@@ -161,72 +166,125 @@ func (p *Pipeline) RunOnce(ctx context.Context) error {
 		return nil
 	}
 
-	items, err := p.eligibleItems(ctx)
-	if err != nil {
-		return err
-	}
-	for _, item := range items {
-		for _, locale := range TargetLocales(item.SourceLanguage, p.cfg.ReaderLocales) {
-			if err := ctx.Err(); err != nil {
-				return err
+	// The bound counts PROVIDER CALLS, never items considered: a skipped
+	// item - no derivable prose, a pair another replica holds - costs
+	// nothing and so consumes nothing. Counting skips would let a run of
+	// permanently unusable items wall off the translatable backlog behind
+	// them for good, while the bound's one purpose is to cap how fast
+	// money leaves in a cycle.
+	calls := 0
+	var after *workItem
+	for {
+		items, err := p.eligibleItems(ctx, after)
+		if err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			return nil
+		}
+		for i := range items {
+			item := items[i]
+			// The provider is sent the title and a BOUNDED extract of the
+			// body, never the body itself: what we publish is an extract
+			// beside a link (FR-004), so nothing longer ever needs to
+			// leave the system - and input tokens are billed like output
+			// ones (FR-006). Derived once per item, before any claim or
+			// transaction: the extract does not depend on the target
+			// locale, and a body that reduces to no prose (markup only,
+			// say) is skipped here without paying for a claim, a budget
+			// read or a slot of the bound.
+			extract := text.DeriveExtract(item.RawBody)
+			if strings.TrimSpace(extract) == "" {
+				p.log.WarnContext(ctx, "skipping item whose body yields no extract",
+					"source_item_id", item.ID)
+				continue
 			}
-			stop, err := p.translatePair(ctx, item, locale)
-			switch {
-			case err == nil:
-			case itemFailure(err):
-				// This pair is the problem, not the pipeline: step over it
-				// and keep translating. The pair stays eligible, so a
-				// transient bad answer is retried next cycle.
-				p.log.WarnContext(ctx, "translating item failed",
-					"source_item_id", item.ID, "target_locale", locale, "error", err)
-			case providerFailure(err):
-				// The provider or its configuration is the problem, so the
-				// next pair would meet exactly the same answer; ending the
-				// cycle is what "slow down" means here. The items stay
-				// eligible for the next interval.
-				p.log.WarnContext(ctx, "ending the translation cycle: the failure is provider-wide, not this item's",
-					"source_item_id", item.ID, "target_locale", locale, "error", err)
-				return nil
-			default:
-				// Infrastructure: the database is the problem, and the
-				// cycle cannot promise anything more until the next one.
-				return err
-			}
-			if stop {
-				return nil
+			for _, locale := range TargetLocales(item.SourceLanguage, p.cfg.ReaderLocales) {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				stop, called, err := p.translatePair(ctx, item, extract, locale)
+				if called {
+					calls++
+				}
+				switch {
+				case err == nil:
+				case itemFailure(err):
+					// This pair is the problem, not the pipeline: step over it
+					// and keep translating. The pair stays eligible, so a
+					// transient bad answer is retried next cycle.
+					p.log.WarnContext(ctx, "translating item failed",
+						"source_item_id", item.ID, "target_locale", locale, "error", err)
+				case providerFailure(err):
+					// The provider or its configuration is the problem, so the
+					// next pair would meet exactly the same answer; ending the
+					// cycle is what "slow down" means here. The items stay
+					// eligible for the next interval.
+					p.log.WarnContext(ctx, "ending the translation cycle: the failure is provider-wide, not this item's",
+						"source_item_id", item.ID, "target_locale", locale, "error", err)
+					return nil
+				default:
+					// Infrastructure: the database is the problem, and the
+					// cycle cannot promise anything more until the next one.
+					return err
+				}
+				if stop || calls >= p.cfg.Limit {
+					return nil
+				}
 			}
 		}
+		if len(items) < p.cfg.Limit {
+			// A short page is the backlog's end: asking again would only
+			// re-run the query to hear "nothing".
+			return nil
+		}
+		after = &items[len(items)-1]
 	}
-	return nil
 }
 
 // workItem is one retrieved item as the pipeline sees it: what to
-// translate and the language it is in.
+// translate, the language it is in, and where it sits in the newest-first
+// order (the keyset cursor).
 type workItem struct {
 	ID             uuid.UUID
 	Title          string
 	RawBody        string
 	SourceLanguage string
+	RetrievedAt    time.Time
 }
 
-// eligibleItems lists the items this cycle considers: retrieved items from
-// active sources, newest first, still lacking at least one reader-locale
-// translation. The per-locale decision is TargetLocales' plus the
-// recheck-under-claim in translatePair; this query only keeps the cycle
-// from re-reading items with nothing left to do.
+// eligibleItems lists one page of the items this cycle considers:
+// retrieved items from active sources, newest first, still lacking at
+// least one reader-locale translation, continuing strictly after the
+// given cursor item (nil means the newest page). The per-locale decision
+// is TargetLocales' plus the recheck-under-claim in translatePair; this
+// query only keeps the cycle from re-reading items with nothing left to
+// do.
 //
-// Items without a title are excluded here rather than skipped in Go: a
-// translation is a headline and an extract, so an item the feed gave no
-// title can never produce one - and, being permanently ineligible, it
-// would otherwise occupy a slot of the cycle's bound forever.
-func (p *Pipeline) eligibleItems(ctx context.Context) ([]workItem, error) {
+// Everything SQL can decide is excluded here rather than skipped in Go: a
+// missing or blank title, a title over the request bound, a body with no
+// text at all. Each of those is PERMANENTLY untranslatable - no
+// translation row will ever be written for it - so skipping it in Go
+// would keep it in the newest-first window on every cycle, and enough of
+// them would wall off the translatable backlog behind them for good. What
+// SQL cannot decide (a body whose text reduces to no prose) is skipped in
+// Go without counting against the cycle's bound, and the keyset cursor
+// walks past it.
+func (p *Pipeline) eligibleItems(ctx context.Context, after *workItem) ([]workItem, error) {
+	var afterAt, afterID any
+	if after != nil {
+		afterAt, afterID = after.RetrievedAt, after.ID.String()
+	}
 	rows, err := p.db.Query(ctx,
-		`select si.id, si.original_title, si.raw_body, s.language_code
+		`select si.id, si.original_title, si.raw_body, s.language_code, si.retrieved_at
 		   from source_item si
 		   join source s on s.id = si.source_id
 		  where s.active
 		    and si.original_title is not null
 		    and btrim(si.original_title) <> ''
+		    and char_length(si.original_title) <= $3
+		    and btrim(si.raw_body) <> ''
+		    and ($4::timestamptz is null or (si.retrieved_at, si.id) < ($4::timestamptz, $5::uuid))
 		    and exists (
 		        select 1
 		          from unnest($1::text[]) as reader(code)
@@ -235,9 +293,9 @@ func (p *Pipeline) eligibleItems(ctx context.Context) ([]workItem, error) {
 		               select 1 from translation t
 		                where t.source_item_id = si.id
 		                  and t.target_locale = reader.code))
-		  order by si.retrieved_at desc, si.id
+		  order by si.retrieved_at desc, si.id desc
 		  limit $2`,
-		p.cfg.ReaderLocales, p.cfg.Limit)
+		p.cfg.ReaderLocales, p.cfg.Limit, MaxSourceTitleChars, afterAt, afterID)
 	if err != nil {
 		return nil, fmt.Errorf("translation: listing eligible items: %w", err)
 	}
@@ -249,7 +307,7 @@ func (p *Pipeline) eligibleItems(ctx context.Context) ([]workItem, error) {
 			id   string
 			item workItem
 		)
-		if err := rows.Scan(&id, &item.Title, &item.RawBody, &item.SourceLanguage); err != nil {
+		if err := rows.Scan(&id, &item.Title, &item.RawBody, &item.SourceLanguage, &item.RetrievedAt); err != nil {
 			return nil, fmt.Errorf("translation: listing eligible items: scan: %w", err)
 		}
 		item.ID, err = uuid.Parse(id)
@@ -267,11 +325,13 @@ func (p *Pipeline) eligibleItems(ctx context.Context) ([]workItem, error) {
 // translatePair translates one item into one locale: claim, re-check,
 // budget, provider, record - in that order, inside one transaction. stop
 // reports that the month is done (halted, or at its cap) and the cycle
-// must make no further provider calls.
-func (p *Pipeline) translatePair(ctx context.Context, item workItem, locale string) (stop bool, err error) {
+// must make no further provider calls; called reports whether the
+// provider was called at all - a skip is free, and only calls count
+// against the cycle's bound.
+func (p *Pipeline) translatePair(ctx context.Context, item workItem, extract, locale string) (stop, called bool, err error) {
 	tx, err := p.db.Begin(ctx)
 	if err != nil {
-		return false, fmt.Errorf("translation: claiming %s into %q: begin: %w", item.ID, locale, err)
+		return false, false, fmt.Errorf("translation: claiming %s into %q: begin: %w", item.ID, locale, err)
 	}
 	// A no-op after a commit below; the guarantee that every earlier
 	// return leaves nothing behind - including the claim, which is
@@ -287,10 +347,10 @@ func (p *Pipeline) translatePair(ctx context.Context, item workItem, locale stri
 	if err := tx.QueryRow(ctx,
 		`select pg_try_advisory_xact_lock(hashtext($1::text || $2::text))`,
 		item.ID.String(), locale).Scan(&claimed); err != nil {
-		return false, fmt.Errorf("translation: claiming %s into %q: %w", item.ID, locale, err)
+		return false, false, fmt.Errorf("translation: claiming %s into %q: %w", item.ID, locale, err)
 	}
 	if !claimed {
-		return false, nil
+		return false, false, nil
 	}
 
 	// Re-check under the claim. The work list was read before this claim
@@ -302,35 +362,22 @@ func (p *Pipeline) translatePair(ctx context.Context, item workItem, locale stri
 	if err := tx.QueryRow(ctx,
 		`select exists (select 1 from translation where source_item_id = $1 and target_locale = $2)`,
 		item.ID.String(), locale).Scan(&alreadyTranslated); err != nil {
-		return false, fmt.Errorf("translation: re-checking %s into %q under the claim: %w", item.ID, locale, err)
+		return false, false, fmt.Errorf("translation: re-checking %s into %q under the claim: %w", item.ID, locale, err)
 	}
 	if alreadyTranslated {
-		return false, nil
+		return false, false, nil
 	}
 
 	// The budget, re-read per pair: this cycle's earlier spend, or a
 	// replica's, may have crossed the cap since the cycle's pre-flight.
 	month, err := NewLedger(tx).ThisMonth(ctx)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if p.budgetStop(ctx, month) {
-		return true, nil
+		return true, false, nil
 	}
 
-	// The provider is sent the title and a BOUNDED extract of the body,
-	// never the body itself: what we publish is an extract beside a link
-	// (FR-004), so nothing longer ever needs to leave the system - and
-	// input tokens are billed like output ones (FR-006).
-	extract := text.DeriveExtract(item.RawBody)
-	if strings.TrimSpace(extract) == "" {
-		// A body that reduces to no prose (markup only, say) cannot be
-		// translated into an extract. Logged and left: the item ages out
-		// of the newest-first window on its own.
-		p.log.WarnContext(ctx, "skipping item whose body yields no extract",
-			"source_item_id", item.ID, "target_locale", locale)
-		return false, nil
-	}
 	result, terr := p.translator.Translate(ctx, Request{
 		SourceTitle:    item.Title,
 		SourceText:     extract,
@@ -339,7 +386,8 @@ func (p *Pipeline) translatePair(ctx context.Context, item workItem, locale stri
 		PromptVersion:  p.cfg.PromptVersion,
 	})
 	if terr != nil {
-		return p.settleFailedCall(ctx, tx, terr)
+		stop, err := p.settleFailedCall(ctx, tx, terr)
+		return stop, true, err
 	}
 
 	writer := NewWriter(tx, p.cfg.Caps)
@@ -347,7 +395,7 @@ func (p *Pipeline) translatePair(ctx context.Context, item workItem, locale stri
 	switch {
 	case rerr == nil:
 		if err := tx.Commit(ctx); err != nil {
-			return false, p.uncommittedSpend(fmt.Errorf("translation: committing %s into %q: %w", item.ID, locale, err), result.Spend)
+			return false, true, p.uncommittedSpend(fmt.Errorf("translation: committing %s into %q: %w", item.ID, locale, err), result.Spend)
 		}
 		p.log.InfoContext(ctx, "translated",
 			"source_item_id", item.ID, "target_locale", locale,
@@ -362,7 +410,7 @@ func (p *Pipeline) translatePair(ctx context.Context, item workItem, locale stri
 		// unreachable behind the claim and the re-check, but if it ever
 		// happens the honest record of the double payment must land.
 		if err := tx.Commit(ctx); err != nil {
-			return false, p.uncommittedSpend(errors.Join(rerr, fmt.Errorf("translation: committing the refusal's spend: %w", err)), result.Spend)
+			return false, true, p.uncommittedSpend(errors.Join(rerr, fmt.Errorf("translation: committing the refusal's spend: %w", err)), result.Spend)
 		}
 		p.log.WarnContext(ctx, "translation refused; its cost is on the ledger",
 			"source_item_id", item.ID, "target_locale", locale, "error", rerr,
@@ -372,9 +420,9 @@ func (p *Pipeline) translatePair(ctx context.Context, item workItem, locale stri
 		// Transient failures exhausted their retries, or something the
 		// writer could not classify: nothing committed, so the deferred
 		// rollback stands and the money is not yet on the ledger.
-		return false, p.uncommittedSpend(rerr, result.Spend)
+		return false, true, p.uncommittedSpend(rerr, result.Spend)
 	}
-	return recorded.Halted(), nil
+	return recorded.Halted(), true, nil
 }
 
 // settleFailedCall books what a failed provider call still cost. A failure
