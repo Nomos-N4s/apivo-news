@@ -8,10 +8,8 @@ import {
   formatItemCost,
   formatSpend,
   spendPercent,
-  withdrawalBanner,
 } from './api';
 import { PROVENANCE_FIXTURES, QUEUE_FIXTURES } from './fixtures';
-import { editorialStrings } from './strings';
 
 function respondingWith(response: Response): {
   calls: { url: URL; init: RequestInit | undefined }[];
@@ -621,41 +619,6 @@ describe('sources', () => {
         licence_terms: 't',
       }),
     ).rejects.toMatchObject({ status: 409 });
-  });
-});
-
-describe('withdrawalBanner', () => {
-  const t = editorialStrings('el');
-
-  it('renders the recorded reason under the success label', () => {
-    const banner = withdrawalBanner(
-      { recorded: true, article_id: 'a1', reason: 'the source retracted the story' },
-      t,
-    );
-    expect(banner.recorded).toBe(true);
-    expect(banner.label).toBe(t.withdraw);
-    // The recorded reason is the banner's text — a genuine, audited,
-    // irreversible write must never confirm itself as a blank box (#85).
-    expect(banner.body).toBe('the source retracted the story');
-  });
-
-  it('renders no success label for a refused withdrawal', () => {
-    const banner = withdrawalBanner(
-      { recorded: false, reason: 'publication did not end; nothing was written' },
-      t,
-    );
-    expect(banner.recorded).toBe(false);
-    expect(banner.label).toBe(t.notRecordedTitle);
-    expect(banner.label).not.toBe(t.withdraw);
-    expect(banner.body).toContain('nothing was written');
-  });
-
-  it('holds in both chrome languages', () => {
-    const de = editorialStrings('de');
-    expect(withdrawalBanner({ recorded: false }, de).label).toBe(de.notRecordedTitle);
-    expect(withdrawalBanner({ recorded: true, article_id: 'a1', reason: 'r' }, de).label).toBe(
-      de.withdraw,
-    );
   });
 });
 

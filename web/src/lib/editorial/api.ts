@@ -1,5 +1,4 @@
 import type { ReadingLanguage } from '../reader/axes';
-import type { EditorialStrings } from './strings';
 import {
   POLL_CYCLE_FIXTURE,
   PROVENANCE_FIXTURES,
@@ -813,35 +812,6 @@ export async function allSources(api: EditorialApi, maxPages = 10): Promise<Sour
     cycle: first.cycle,
     fixture: first.fixture === true,
     truncated: cursor !== null,
-  };
-}
-
-/** What the audit page's withdrawal banner shows. */
-export interface WithdrawalBanner {
-  readonly recorded: boolean;
-  readonly label: string;
-  readonly body: string;
-}
-
-/**
- * The banner after a withdrawal attempt: the success label only when the
- * record exists, and the reason either way — the justification the
- * database froze on success, the explanation of why nothing was written
- * otherwise. The honest-record rule in one testable place: the success
- * label never appears over a write that did not happen, and a recorded
- * withdrawal is never confirmed by an empty box.
- */
-export function withdrawalBanner(
-  outcome: WithdrawalOutcome,
-  t: Pick<EditorialStrings, 'withdraw' | 'notRecordedTitle'>,
-): WithdrawalBanner {
-  return {
-    recorded: outcome.recorded,
-    label: outcome.recorded ? t.withdraw : t.notRecordedTitle,
-    // A recorded outcome carries its reason by type: the client refuses a
-    // confirmation without one, so no fallback exists on that branch. Only
-    // a refusal may arrive without words.
-    body: outcome.recorded ? outcome.reason : (outcome.reason ?? ''),
   };
 }
 
