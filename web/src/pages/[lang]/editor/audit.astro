@@ -5,6 +5,7 @@ import ReaderLayout from '../../../layouts/ReaderLayout.astro';
 import {
   createEditorialApi,
   formatItemCost,
+  withdrawalBanner,
   type ArticleProvenance,
   type WithdrawalOutcome,
 } from '../../../lib/editorial/api';
@@ -86,6 +87,10 @@ if (Astro.request.method === 'POST') {
   }
 }
 
+// The banner is derived by one tested function: the success label only
+// over a real record, and the reason — recorded or refusing — as the body.
+const banner = withdrawal === null ? null : withdrawalBanner(withdrawal, t);
+
 const queryId = Astro.url.searchParams.get('id') ?? withdrawnId;
 let record: ArticleProvenance | null = null;
 let traceFailed = false;
@@ -146,12 +151,10 @@ const initials = (record?.approval.approver_name ?? '')
       )
     }
     {
-      withdrawal !== null && (
-        <div class:list={['banner', { 'banner-warn': !withdrawal.recorded }]}>
-          <span class="banner-label">
-            {withdrawal.recorded ? t.withdraw : t.notRecordedTitle}
-          </span>
-          <span class="banner-body">{withdrawal.reason}</span>
+      banner !== null && (
+        <div class:list={['banner', { 'banner-warn': !banner.recorded }]}>
+          <span class="banner-label">{banner.label}</span>
+          <span class="banner-body">{banner.body}</span>
         </div>
       )
     }

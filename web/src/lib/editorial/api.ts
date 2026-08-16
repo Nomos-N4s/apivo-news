@@ -1,4 +1,5 @@
 import type { ReadingLanguage } from '../reader/axes';
+import type { EditorialStrings } from './strings';
 import {
   POLL_CYCLE_FIXTURE,
   PROVENANCE_FIXTURES,
@@ -349,9 +350,15 @@ export class EditorialApiError extends Error {
  * What `POST /api/v1/editorial/articles/{id}/withdrawal` answers.
  * `recorded: false` carries the same meaning as on approval: the intent
  * was expressed, nothing was written.
+ *
+ * `reason` is dual-purpose by construction: on a recorded withdrawal it is
+ * the justification the database froze (`article.withdrawal_reason`), and
+ * on a refused one it is why nothing was written. Either way it is the one
+ * line the banner renders.
  */
 export interface WithdrawalOutcome {
   readonly recorded: boolean;
+  readonly article_id?: string;
   readonly withdrawn_at?: string;
   readonly withdrawn_by?: string;
   readonly reason?: string;
@@ -543,6 +550,13 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason }),
       });
+      // The one editorial method that lacked this branch: with the reader
+      // deployed but editorial unmounted, its siblings fall back to the
+      // fixtures' honest not-recorded answer while withdraw() threw. A 404
+      // here means "not deployed", and publication did not end.
+      if (response.status === NOT_DEPLOYED) {
+        return fixtures.withdraw(articleId, reason);
+      }
       if (!response.ok) {
         throw new EditorialApiError(
           `editorial API answered ${response.status} for the withdrawal`,
@@ -628,6 +642,32 @@ export function approvalRecordLine(outcome: ApprovalOutcome): string {
     parts.push(`article ${outcome.article_id}`);
   }
   return parts.join(' · ');
+}
+
+/** What the audit page's withdrawal banner shows. */
+export interface WithdrawalBanner {
+  readonly recorded: boolean;
+  readonly label: string;
+  readonly body: string;
+}
+
+/**
+ * The banner after a withdrawal attempt: the success label only when the
+ * record exists, and the reason either way — the justification the
+ * database froze on success, the explanation of why nothing was written
+ * otherwise. The honest-record rule in one testable place: the success
+ * label never appears over a write that did not happen, and a recorded
+ * withdrawal is never confirmed by an empty box.
+ */
+export function withdrawalBanner(
+  outcome: WithdrawalOutcome,
+  t: Pick<EditorialStrings, 'withdraw' | 'notRecordedTitle'>,
+): WithdrawalBanner {
+  return {
+    recorded: outcome.recorded,
+    label: outcome.recorded ? t.withdraw : t.notRecordedTitle,
+    body: outcome.reason ?? '',
+  };
 }
 
 /**
