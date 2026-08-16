@@ -621,6 +621,38 @@ func TestAWrongMethodUnderTheEditorialPrefixIsProblemJSON(t *testing.T) {
 	}
 }
 
+// TestEveryRegisteredRouteAnswers405ForAWrongMethod iterates Patterns()
+// itself, so a route added to routes() is covered here without anyone
+// remembering to extend a hardcoded list: the 405 classifier is derived
+// from routes() at NewHandler time, and this walk proves the derivation
+// holds for every registered pattern - a wrong method on a real path is
+// never the catch-all's 404.
+func TestEveryRegisteredRouteAnswers405ForAWrongMethod(t *testing.T) {
+	t.Parallel()
+	h := newHandler(t, errStore{err: errUnexpectedCall})
+
+	for _, pattern := range editorial.Patterns() {
+		method, path, ok := strings.Cut(pattern, " ")
+		if !ok {
+			t.Fatalf("pattern %q is not METHOD /path", pattern)
+		}
+		concrete := strings.ReplaceAll(path, "{id}", "11111111-1111-4111-8111-111111111111")
+		t.Run("DELETE on "+concrete, func(t *testing.T) {
+			t.Parallel()
+			// No editorial route serves DELETE, so on every registered
+			// path it is a wrong method rather than a wrong address.
+			rec := doJSON(t, h, http.MethodDelete, concrete, editorToken, "")
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("status = %d, want 405 (body %q)", rec.Code, rec.Body.String())
+			}
+			allow := rec.Header().Get("Allow")
+			if !strings.Contains(allow, method) {
+				t.Errorf("Allow = %q, want it to name %s - the method routes() registers for this path", allow, method)
+			}
+		})
+	}
+}
+
 // TestAnUnroutedEditorialPathIsProblemJSON pins the catch-all's other arm:
 // an address nobody serves answers 404 in problem+json rather than the
 // router's text/plain.
