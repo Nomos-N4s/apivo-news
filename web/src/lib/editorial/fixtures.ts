@@ -37,6 +37,9 @@ export const QUEUE_FIXTURES: readonly QueueItem[] = [
     model: 'translate-alpha-1',
     prompt_version: 'v4',
     cost_microusd: 4000,
+    // A fresh origin: the contract sends false and [] here, never absent.
+    correction_candidate: false,
+    withdrawals: [],
   },
   {
     source_item_id: '4c81a7d5-93e2-4b60-8a1f-77d3e5c20b96',
@@ -60,6 +63,8 @@ export const QUEUE_FIXTURES: readonly QueueItem[] = [
     model: 'translate-alpha-1',
     prompt_version: 'v4',
     cost_microusd: 3000,
+    correction_candidate: false,
+    withdrawals: [],
   },
   {
     // Same-language origin: approval takes the source_item directly, with
@@ -88,11 +93,17 @@ export const QUEUE_FIXTURES: readonly QueueItem[] = [
     // article was withdrawn, with the recorded withdrawal newest-first.
     // Without one fixture in this state, preview mode could never show
     // the correction explanation the review pane owes the editor.
+    //
+    // The quoted withdrawal is the one PROVENANCE_FIXTURES holds for this
+    // same origin (article d57b1f30, retrieved 05:20, published 05:31:20,
+    // withdrawn 09:15), so the trace the audit screen answers with and the
+    // reason the queue quotes are one record, in an order the append-only
+    // schema could actually have written.
     correction_candidate: true,
     withdrawals: [
       {
-        article_id: 'f5d2c8a1-6e3b-4790-a2c4-9b8e0d1f6a35',
-        withdrawn_at: '2026-08-13T16:40:00Z',
+        article_id: 'd57b1f30-6c92-4a44-b8e1-95ac2f7d0e63',
+        withdrawn_at: '2026-08-14T09:15:00Z',
         withdrawn_by: '7a1e9c04-2b5d-4f68-8e3a-c6d90b47f512',
         reason: 'Λανθασμένη ημερομηνία έναρξης των δρομολογίων στην αρχική δημοσίευση.',
       },
@@ -275,7 +286,14 @@ export const PROVENANCE_FIXTURES: readonly ArticleProvenance[] = [
       approved_at: '2026-08-14T05:31:00Z',
     },
     published_at: '2026-08-14T05:31:20Z',
-    withdrawal: null,
+    // Withdrawn the same morning, which is why the origin is back in the
+    // queue as a correction candidate (QUEUE_FIXTURES). Publication ended;
+    // the article, its approval and the reason stay on the record.
+    withdrawal: {
+      withdrawn_at: '2026-08-14T09:15:00Z',
+      withdrawn_by: 'Dimitra Andreou',
+      reason: 'Λανθασμένη ημερομηνία έναρξης των δρομολογίων στην αρχική δημοσίευση.',
+    },
     events: [
       {
         type: 'source_item.retrieved',
@@ -291,6 +309,11 @@ export const PROVENANCE_FIXTURES: readonly ArticleProvenance[] = [
         type: 'article.published',
         occurred_at: '2026-08-14T05:31:20Z',
         detail: 'visible on /el/greece',
+      },
+      {
+        type: 'article.withdrawn',
+        occurred_at: '2026-08-14T09:15:00Z',
+        detail: 'Λανθασμένη ημερομηνία έναρξης των δρομολογίων στην αρχική δημοσίευση.',
       },
     ],
   },
