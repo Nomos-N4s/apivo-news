@@ -59,8 +59,12 @@ jobs:
           sh scripts/release_notes_test.sh
       - name: Require a tag ref
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        env:
+          # Through the environment rather than interpolated into the script:
+          # a ref is data, and this workflow holds the deploy credentials.
+          REF: ${{ github.ref }}
         run: |
-          echo "::error::the release workflow runs only from a tag ref; pick the tag under 'Use workflow from' when dispatching (got ${{ github.ref }})"
+          echo "::error::the release workflow runs only from a tag ref; pick the tag under 'Use workflow from' when dispatching (got $REF)"
           exit 1
       # What the already-published Release for this tag says it was cut from,
       # which is the one question the guard cannot answer from git alone. The
