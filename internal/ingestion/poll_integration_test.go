@@ -284,6 +284,105 @@ func TestPollCycleNotModifiedRefreshesValidatorsAndZeroesCounters(t *testing.T) 
 	}
 }
 
+// storeFailureMarker names the body text the induced-failure trigger
+// refuses. Only this file's feeds ever carry it, so concurrent suites
+// writing source_item rows pass through the trigger untouched.
+const storeFailureMarker = "POLL-TEST-STORE-FAILURE"
+
+// installStoreFailure makes the provenance write path die on demand: a
+// trigger refuses any source_item whose body carries storeFailureMarker,
+// which is what a database failing mid-cycle looks like to recordItems -
+// some items committed, then an error. Removed on cleanup.
+func installStoreFailure(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx,
+		`create or replace function poll_test_fail_on_marker() returns trigger
+		 language plpgsql as $fail$
+		 begin
+		     if new.raw_body like '%`+storeFailureMarker+`%' then
+		         raise exception 'poll test: induced store failure';
+		     end if;
+		     return new;
+		 end $fail$`); err != nil {
+		t.Fatalf("installing failure function: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`drop trigger if exists poll_test_fail on source_item`); err != nil {
+		t.Fatalf("clearing stale failure trigger: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`create trigger poll_test_fail before insert on source_item
+		 for each row execute function poll_test_fail_on_marker()`); err != nil {
+		t.Fatalf("installing failure trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(),
+			`drop trigger if exists poll_test_fail on source_item`); err != nil {
+			t.Errorf("dropping failure trigger: %v", err)
+		}
+		if _, err := pool.Exec(context.Background(),
+			`drop function if exists poll_test_fail_on_marker()`); err != nil {
+			t.Errorf("dropping failure function: %v", err)
+		}
+	})
+}
+
+func TestPollCycleStoreFailureKeepsStoredValidators(t *testing.T) {
+	pool := storePool(t)
+	installStoreFailure(t, pool)
+
+	// Two items under ETag "v2": the first commits, the second dies in the
+	// store. The response's validators must NOT be stored - a later 304
+	// against them would confirm a document whose items were never fully
+	// written, hiding the missing ones for as long as the document stands.
+	feed := &recordingFeed{
+		body: rssFeed(
+			"Πρώτο κείμενο ("+uuid.NewString()+")",
+			"Δεύτερο κείμενο "+storeFailureMarker+" ("+uuid.NewString()+")",
+		),
+		etag: `"v2"`,
+	}
+	server := httptest.NewServer(feed)
+	t.Cleanup(server.Close)
+	sourceID := seedPollSource(t, pool, server.URL)
+	poller := newTestPoller(pool)
+
+	if _, err := poller.PollOnce(context.Background()); err != nil {
+		t.Fatalf("first PollOnce() error: %v", err)
+	}
+	state := readPollState(t, pool, sourceID)
+	if state.Error == nil {
+		t.Fatal("after the store failure: last_poll_error is NULL, want the failure recorded")
+	}
+	if state.Retrieved != 1 {
+		t.Errorf("after the store failure: retrieved = %d, want 1: the honest count of what committed", state.Retrieved)
+	}
+	if state.ETag != "" {
+		t.Errorf("after the store failure: etag = %q, want empty: a failed store must not advance the validators", state.ETag)
+	}
+	if n := countSourceItems(t, pool, sourceID); n != 1 {
+		t.Errorf("source_item rows = %d, want 1: only the first item committed", n)
+	}
+
+	// The next cycle must refetch unconditionally, so the source hands the
+	// complete document over again; the already-stored item is absorbed by
+	// the content_hash dedupe.
+	if _, err := poller.PollOnce(context.Background()); err != nil {
+		t.Fatalf("second PollOnce() error: %v", err)
+	}
+	requests := feed.recorded()
+	if len(requests) != 2 {
+		t.Fatalf("feed requests = %d, want 2", len(requests))
+	}
+	if got := requests[1].Get("If-None-Match"); got != "" {
+		t.Errorf("second request carried If-None-Match %q, want none: a failed store must leave the next fetch unconditional", got)
+	}
+	if n := countSourceItems(t, pool, sourceID); n != 1 {
+		t.Errorf("source_item rows after refetch = %d, want still 1: the dedupe absorbs the committed item", n)
+	}
+}
+
 func TestPollCycleFailingSourceDoesNotStopOthers(t *testing.T) {
 	pool := storePool(t)
 	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

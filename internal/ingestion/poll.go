@@ -214,7 +214,13 @@ func (p *Poller) pollSource(ctx context.Context, src PolledSource) {
 		if err != nil {
 			// The counters stand for what was stored before the failure:
 			// an honest partial record, never a success state for writes
-			// that did not happen.
+			// that did not happen. The validators stay the stored ones for
+			// the same reason: advancing them would let the next cycle's
+			// 304 confirm a document whose items were never fully written,
+			// hiding the missing ones for as long as the document stands.
+			// Refetching unconditionally is safe - RecordRetrieval's
+			// content_hash dedupe absorbs the items that did commit.
+			outcome.Validators = src.Validators
 			outcome.Error = err.Error()
 			p.log.WarnContext(ctx, "recording retrieved items failed",
 				"source_id", src.ID, "url", redactedFeedURL(src.URL), "error", err)
