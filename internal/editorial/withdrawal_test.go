@@ -59,6 +59,10 @@ func (s *withdrawalStore) Withdraw(_ context.Context, articleID, editorID uuid.U
 	return s.withdrawal, s.err
 }
 
+func (s *withdrawalStore) Provenance(context.Context, uuid.UUID) (editorial.Provenance, error) {
+	return editorial.Provenance{}, errUnexpectedCall
+}
+
 // withdrawalBody is the decoded 200 payload, kept close to the contract's
 // wire shape so a renamed field fails the test.
 type withdrawalBody struct {

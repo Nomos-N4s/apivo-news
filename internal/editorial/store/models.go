@@ -43,7 +43,7 @@ type ArticlePlace struct {
 	PlaceID   pgtype.UUID
 }
 
-// I-5: for any article - source, licence snapshot at retrieval, model, prompt version, named approver and any withdrawal - in a single query.
+// I-5: for any article - source, licence snapshot at retrieval, model, prompt version, cost, named approver, places and any withdrawal - in a single query.
 type ArticleProvenance struct {
 	ArticleID          pgtype.UUID
 	PublishedAt        pgtype.Timestamptz
@@ -73,6 +73,10 @@ type ArticleProvenance struct {
 	WithdrawnAt        pgtype.Timestamptz
 	WithdrawnBy        pgtype.UUID
 	WithdrawalReason   pgtype.Text
+	OriginalTitle      pgtype.Text
+	Headline           string
+	Places             interface{}
+	CostMicrousd       pgtype.Int8
 }
 
 // Per-purpose consent rows, never a boolean column. Revocation closes a row; a new grant opens a new row, preserving the full consent history.

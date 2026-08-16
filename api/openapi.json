@@ -4,7 +4,7 @@
     "title": "epiloYES internal HTTP API",
     "version": "1.0.0-alpha",
     "summary": "Public reader endpoints, editorial writes behind a bearer JWT, and the operational probes served by the Go binary.",
-    "description": "Machine-readable description of what the Go binary actually serves. It is written from the handlers, not from prose: where this document and `specs/001-epiloyes-alpha/contracts/http-api.md` disagree, the handlers won and this document follows them.\n\n**Topology.** The API is not publicly routable. In every deployment (compose, Cloudflare, Kubernetes) it listens on an internal network and the Astro server is the only public HTTP surface. As defence in depth every response - this document included - carries `X-Robots-Tag: noindex, nofollow`.\n\n**Errors.** Every handler-produced error is an RFC 9457 `application/problem+json` body: `type` (always `about:blank`), `title` (the plain rendering of the status code), `status`, and `detail` (omitted when empty). See the `Problem` schema.\n\n**Pagination.** Lists take `limit` (default 20) and `cursor` (opaque, keyset) and answer `{ items, next_cursor }`, where `next_cursor` is `null` on the last page. A `limit` outside 1-100 is rejected with 400 rather than clamped; a malformed or oversized `cursor` is rejected with 400.\n\n**Auth.** Only the editorial endpoints require authentication: `Authorization: Bearer <JWT>`, verified against the configured JWKS, and the subject's account must hold the editor role. The database enforces the same rule again on write. When `JWKS_URL` is unset the whole `/api/v1/editorial/` prefix is left unmounted deliberately, and those paths answer 404 instead of authenticating nobody.\n\n**Unrouted paths under `/api/v1/`.** The content module owns a catch-all across the whole namespace: a known reader path reached with the wrong method answers 405 with an `Allow` header, and anything else under `/api/v1/` answers 404, both in problem+json. Outside its reach - the editorial prefix - an unrouted path or a wrong method is answered by the router itself with a `text/plain` body. That is the one corner where the single error convention does not hold.\n\n**Completeness.** Every operation described here is served by the binary, and every route the binary registers is described here; a test in the composition root compares the two in both directions on every build. The one endpoint that exists in the contract but has no implementation - editorial provenance - is deliberately absent rather than described speculatively.\n\n**Availability.** The editorial routes are mounted only when the deployment configures JWKS verification; without it they answer 404 rather than authenticating nobody. The reader endpoints and the probes mount unconditionally."
+    "description": "Machine-readable description of what the Go binary actually serves. It is written from the handlers, not from prose: where this document and `specs/001-epiloyes-alpha/contracts/http-api.md` disagree, the handlers won and this document follows them.\n\n**Topology.** The API is not publicly routable. In every deployment (compose, Cloudflare, Kubernetes) it listens on an internal network and the Astro server is the only public HTTP surface. As defence in depth every response - this document included - carries `X-Robots-Tag: noindex, nofollow`.\n\n**Errors.** Every handler-produced error is an RFC 9457 `application/problem+json` body: `type` (always `about:blank`), `title` (the plain rendering of the status code), `status`, and `detail` (omitted when empty). See the `Problem` schema.\n\n**Pagination.** Lists take `limit` (default 20) and `cursor` (opaque, keyset) and answer `{ items, next_cursor }`, where `next_cursor` is `null` on the last page. A `limit` outside 1-100 is rejected with 400 rather than clamped; a malformed or oversized `cursor` is rejected with 400.\n\n**Auth.** Only the editorial endpoints require authentication: `Authorization: Bearer <JWT>`, verified against the configured JWKS, and the subject's account must hold the editor role. The database enforces the same rule again on write. When `JWKS_URL` is unset the whole `/api/v1/editorial/` prefix is left unmounted deliberately, and those paths answer 404 instead of authenticating nobody.\n\n**Unrouted paths under `/api/v1/`.** The content module owns a catch-all across the whole namespace: a known reader path reached with the wrong method answers 405 with an `Allow` header, and anything else under `/api/v1/` answers 404, both in problem+json. Outside its reach - the editorial prefix - an unrouted path or a wrong method is answered by the router itself with a `text/plain` body. That is the one corner where the single error convention does not hold.\n\n**Completeness.** Every operation described here is served by the binary, and every route the binary registers is described here; a test in the composition root compares the two in both directions on every build.\n\n**Availability.** The editorial routes are mounted only when the deployment configures JWKS verification; without it they answer 404 rather than authenticating nobody. The reader endpoints and the probes mount unconditionally."
   },
   "servers": [
     {
@@ -826,6 +826,101 @@
           }
         }
       }
+    },
+    "/api/v1/editorial/articles/{id}/provenance": {
+      "get": {
+        "tags": [
+          "editorial"
+        ],
+        "operationId": "getArticleProvenance",
+        "summary": "The five-minute audit of one article",
+        "description": "The full provenance chain (US5, FR-010), answered from the `article_provenance` view in a single query (I-5): source identity, the retrieval evidence with its licence snapshots, translation lineage with its recorded cost, the named approver, publication, and any withdrawal - audit sees full history, so withdrawn articles answer too.\n\n**The legal basis is the snapshots.** `source_item` carries the licence terms, usage rule and permission evidence exactly as they applied at retrieval, written by trigger in the same transaction as the content (I-2, I-4). The `source` object is identity only; the mutable source row is never the legal basis of anything already retrieved.\n\n**Events.** The article's rows of the append-only `domain_event` stream (FR-012), oldest first, each carrying the recorded payload as its detail. They arrive in the same statement as the chain - one round trip, one snapshot.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The article id. A value that is not a UUID answers 400 - a malformed id is a client mistake worth naming, distinct from an article that does not exist.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "examples": {
+              "id": {
+                "value": "8f1b6c1e-1f5a-4a2f-9e1a-2b3c4d5e6f70"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The audit trace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleProvenance"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The `{id}` path segment is not a UUID.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "notAUuid": {
+                    "summary": "Malformed article id",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "the article id in the path must be a uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotEditor"
+          },
+          "404": {
+            "description": "No article with this id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "unknownArticle": {
+                    "summary": "No such article",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Not Found",
+                      "status": 404,
+                      "detail": "no article with this id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1497,6 +1592,274 @@
             "type": "string",
             "format": "uuid",
             "description": "The authenticated editor who ended the publication."
+          }
+        }
+      },
+      "ArticleProvenance": {
+        "type": "object",
+        "title": "ArticleProvenance",
+        "description": "The full audit chain of one article, from the `article_provenance` view in one query (I-5). The `source` object is identity only: the legal basis always comes from the retrieval-time snapshots inside `source_item` (I-4).",
+        "required": [
+          "article_id",
+          "headline",
+          "places",
+          "source",
+          "source_item",
+          "translation",
+          "approval",
+          "published_at",
+          "withdrawal",
+          "events"
+        ],
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "headline": {
+            "type": "string",
+            "description": "The translation's headline, or the item's original title for an article published untranslated - the same resolution the reader sees."
+          },
+          "places": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Where the article published to, as sorted place slugs. Always a list, never null."
+          },
+          "source": {
+            "$ref": "#/components/schemas/ProvenanceSource"
+          },
+          "source_item": {
+            "$ref": "#/components/schemas/ProvenanceSourceItem"
+          },
+          "translation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProvenanceTranslation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The translation lineage, or null for an article published untranslated."
+          },
+          "approval": {
+            "$ref": "#/components/schemas/ProvenanceApproval"
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When publication began, or null for an approved-but-never-released record."
+          },
+          "withdrawal": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProvenanceWithdrawal"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How publication ended, or null while it has not."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProvenanceEvent"
+            },
+            "description": "The article's rows of the append-only audit stream (FR-012), oldest first. Always a list, never null."
+          }
+        }
+      },
+      "ProvenanceSource": {
+        "type": "object",
+        "title": "ProvenanceSource",
+        "description": "The licensed feed's identity - and identity ONLY. No licence field belongs here: the source row is mutable, and the legal basis of what was retrieved is the immutable snapshots on `source_item` (I-4).",
+        "required": [
+          "name",
+          "feed_url",
+          "jurisdiction"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "feed_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "jurisdiction": {
+            "type": "string"
+          }
+        }
+      },
+      "ProvenanceSourceItem": {
+        "type": "object",
+        "title": "ProvenanceSourceItem",
+        "description": "The immutable retrieval record (I-2, I-3): what was fetched, when, its database-computed fingerprint, and the licence terms exactly as they applied at retrieval, written by trigger in the same transaction as the content (I-4).",
+        "required": [
+          "source_url",
+          "original_title",
+          "retrieved_at",
+          "content_hash",
+          "licence_snapshot",
+          "usage_rule_snapshot",
+          "permission_evidence_snapshot",
+          "original_author"
+        ],
+        "properties": {
+          "source_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The original article at the publisher."
+          },
+          "original_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The item title exactly as the feed provided it, or null when it omitted one."
+          },
+          "retrieved_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "content_hash": {
+            "type": "string",
+            "description": "SHA-256 hex digest of the retrieved body, computed by the database."
+          },
+          "licence_snapshot": {
+            "type": "string",
+            "description": "The licence terms as they applied at retrieval (I-4)."
+          },
+          "usage_rule_snapshot": {
+            "type": "string",
+            "enum": [
+              "extract_and_link",
+              "full_text"
+            ],
+            "description": "The usage rule in force at retrieval."
+          },
+          "permission_evidence_snapshot": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The permission evidence on record at retrieval, or null when there was none."
+          },
+          "original_author": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The author as the feed named them, or null when it did not."
+          }
+        }
+      },
+      "ProvenanceTranslation": {
+        "type": "object",
+        "title": "ProvenanceTranslation",
+        "description": "The machine-translation lineage (FR-005): which model, which prompt version, when, and the provider-reported cost recorded at insert (FR-006).",
+        "required": [
+          "model",
+          "prompt_version",
+          "target_locale",
+          "generated_at",
+          "cost_microusd"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "prompt_version": {
+            "type": "string"
+          },
+          "target_locale": {
+            "type": "string"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cost_microusd": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Provider-reported cost in micro-USD."
+          }
+        }
+      },
+      "ProvenanceApproval": {
+        "type": "object",
+        "title": "ProvenanceApproval",
+        "description": "The named human whose decision the article is (I-1).",
+        "required": [
+          "approver_name",
+          "approver_email",
+          "approved_at"
+        ],
+        "properties": {
+          "approver_name": {
+            "type": "string"
+          },
+          "approver_email": {
+            "type": "string",
+            "format": "email"
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ProvenanceWithdrawal": {
+        "type": "object",
+        "title": "ProvenanceWithdrawal",
+        "description": "The recorded end of publication (FR-016): who, when and why, frozen once written.",
+        "required": [
+          "withdrawn_at",
+          "withdrawn_by",
+          "reason"
+        ],
+        "properties": {
+          "withdrawn_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "withdrawn_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "ProvenanceEvent": {
+        "type": "object",
+        "title": "ProvenanceEvent",
+        "description": "One row of the append-only audit stream (FR-012). The detail is the recorded payload itself, compact, minus the article_id the response is already scoped to - the record, never a paraphrase.",
+        "required": [
+          "type",
+          "occurred_at",
+          "detail"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "examples": [
+              "article.approved"
+            ]
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "detail": {
+            "type": "string"
           }
         }
       }

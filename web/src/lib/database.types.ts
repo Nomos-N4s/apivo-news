@@ -546,12 +546,16 @@ export type Database = {
           article_id: string | null
           attribution_block: string | null
           content_hash: string | null
+          cost_microusd: number | null
           generated_at: string | null
+          headline: string | null
           jurisdiction: string | null
           licence_snapshot: string | null
           model: string | null
           original_author: string | null
+          original_title: string | null
           permission_evidence: string | null
+          places: string[] | null
           prompt_version: string | null
           published_at: string | null
           retrieved_at: string | null

@@ -7,52 +7,7 @@ package store
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
-
-const getArticleProvenance = `-- name: GetArticleProvenance :one
-select article_id, published_at, attribution_block, approved_at, approver_id, approver_name, approver_email, translation_id, model, prompt_version, target_locale, generated_at, source_item_id, source_url, original_author, source_published_at, retrieved_at, content_hash, licence_snapshot, usage_rule, permission_evidence, source_id, source_name, source_feed_url, jurisdiction, withdrawn_at, withdrawn_by, withdrawal_reason from article_provenance
-where article_id = $1
-`
-
-// I-5: full provenance of one article - source, licence snapshot at
-// retrieval, model, prompt version and named approver - in a single query.
-func (q *Queries) GetArticleProvenance(ctx context.Context, articleID pgtype.UUID) (ArticleProvenance, error) {
-	row := q.db.QueryRow(ctx, getArticleProvenance, articleID)
-	var i ArticleProvenance
-	err := row.Scan(
-		&i.ArticleID,
-		&i.PublishedAt,
-		&i.AttributionBlock,
-		&i.ApprovedAt,
-		&i.ApproverID,
-		&i.ApproverName,
-		&i.ApproverEmail,
-		&i.TranslationID,
-		&i.Model,
-		&i.PromptVersion,
-		&i.TargetLocale,
-		&i.GeneratedAt,
-		&i.SourceItemID,
-		&i.SourceUrl,
-		&i.OriginalAuthor,
-		&i.SourcePublishedAt,
-		&i.RetrievedAt,
-		&i.ContentHash,
-		&i.LicenceSnapshot,
-		&i.UsageRule,
-		&i.PermissionEvidence,
-		&i.SourceID,
-		&i.SourceName,
-		&i.SourceFeedUrl,
-		&i.Jurisdiction,
-		&i.WithdrawnAt,
-		&i.WithdrawnBy,
-		&i.WithdrawalReason,
-	)
-	return i, err
-}
 
 const listPublishedArticles = `-- name: ListPublishedArticles :many
 select id, translation_id, source_item_id, approved_by, approved_at, published_at, attribution_block, withdrawn_at, withdrawn_by, withdrawal_reason from article

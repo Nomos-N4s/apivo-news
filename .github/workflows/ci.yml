@@ -96,6 +96,12 @@ jobs:
         run: go build ./...
       - name: Test (invariant tests run against the service Postgres)
         run: go test -race -shuffle=on -covermode=atomic -coverprofile=coverage.out -coverpkg=./... ./...
+      # The drill logs a timing per provenance chain, and those numbers are
+      # the point (I-5: the audit must be demonstrably fast, not asserted
+      # fast) - but a passing non-verbose `go test` swallows t.Logf. Run it
+      # once more verbosely so every CI run records what the audit costs.
+      - name: I-5 drill timings (verbose, for the record)
+        run: go test -v -run TestProvenanceI5DrillAgainstSchema ./internal/editorial/
       - name: Coverage gate (90%)
         run: sh scripts/coverage_gate.sh 90 coverage.out
 

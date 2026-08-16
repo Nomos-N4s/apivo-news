@@ -8,7 +8,6 @@ package content_test
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"os"
 	"testing"
@@ -52,8 +51,6 @@ func TestGeneratedStoreAgainstSchema(t *testing.T) {
 	suffix := hex.EncodeToString(b)
 	rawBody := "Δοκιμαστικό περιεχόμενο " + suffix
 	licence := "Extract and link permitted per feed terms v1 (" + suffix + ")"
-	hashSum := sha256.Sum256([]byte(rawBody))
-	contentHash := hex.EncodeToString(hashSum[:])
 
 	var accountID, sourceID, sourceItemID, translationID, articleID string
 	// Approvers must hold the editor role (0002); the default is reader.
@@ -96,26 +93,9 @@ func TestGeneratedStoreAgainstSchema(t *testing.T) {
 
 	q := store.New(tx)
 
-	prov, err := q.GetArticleProvenance(ctx, articleUUID)
-	if err != nil {
-		t.Fatalf("GetArticleProvenance: %v", err)
-	}
-	if prov.LicenceSnapshot != licence {
-		t.Errorf("LicenceSnapshot = %q, want %q", prov.LicenceSnapshot, licence)
-	}
-	if prov.ContentHash != contentHash {
-		t.Errorf("ContentHash = %q, want %q", prov.ContentHash, contentHash)
-	}
-	if !prov.Model.Valid || prov.Model.String != "test-model-1" {
-		t.Errorf("Model = %+v, want test-model-1", prov.Model)
-	}
-	if !prov.PromptVersion.Valid || prov.PromptVersion.String != "prompt-v1" {
-		t.Errorf("PromptVersion = %+v, want prompt-v1", prov.PromptVersion)
-	}
-	if prov.ApproverName == "" || prov.ApproverEmail == "" {
-		t.Error("provenance lacks the named human approver")
-	}
-
+	// Reading the article_provenance view is the editorial module's job
+	// (I-5, #31): the audit endpoint lives there and its integration tests
+	// assert the full chain. This test covers the reader-facing store only.
 	articles, err := q.ListPublishedArticles(ctx, 10)
 	if err != nil {
 		t.Fatalf("ListPublishedArticles: %v", err)
@@ -146,8 +126,5 @@ func TestGeneratedStoreAgainstSchema(t *testing.T) {
 		if a.ID == articleUUID {
 			t.Errorf("withdrawn article %s still listed by ListPublishedArticles", articleID)
 		}
-	}
-	if _, err := q.GetArticleProvenance(ctx, articleUUID); err != nil {
-		t.Errorf("withdrawn article lost its provenance record: %v", err)
 	}
 }
