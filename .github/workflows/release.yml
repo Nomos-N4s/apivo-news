@@ -47,15 +47,41 @@ jobs:
           # Full history, all branches and tags: the guard needs origin/main
           # and the tag object itself.
           fetch-depth: 0
-      - name: Prove the guard itself
-        run: sh scripts/release_guard_test.sh
+      - name: Prove the guard and the notes themselves
+        run: |
+          sh scripts/release_guard_test.sh
+          sh scripts/release_notes_test.sh
       - name: Require a tag ref
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: |
           echo "::error::the release workflow runs only from a tag ref; pick the tag under 'Use workflow from' when dispatching (got ${{ github.ref }})"
           exit 1
-      - name: Guard the tag (annotated semver, merged to main)
-        run: sh scripts/release_guard.sh "${GITHUB_REF_NAME}" origin/main
+      # What the already-published Release for this tag says it was cut from,
+      # which is the one question the guard cannot answer from git alone. The
+      # notes generator writes that line into every Release this pipeline
+      # publishes (scripts/release_notes.sh); the guard compares it with the
+      # commit the tag points at now and refuses a tag that has moved.
+      - name: Read the commit the published Release records
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! body=$(gh release view "$GITHUB_REF_NAME" --json body --jq .body 2>/dev/null); then
+            echo "no GitHub Release exists for $GITHUB_REF_NAME yet"
+            echo "commit=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The backticks below are literal markdown from the Release body,
+          # not a command substitution - the expression must stay unexpanded.
+          # shellcheck disable=SC2016
+          commit=$(printf '%s\n' "$body" | sed -n 's/^Released from commit `\([0-9a-f]\{40\}\)`\.$/\1/p' | head -n 1)
+          echo "a GitHub Release for $GITHUB_REF_NAME exists, recording commit: ${commit:-none}"
+          echo "commit=${commit:-unknown}" >> "$GITHUB_OUTPUT"
+      - name: Guard the tag (annotated semver, merged to main, not moved)
+        env:
+          RELEASED_COMMIT: ${{ steps.published.outputs.commit }}
+        run: sh scripts/release_guard.sh "${GITHUB_REF_NAME}" origin/main "${RELEASED_COMMIT}"
       - name: Record the version
         id: tag
         run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
