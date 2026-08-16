@@ -156,6 +156,14 @@ if (Astro.request.method === 'POST') {
           reason: error instanceof Error ? error.message : String(error),
         };
       }
+    } else {
+      // A single space satisfies the browser's `required` check and this
+      // trim, so the form can arrive with nothing usable in it. Saying
+      // nothing at all would leave the editor looking at an unchanged
+      // screen with no idea their source was never sent — and the typed
+      // licensing details go back into the form, not into the void.
+      outcome = { recorded: false, reason: t.sourceNeedsNameAndUrl };
+      submitted = input;
     }
   } else if (intent === 'update') {
     // The row edit sends only the fields whose value differs from the one
@@ -251,6 +259,22 @@ const bulkSummary =
         ? t.bulkDeactivateSummary(counts.recorded, counts.refused)
         : t.bulkDeleteSummary(counts.recorded, counts.refused);
 
+// A refusal whose row is not on screen would otherwise be counted in the
+// summary and explained nowhere: the list re-read can fail after the bulk
+// loop has already run, and the view filter can hide a row the action
+// just changed. Those refusals are named here instead, so the count in
+// the summary always has its evidence somewhere on the page.
+const shownIds = new Set(shown.map((source) => source.id));
+const orphanedRefusals = [...refusedById.entries()]
+  .filter(([id]) => !shownIds.has(id))
+  .map(([id, refusal]) => ({
+    id,
+    // The row may be gone from the list entirely; its name is whatever the
+    // pre-action list knew, and the id when even that is unavailable.
+    name: sources.find((source) => source.id === id)?.name ?? id,
+    refusal,
+  }));
+
 const views: readonly { key: SourceView; label: string }[] = [
   { key: 'all', label: t.viewAll },
   { key: 'active', label: t.viewActive },
@@ -289,13 +313,35 @@ const views: readonly { key: SourceView; label: string }[] = [
             bulkSummary,
             counts.refused,
             // Deactivation is the one action whose consequences are widely
-            // misread, so a recorded one says what it kept.
-            bulkAction === 'deactivate' && counts.recorded > 0
+            // misread, so a recorded one says what it kept — but only when
+            // every row was recorded. "Polling has stopped" is an
+            // unqualified statement about the action, and over a mixed
+            // result it would cover the rows that refused, where polling
+            // carries on.
+            bulkAction === 'deactivate' && counts.recorded > 0 && counts.refused === 0
               ? t.deactivationKeepsRecord
               : undefined,
           )}
         />
       )
+    }
+    {/* Refusals with no row left to sit beside — the list re-read failed
+        after the action, or the view filter hides the row it changed.
+        The summary counts them, so their words have to be somewhere. */}
+    {
+      orphanedRefusals.map((entry) => (
+        <RecordNotice
+          notice={{
+            ...noticeForRowRefusal(entry.refusal, t),
+            label: entry.name,
+          }}
+          action={
+            entry.refusal.status === 409
+              ? { href: pageURL({ edit: entry.id }, 'all'), label: t.deactivateInstead }
+              : undefined
+          }
+        />
+      ))
     }
 
     <div class="split">
@@ -366,7 +412,13 @@ const views: readonly { key: SourceView; label: string }[] = [
                     </tr>
                   </thead>
                   <tbody>
-                    {shown.map((source) => (
+                    {shown.map((source) => {
+                      // One lookup, narrowed once: the cast this replaces was
+                      // the file's only unchecked assertion, and it was
+                      // guarded by a different expression than the one it
+                      // narrowed.
+                      const refusal = refusedById.get(source.id);
+                      return (
                       <>
                         <tr>
                           <td class="check-col">
@@ -400,10 +452,12 @@ const views: readonly { key: SourceView; label: string }[] = [
                             <a href={pageURL({ edit: source.id })}>{t.editSource}</a>
                           </td>
                         </tr>
-                        {refusedById.has(source.id) && (
+                        {refusal !== undefined && (
                           <tr class="row-refusal">
-                            <td />
-                            <td colspan="7">
+                            {/* One cell across all eight columns: a leading
+                                empty cell would cut an untinted notch out of
+                                the left edge of the notice's band. */}
+                            <td colspan="8">
                               {/* The API's own words — a refused delete names
                                   the evidence count — followed by what the
                                   refusal means. Deactivation is offered as a
@@ -413,12 +467,9 @@ const views: readonly { key: SourceView; label: string }[] = [
                                   choose, and the audited PATCH stays the one
                                   path that changes a source. */}
                               <RecordNotice
-                                notice={noticeForRowRefusal(
-                                  refusedById.get(source.id) as SourceActionOutcome,
-                                  t,
-                                )}
+                                notice={noticeForRowRefusal(refusal, t)}
                                 action={
-                                  refusedById.get(source.id)?.status === 409 && source.active
+                                  refusal.status === 409 && source.active
                                     ? {
                                         href: pageURL({ edit: source.id }),
                                         label: t.deactivateInstead,
@@ -430,7 +481,8 @@ const views: readonly { key: SourceView; label: string }[] = [
                           </tr>
                         )}
                       </>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

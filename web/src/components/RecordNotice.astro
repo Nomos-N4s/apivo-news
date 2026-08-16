@@ -5,14 +5,20 @@ import type { RecordNoticeModel } from '../lib/editorial/notices';
 // happened (or refused to, or is about to be reviewed), and the frozen
 // facts echoed from the response beneath.
 //
-// Tone chooses the role by what the notice IS, not by how loud it should
-// be. An outcome arrives in answer to something the editor just did, so
-// it is a live region — status for a recorded write, alert for a refusal
-// that needs reading before anything else. Context is different: it
-// renders with the page, describing what the editor is about to review,
-// so it takes `note` — deliberately not a live region, because
-// announcing static page content over the reader's own navigation is
-// noise, not help.
+// Tone chooses the role by what the notice IS: `status` for a recorded
+// write, `alert` for a refusal that needs reading before anything else,
+// `note` for context describing what the editor is about to review.
+//
+// What those roles do NOT do here is announce. These screens are plain
+// server-rendered documents — a POST re-renders the whole page — so the
+// notice is in the HTML before the region exists, and a live region only
+// speaks for changes made after it was parsed. The roles still classify
+// the content correctly for anyone reading the page, and they would
+// announce if a notice were ever inserted into a live document; what
+// carries the message today is position, at the top of the pane the
+// editor just acted in. Moving focus to it after a POST would need
+// client JavaScript these screens deliberately do without — recorded as
+// issue #129 rather than smuggled in here.
 interface Props {
   notice: RecordNoticeModel;
   /**
@@ -27,9 +33,8 @@ const role =
   notice.tone === 'refused' ? 'alert' : notice.tone === 'recorded' ? 'status' : 'note';
 ---
 
-{/* The live region wraps the words only. An alert should not contain
-    interactive content — the role announces text and never moves focus —
-    so the adjacent action sits outside it, in the same row. */}
+{/* The role wraps the words only. An alert should not contain interactive
+    content, so the adjacent action sits outside it, in the same row. */}
 <div class:list={['record-notice', `tone-${notice.tone}`]}>
   <span class="announced" role={role}>
     <span class="label">{notice.label}</span>

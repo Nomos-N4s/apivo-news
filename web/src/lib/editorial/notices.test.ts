@@ -233,6 +233,17 @@ describe('noticeForBulk', () => {
     expect(noticeForBulk(t.bulkDeactivate, 'summary', 0, '').body).toBe('summary');
   });
 
+  it('never lets a consequence speak for rows that refused', () => {
+    // "Polling has stopped" is a statement about the action, so a mixed
+    // result must not carry it: for the refused rows polling carries on.
+    // The builder drops it even when a caller passes one — the rule holds
+    // here, not in whoever remembers to gate the argument.
+    expect(noticeForBulk(t.bulkDeactivate, '3 · 2', 2, t.deactivationKeepsRecord).body).toBe(
+      '3 · 2',
+    );
+    expect(noticeForBulk(t.bulkDeactivate, '3 · 2', 2, undefined).body).toBe('3 · 2');
+  });
+
   it('takes the attention tone as soon as one row refused', () => {
     expect(noticeForBulk('Διαγραφή', 'summary', 0).tone).toBe('recorded');
     expect(noticeForBulk('Διαγραφή', 'summary', 1).tone).toBe('refused');
@@ -247,7 +258,7 @@ describe('noticeForBulk', () => {
 });
 
 describe('noticeForRowRefusal', () => {
-  it('explains what a delete held by evidence means, after the API says it', () => {
+  it('explains a delete held by evidence in the reading language, keeping the API’s words as the record', () => {
     const notice = noticeForRowRefusal(
       {
         recorded: false,
@@ -258,8 +269,10 @@ describe('noticeForRowRefusal', () => {
     );
     expect(notice.tone).toBe('refused');
     expect(notice.label).toBe(t.notRecordedTitle);
-    // The count the server named comes first; the meaning follows it.
-    expect(notice.body).toBe(`this source has 14 retrieved items on record ${t.deleteRefusedBody}`);
+    // The explanation is read; the server's English detail — which names
+    // the count — is quoted, not spliced into a Greek sentence.
+    expect(notice.body).toBe(t.deleteRefusedBody);
+    expect(notice.record).toEqual(['this source has 14 retrieved items on record']);
   });
 
   it('adds no evidence explanation to a refusal that is not one', () => {
