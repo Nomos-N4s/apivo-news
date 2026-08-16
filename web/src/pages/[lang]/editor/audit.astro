@@ -139,12 +139,19 @@ const initials = (record?.approval.approver_name ?? '')
       <span class="rows">{record === null ? '0 rows' : '1 row'}</span>
     </div>
 
-    {/* If the trace cannot be re-read without a token there is no form to
-        put the typed reason back into — the notice carries it. */}
+    {/* The notice carries the typed reason whenever no form will: the
+        trace unreadable without a token, a different article traced, or
+        this one already withdrawn by someone else — in each case the
+        withdrawal form the editor typed into is not on the page. */}
     {
       signedOutPost && (
         <RecordNotice
-          notice={noticeForSignedOut(t, record === null ? staleReason : null)}
+          notice={noticeForSignedOut(
+            t,
+            record !== null && record.article_id === withdrawnId && record.withdrawal === null
+              ? null
+              : staleReason,
+          )}
           action={{ href: `/${lang}/editor/signin`, label: t.signIn }}
         />
       )

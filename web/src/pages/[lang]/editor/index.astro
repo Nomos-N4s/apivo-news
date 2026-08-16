@@ -297,13 +297,17 @@ const defaultAttribution = (item: (typeof items)[number]): string =>
       </div>
 
       <div class="review">
-        {/* The queue may be unreadable without a token, and then there is
-            no form to put the typed wording back into — the notice itself
-            carries it. */}
+        {/* The notice carries the typed attribution whenever no form will:
+            the queue unreadable without a token, or the posted item gone
+            from it — another editor approved it meanwhile — leaving a
+            different row selected whose form refills from its own row. */}
         {
           signedOutPost && (
             <RecordNotice
-              notice={noticeForSignedOut(t, selected === undefined ? staleAttribution : null)}
+              notice={noticeForSignedOut(
+                t,
+                selected?.source_item_id === staleItemId ? null : staleAttribution,
+              )}
               action={{ href: `/${lang}/editor/signin`, label: t.signIn }}
             />
           )
