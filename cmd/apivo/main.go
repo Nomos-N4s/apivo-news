@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +32,8 @@ import (
 	platformdb "github.com/Nomos-N4s/apivo-news/internal/platform/db"
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/logging"
+	"github.com/Nomos-N4s/apivo-news/internal/translation"
+	"github.com/Nomos-N4s/apivo-news/internal/translation/providers/openaicompat"
 )
 
 // healthcheckTimeout bounds the whole healthcheck probe. It stays below the
@@ -138,6 +141,66 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		log.InfoContext(ctx, "feed poll loop started", "interval", cfg.PollInterval)
 	} else {
 		log.InfoContext(ctx, "POLL_INTERVAL is 0: the feed poll loop is disabled and no source will be polled")
+	}
+
+	// The translation pipeline runs beside the poll loop, in the same
+	// style and under the same lifetime: the deferred wait holds serve
+	// open until the loop has returned, so the pool is never closed under
+	// it. It starts ONLY on a complete TRANSLATION_* configuration -
+	// provider, model, prices (or an explicit free-of-charge), and both
+	// budget caps have no defaults, because the production provider and
+	// budget are a founder decision still pending and nothing here may
+	// make it by accident. Anything less stays off, with one line naming
+	// the state; a complete-but-wrong value (a bad URL, an inconsistent
+	// budget) fails startup instead, because an operator who set nine
+	// keys believes translation is on.
+	switch tc := cfg.Translation; {
+	case !tc.Configured() && !tc.AnySet():
+		log.InfoContext(ctx, "no translation provider is configured: the translation pipeline is OFF and no item will be translated (provider and budget are a pending founder decision). To enable it set: "+strings.Join(tc.Missing(), ", "))
+	case !tc.Configured():
+		log.ErrorContext(ctx, "the translation provider configuration is INCOMPLETE: the translation pipeline is OFF and no item will be translated. Missing: "+strings.Join(tc.Missing(), ", "))
+	case tc.Interval == 0:
+		log.InfoContext(ctx, "TRANSLATION_INTERVAL is 0: the translation pipeline is disabled and no item will be translated")
+	default:
+		translator, err := openaicompat.New(openaicompat.Config{
+			BaseURL:                  tc.BaseURL,
+			Model:                    tc.Model,
+			APIKey:                   tc.APIKey,
+			InputPricePerMillionUSD:  tc.InputUSDPerMTok,
+			OutputPricePerMillionUSD: tc.OutputUSDPerMTok,
+			FreeOfCharge:             tc.FreeOfCharge,
+		})
+		if err != nil {
+			return err
+		}
+		pipeline, err := translation.NewPipeline(log, pool, translator, translation.PipelineConfig{
+			Interval:      tc.Interval,
+			ReaderLocales: translation.AlphaReaderLocales,
+			PromptVersion: translation.CurrentPromptVersion,
+			Caps: translation.Caps{
+				PerArticleMicroUSD: tc.ArticleCeilingMicroUSD,
+				MonthlyMicroUSD:    tc.MonthlyCapMicroUSD,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		translateCtx, stopTranslation := context.WithCancel(ctx)
+		translateDone := make(chan struct{})
+		go func() {
+			defer close(translateDone)
+			pipeline.Run(translateCtx)
+		}()
+		defer func() {
+			stopTranslation()
+			<-translateDone
+		}()
+		log.InfoContext(ctx, "translation pipeline started",
+			"interval", tc.Interval, "model", tc.Model,
+			"reader_locales", translation.AlphaReaderLocales,
+			"prompt_version", translation.CurrentPromptVersion,
+			"article_ceiling_microusd", tc.ArticleCeilingMicroUSD,
+			"monthly_cap_microusd", tc.MonthlyCapMicroUSD)
 	}
 
 	srv := platformhttp.New(log, cfg.HTTPAddr, readiness(pool), routes...)

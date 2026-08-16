@@ -104,6 +104,33 @@ export class ApiContainer extends ContainerHost {
 		if (this.env.POLL_INTERVAL) {
 			containerEnv.POLL_INTERVAL = this.env.POLL_INTERVAL;
 		}
+		// Machine translation (T018): the provider, its prices and the
+		// FR-006 budget. Forwarded independently and only when set, like
+		// everything above — a var this method does not copy never
+		// reaches the container. All of them unset is the documented off
+		// state (the binary logs one line and translates nothing); the
+		// binary itself names any half-configured set at startup, so
+		// nothing is gated on anything else here. TRANSLATION_API_KEY is
+		// a Cloudflare secret (`npx wrangler secret put
+		// TRANSLATION_API_KEY`); the rest are plain vars in
+		// wrangler.jsonc. NO DEFAULTS anywhere in this chain: the
+		// provider and the budget are a founder decision, and a value
+		// invented here would make it by accident.
+		for (const name of [
+			"TRANSLATION_BASE_URL",
+			"TRANSLATION_MODEL",
+			"TRANSLATION_API_KEY",
+			"TRANSLATION_INPUT_USD_PER_MTOK",
+			"TRANSLATION_OUTPUT_USD_PER_MTOK",
+			"TRANSLATION_FREE_OF_CHARGE",
+			"TRANSLATION_INTERVAL",
+			"TRANSLATION_ARTICLE_CEILING_MICROUSD",
+			"TRANSLATION_MONTHLY_CAP_MICROUSD",
+		]) {
+			if (this.env[name]) {
+				containerEnv[name] = this.env[name];
+			}
+		}
 		return containerEnv;
 	}
 }

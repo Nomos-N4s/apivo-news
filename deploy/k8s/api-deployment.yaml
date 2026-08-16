@@ -64,6 +64,20 @@ spec:
                 secretKeyRef:
                   name: apivo-secrets
                   key: DATABASE_URL
+            # The translation provider credential (T018). Secrets are
+            # mapped one by one - envFrom above covers only the ConfigMap,
+            # so a key not named here never reaches the binary. optional:
+            # a self-hosted provider needs no key and the Secret is
+            # created out of band, so its absence must not block the pod;
+            # the binary treats a missing key as "no Authorization
+            # header", and the pipeline itself stays off until the
+            # non-secret TRANSLATION_* keys are set in the ConfigMap.
+            - name: TRANSLATION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: apivo-secrets
+                  key: TRANSLATION_API_KEY
+                  optional: true
           resources:
             requests:
               cpu: 100m

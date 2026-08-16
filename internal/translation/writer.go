@@ -289,15 +289,34 @@ func (w *Writer) ownWinningRow(ctx context.Context, tx pgx.Tx, rec Record) (uuid
 	return parsed, true, nil
 }
 
+// RecordFailedCall puts the cost of a provider call that FAILED onto the
+// ledger, and settles the month with it. It is the pipeline's half of the
+// SpendError contract (see Translator): a provider bills for the tokens it
+// generated whether or not the answer was usable, so a failure that cost
+// money must move the month exactly like a success does - a ledger that
+// omitted the failures would read low by everything they cost, which is
+// the one thing the cap exists to prevent (FR-006).
+//
+// There is no translation to store, so the returned Recorded carries no
+// translation id - only the month's authoritative total, and the halt if
+// this failure's cost is what crossed the cap.
+func (w *Writer) RecordFailedCall(ctx context.Context, spend Spend) (Recorded, error) {
+	if err := w.caps.Validate(); err != nil {
+		return Recorded{}, fmt.Errorf("translation: recording a failed call's spend: %w", err)
+	}
+	return w.recordRefusedSpend(ctx, spend)
+}
+
 // recordRefusedSpend puts the cost of a call that produced no translation
 // row onto the ledger and settles the month with it, atomically. The
 // returned Recorded carries no translation id, because there is none.
 //
-// It serves only the refusals decided BEFORE any insert is attempted (the
-// over-ceiling check), where this one transaction is the only one there
-// is. A refusal decided BY the database happens mid-transaction and is
-// settled in place by settleRefusedInsert - a second transaction there
-// would open a crash window between the rollback and the booking.
+// It serves only the refusals decided BEFORE any insert is attempted -
+// the over-ceiling check, and RecordFailedCall's failed provider calls -
+// where this one transaction is the only one there is. A refusal decided
+// BY the database happens mid-transaction and is settled in place by
+// settleRefusedInsert - a second transaction there would open a crash
+// window between the rollback and the booking.
 func (w *Writer) recordRefusedSpend(ctx context.Context, spend Spend) (Recorded, error) {
 	tx, err := w.db.Begin(ctx)
 	if err != nil {

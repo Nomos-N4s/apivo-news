@@ -20,8 +20,23 @@
 #                is the only disable switch. The HPA runs 2+ api replicas
 #                and each runs the loop; a Postgres advisory lock inside the
 #                binary keeps exactly one of them polling per cycle.
+#   TRANSLATION_* — machine translation provider and budget (T018). NO
+#                DEFAULTS on purpose: unset means the translation pipeline
+#                stays OFF and the api logs one line saying so - the
+#                provider and the budget are a founder decision, and
+#                nothing picks either by accident. All of them ship empty;
+#                setting only some is a mistake the api names at startup.
+#                Prices are USD per million tokens; the caps are micro-USD
+#                (the alpha's working budget: 20000 = $0.02/article,
+#                25000000 = $25/month). TRANSLATION_FREE_OF_CHARGE=true
+#                replaces both price lines for a self-hosted host.
+#                TRANSLATION_INTERVAL behaves exactly like POLL_INTERVAL.
+#                The pipeline claims each (item, locale) in Postgres, so
+#                2+ replicas never pay a provider twice.
 #   DATABASE_URL is deliberately absent: it is a credential and lives in the
-#   Secret (see secret.yaml).
+#   Secret (see secret.yaml) - and so is TRANSLATION_API_KEY, delivered by
+#   the deployment as an OPTIONAL secretKeyRef: a self-hosted provider
+#   needs no key, so its absence from the Secret must not block the pod.
 #
 # JWKS_URL and JWT_AUDIENCE ship EMPTY, and deliberately so. A placeholder
 # hostname would be worse than nothing: it is a real value as far as the
@@ -52,3 +67,14 @@ data:
   # "0" disables polling entirely. Delivered via the deployment's envFrom
   # like every other key here.
   POLL_INTERVAL: ""
+  # Machine translation (T018): empty = the pipeline is OFF, documented
+  # above. Set every one of them (or FREE_OF_CHARGE in place of the two
+  # prices) to enable it; the api key alone lives in the Secret.
+  TRANSLATION_BASE_URL: ""
+  TRANSLATION_MODEL: ""
+  TRANSLATION_INPUT_USD_PER_MTOK: ""
+  TRANSLATION_OUTPUT_USD_PER_MTOK: ""
+  TRANSLATION_FREE_OF_CHARGE: ""
+  TRANSLATION_INTERVAL: ""
+  TRANSLATION_ARTICLE_CEILING_MICROUSD: ""
+  TRANSLATION_MONTHLY_CAP_MICROUSD: ""

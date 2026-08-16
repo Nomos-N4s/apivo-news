@@ -7,6 +7,7 @@ package translation
 // nothing on a deterministic refusal loses real money from the ledger.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -58,5 +59,19 @@ func TestDeterministicRefusalsBookSpendAndTransientErrorsDoNot(t *testing.T) {
 				t.Errorf("isDeterministicRefusal(%v) = %t, want %t", tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestRecordFailedCallRefusesUnconfiguredCaps mirrors Record: a missing
+// budget is not an unlimited one, and validating before any statement runs
+// means a nil database is never touched - which is also what lets this
+// test run without one.
+func TestRecordFailedCallRefusesUnconfiguredCaps(t *testing.T) {
+	t.Parallel()
+
+	writer := NewWriter(nil, Caps{})
+	_, err := writer.RecordFailedCall(context.Background(), Spend{CostMicroUSD: 1})
+	if !errors.Is(err, ErrCapsNotConfigured) {
+		t.Fatalf("RecordFailedCall() error = %v, want ErrCapsNotConfigured", err)
 	}
 }
