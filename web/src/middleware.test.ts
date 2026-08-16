@@ -379,11 +379,18 @@ describe('usage rollup logging', () => {
     vi.useFakeTimers();
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     try {
-      vi.setSystemTime(new Date('2026-08-16T10:00:00Z'));
+      // The window opened at REAL time during the tests above, so the fake
+      // clock has to run after that moment for the interval to elapse. A
+      // hardcoded instant passes only while the real clock happens to sit
+      // behind it — the suite would start failing partway through the day.
+      const opening = new Date(Date.now() + 24 * 60 * 60_000);
+      const afterInterval = new Date(opening.getTime() + 6 * 60_000);
+
+      vi.setSystemTime(opening);
       await run({ path: '/el/munich+greece' });
       await run({ path: '/el/munich+greece' });
 
-      vi.setSystemTime(new Date('2026-08-16T10:06:00Z'));
+      vi.setSystemTime(afterInterval);
       await run({ path: '/el/munich+greece' });
 
       const lastLine = log.mock.calls.at(-1)?.[0] as string;
@@ -394,13 +401,15 @@ describe('usage rollup logging', () => {
         counts: Record<string, unknown>[];
       };
       expect(rollup.event).toBe('usage_rollup');
-      expect(rollup.window_ended_at).toBe('2026-08-16T10:06:00.000Z');
+      expect(rollup.window_ended_at).toBe(afterInterval.toISOString());
 
       const mine = rollup.counts.find(
         (count) => count['route'] === 'front' && count['lang'] === 'el' && count['status'] === 200,
       );
       expect(mine).toBeDefined();
-      expect(mine?.['day']).toBe('2026-08-16');
+      // The Europe/Berlin day boundary is usage.test.ts's subject; here the
+      // bucket only has to carry a day key of the right shape.
+      expect(mine?.['day']).toMatch(/^\d{4}-\d{2}-\d{2}$/);
       // The whole point: nothing beyond the five aggregate dimensions —
       // no IP, no User-Agent, no identifier of any kind.
       for (const count of rollup.counts) {
