@@ -51,6 +51,13 @@ func NewHandler(log *slog.Logger, store Store, auth EditorAuthenticator) http.Ha
 	for pattern, handler := range h.routes() {
 		mux.HandleFunc(pattern, handler)
 	}
+	// Every error under this prefix is problem+json, including the ones
+	// nobody wrote a handler for - mirroring the content module, which owns
+	// the same convention for the rest of /api/v1. Without this catch-all
+	// the ServeMux answers an unknown path or a wrong method with a
+	// text/plain body, which was the one corner where the API's single
+	// error convention did not hold.
+	mux.HandleFunc("/api/v1/editorial/", h.handleUnrouted)
 	return h.requireEditor(mux)
 }
 
@@ -72,10 +79,57 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 
 // Patterns lists this module's ServeMux patterns ("METHOD /path"), sorted.
 // Every one of them sits under the prefix the composition root mounts, and
-// behind the requireEditor gate.
+// behind the requireEditor gate. The catch-all is deliberately absent: it
+// is the error convention for paths nobody serves, not an endpoint a
+// client can call.
 func Patterns() []string {
 	var h Handler
 	return slices.Sorted(maps.Keys(h.routes()))
+}
+
+// handleUnrouted answers anything under the editorial prefix that no route
+// claimed - still behind the auth gate, so an unauthenticated probe of an
+// unknown path answers 401 before this runs. A known path reached with the
+// wrong method is 405 (with Allow, as HTTP requires); anything else is 404.
+func (h *Handler) handleUnrouted(w http.ResponseWriter, r *http.Request) {
+	if allow := allowedEditorialMethods(r.URL.Path); allow != "" {
+		w.Header().Set("Allow", allow)
+		platformhttp.Problem(w, http.StatusMethodNotAllowed,
+			r.Method+" is not allowed on this endpoint; use "+allow)
+		return
+	}
+	platformhttp.Problem(w, http.StatusNotFound, "no such endpoint")
+}
+
+// allowedEditorialMethods reports what a known editorial path accepts, or
+// "" for a path this module does not serve - the test for "wrong method"
+// rather than "wrong address". It mirrors the patterns in routes(); a
+// route added there belongs here too, and the composition root's
+// reachability probe is what catches one that is only half-registered.
+func allowedEditorialMethods(path string) string {
+	switch path {
+	case "/api/v1/editorial/queue":
+		return "GET, HEAD"
+	case "/api/v1/editorial/approvals":
+		return "POST"
+	case "/api/v1/editorial/sources":
+		return "GET, HEAD, POST"
+	}
+	rest, ok := strings.CutPrefix(path, "/api/v1/editorial/articles/")
+	if !ok {
+		return ""
+	}
+	id, action, ok := strings.Cut(rest, "/")
+	if !ok || id == "" || strings.Contains(action, "/") {
+		return ""
+	}
+	switch action {
+	case "publication", "withdrawal":
+		return "POST"
+	case "provenance":
+		return "GET, HEAD"
+	}
+	return ""
 }
 
 // approvalRequest is the approval payload: exactly one origin, the

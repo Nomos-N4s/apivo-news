@@ -589,6 +589,63 @@ func TestCreateSourceAgainstSchema(t *testing.T) {
 	wantProblem(t, rec, http.StatusBadRequest, "language")
 }
 
+// TestAWrongMethodUnderTheEditorialPrefixIsProblemJSON pins the catch-all:
+// a known path reached with the wrong method answers 405 with an Allow
+// header in problem+json, mirroring the content module - the router's
+// text/plain answer was the one corner where the API's single error
+// convention did not hold, and it is closed.
+func TestAWrongMethodUnderTheEditorialPrefixIsProblemJSON(t *testing.T) {
+	t.Parallel()
+	// The store must never be reached by a request no route claimed.
+	h := newHandler(t, errStore{err: errUnexpectedCall})
+
+	cases := []struct {
+		name, method, path, allow string
+	}{
+		{name: "DELETE on the queue", method: http.MethodDelete, path: "/api/v1/editorial/queue", allow: "GET, HEAD"},
+		{name: "GET on approvals", method: http.MethodGet, path: "/api/v1/editorial/approvals", allow: "POST"},
+		{name: "DELETE on sources", method: http.MethodDelete, path: "/api/v1/editorial/sources", allow: "GET, HEAD, POST"},
+		{name: "GET on a publication", method: http.MethodGet, path: "/api/v1/editorial/articles/11111111-1111-4111-8111-111111111111/publication", allow: "POST"},
+		{name: "GET on a withdrawal", method: http.MethodGet, path: "/api/v1/editorial/articles/11111111-1111-4111-8111-111111111111/withdrawal", allow: "POST"},
+		{name: "POST on a provenance trace", method: http.MethodPost, path: "/api/v1/editorial/articles/11111111-1111-4111-8111-111111111111/provenance", allow: "GET, HEAD"},
+	}
+	for _, tc := range cases {
+		t.Run("405 on "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			rec := doJSON(t, h, tc.method, tc.path, editorToken, "")
+			wantProblem(t, rec, http.StatusMethodNotAllowed, "use "+tc.allow)
+			if got := rec.Header().Get("Allow"); got != tc.allow {
+				t.Errorf("Allow = %q, want %q", got, tc.allow)
+			}
+		})
+	}
+}
+
+// TestAnUnroutedEditorialPathIsProblemJSON pins the catch-all's other arm:
+// an address nobody serves answers 404 in problem+json rather than the
+// router's text/plain.
+func TestAnUnroutedEditorialPathIsProblemJSON(t *testing.T) {
+	t.Parallel()
+	h := newHandler(t, errStore{err: errUnexpectedCall})
+
+	// A doubled slash is absent deliberately: ServeMux canonicalises the
+	// path with a redirect before any handler - the catch-all included -
+	// can see it.
+	paths := []string{
+		"/api/v1/editorial/nope",
+		"/api/v1/editorial/articles/11111111-1111-4111-8111-111111111111/publication/extra",
+		"/api/v1/editorial/articles/11111111-1111-4111-8111-111111111111/nonsense",
+		"/api/v1/editorial/articles/11111111-1111-4111-8111-111111111111",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			rec := doJSON(t, h, http.MethodGet, path, editorToken, "")
+			wantProblem(t, rec, http.StatusNotFound, "no such endpoint")
+		})
+	}
+}
+
 func jsonString(t *testing.T, s string) string {
 	t.Helper()
 	b, err := json.Marshal(s)
