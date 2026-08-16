@@ -80,6 +80,16 @@ export interface EditorialStrings {
   readonly skip: string;
   readonly rejectNote: string;
   /**
+   * The queue row lacks the evidence block (#87) — an API predating it —
+   * so the approve button is disabled: a permanent approval is not given
+   * over placeholder dashes.
+   */
+  readonly evidenceIncomplete: string;
+  /** The tag on a re-queued origin whose earlier publication was withdrawn. */
+  readonly correctionTag: string;
+  /** The review-pane note explaining what the correction tag means. */
+  readonly correctionBody: string;
+  /**
    * Signed in, yet the editorial API refuses every call: the quickstart's
    * documented first-run state, where no `account` row has been
    * provisioned for this person. Named plainly — the generic outage body
@@ -203,6 +213,11 @@ const EL: EditorialStrings = {
   skip: 'Παράλειψη',
   rejectNote:
     'Η απόρριψη δεν δημιουργεί άρθρο. Το ανακτημένο στοιχείο παραμένει ως τεκμήριο και στις δύο περιπτώσεις.',
+  evidenceIncomplete:
+    'Η έγκριση απενεργοποιήθηκε: η εγγραφή δεν φέρει τα πλήρη αποδεικτικά στοιχεία (πρωτότυπο κείμενο, σύνδεσμο, αποτύπωμα, προέλευση μετάφρασης). Μια μόνιμη έγκριση δεν δίνεται πάνω σε κενά.',
+  correctionTag: 'Διόρθωση',
+  correctionBody:
+    'Η προηγούμενη δημοσίευση αυτής της προέλευσης αποσύρθηκε· ελέγχεται ως διόρθωση, όχι ως πρώτη έγκριση.',
   notProvisionedTitle: 'Ο λογαριασμός σας δεν έχει καταχωριστεί ως συντάκτης',
   notProvisionedBody:
     'Η σύνδεση έγινε, αλλά το συντακτικό API απορρίπτει κάθε κλήση: δεν υπάρχει εγγραφή account για τον λογαριασμό σας στη βάση δεδομένων του API. Χρειάζεται το βήμα «Provision an editor» του quickstart (specs/001-epiloyes-alpha/quickstart.md) — μία εγγραφή account με το Supabase user id σας και ρόλο editor, στη βάση όπου δείχνει το DATABASE_URL.',
@@ -321,6 +336,11 @@ const DE: EditorialStrings = {
   skip: 'Überspringen',
   rejectNote:
     'Eine Ablehnung erzeugt keinen Artikel. Der abgerufene Beitrag bleibt in beiden Fällen als Nachweis erhalten.',
+  evidenceIncomplete:
+    'Freigabe deaktiviert: dieser Eintrag trägt nicht die vollständige Beleglage (Originaltext, Link, Fingerabdruck, Übersetzungsherkunft). Eine dauerhafte Freigabe wird nicht über Lücken erteilt.',
+  correctionTag: 'Korrektur',
+  correctionBody:
+    'Die frühere Veröffentlichung dieses Ursprungs wurde zurückgezogen; die Prüfung gilt einer Korrektur, nicht einer Erstfreigabe.',
   notProvisionedTitle: 'Ihr Konto ist nicht als Redaktion eingerichtet',
   notProvisionedBody:
     'Die Anmeldung war erfolgreich, aber das redaktionelle API weist jeden Aufruf zurück: für Ihr Konto gibt es keine account-Zeile in der Datenbank des API. Es fehlt der Schritt „Provision an editor“ aus dem Quickstart (specs/001-epiloyes-alpha/quickstart.md) — eine account-Zeile mit Ihrer Supabase-Benutzer-ID und der Rolle editor, in der Datenbank, auf die DATABASE_URL zeigt.',

@@ -58,6 +58,49 @@ export function attributionDefault(
   return `${strings.originallyPublishedBy} ${item.source_name}, ${formatDate(published)}.`;
 }
 
+/**
+ * Whether a queue row carries the evidence the approval rests on (#87).
+ *
+ * Presence, not truthiness: a null author or publication date is a value
+ * the feed genuinely declared (none), while an ABSENT property means the
+ * row came from an API that predates the evidence block — and a permanent
+ * approval must not be offered over placeholder dashes, which is the exact
+ * failure mode the evidence work exists to close. A translated row must
+ * additionally carry its lineage: the model and prompt version that
+ * produced the text being approved (FR-005), and the recorded cost field
+ * (FR-006 — the value may be null, the field may not be missing).
+ */
+export function hasApprovalEvidence(
+  item: Pick<
+    QueueItem,
+    | 'translation_id'
+    | 'source_url'
+    | 'extract_original'
+    | 'original_author'
+    | 'original_published_at'
+    | 'content_hash'
+    | 'source_lang'
+    | 'model'
+    | 'prompt_version'
+    | 'cost_microusd'
+  >,
+): boolean {
+  if (
+    item.source_url === undefined ||
+    item.extract_original === undefined ||
+    item.original_author === undefined ||
+    item.original_published_at === undefined ||
+    item.content_hash === undefined ||
+    item.source_lang === undefined
+  ) {
+    return false;
+  }
+  if (item.translation_id !== null) {
+    return item.model != null && item.prompt_version != null && item.cost_microusd !== undefined;
+  }
+  return true;
+}
+
 /** A submission the API client can carry as-is. */
 export interface ApprovalSubmission {
   readonly sourceItemId: string;

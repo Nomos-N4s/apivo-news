@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { PLACE_CATALOG } from '../reader/axes';
-import { APPROVAL_PLACES, attributionDefault, parseApprovalForm } from './approvalForm';
+import {
+  APPROVAL_PLACES,
+  attributionDefault,
+  hasApprovalEvidence,
+  parseApprovalForm,
+} from './approvalForm';
 import { editorialStrings } from './strings';
 
 function approvalForm(entries: readonly (readonly [string, string])[]): FormData {
@@ -82,6 +87,77 @@ describe('attributionDefault', () => {
         formatDate,
       );
       expect(line).toContain(t.publicationDateNotSupplied);
+    }
+  });
+});
+
+describe('hasApprovalEvidence', () => {
+  // The full evidence block the backend serves since #87. Null author and
+  // date are DECLARED absences - values, not gaps.
+  const untranslated = {
+    translation_id: null,
+    source_url: 'https://x.example/a',
+    extract_original: 'The retrieved original.',
+    original_author: null,
+    original_published_at: null,
+    content_hash: '3f9c81b0',
+    source_lang: 'el',
+    model: null,
+    prompt_version: null,
+    cost_microusd: null,
+  };
+  const translated = {
+    ...untranslated,
+    translation_id: 'tr-1',
+    model: 'translate-alpha-1',
+    prompt_version: 'v4',
+    cost_microusd: 4000,
+  };
+
+  it('accepts a complete row, declared absences included', () => {
+    expect(hasApprovalEvidence(untranslated)).toBe(true);
+    expect(hasApprovalEvidence(translated)).toBe(true);
+  });
+
+  it('refuses a row from an API predating the evidence block (#87)', () => {
+    // The pre-#87 wire shape: the contract's first block only. The pane
+    // would render dashes, and a permanent approval must not be offered
+    // over dashes.
+    expect(hasApprovalEvidence({ translation_id: 'tr-1' })).toBe(false);
+    expect(hasApprovalEvidence({ translation_id: null })).toBe(false);
+  });
+
+  it('refuses a row missing any single evidence field', () => {
+    for (const field of [
+      'source_url',
+      'extract_original',
+      'original_author',
+      'original_published_at',
+      'content_hash',
+      'source_lang',
+    ] as const) {
+      const { [field]: gone, ...partial } = untranslated;
+      void gone;
+      expect(hasApprovalEvidence(partial), `${field} absent`).toBe(false);
+    }
+  });
+
+  it('requires the lineage on a translated row, but not on an untranslated one', () => {
+    // FR-005: what the editor approves on a translated row was produced
+    // by a model and prompt version, and they must be on record.
+    expect(hasApprovalEvidence({ ...translated, model: null })).toBe(false);
+    expect(hasApprovalEvidence({ ...translated, prompt_version: null })).toBe(false);
+    const { cost_microusd, ...noCostField } = translated;
+    void cost_microusd;
+    expect(hasApprovalEvidence(noCostField)).toBe(false);
+    // A recorded null cost is a value; only the missing FIELD refuses.
+    expect(hasApprovalEvidence({ ...translated, cost_microusd: null })).toBe(true);
+  });
+
+  it('holds for every fixture row - the preview must demonstrate the enabled state', async () => {
+    const { QUEUE_FIXTURES } = await import('./fixtures');
+    for (const row of QUEUE_FIXTURES) {
+      expect(hasApprovalEvidence(row), row.source_item_id).toBe(true);
     }
   });
 });
