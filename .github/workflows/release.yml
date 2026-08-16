@@ -11,6 +11,12 @@
 # probe. Dispatching with dry_run UNCHECKED performs a real release of that
 # tag - which is also the rollback mechanism: re-run the previous tag.
 #
+# That rollback runs through a tag that has already been released, so the
+# whole path is built for it: the guard demands the tag still name the
+# commit its published Release was cut from, publishing the Release is
+# idempotent, and the probe runs on any deploy that happened - a rollback
+# that came up healthy reads green.
+#
 # Operator setup (one-time) and the semver discipline: docs/RELEASING.md.
 name: release
 
@@ -99,8 +105,13 @@ jobs:
     needs: [guard, verify]
     runs-on: ubuntu-latest
     permissions:
-      # gh release create writes to the repository; everything else reads.
+      # Publishing the Release writes to the repository; everything else reads.
       contents: write
+    outputs:
+      # Set the moment wrangler returns, and read by the probe: what must be
+      # verified is a deployment that happened, whatever the steps after it
+      # did.
+      deployed: ${{ steps.deploy.outputs.deployed }}
     env:
       VERSION: ${{ needs.guard.outputs.version }}
       DRY_RUN: ${{ needs.guard.outputs.dry_run }}
@@ -171,24 +182,49 @@ jobs:
           fi
 
       - name: Deploy to Cloudflare
+        id: deploy
         if: env.DRY_RUN != 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         # --var carries the version to the web container at request time
         # (deploy/cloudflare/worker.js forwards it; the footer renders it).
-        run: npx --yes wrangler@4 deploy --var PUBLIC_APP_VERSION:"$VERSION"
+        run: |
+          npx --yes wrangler@4 deploy --var PUBLIC_APP_VERSION:"$VERSION"
+          # Production has changed. Whatever happens below, the probe job
+          # must run and say whether what is now serving is $VERSION.
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Create the GitHub Release
+      - name: Publish the GitHub Release
         if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file release-notes.md
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Idempotent, because re-releasing a tag is the documented
+          # rollback: `gh release create` answers 422 when a Release for the
+          # tag exists, which failed the run AFTER production had already
+          # been rolled back - a red run for a deploy that happened, and a
+          # skipped probe in the one situation where "did it come up?"
+          # matters most.
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release edit "$VERSION" --title "$VERSION" --notes-file release-notes.md
+            echo "updated the existing GitHub Release for $VERSION"
+          else
+            gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file release-notes.md
+            echo "created the GitHub Release for $VERSION"
+          fi
 
   # A release that did not come up is a failed release, reported honestly.
+  #
+  # The gate is the DEPLOY, not the release job's verdict: once production
+  # has changed it must be probed, even if publishing the Release afterwards
+  # failed. always() lets this job run over a failed `release`; `deployed` is
+  # set only by wrangler returning successfully, so a run that never reached
+  # the deploy (guard refused, CI red, dry run) still skips the probe.
   probe:
     needs: [guard, release]
-    if: needs.guard.outputs.dry_run != 'true'
+    if: always() && needs.release.outputs.deployed == 'true'
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.guard.outputs.version }}
