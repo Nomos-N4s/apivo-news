@@ -187,14 +187,19 @@ func (q *Queries) ListSources(ctx context.Context, arg ListSourcesParams) ([]Lis
 }
 
 const updateSource = `-- name: UpdateSource :one
+with old as (
+    select id, name, url, active, licence_terms
+      from source
+     where id = $5::uuid
+       for update
+)
 update source
    set name = coalesce($1::text, source.name),
        url = coalesce($2::text, source.url),
        active = coalesce($3::boolean, source.active),
        licence_terms = coalesce($4::text, source.licence_terms)
-  from source old
- where source.id = $5::uuid
-   and old.id = source.id
+  from old
+ where source.id = old.id
 returning
     source.id,
     source.name,
@@ -241,10 +246,18 @@ type UpdateSourceRow struct {
 
 // One PATCH as one statement (#118). Each narg is "not supplied": coalesce
 // keeps the current value, so any subset of name, url, active and
-// licence_terms updates without a per-combination query. The self-join on
-// `old` reads the pre-update row in the same snapshot, which is what lets
-// the source.updated event carry old and new values without a second read
-// racing the write.
+// licence_terms updates without a per-combination query.
+//
+// The pre-image comes from a LOCKING read, and must. Under READ COMMITTED
+// an UPDATE that blocks on a concurrent committed update re-fetches its
+// target row when it resumes (EvalPlanQual), but an ordinary join scan of
+// the same table keeps answering from the statement's ORIGINAL snapshot -
+// precisely the snapshot the race made stale. A pre-image read that way
+// is the value from before the wait rather than the value the write
+// actually replaced: the intervening version disappears from an
+// append-only stream, and a patch restating what another editor just set
+// looks like an edit. `for update` waits for that writer and then reads
+// the latest committed row, so old and new are the true adjacent pair.
 //
 // No row answers pgx.ErrNoRows, which the store maps to ErrSourceNotFound;
 // a url colliding with another registration raises source_url_key, mapped

@@ -271,6 +271,11 @@ func (s *PGStore) UpdateSource(ctx context.Context, id, editorID uuid.UUID, patc
 // before-and-after reading, reporting whether anything changed at all. A
 // patch that restated the current values changes nothing, and appending an
 // event over it would put a non-edit into the audit stream.
+//
+// Both halves of every pair come from the one statement, and its "old" is
+// the row the write actually replaced because the query takes it under
+// FOR UPDATE - a concurrent edit that commits mid-flight is waited for and
+// then read, never skipped over.
 func sourceUpdate(id, editorID uuid.UUID, patch SourcePatch, row store.UpdateSourceRow) (sourceUpdatedPayload, bool) {
 	payload := sourceUpdatedPayload{SourceID: id.String(), UpdatedBy: editorID.String()}
 	changed := false
