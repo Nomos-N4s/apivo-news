@@ -1021,24 +1021,3 @@ export function bulkCounts(outcomes: readonly SourceRowOutcome[]): {
   }
   return { recorded, refused: outcomes.length - recorded };
 }
-
-/** The three ways the sources table can be viewed. */
-export type SourceView = 'all' | 'active' | 'inactive';
-
-/** Reads a view from a query parameter; anything unrecognised is `all`. */
-export function sourceView(raw: string | null): SourceView {
-  return raw === 'active' || raw === 'inactive' ? raw : 'all';
-}
-
-/**
- * Applies the view and the default ordering: active sources first, the
- * list's own newest-first order preserved within each group (sort is
- * stable). Deactivation is the everyday "remove", so a paused feed drops
- * below the working set instead of vanishing — hiding it entirely is the
- * `active` view's job, chosen explicitly.
- */
-export function viewSources(items: readonly SourceRow[], view: SourceView): SourceRow[] {
-  const shown =
-    view === 'all' ? [...items] : items.filter((row) => row.active === (view === 'active'));
-  return shown.sort((a, b) => Number(b.active) - Number(a.active));
-}
