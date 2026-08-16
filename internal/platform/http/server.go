@@ -5,6 +5,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"maps"
@@ -31,17 +32,25 @@ type Route struct {
 // Server wraps the standard library HTTP server with health endpoints and
 // context-driven graceful shutdown.
 type Server struct {
-	log   *slog.Logger
-	mux   *http.ServeMux
-	inner *http.Server
+	log     *slog.Logger
+	version string
+	mux     *http.ServeMux
+	inner   *http.Server
 }
 
 // New builds a Server listening on addr. The ready check backs /readyz;
 // pass the database ping. A nil check reports always ready. Any routes
 // given here are mounted on the same mux, sharing the noindex stamping;
 // Mount adds more later.
-func New(log *slog.Logger, addr string, ready ReadinessCheck, routes ...Route) *Server {
-	s := &Server{log: log, mux: http.NewServeMux()}
+//
+// version is the build's stamped release version, reported on both health
+// payloads. It is a parameter rather than an option because a probe that
+// cannot read which version answered cannot tell a rolled-forward
+// deployment from the previous container still serving: every construction
+// site must answer the question. An empty version reports no version at
+// all - "unversioned" is a fact, not a value to invent.
+func New(log *slog.Logger, addr, version string, ready ReadinessCheck, routes ...Route) *Server {
+	s := &Server{log: log, version: version, mux: http.NewServeMux()}
 	for pattern, handler := range s.builtin(ready) {
 		s.mux.HandleFunc(pattern, handler)
 	}
@@ -148,10 +157,30 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
+// healthBody is the probe payload: the status, and the version of the build
+// that answered. The version is what makes a probe conclusive - a request
+// that reaches a container still running the previous release gets a 200
+// either way, and only the version distinguishes them (the release
+// pipeline's probe asserts it against the tag it deployed, issue #119). It
+// is omitted rather than blanked when the build carries no stamp, because
+// an empty version is not a version.
+type healthBody struct {
+	Status  string `json:"status"`
+	Version string `json:"version,omitempty"`
+}
+
 func (s *Server) writeStatus(w http.ResponseWriter, code int, status string) {
+	// Marshalled rather than concatenated: the version arrives from the
+	// build's -ldflags, so it is not this package's string to trust.
+	body, err := json.Marshal(healthBody{Status: status, Version: s.version})
+	if err != nil {
+		s.log.Warn("encoding health response", "error", err)
+		http.Error(w, "", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	if _, err := w.Write([]byte(`{"status":"` + status + `"}`)); err != nil {
+	if _, err := w.Write(body); err != nil {
 		s.log.Warn("writing health response", "error", err)
 	}
 }

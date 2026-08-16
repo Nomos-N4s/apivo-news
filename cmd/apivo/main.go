@@ -217,7 +217,7 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 			"monthly_cap_microusd", tc.MonthlyCapMicroUSD)
 	}
 
-	srv := platformhttp.New(log, cfg.HTTPAddr, readiness(pool), routes...)
+	srv := platformhttp.New(log, cfg.HTTPAddr, version, readiness(pool), routes...)
 	// The reader endpoints need no bearer token, so they mount
 	// unconditionally - a missing JWKS_URL costs the editorial routes, never
 	// the public site.
