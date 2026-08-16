@@ -26,7 +26,12 @@ import { createUsageCounter } from './lib/usage';
  *
  * Matching is a case-insensitive substring test against the request's
  * User-Agent, so each entry is the stable product token the bot declares.
- * Adding a bot is one line in the appropriate group.
+ * Adding a bot is one line in the appropriate group — and one line in
+ * `CRAWLER_SIGNATURES` in deploy/cloudflare/routing.js, which carries the
+ * same list at the Cloudflare edge because the api container has no
+ * middleware of its own. The two are compared by a test
+ * (deploy/cloudflare/routing.test.mjs), so updating one and not the other
+ * fails the build rather than opening a hole.
  */
 export const CRAWLER_SIGNATURES: readonly string[] = [
   // AI training / assistant crawlers

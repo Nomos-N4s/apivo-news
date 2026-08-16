@@ -11,6 +11,77 @@
 /** The advisory value stamped on responses that carry none of their own. */
 export const X_ROBOTS_TAG_VALUE = 'noindex, nofollow';
 
+/**
+ * The crawler deny list, kept identical to `CRAWLER_SIGNATURES` in
+ * web/src/middleware.ts.
+ *
+ * Two copies, on purpose and with a test to keep them equal
+ * (routing.test.mjs). The web container's list is the one that ships
+ * inside the artefact, so the fence holds identically on Kubernetes where
+ * no Worker exists — it cannot move here. But the Worker now routes
+ * /api/… to the api container, which has no such middleware, so a
+ * declared crawler could read the reader endpoints as JSON without ever
+ * meeting the fence the pages are behind (FR-013, research D6). The edge
+ * copy closes that, and refuses before a container is even woken.
+ *
+ * Adding a bot means adding it in both places; the drift test says so by
+ * name when only one is updated.
+ */
+export const CRAWLER_SIGNATURES = [
+	// AI training / assistant crawlers
+	'GPTBot',
+	'ClaudeBot',
+	'CCBot',
+	'Google-Extended',
+	'Bytespider',
+	'PerplexityBot',
+	'Amazonbot',
+	'meta-externalagent',
+	// Archive crawlers
+	'ia_archiver',
+	'archive.org_bot',
+	// Search engine crawlers
+	'Googlebot',
+	'Bingbot',
+	'DuckDuckBot',
+	'Baiduspider',
+	'YandexBot',
+	'Applebot',
+];
+
+/**
+ * Whether a User-Agent matches the deny list. A missing User-Agent does
+ * not match: the list blocks crawlers that declare themselves, and an
+ * ordinary client that omits the header must not be caught by it.
+ */
+export function matchesCrawlerSignature(userAgent) {
+	if (userAgent === null || userAgent === undefined) {
+		return false;
+	}
+	const normalised = userAgent.toLowerCase();
+	return CRAWLER_SIGNATURES.some((signature) =>
+		normalised.includes(signature.toLowerCase()),
+	);
+}
+
+/**
+ * The crawler refusal: an actual 403, not advice.
+ *
+ * `Vary: User-Agent` because the same URL answers differently by
+ * User-Agent, and a shared cache must never hand one audience the other's
+ * response — the same reason the web container's middleware sets it.
+ */
+export function crawlerRefusal() {
+	return new Response('Forbidden', {
+		status: 403,
+		headers: {
+			'Content-Type': 'text/plain; charset=utf-8',
+			'Vary': 'User-Agent',
+			'X-Robots-Tag': X_ROBOTS_TAG_VALUE,
+		},
+	});
+}
+
 /** Where the editorial module's routes live (cmd/apivo/main.go). */
 export const EDITORIAL_PREFIX = '/api/v1/editorial/';
 

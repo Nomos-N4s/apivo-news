@@ -18,17 +18,20 @@
 // Worker rate-limits their prefix because public reachability makes
 // invalid-token load possible.
 //
-// Two more things happen on the way through, both invisible until a real
-// browser met a real deploy (see routing.js for the reasoning): the proxy
-// hop is plain HTTP, and the site's own Origin/Referer are translated to
-// match so that form posts are not all refused as cross-site.
+// Other things happen on the way through, and the reasoning for each is in
+// routing.js: the proxy hop is plain HTTP, the site's own Origin/Referer
+// are translated to match so form posts are not all refused as cross-site,
+// the crawler fence is enforced at the edge as well as inside the web
+// container, and every response leaves with an X-Robots-Tag.
 
 import { DurableObject } from "cloudflare:workers";
 
 import {
 	containerRequest,
+	crawlerRefusal,
 	isApiPath,
 	isEditorialPath,
+	matchesCrawlerSignature,
 	withRobotsTag,
 } from "./routing.js";
 
@@ -290,6 +293,16 @@ export default {
 	 */
 	async fetch(request, env) {
 		const { pathname } = new URL(request.url);
+		// The crawler fence, at the edge. It lives inside the web
+		// container too — that copy is the one Kubernetes relies on — but
+		// the api container has no middleware, and routing /api/… onto the
+		// public surface would otherwise let a declared crawler read the
+		// reader endpoints as JSON without ever meeting the fence the
+		// pages are behind. Refusing here also spares the containers the
+		// wake-up.
+		if (matchesCrawlerSignature(request.headers.get("user-agent"))) {
+			return crawlerRefusal();
+		}
 		if (isEditorialPath(pathname)) {
 			const refusal = await limitEditorial(request, env);
 			if (refusal !== null) {

@@ -7,14 +7,19 @@
 // Worker nobody could run.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
 import {
+	CRAWLER_SIGNATURES,
 	EDITORIAL_PREFIX,
 	X_ROBOTS_TAG_VALUE,
 	containerRequest,
+	crawlerRefusal,
 	isApiPath,
 	isEditorialPath,
+	matchesCrawlerSignature,
 	rewriteSameSiteOriginHeaders,
 	withRobotsTag,
 } from './routing.js';
@@ -171,6 +176,53 @@ describe('containerRequest', () => {
 			}),
 		);
 		assert.notEqual(proxied.headers.get('origin'), new URL(proxied.url).origin);
+	});
+});
+
+describe('the crawler fence', () => {
+	it('refuses a declared crawler with a 403, not advice', () => {
+		assert.equal(matchesCrawlerSignature('Mozilla/5.0 (compatible; GPTBot/1.2)'), true);
+		const refusal = crawlerRefusal();
+		assert.equal(refusal.status, 403);
+		assert.equal(refusal.headers.get('vary'), 'User-Agent');
+	});
+
+	it('matches case-insensitively, as a User-Agent substring', () => {
+		assert.equal(matchesCrawlerSignature('claudebot/1.0'), true);
+		assert.equal(matchesCrawlerSignature('x archive.org_bot y'), true);
+	});
+
+	it('does not catch an ordinary browser, or a client with no User-Agent', () => {
+		assert.equal(
+			matchesCrawlerSignature(
+				'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15',
+			),
+			false,
+		);
+		assert.equal(matchesCrawlerSignature(null), false);
+		assert.equal(matchesCrawlerSignature(undefined), false);
+	});
+
+	// The list exists twice: here, and in the web container's middleware,
+	// which is the copy Kubernetes relies on. Neither can be deleted, so
+	// the only defence against drift is this - a bot added to one and not
+	// the other fails the build with both lists printed.
+	it('is identical to the web container middleware list', () => {
+		const middleware = readFileSync(
+			fileURLToPath(new URL('../../web/src/middleware.ts', import.meta.url)),
+			'utf8',
+		);
+		const declaration = middleware.match(
+			/CRAWLER_SIGNATURES:\s*readonly string\[\]\s*=\s*\[([\s\S]*?)\];/,
+		);
+		assert.ok(
+			declaration,
+			'could not find CRAWLER_SIGNATURES in web/src/middleware.ts - if it moved or was renamed, this drift check moved with it',
+		);
+		const fromMiddleware = [...declaration[1].matchAll(/'([^']+)'/g)].map(
+			(match) => match[1],
+		);
+		assert.deepEqual(CRAWLER_SIGNATURES, fromMiddleware);
 	});
 });
 
