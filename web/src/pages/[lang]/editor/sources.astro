@@ -347,7 +347,13 @@ const views: readonly { key: SourceView; label: string }[] = [
             <form method="post" action={here}>
               <input type="hidden" name="intent" value="bulk" />
               <div class="bulk-bar">
-                <label class="select-all">
+                {/* Hidden until the script that gives it meaning is
+                    running. It has no name, is never submitted and does
+                    nothing on its own; rendered as an operative checkbox
+                    beside a bulk DELETE it would look armed while being
+                    inert, which is the wrong surprise on that verb. Every
+                    row stays individually selectable without it. */}
+                <label class="select-all" id="select-all-label" hidden>
                   <input type="checkbox" id="select-all" />
                   {t.selectAll}
                 </label>
@@ -597,8 +603,14 @@ const views: readonly { key: SourceView; label: string }[] = [
   // Progressive enhancement only: the select-all box mirrors itself into
   // the row checkboxes. Without it every row is still individually
   // selectable and every form still posts — nothing here is load-bearing.
+  //
+  // The control is rendered hidden and revealed here, so it exists only
+  // where it works: a labelled checkbox beside a bulk delete that does
+  // nothing when ticked would look armed and be inert.
   const all = document.getElementById('select-all');
-  if (all instanceof HTMLInputElement) {
+  const allLabel = document.getElementById('select-all-label');
+  if (all instanceof HTMLInputElement && allLabel !== null) {
+    allLabel.hidden = false;
     all.addEventListener('change', () => {
       for (const box of document.querySelectorAll('input.row-select')) {
         if (box instanceof HTMLInputElement) {
@@ -718,6 +730,12 @@ const views: readonly { key: SourceView; label: string }[] = [
     align-items: center;
     font-size: 12.5px;
     margin-right: var(--space-2);
+  }
+  /* `display: flex` would otherwise win over the hidden attribute's own
+     `display: none`, and the control must not be visible before the
+     script that makes it work has revealed it. */
+  .select-all[hidden] {
+    display: none;
   }
   .bulk-bar .btn {
     font-size: 12px;
