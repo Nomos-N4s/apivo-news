@@ -16,15 +16,22 @@ import {
   bulkCounts,
   createEditorialApi,
   runBulkAction,
-  sourceView,
-  viewSources,
   type BulkAction,
   type SourceActionOutcome,
   type SourceList,
   type SourceOutcome,
   type SourceRowOutcome,
-  type SourceView,
 } from '../../../lib/editorial/api';
+import {
+  activeFilters,
+  filterOptions,
+  filterQuery,
+  filterSources,
+  NO_FILTERS,
+  parseSourceFilters,
+  presentValues,
+  type SourceFilters,
+} from '../../../lib/editorial/sourceFilters';
 import {
   BASELINE_FIELD,
   parseSourceEditForm,
@@ -78,17 +85,23 @@ if (signedOut && Astro.request.method !== 'POST') {
 
 const api = createEditorialApi(API_BASE_URL, session.token);
 
-// The active-first default and the all/active/inactive toggle live in the
-// query string, so the view survives a POST re-render as part of the URL.
-const view = sourceView(Astro.url.searchParams.get('view'));
+// The filters live in the query string, so a narrowed table survives a
+// POST re-render, comes back on the browser's back button, and can be
+// handed to someone else as a URL.
+const filters = parseSourceFilters(Astro.url.searchParams);
 const editId = Astro.url.searchParams.get('edit');
 
-/** This page's own URL carrying the current view plus the given params. */
-function pageURL(params: Record<string, string> = {}, forView: SourceView = view): string {
-  const query = new URLSearchParams();
-  if (forView !== 'all') {
-    query.set('view', forView);
-  }
+/**
+ * This page's own URL carrying the current filters plus the given params.
+ * Every link and form action on the screen goes through here: a link that
+ * built its own query string would silently drop whatever narrowing the
+ * editor had chosen.
+ */
+function pageURL(
+  params: Record<string, string> = {},
+  forFilters: SourceFilters = filters,
+): string {
+  const query = new URLSearchParams(filterQuery(forFilters));
   for (const [key, value] of Object.entries(params)) {
     query.set(key, value);
   }
@@ -228,8 +241,11 @@ try {
 
 const sources = page?.items ?? [];
 const activeCount = sources.filter((source) => source.active).length;
-// Active first by default; the toggle narrows to one state explicitly.
-const shown = viewSources(sources, view);
+// The cycle names the feeds whose last poll failed; it is what the health
+// filter and the failing-first order read. An unreadable list is no list.
+const failures: readonly unknown[] = page?.cycle.failures ?? [];
+// Filtered and ordered in one place, over the whole walked registry.
+const shown = filterSources(sources, filters, failures);
 const editing = editId === null ? null : (sources.find((source) => source.id === editId) ?? null);
 
 // Per-row refusals, keyed to the rows that still stand: a refused delete
@@ -275,11 +291,55 @@ const orphanedRefusals = [...refusedById.entries()]
     refusal,
   }));
 
-const views: readonly { key: SourceView; label: string }[] = [
-  { key: 'all', label: t.viewAll },
-  { key: 'active', label: t.viewActive },
-  { key: 'inactive', label: t.viewInactive },
-];
+// Each control's options, with the count each would show if chosen while
+// the other filters stay as they are.
+const stateOptions = [
+  { value: 'all', label: t.viewAll },
+  { value: 'active', label: t.viewActive },
+  { value: 'inactive', label: t.viewInactive },
+] as const;
+const healthOptions = [
+  { value: 'any', label: t.filterAny },
+  { value: 'healthy', label: t.healthHealthy },
+  { value: 'failing', label: t.healthFailing },
+  { value: 'never', label: t.healthNever },
+] as const;
+const languageValues = ['', ...presentValues(sources, 'language')];
+const jurisdictionValues = ['', ...presentValues(sources, 'jurisdiction')];
+
+const countFor = (dimension: keyof SourceFilters, values: readonly string[]) =>
+  new Map(
+    filterOptions(sources, filters, failures, dimension, values).map((option) => [
+      option.value,
+      option.count,
+    ]),
+  );
+const stateCounts = countFor('view', stateOptions.map((option) => option.value));
+const healthCounts = countFor('health', healthOptions.map((option) => option.value));
+const languageCounts = countFor('language', languageValues);
+const jurisdictionCounts = countFor('jurisdiction', jurisdictionValues);
+
+// The chips name what is narrowing the table, each linking to the same
+// page with that one filter dropped.
+const dimensionLabels: Record<keyof SourceFilters, string> = {
+  view: t.filterState,
+  language: t.filterLanguage,
+  jurisdiction: t.filterJurisdiction,
+  health: t.filterHealth,
+  search: t.filterSearch,
+};
+const valueLabels: Record<string, string> = {
+  active: t.viewActive,
+  inactive: t.viewInactive,
+  healthy: t.healthHealthy,
+  failing: t.healthFailing,
+  never: t.healthNever,
+};
+const chips = activeFilters(filters).map((chip) => ({
+  ...chip,
+  dimension: dimensionLabels[chip.key],
+  shown: valueLabels[chip.value] ?? chip.value,
+}));
 ---
 
 <ReaderLayout lang={lang} title={`epiloYES — ${t.sources}`} description={reader.tagline}>
@@ -337,7 +397,7 @@ const views: readonly { key: SourceView; label: string }[] = [
           }}
           action={
             entry.refusal.status === 409
-              ? { href: pageURL({ edit: entry.id }, 'all'), label: t.deactivateInstead }
+              ? { href: pageURL({ edit: entry.id }, NO_FILTERS), label: t.deactivateInstead }
               : undefined
           }
         />
@@ -349,20 +409,110 @@ const views: readonly { key: SourceView; label: string }[] = [
         {failed && <p class="notice">{reader.unavailableBody}</p>}
         {!failed && sources.length === 0 && <p class="notice">{t.sourcesEmpty}</p>}
 
+        {/* A GET form: the filters end up in the URL, so a narrowed table
+            is shareable, survives the back button and outlives a POST
+            re-render. Submitting is one button — the screen carries no
+            client JavaScript, so nothing filters as you type. */}
         {
           sources.length > 0 && (
-            <nav class="view-toggle" aria-label={t.viewLabel}>
-              <span class="view-label">{t.viewLabel}</span>
-              {views.map((option) =>
-                option.key === view ? (
-                  <span class="view-current" aria-current="true">
-                    {option.label}
-                  </span>
-                ) : (
-                  <a href={pageURL({}, option.key)}>{option.label}</a>
-                ),
-              )}
-            </nav>
+            <form class="filters" method="get" action={`/${lang}/editor/sources`}>
+              <h6>{t.filtersHeading}</h6>
+              <div class="filter-row">
+                <label class="filter">
+                  <span>{t.filterState}</span>
+                  <select class="input" name="view">
+                    {stateOptions.map((option) => (
+                      <option value={option.value} selected={filters.view === option.value}>
+                        {t.filterOptionCount(option.label, stateCounts.get(option.value) ?? 0)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label class="filter">
+                  <span>{t.filterLanguage}</span>
+                  <select class="input" name="language">
+                    {languageValues.map((value) => (
+                      <option value={value} selected={filters.language === value}>
+                        {t.filterOptionCount(
+                          value === '' ? t.filterAny : value,
+                          languageCounts.get(value) ?? 0,
+                        )}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label class="filter">
+                  <span>{t.filterJurisdiction}</span>
+                  <select class="input" name="jurisdiction">
+                    {jurisdictionValues.map((value) => (
+                      <option value={value} selected={filters.jurisdiction === value}>
+                        {t.filterOptionCount(
+                          value === '' ? t.filterAny : value,
+                          jurisdictionCounts.get(value) ?? 0,
+                        )}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label class="filter">
+                  <span>{t.filterHealth}</span>
+                  <select class="input" name="health">
+                    {healthOptions.map((option) => (
+                      <option value={option.value} selected={filters.health === option.value}>
+                        {t.filterOptionCount(option.label, healthCounts.get(option.value) ?? 0)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label class="filter filter-search">
+                  <span>{t.filterSearch}</span>
+                  <input
+                    class="input"
+                    type="search"
+                    name="q"
+                    value={filters.search}
+                    placeholder={t.filterSearchHint}
+                  />
+                </label>
+                <button class="btn btn-secondary" type="submit">
+                  {t.filterApply}
+                </button>
+              </div>
+              {/* What the API can and cannot say about a feed's health. */}
+              <p class="filter-note">{t.healthFailingNote}</p>
+            </form>
+          )
+        }
+
+        {
+          chips.length > 0 && (
+            <div class="chips">
+              {chips.map((chip) => (
+                <a
+                  class="chip"
+                  href={pageURL({}, chip.without)}
+                  aria-label={t.filterRemove(chip.dimension, chip.shown)}
+                >
+                  {t.filterChipLabel(chip.dimension, chip.shown)}
+                  <span aria-hidden="true">×</span>
+                </a>
+              ))}
+              <a class="chip-clear" href={pageURL({}, NO_FILTERS)}>
+                {t.filtersClear}
+              </a>
+            </div>
+          )
+        }
+
+        {/* Narrowed to nothing: name what did it and offer the way back,
+            rather than leaving an empty table to explain itself. */}
+        {
+          !failed && sources.length > 0 && shown.length === 0 && (
+            <p class="notice">
+              {t.filteredEmpty}{' '}
+              {chips.map((chip) => t.filterChipLabel(chip.dimension, chip.shown)).join(' · ')}{' '}
+              <a href={pageURL({}, NO_FILTERS)}>{t.filtersClear}</a>
+            </p>
           )
         }
 
@@ -372,7 +522,7 @@ const views: readonly { key: SourceView; label: string }[] = [
             scroll reachable by keyboard (WCAG 2.1.1) and give it a name for
             screen readers. */}
         {
-          sources.length > 0 && (
+          shown.length > 0 && (
             <form method="post" action={here}>
               <input type="hidden" name="intent" value="bulk" />
               <div class="bulk-bar">
@@ -718,24 +868,65 @@ const views: readonly { key: SourceView; label: string }[] = [
     color: var(--ink-soft);
   }
 
-  .view-toggle {
+  .filters {
+    margin-bottom: var(--space-4);
+    padding-bottom: var(--space-3);
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .filters h6 {
+    margin: 0 0 var(--space-2);
+  }
+  .filter-row {
     display: flex;
     gap: var(--space-3);
-    align-items: baseline;
-    margin-bottom: var(--space-3);
-    font-size: 12.5px;
+    align-items: flex-end;
+    flex-wrap: wrap;
   }
-  .view-label {
-    font-family: var(--font-heading);
-    font-weight: 600;
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+  .filter {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11.5px;
     color: var(--ink-soft);
   }
-  .view-current {
-    font-weight: 600;
-    color: var(--color-accent-700);
+  .filter .input {
+    font-size: 12.5px;
+    color: var(--color-text);
+  }
+  .filter-search {
+    flex: 1 1 200px;
+    min-width: 160px;
+  }
+  .filter-note {
+    margin: var(--space-2) 0 0;
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    text-wrap: pretty;
+  }
+  .chips {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: var(--space-3);
+    font-size: 12px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    padding: 2px var(--space-2);
+    border: 1px solid var(--color-accent-700);
+    color: var(--color-accent-800);
+    background: var(--color-accent-100);
+    text-decoration: none;
+  }
+  .chip-clear {
+    min-height: 24px;
+    display: inline-flex;
+    align-items: center;
+    font-size: 12px;
   }
 
   .bulk-bar {
