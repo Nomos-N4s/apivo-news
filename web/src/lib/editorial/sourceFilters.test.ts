@@ -116,6 +116,17 @@ describe('pollHealth', () => {
     expect(pollHealth(row({ id: 'z' }), FAILURES)).toBe('healthy');
   });
 
+  it('calls a paused feed unpolled, never healthy', () => {
+    // The cycle is built `where active`, so a paused feed is missing from
+    // the failure list because nothing polled it — not because it
+    // succeeded. Its stored last_poll_error may say the opposite.
+    const paused = row({ id: 'p', active: false });
+    expect(pollHealth(paused, FAILURES)).toBe('unpolled');
+    expect(pollHealth(paused, [])).not.toBe('healthy');
+    // Never-polled still wins: the row's own field is the certain one.
+    expect(pollHealth(row({ id: 'q', active: false, last_polled_at: null }), [])).toBe('never');
+  });
+
   it('reads a never-polled feed as never, even when the cycle named it', () => {
     // Two different facts; the row's own field is the certain one.
     const never = row({ id: 'n', name: 'Πρωινός Τύπος', last_polled_at: null });
@@ -186,11 +197,13 @@ describe('filterSources', () => {
 
   it('treats an absent failure list as no failures rather than guessing', () => {
     expect(filterSources(REGISTRY, filters({ health: 'failing' })).map((s) => s.id)).toEqual([]);
+    // 'b' is paused: with no cycle covering it, it is unpolled rather than
+    // healthy, however empty the failure list is.
     expect(filterSources(REGISTRY, filters({ health: 'healthy' })).map((s) => s.id)).toEqual([
       'a',
       'c',
-      'b',
     ]);
+    expect(filterSources(REGISTRY, filters({ health: 'unpolled' })).map((s) => s.id)).toEqual(['b']);
   });
 });
 
@@ -237,6 +250,22 @@ describe('presentValues', () => {
     expect(presentValues(REGISTRY, 'language')).toEqual(['de', 'el']);
     expect(presentValues(REGISTRY, 'jurisdiction')).toEqual(['DE', 'GR']);
     expect(presentValues([], 'language')).toEqual([]);
+  });
+});
+
+describe('the paused-feed health value', () => {
+  it('is selectable, and keeps paused feeds out of the healthy count', () => {
+    const paused = row({ id: 'p', active: false });
+    const working = row({ id: 'w' });
+    const registry = [paused, working];
+    expect(filterSources(registry, filters({ health: 'unpolled' }), []).map((s) => s.id)).toEqual([
+      'p',
+    ]);
+    expect(filterSources(registry, filters({ health: 'healthy' }), []).map((s) => s.id)).toEqual([
+      'w',
+    ]);
+    // And it survives the query string like every other value.
+    expect(parseSourceFilters(new URLSearchParams('health=unpolled')).health).toBe('unpolled');
   });
 });
 

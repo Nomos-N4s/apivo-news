@@ -271,6 +271,11 @@ export interface EditorialStrings {
   readonly healthFailing: string;
   readonly healthNever: string;
   /**
+   * A paused feed: the cycle covers active sources only, so its absence
+   * from the failure list is no reading rather than a clean one (#120).
+   */
+  readonly healthUnpolled: string;
+  /**
    * The API reports failures as the names of feeds whose LAST CYCLE
    * failed, with no per-source error text (issue #122). The filter says
    * that plainly rather than implying a standing diagnosis.
@@ -467,6 +472,7 @@ const EL: EditorialStrings = {
   healthHealthy: 'Χωρίς αστοχία',
   healthFailing: 'Απέτυχε στον τελευταίο κύκλο',
   healthNever: 'Δεν έχει γίνει ποτέ λήψη',
+  healthUnpolled: 'Σε παύση — εκτός του τελευταίου κύκλου',
   healthFailingNote:
     'Το API αναφέρει μόνο ποιες ενεργές ροές απέτυχαν στον τελευταίο κύκλο, με το όνομά τους — όχι το κείμενο του σφάλματος ούτε πόσο καιρό κρατά (ζητήθηκε στο #122).',
   filterOptionCount: (label, count) => `${label} (${count})`,
@@ -657,6 +663,7 @@ const DE: EditorialStrings = {
   healthHealthy: 'Ohne Fehlschlag',
   healthFailing: 'Im letzten Zyklus fehlgeschlagen',
   healthNever: 'Noch nie abgerufen',
+  healthUnpolled: 'Pausiert — nicht im letzten Zyklus',
   healthFailingNote:
     'Das API meldet nur, welche aktiven Feeds im letzten Zyklus fehlgeschlagen sind, mit Namen — nicht den Fehlertext und nicht, seit wann (angefragt in #122).',
   filterOptionCount: (label, count) => `${label} (${count})`,

@@ -27,11 +27,20 @@ export type SourceView = 'all' | 'active' | 'inactive';
  * not: no per-source error crosses the wire, and the only failure signal
  * is `cycle.failures`, a list of names describing THE LAST CYCLE. So a
  * source counts as failing when the last cycle named it, and the label
- * says exactly that rather than implying a standing condition. The
- * per-source `last_poll_error` this wants is filed as issue #122; until
- * it lands, the screen surfaces the fact of failure and not its text.
+ * says exactly that rather than implying a standing condition.
+ *
+ * `unpolled` exists because that list is built `where active`. A paused
+ * feed is missing from it for the same reason it is missing from the
+ * cycle: nothing polled it. Reading that absence as success would print
+ * "no failure" over a row whose stored `last_poll_error` may say
+ * otherwise — deactivation clears neither the error nor the timestamp —
+ * so a paused feed gets its own value instead of a verdict the payload
+ * cannot support.
+ *
+ * The per-source `last_poll_error` all this wants is filed as issue #122;
+ * until it lands, the screen surfaces the fact of failure, never its text.
  */
-export type PollHealth = 'any' | 'healthy' | 'failing' | 'never';
+export type PollHealth = 'any' | 'healthy' | 'failing' | 'never' | 'unpolled';
 
 /** Everything the query string can narrow the table by. */
 export interface SourceFilters {
@@ -68,7 +77,9 @@ function readView(raw: string | null): SourceView {
 }
 
 function readHealth(raw: string | null): PollHealth {
-  return raw === 'healthy' || raw === 'failing' || raw === 'never' ? raw : 'any';
+  return raw === 'healthy' || raw === 'failing' || raw === 'never' || raw === 'unpolled'
+    ? raw
+    : 'any';
 }
 
 /**
@@ -128,6 +139,11 @@ export function isNarrowed(filters: SourceFilters): boolean {
  * Entries that are not strings are ignored. The client's validator checks
  * only that `failures` is an array, and a malformed payload must not get
  * to decide a source's health.
+ *
+ * The limit this cannot fix: `source.name` carries no unique constraint —
+ * only `url` does — so two feeds registered under one masthead share a
+ * name, and one of them failing marks both. The payload offers no id to
+ * match on, which is the second half of what issue #122 asks for.
  */
 export function namedInFailures(name: string, failures: readonly unknown[]): boolean {
   const own = name.trim();
@@ -138,9 +154,17 @@ export function namedInFailures(name: string, failures: readonly unknown[]): boo
 }
 
 /** A source's poll health, as far as the payload can tell. */
-export function pollHealth(row: SourceRow, failures: readonly unknown[]): Exclude<PollHealth, 'any'> {
+export function pollHealth(
+  row: SourceRow,
+  failures: readonly unknown[],
+): Exclude<PollHealth, 'any'> {
   if (row.last_polled_at === null) {
     return 'never';
+  }
+  // The cycle covers active feeds only, so for a paused one its silence
+  // is not a clean bill of health — it is no reading at all.
+  if (!row.active) {
+    return 'unpolled';
   }
   return namedInFailures(row.name, failures) ? 'failing' : 'healthy';
 }
