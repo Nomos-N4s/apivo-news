@@ -167,7 +167,7 @@ type Translation struct {
 	UnmeteredAttempts int32
 }
 
-// Monthly translation spend ledger. Every translation insert moves it by trigger, so a translation whose cost is not in the ledger is unrepresentable; spend from calls that were billed but produced no translation is added directly. Caps (per-article ceiling, monthly cap) remain configuration - the database supplies the atomic counter and the once-per-month halt latch, not the budget.
+// Monthly translation spend ledger. Every translation insert moves it by trigger, so a translation whose cost is not in the ledger is unrepresentable; spend from calls that were billed but produced no translation is added directly. The month key is the calendar month IN UTC - every writer and reader derives it as date_trunc('month', now() at time zone 'utc')::date, never from the session TimeZone, so an operator's psql session and the app pool always land spend in the same row. Caps (per-article ceiling, monthly cap) remain configuration - the database supplies the atomic counter and the once-per-month halt latch, not the budget.
 type TranslationSpend struct {
 	Month         pgtype.Date
 	SpentMicrousd int64
