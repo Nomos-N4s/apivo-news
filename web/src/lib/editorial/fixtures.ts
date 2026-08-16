@@ -84,6 +84,19 @@ export const QUEUE_FIXTURES: readonly QueueItem[] = [
     model: null,
     prompt_version: null,
     cost_microusd: null,
+    // A correction candidate: the contract flags an origin whose earlier
+    // article was withdrawn, with the recorded withdrawal newest-first.
+    // Without one fixture in this state, preview mode could never show
+    // the correction explanation the review pane owes the editor.
+    correction_candidate: true,
+    withdrawals: [
+      {
+        article_id: 'f5d2c8a1-6e3b-4790-a2c4-9b8e0d1f6a35',
+        withdrawn_at: '2026-08-13T16:40:00Z',
+        withdrawn_by: '7a1e9c04-2b5d-4f68-8e3a-c6d90b47f512',
+        reason: 'Λανθασμένη ημερομηνία έναρξης των δρομολογίων στην αρχική δημοσίευση.',
+      },
+    ],
   },
 ];
 
