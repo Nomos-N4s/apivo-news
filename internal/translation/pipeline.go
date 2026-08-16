@@ -443,10 +443,10 @@ func (p *Pipeline) settleFailedCall(ctx context.Context, tx pgx.Tx, terr error) 
 	}
 	recorded, rerr := NewWriter(tx, p.cfg.Caps).RecordFailedCall(ctx, spent.Spend)
 	if rerr != nil {
-		return false, p.uncommittedSpend(fmt.Errorf("translation: booking a failed call's spend: %w (the provider call it books had failed with: %v)", rerr, terr), spent.Spend)
+		return false, p.uncommittedSpend(fmt.Errorf("translation: booking a failed call's spend: %w (the provider call it books had failed with: %s)", rerr, terr.Error()), spent.Spend)
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
-		return false, p.uncommittedSpend(fmt.Errorf("translation: committing a failed call's spend: %w (the provider call it books had failed with: %v)", cerr, terr), spent.Spend)
+		return false, p.uncommittedSpend(fmt.Errorf("translation: committing a failed call's spend: %w (the provider call it books had failed with: %s)", cerr, terr.Error()), spent.Spend)
 	}
 	return recorded.Halted(), terr
 }
