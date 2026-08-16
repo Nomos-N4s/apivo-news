@@ -42,6 +42,19 @@ export default defineConfig({
         access: 'secret',
         optional: true,
       }),
+      // The release version (issue #119): the annotated tag the release
+      // pipeline deployed, rendered in the footer's fine print. PUBLIC_ by
+      // nature — it is printed on every page — but declared
+      // `access: 'secret'` for the same reason as everything above: read
+      // from the environment at runtime, so the version names the deploy,
+      // not whichever build produced the image. Unset is a working state
+      // and renders nothing: only the release pipeline may claim a
+      // version, and an unstamped deployment must not invent one.
+      PUBLIC_APP_VERSION: envField.string({
+        context: 'server',
+        access: 'secret',
+        optional: true,
+      }),
     },
   },
 });

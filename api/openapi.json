@@ -51,7 +51,8 @@
                 "examples": {
                   "alive": {
                     "value": {
-                      "status": "ok"
+                      "status": "ok",
+                      "version": "v0.1.0"
                     }
                   }
                 }
@@ -80,7 +81,8 @@
                 "examples": {
                   "ready": {
                     "value": {
-                      "status": "ok"
+                      "status": "ok",
+                      "version": "v0.1.0"
                     }
                   }
                 }
@@ -97,7 +99,8 @@
                 "examples": {
                   "unavailable": {
                     "value": {
-                      "status": "unavailable"
+                      "status": "unavailable",
+                      "version": "v0.1.0"
                     }
                   }
                 }
@@ -1335,6 +1338,13 @@
             "enum": [
               "ok",
               "unavailable"
+            ]
+          },
+          "version": {
+            "type": "string",
+            "description": "The release version of the build that answered, stamped at build time from the release tag. Omitted entirely by a build the release pipeline did not cut - an unversioned build says so rather than reporting an empty version. The release probe asserts this against the tag it deployed: a 200 from the previous container is still a 200, and only this field tells them apart.",
+            "examples": [
+              "v0.1.0"
             ]
           }
         },

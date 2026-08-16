@@ -132,6 +132,12 @@ configuration on every PR with
 Worker bundle needing no Cloudflare credentials; images build at deploy
 time (`npx wrangler deploy`).
 
+Production deploys are never run by hand: releases are cut only from
+annotated semver tags by the release pipeline
+([.github/workflows/release.yml](.github/workflows/release.yml)) — the
+rules, the one-time secret setup and the rollback procedure live in
+[docs/RELEASING.md](docs/RELEASING.md).
+
 ## Quality gates (CI-enforced)
 
 - Go: `golangci-lint` (strict config), `go vet`, tests with `-race`,

@@ -174,6 +174,14 @@ export class WebContainer extends ContainerHost {
 		if (this.env.PUBLIC_SUPABASE_ANON_KEY) {
 			containerEnv.PUBLIC_SUPABASE_ANON_KEY = this.env.PUBLIC_SUPABASE_ANON_KEY;
 		}
+		// The release version (issue #119), set per deployment by the
+		// release workflow (`wrangler deploy --var PUBLIC_APP_VERSION:vX.Y.Z`)
+		// and rendered in the footer's fine print. Forwarded only when set:
+		// a deployment nobody released through a tag shows no version, and
+		// nothing here may invent one.
+		if (this.env.PUBLIC_APP_VERSION) {
+			containerEnv.PUBLIC_APP_VERSION = this.env.PUBLIC_APP_VERSION;
+		}
 		return containerEnv;
 	}
 }

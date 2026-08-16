@@ -79,6 +79,7 @@ func TestRunRejectsBadArguments(t *testing.T) {
 	}{
 		{name: "unknown command", args: []string{"frobnicate"}, want: "unknown command"},
 		{name: "healthcheck with extra arguments", args: []string{"healthcheck", "extra"}, want: "takes no arguments"},
+		{name: "version with extra arguments", args: []string{"version", "extra"}, want: "takes no arguments"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -88,6 +89,20 @@ func TestRunRejectsBadArguments(t *testing.T) {
 				t.Errorf("run() with args %q: want error containing %q, got %v", tt.args, tt.want, err)
 			}
 		})
+	}
+}
+
+// TestRunVersion drives the subcommand end to end through run(). An unstamped
+// test binary must report "dev" - the honest name for anything the release
+// pipeline did not cut - and need neither configuration nor a database.
+func TestRunVersion(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"version"}, envFrom(nil), &out); err != nil {
+		t.Fatalf("run(version): %v", err)
+	}
+	if got, want := out.String(), "apivo version dev\n"; got != want {
+		t.Errorf("run(version) printed %q, want %q", got, want)
 	}
 }
 

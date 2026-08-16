@@ -56,7 +56,7 @@ type operation struct {
 // disk, and not the embedded bytes directly.
 func servedDocument(t *testing.T) openAPIDocument {
 	t.Helper()
-	srv := platformhttp.New(discardLogger(), ":0", nil)
+	srv := platformhttp.New(discardLogger(), ":0", "", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil))
 	if rec.Code != http.StatusOK {
@@ -229,7 +229,7 @@ func TestReaderPatternsAreReachable(t *testing.T) {
 // it.
 func TestTheDocumentSurvivesTheReaderCatchAll(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), ":0", nil)
+	srv := platformhttp.New(discardLogger(), ":0", "", nil)
 	srv.Mount(readerPrefix, content.NewHandler(discardLogger(), nil))
 
 	rec := httptest.NewRecorder()

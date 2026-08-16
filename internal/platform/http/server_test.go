@@ -45,7 +45,7 @@ func TestHealthEndpoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			srv := platformhttp.New(discardLogger(), ":0", tt.ready)
+			srv := platformhttp.New(discardLogger(), ":0", "", tt.ready)
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			srv.Handler().ServeHTTP(rec, req)
@@ -59,9 +59,54 @@ func TestHealthEndpoints(t *testing.T) {
 	}
 }
 
+// TestHealthPayloadCarriesTheVersion pins what makes a post-deploy probe
+// conclusive: both probes name the build that answered them. Without it a
+// probe cannot tell a rolled-forward deployment from the previous container
+// still happily answering 200 (issue #119).
+func TestHealthPayloadCarriesTheVersion(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"/healthz", "/readyz"} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			srv := platformhttp.New(discardLogger(), ":0", "v9.9.9-test", nil)
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+			var got struct {
+				Status  string `json:"status"`
+				Version string `json:"version"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("%s body is not valid JSON: %v", path, err)
+			}
+			if got.Status != "ok" {
+				t.Errorf("%s status = %q, want %q", path, got.Status, "ok")
+			}
+			if got.Version != "v9.9.9-test" {
+				t.Errorf("%s version = %q, want the build's stamp", path, got.Version)
+			}
+		})
+	}
+}
+
+// TestHealthPayloadOmitsAnAbsentVersion: an unstamped build reports no
+// version rather than an empty one. A release probe must fail against it,
+// which it does - "" never matches the tag being deployed - instead of
+// reading a blank field as agreement.
+func TestHealthPayloadOmitsAnAbsentVersion(t *testing.T) {
+	t.Parallel()
+	srv := platformhttp.New(discardLogger(), ":0", "", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if body := rec.Body.String(); body != `{"status":"ok"}` {
+		t.Fatalf("unstamped build answered %q, want %q", body, `{"status":"ok"}`)
+	}
+}
+
 func TestMountedRoutes(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), ":0", nil, platformhttp.Route{
+	srv := platformhttp.New(discardLogger(), ":0", "", nil, platformhttp.Route{
 		Pattern: "/api/v1/editorial/",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusTeapot)
@@ -87,7 +132,7 @@ func TestMountedRoutes(t *testing.T) {
 
 func TestServesTheEmbeddedOpenAPIDocument(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), ":0", nil)
+	srv := platformhttp.New(discardLogger(), ":0", "", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil))
 
@@ -136,7 +181,7 @@ func TestPatternsAreRegistered(t *testing.T) {
 			if !ok {
 				t.Fatalf("pattern %q is not %q", pattern, "METHOD /path")
 			}
-			srv := platformhttp.New(discardLogger(), ":0", nil)
+			srv := platformhttp.New(discardLogger(), ":0", "", nil)
 			rec := httptest.NewRecorder()
 			srv.Handler().ServeHTTP(rec, httptest.NewRequest(method, path, nil))
 			if rec.Code != http.StatusOK {
@@ -183,7 +228,7 @@ func TestProblemOmitsEmptyDetail(t *testing.T) {
 
 func TestMountRoutesModuleHandlers(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), ":0", nil)
+	srv := platformhttp.New(discardLogger(), ":0", "", nil)
 	srv.Mount("/api/v1/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 	}))
@@ -254,7 +299,7 @@ func (w *brokenWriter) Write([]byte) (int, error)  { return 0, errors.New("conne
 
 func TestHealthzSurvivesFailedResponseWrite(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), ":0", nil)
+	srv := platformhttp.New(discardLogger(), ":0", "", nil)
 	w := &brokenWriter{header: make(http.Header)}
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	srv.Handler().ServeHTTP(w, req)
@@ -265,7 +310,7 @@ func TestHealthzSurvivesFailedResponseWrite(t *testing.T) {
 
 func TestRunShutsDownOnContextCancel(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), "127.0.0.1:0", nil)
+	srv := platformhttp.New(discardLogger(), "127.0.0.1:0", "", nil)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
@@ -287,7 +332,7 @@ func TestRunShutsDownOnContextCancel(t *testing.T) {
 
 func TestRunReturnsListenError(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), "not-a-valid-listen-address", nil)
+	srv := platformhttp.New(discardLogger(), "not-a-valid-listen-address", "", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Run(ctx); err == nil {

@@ -1,0 +1,290 @@
+# The release pipeline (issue #119). Releases are cut ONLY from annotated
+# semver tags: pushing v0.1.0 is the release act; nothing else deploys
+# production. main stays always-green and always-deployable, but merging
+# never deploys anything.
+#
+#   guard -> verify (the full CI matrix, reused) -> stamp + build proof
+#         -> wrangler deploy -> GitHub Release -> health probe
+#
+# Rehearsal: "Run workflow" (workflow_dispatch) from a tag ref with dry_run
+# checked runs everything except the deploy, the GitHub Release and the
+# probe. Dispatching with dry_run UNCHECKED performs a real release of that
+# tag - which is also the rollback mechanism: re-run the previous tag.
+#
+# That rollback runs through a tag that has already been released, so the
+# whole path is built for it: the guard demands the tag still name the
+# commit its published Release was cut from, publishing the Release is
+# idempotent, and the probe runs on any deploy that happened - a rollback
+# that came up healthy reads green.
+#
+# Operator setup (one-time) and the semver discipline: docs/RELEASING.md.
+name: release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: verify, stamp and build everything; deploy and publish nothing."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# One release at a time, never cancelled: interrupting a deploy half-way is
+# strictly worse than letting it finish and releasing again.
+concurrency:
+  group: release
+
+jobs:
+  # Gate first: an unmerged or lightweight or misnamed tag is refused before
+  # a single test runs. The guard's own test suite runs first - a gate is
+  # only trustworthy while its proof is green.
+  guard:
+    runs-on: ubuntu-latest
+    # Every job is bounded: the concurrency group above serialises releases
+    # and never cancels, so a job that hangs holds up the next release - and
+    # the next release is also the rollback. (The verify job below cannot
+    # carry a timeout: a job that only says `uses:` takes no other keys.)
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      dry_run: ${{ steps.mode.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history, all branches and tags: the guard needs origin/main
+          # and the tag object itself.
+          fetch-depth: 0
+      - name: Prove the guard and the notes themselves
+        run: |
+          sh scripts/release_guard_test.sh
+          sh scripts/release_notes_test.sh
+      - name: Require a tag ref
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        env:
+          # Through the environment rather than interpolated into the script:
+          # a ref is data, and this workflow holds the deploy credentials.
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::the release workflow runs only from a tag ref; pick the tag under 'Use workflow from' when dispatching (got $REF)"
+          exit 1
+      # What the already-published Release for this tag says it was cut from,
+      # which is the one question the guard cannot answer from git alone. The
+      # notes generator writes that line into every Release this pipeline
+      # publishes (scripts/release_notes.sh); the guard compares it with the
+      # commit the tag points at now and refuses a tag that has moved.
+      - name: Read the commit the published Release records
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! body=$(gh release view "$GITHUB_REF_NAME" --json body --jq .body 2>/dev/null); then
+            echo "no GitHub Release exists for $GITHUB_REF_NAME yet"
+            echo "commit=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The backticks below are literal markdown from the Release body,
+          # not a command substitution - the expression must stay unexpanded.
+          # shellcheck disable=SC2016
+          commit=$(printf '%s\n' "$body" | sed -n 's/^Released from commit `\([0-9a-f]\{40\}\)`\.$/\1/p' | head -n 1)
+          echo "a GitHub Release for $GITHUB_REF_NAME exists, recording commit: ${commit:-none}"
+          echo "commit=${commit:-unknown}" >> "$GITHUB_OUTPUT"
+      - name: Guard the tag (annotated semver, merged to main, not moved)
+        env:
+          RELEASED_COMMIT: ${{ steps.published.outputs.commit }}
+        run: sh scripts/release_guard.sh "${GITHUB_REF_NAME}" origin/main "${RELEASED_COMMIT}"
+      - name: Record the version
+        id: tag
+        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+      - name: Record the mode
+        id: mode
+        run: echo "dry_run=${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+
+  # The full CI matrix on the tagged commit, by calling ci.yml rather than
+  # copying its jobs: what "verified" means is defined in exactly one place.
+  verify:
+    needs: guard
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: [guard, verify]
+    runs-on: ubuntu-latest
+    # Two container image builds, the deploy and the rollout live here.
+    timeout-minutes: 45
+    permissions:
+      # Publishing the Release writes to the repository; everything else reads.
+      contents: write
+    outputs:
+      # Set the moment wrangler returns, and read by the probe: what must be
+      # verified is a deployment that happened, whatever the steps after it
+      # did.
+      deployed: ${{ steps.deploy.outputs.deployed }}
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+      DRY_RUN: ${{ needs.guard.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history and tags: the release notes walk back to the
+          # previous semver tag.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # The stamp channel is a VERSION file in the build context (git-ignored;
+      # wrangler builds the image itself and passes no build args), read by
+      # the Dockerfile into -ldflags "-X main.version=...".
+      - name: Stamp the version into the build context
+        run: printf '%s' "$VERSION" > VERSION
+
+      # Build the api image exactly as wrangler will and make the binary say
+      # its own version: a release whose artefact cannot name its tag fails
+      # here, before anything deploys.
+      - name: Prove the stamp lands in the artefact
+        run: |
+          docker build -t apivo:release-proof .
+          got=$(docker run --rm apivo:release-proof version)
+          if [ "$got" != "apivo version $VERSION" ]; then
+            echo "::error::the built binary reports '$got', expected 'apivo version $VERSION' - the version stamp did not land"
+            exit 1
+          fi
+          echo "stamp proof: $got"
+
+      - name: Generate the release notes
+        run: |
+          sh scripts/release_notes.sh "$VERSION" > release-notes.md
+          {
+            echo "## Release notes ($VERSION)"
+            echo
+            cat release-notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Everything below is the release act itself, skipped on a dry run.
+      - name: 'Dry run: stop before deploying'
+        if: env.DRY_RUN == 'true'
+        run: |
+          # Rehearse wrangler's full config parse and Worker bundle without
+          # credentials, then say loudly that nothing shipped.
+          npx --yes wrangler@4 deploy --dry-run --containers-rollout none --var PUBLIC_APP_VERSION:"$VERSION"
+          {
+            echo "## DRY RUN - nothing was deployed"
+            echo
+            echo "Guard, CI matrix, version stamp and wrangler validation all passed for $VERSION."
+            echo "No deploy, no GitHub Release, no probe."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require the Cloudflare credentials
+        if: env.DRY_RUN != 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          missing=""
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="CLOUDFLARE_API_TOKEN"
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::cannot deploy $VERSION: repository secret(s) not set: $missing - the one-time setup lives in docs/RELEASING.md (Settings > Secrets and variables > Actions). Nothing was deployed."
+            exit 1
+          fi
+
+      - name: Deploy to Cloudflare
+        id: deploy
+        if: env.DRY_RUN != 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # --var carries the version to the web container at request time
+        # (deploy/cloudflare/worker.js forwards it; the footer renders it).
+        run: |
+          npx --yes wrangler@4 deploy --var PUBLIC_APP_VERSION:"$VERSION"
+          # Production has changed. Whatever happens below, the probe job
+          # must run and say whether what is now serving is $VERSION.
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the GitHub Release
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Idempotent, because re-releasing a tag is the documented
+          # rollback: `gh release create` answers 422 when a Release for the
+          # tag exists, which failed the run AFTER production had already
+          # been rolled back - a red run for a deploy that happened, and a
+          # skipped probe in the one situation where "did it come up?"
+          # matters most.
+          #
+          # A pre-release tag is published as a pre-release: the guard admits
+          # v0.2.0-rc.1 deliberately, and an RC published as a normal release
+          # is read as stable by everything that looks. Build metadata is
+          # stripped first, so the "-" that decides is the one before "+".
+          prerelease=false
+          case "${VERSION%%+*}" in
+          *-*) prerelease=true ;;
+          esac
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release edit "$VERSION" --title "$VERSION" --notes-file release-notes.md --prerelease="$prerelease"
+            echo "updated the existing GitHub Release for $VERSION (pre-release: $prerelease)"
+          else
+            gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file release-notes.md --prerelease="$prerelease"
+            echo "created the GitHub Release for $VERSION (pre-release: $prerelease)"
+          fi
+
+  # A release that did not come up is a failed release, reported honestly.
+  #
+  # The gate is the DEPLOY, not the release job's verdict: once production
+  # has changed it must be probed, even if publishing the Release afterwards
+  # failed. always() lets this job run over a failed `release`; `deployed` is
+  # set only by wrangler returning successfully, so a run that never reached
+  # the deploy (guard refused, CI red, dry run) still skips the probe.
+  probe:
+    needs: [guard, release]
+    if: always() && needs.release.outputs.deployed == 'true'
+    runs-on: ubuntu-latest
+    # Both paths retried for up to ~2.5 minutes each of cold start, plus room.
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+      RELEASE_HEALTH_URL: ${{ vars.RELEASE_HEALTH_URL }}
+    steps:
+      - name: Probe /healthz and /readyz
+        run: |
+          if [ -z "$RELEASE_HEALTH_URL" ]; then
+            echo "::warning::RELEASE_HEALTH_URL repository variable is not set: $VERSION was deployed but NOT probed. Nothing verified that the release actually serves. Set the variable (docs/RELEASING.md) so the next release proves itself."
+            {
+              echo "## WARNING: release $VERSION was NOT probed"
+              echo
+              echo "The RELEASE_HEALTH_URL repository variable is not set, so nothing"
+              echo "verified that the deployed release actually serves traffic."
+              echo "Set it to the deployment's base URL (docs/RELEASING.md)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          base="${RELEASE_HEALTH_URL%/}"
+          for path in /healthz /readyz; do
+            echo "probing $base$path"
+            # Retries cover the containers' cold start; after that, a refusal
+            # is a refusal: the release did not come up, so the release failed.
+            if ! curl --fail --silent --show-error --retry 10 --retry-delay 15 --retry-all-errors --max-time 20 "$base$path" > answer.json; then
+              echo "::error::release $VERSION deployed but $base$path does not answer 200: the release did not come up. Roll back by re-running this workflow from the previous tag with dry_run unchecked (docs/RELEASING.md)."
+              exit 1
+            fi
+            # A 200 only says something is serving, and the previous
+            # container answers 200 just as happily. What proves the release
+            # is the version in the payload - stamped into the binary at
+            # build time, and proven to be there before anything deployed.
+            # Anything but $VERSION means this deployment did not roll
+            # forward, whatever the status code says.
+            served=$(jq -r '.version // ""' answer.json 2>/dev/null || true)
+            if [ "$served" != "$VERSION" ]; then
+              echo "::error::release $VERSION deployed but $base$path is answered by version '${served:-none}', not $VERSION: the deployment did not roll forward and something else is still serving. Roll back by re-running this workflow from the previous tag with dry_run unchecked (docs/RELEASING.md)."
+              exit 1
+            fi
+            echo "$path answered 200 as version $served"
+          done
+          echo "release $VERSION serves: /healthz and /readyz answered 200 as $VERSION" >> "$GITHUB_STEP_SUMMARY"
