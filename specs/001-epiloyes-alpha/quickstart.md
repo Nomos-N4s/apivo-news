@@ -108,6 +108,13 @@ DATABASE_URL=... go test -run TestAlphaDefinitionOfDoneJourney -v ./cmd/apivo/
 TZ=Europe/Athens DATABASE_URL=... go test -run TestAlphaDefinitionOfDoneJourney -count=1 -v ./cmd/apivo/
 ```
 
+The `TZ=` form works on Linux and macOS only — on Windows, Go reads the
+zone from the registry and silently ignores `TZ`, so that command proves
+nothing there (a Windows machine in a non-UTC zone already exercises the
+same assertions through its own clock). The gate that cannot be skipped
+is CI's "journey under a non-UTC clock" step, which runs the journey
+under `TZ=Europe/Athens` on every build.
+
 If this test is green, the alpha's definition of done holds on that
 database. If it is red, something in section 10 does not - stop shipping.
 

@@ -102,6 +102,15 @@ jobs:
       # once more verbosely so every CI run records what the audit costs.
       - name: I-5 drill timings (verbose, for the record)
         run: go test -v -run TestProvenanceI5DrillAgainstSchema ./internal/editorial/
+      # The journey's Z-suffix assertions guard every wire and audit-payload
+      # timestamp render. They can only fail on a non-UTC host, and the
+      # runners are UTC - so without this leg a dropped .UTC() ships green.
+      # Linux honours TZ; Windows does not, which is why the gate lives here
+      # rather than in the quickstart's local instructions.
+      - name: journey under a non-UTC clock
+        run: go test -count=1 -run TestAlphaDefinitionOfDoneJourney ./cmd/apivo/
+        env:
+          TZ: Europe/Athens
       - name: Coverage gate (90%)
         run: sh scripts/coverage_gate.sh 90 coverage.out
 
