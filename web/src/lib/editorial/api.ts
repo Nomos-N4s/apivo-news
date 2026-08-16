@@ -723,8 +723,19 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
           response.status,
         );
       }
+      // The 201 names the new source under `id` (contract; the Go handler's
+      // sourceResponse), so the outcome reads that field rather than
+      // spreading the body and hoping one called `source_id` appears —
+      // which never does, leaving every real success with a blank id.
       const body: unknown = await response.json();
-      return { recorded: true, ...(body as Record<string, unknown>) } as SourceOutcome;
+      const id = (body as Record<string, unknown> | null)?.['id'];
+      // A 201 is a written record even when the body withholds the id, so
+      // the outcome stays recorded and the screen omits what it was not
+      // told. Denying a source that exists would be the honest-record
+      // failure in the other direction.
+      return typeof id === 'string' && id !== ''
+        ? { recorded: true, source_id: id }
+        : { recorded: true };
     },
   };
 }

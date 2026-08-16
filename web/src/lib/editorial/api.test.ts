@@ -593,8 +593,36 @@ describe('sources', () => {
     expect(outcome.reason).toContain('no source was configured');
   });
 
+  it('reads the id the 201 actually carries', async () => {
+    const { fetchImpl } = respondingWith(
+      jsonResponse({ id: 's1', name: 'X', usage_rule: 'extract_and_link' }, 201),
+    );
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).addSource({
+      name: 'X',
+      url: 'https://x.example/rss',
+      language: 'de',
+      jurisdiction: 'DE',
+      licence_terms: 'terms',
+    });
+    expect(outcome).toEqual({ recorded: true, source_id: 's1' });
+  });
+
+  it('a 201 that withholds the id is still a written record', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ name: 'X' }, 201));
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).addSource({
+      name: 'X',
+      url: 'https://x.example/rss',
+      language: 'de',
+      jurisdiction: 'DE',
+      licence_terms: 'terms',
+    });
+    // Denying a source the API created would be the honest-record failure
+    // in the other direction; the id is simply absent.
+    expect(outcome).toEqual({ recorded: true });
+  });
+
   it('never sends a usage rule — the contract does not accept one', async () => {
-    const { calls, fetchImpl } = respondingWith(jsonResponse({ source_id: 's1' }, 201));
+    const { calls, fetchImpl } = respondingWith(jsonResponse({ id: 's1' }, 201));
     await createEditorialApi('http://api:8080', 'jwt', fetchImpl).addSource({
       name: 'X',
       url: 'https://x.example/rss',
