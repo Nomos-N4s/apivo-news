@@ -65,6 +65,8 @@ type Source struct {
 // failure paths no real database produces on demand.
 type Store interface {
 	CreateSource(ctx context.Context, src NewSource) (Source, error)
+	ListSources(ctx context.Context, q SourcesQuery) (SourcesPage, error)
+	LastPollCycle(ctx context.Context) (PollCycle, error)
 	ReviewQueue(ctx context.Context, q QueueQuery) (QueuePage, error)
 	Approve(ctx context.Context, a NewApproval) (Article, error)
 	Publish(ctx context.Context, articleID, editorID uuid.UUID) (Article, error)

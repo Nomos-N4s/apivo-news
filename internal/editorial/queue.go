@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Nomos-N4s/apivo-news/internal/editorial/store"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/text"
 )
 
 // QueueCursor is a position in the review queue: the (retrieved_at, row_id)
@@ -73,6 +74,35 @@ type QueueItem struct {
 	RetrievedAt time.Time
 	// LicenceSnapshot is the licence terms that applied at retrieval (I-4).
 	LicenceSnapshot string
+	// SourceURL is the original article at the publisher - the link the
+	// editor opens to check the evidence.
+	SourceURL string
+	// OriginalAuthor is the author as the feed named them, nil when it did
+	// not (FR-002: absent stays absent, never invented).
+	OriginalAuthor *string
+	// OriginalPublishedAt is the publication date the feed declared, nil
+	// when it declared none. It is the load-bearing field of the evidence
+	// block: the attribution that article_guard freezes at approval states
+	// this date, and a fallback to RetrievedAt would state a different one.
+	OriginalPublishedAt *time.Time
+	// ContentHash is the database-computed fingerprint of the retrieved
+	// body (I-3): the evidence's own identity.
+	ContentHash string
+	// ExtractOriginal is the retrieved original as bounded prose: derived
+	// from raw_body with the shared D9 reducer, never more than
+	// text.MaxExtractRunes runes - the evidence blob crosses the database
+	// hop for one page of rows but never unbounded on the wire.
+	ExtractOriginal string
+	// SourceLang is the source's language; TargetLang the translation's
+	// target locale, nil for an untranslated origin.
+	SourceLang string
+	TargetLang *string
+	// Model, PromptVersion and CostMicroUSD are the translation lineage
+	// (FR-005) and its recorded cost (FR-006), nil together for an
+	// untranslated origin.
+	Model         *string
+	PromptVersion *string
+	CostMicroUSD  *int64
 	// Withdrawals is this origin's withdrawal history, newest first, empty
 	// for an origin that has never been published.
 	Withdrawals []Withdrawal
@@ -146,6 +176,17 @@ func (s *PGStore) ReviewQueue(ctx context.Context, q QueueQuery) (QueuePage, err
 			ExtractTranslated:  textPtr(row.TranslationExtract),
 			RetrievedAt:        row.RetrievedAt.Time,
 			LicenceSnapshot:    row.LicenceSnapshot,
+			SourceURL:          row.SourceUrl,
+			OriginalAuthor:     textPtr(row.OriginalAuthor),
+			ContentHash:        row.ContentHash,
+			// The reduction happens here, at the hop between database and
+			// wire: raw_body is unbounded evidence, and the shared D9
+			// reducer is what makes what leaves this method bounded prose.
+			ExtractOriginal: text.DeriveExtract(row.RawBody),
+			SourceLang:      row.SourceLang,
+			TargetLang:      textPtr(row.TargetLang),
+			Model:           textPtr(row.Model),
+			PromptVersion:   textPtr(row.PromptVersion),
 			Cursor: QueueCursor{
 				RetrievedAt: row.RetrievedAt.Time,
 				RowID:       uuid.UUID(row.RowID.Bytes),
@@ -154,6 +195,14 @@ func (s *PGStore) ReviewQueue(ctx context.Context, q QueueQuery) (QueuePage, err
 		if row.TranslationID.Valid {
 			id := uuid.UUID(row.TranslationID.Bytes)
 			item.TranslationID = &id
+		}
+		if row.OriginalPublishedAt.Valid {
+			at := row.OriginalPublishedAt.Time
+			item.OriginalPublishedAt = &at
+		}
+		if row.CostMicrousd.Valid {
+			cost := row.CostMicrousd.Int64
+			item.CostMicroUSD = &cost
 		}
 		page.Items = append(page.Items, item)
 	}

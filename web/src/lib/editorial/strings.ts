@@ -60,6 +60,13 @@ export interface EditorialStrings {
   readonly extractOnlyNote: string;
   readonly licenceAtRetrieval: string;
   /**
+   * The visible stand-in when the feed declared no publication date. The
+   * attribution is frozen at approval, so an absent date must be SAID
+   * rather than papered over with the retrieval date — a different claim,
+   * and one that would be frozen in permanently (#87).
+   */
+  readonly publicationDateNotSupplied: string;
+  /**
    * The place checkbox group's heading. The front page is scoped by place
    * (FR-009), so where an article publishes to is part of the approval —
    * an article tagged to no place could never appear anywhere.
@@ -72,6 +79,16 @@ export interface EditorialStrings {
   readonly reject: string;
   readonly skip: string;
   readonly rejectNote: string;
+  /**
+   * The queue row lacks the evidence block (#87) — an API predating it —
+   * so the approve button is disabled: a permanent approval is not given
+   * over placeholder dashes.
+   */
+  readonly evidenceIncomplete: string;
+  /** The tag on a re-queued origin whose earlier publication was withdrawn. */
+  readonly correctionTag: string;
+  /** The review-pane note explaining what the correction tag means. */
+  readonly correctionBody: string;
   /**
    * Signed in, yet the editorial API refuses every call: the quickstart's
    * documented first-run state, where no `account` row has been
@@ -133,6 +150,12 @@ export interface EditorialStrings {
   readonly usageRuleNotAnInput: string;
   readonly addSourceAndPoll: string;
   readonly sourcesEmpty: string;
+  /**
+   * The page bound was reached with more pages on offer: the table and
+   * the summary count cover what was fetched, not the whole registry,
+   * and the screen must say so rather than truncate silently.
+   */
+  readonly sourcesTruncated: string;
   /** Success confirmation; a 201 carries an id, not prose. */
   readonly sourceAdded: (id: string) => string;
 }
@@ -179,6 +202,7 @@ const EL: EditorialStrings = {
   extractOnlyNote:
     'Μόνο τίτλος και απόσπασμα — πλήρης μετάφραση δεν επιτρέπεται για αυτή την πηγή.',
   licenceAtRetrieval: 'Άδεια κατά την ανάκτηση',
+  publicationDateNotSupplied: 'η ροή δεν δήλωσε ημερομηνία δημοσίευσης',
   publishTo: 'Δημοσίευση σε',
   atLeastOnePlace:
     'Επιλέξτε τουλάχιστον έναν τόπο: η πρώτη σελίδα φιλτράρεται ανά τόπο, οπότε ένα άρθρο χωρίς τόπο δεν θα εμφανιζόταν πουθενά. Τίποτα δεν καταγράφηκε.',
@@ -189,6 +213,11 @@ const EL: EditorialStrings = {
   skip: 'Παράλειψη',
   rejectNote:
     'Η απόρριψη δεν δημιουργεί άρθρο. Το ανακτημένο στοιχείο παραμένει ως τεκμήριο και στις δύο περιπτώσεις.',
+  evidenceIncomplete:
+    'Η έγκριση απενεργοποιήθηκε: η εγγραφή δεν φέρει τα πλήρη αποδεικτικά στοιχεία (πρωτότυπο κείμενο, σύνδεσμο, αποτύπωμα, προέλευση μετάφρασης). Μια μόνιμη έγκριση δεν δίνεται πάνω σε κενά.',
+  correctionTag: 'Διόρθωση',
+  correctionBody:
+    'Η προηγούμενη δημοσίευση αυτής της προέλευσης αποσύρθηκε· ελέγχεται ως διόρθωση, όχι ως πρώτη έγκριση.',
   notProvisionedTitle: 'Ο λογαριασμός σας δεν έχει καταχωριστεί ως συντάκτης',
   notProvisionedBody:
     'Η σύνδεση έγινε, αλλά το συντακτικό API απορρίπτει κάθε κλήση: δεν υπάρχει εγγραφή account για τον λογαριασμό σας στη βάση δεδομένων του API. Χρειάζεται το βήμα «Provision an editor» του quickstart (specs/001-epiloyes-alpha/quickstart.md) — μία εγγραφή account με το Supabase user id σας και ρόλο editor, στη βάση όπου δείχνει το DATABASE_URL.',
@@ -249,6 +278,8 @@ const EL: EditorialStrings = {
     'Ο κανόνας δεν είναι πεδίο της φόρμας: κάθε νέα πηγή είναι extract_and_link και η αναβάθμιση είναι ξεχωριστή διαδικασία με έγκριση ιδρυτή.',
   addSourceAndPoll: 'Προσθήκη πηγής και έναρξη λήψης',
   sourcesEmpty: 'Δεν έχει ρυθμιστεί καμία πηγή ακόμη.',
+  sourcesTruncated:
+    'Υπάρχουν κι άλλες πηγές που δεν εμφανίζονται εδώ· ο πίνακας και τα σύνολα καλύπτουν όσες φορτώθηκαν.',
   sourceAdded: (id) => `Η πηγή ρυθμίστηκε (${id}) και η λήψη ξεκίνησε.`,
 };
 
@@ -294,6 +325,7 @@ const DE: EditorialStrings = {
   extractOnlyNote:
     'Nur Überschrift und Auszug — eine Volltextübersetzung ist für diese Quelle nicht zulässig.',
   licenceAtRetrieval: 'Lizenz beim Abruf',
+  publicationDateNotSupplied: 'der Feed hat kein Veröffentlichungsdatum angegeben',
   publishTo: 'Veröffentlichen in',
   atLeastOnePlace:
     'Wählen Sie mindestens einen Ort: die Titelseite ist nach Ort gefiltert, ein Artikel ohne Ort erschiene also nirgends. Es wurde nichts verzeichnet.',
@@ -304,6 +336,11 @@ const DE: EditorialStrings = {
   skip: 'Überspringen',
   rejectNote:
     'Eine Ablehnung erzeugt keinen Artikel. Der abgerufene Beitrag bleibt in beiden Fällen als Nachweis erhalten.',
+  evidenceIncomplete:
+    'Freigabe deaktiviert: dieser Eintrag trägt nicht die vollständige Beleglage (Originaltext, Link, Fingerabdruck, Übersetzungsherkunft). Eine dauerhafte Freigabe wird nicht über Lücken erteilt.',
+  correctionTag: 'Korrektur',
+  correctionBody:
+    'Die frühere Veröffentlichung dieses Ursprungs wurde zurückgezogen; die Prüfung gilt einer Korrektur, nicht einer Erstfreigabe.',
   notProvisionedTitle: 'Ihr Konto ist nicht als Redaktion eingerichtet',
   notProvisionedBody:
     'Die Anmeldung war erfolgreich, aber das redaktionelle API weist jeden Aufruf zurück: für Ihr Konto gibt es keine account-Zeile in der Datenbank des API. Es fehlt der Schritt „Provision an editor“ aus dem Quickstart (specs/001-epiloyes-alpha/quickstart.md) — eine account-Zeile mit Ihrer Supabase-Benutzer-ID und der Rolle editor, in der Datenbank, auf die DATABASE_URL zeigt.',
@@ -364,6 +401,8 @@ const DE: EditorialStrings = {
     'Die Regel ist kein Formularfeld: jede neue Quelle ist extract_and_link, und eine Heraufstufung ist ein eigener, von der Gründung freigegebener Vorgang.',
   addSourceAndPoll: 'Quelle hinzufügen und Abruf starten',
   sourcesEmpty: 'Noch keine Quelle eingerichtet.',
+  sourcesTruncated:
+    'Es gibt weitere Quellen, die hier nicht angezeigt werden; Tabelle und Summen decken nur die geladenen ab.',
   sourceAdded: (id) => `Quelle eingerichtet (${id}); der Abruf läuft.`,
 };
 

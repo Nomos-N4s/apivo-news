@@ -27,6 +27,14 @@ type provenanceStore struct {
 	gotArticleID uuid.UUID
 }
 
+func (s *provenanceStore) ListSources(context.Context, editorial.SourcesQuery) (editorial.SourcesPage, error) {
+	return editorial.SourcesPage{}, errUnexpectedCall
+}
+
+func (s *provenanceStore) LastPollCycle(context.Context) (editorial.PollCycle, error) {
+	return editorial.PollCycle{}, errUnexpectedCall
+}
+
 func (s *provenanceStore) CreateSource(context.Context, editorial.NewSource) (editorial.Source, error) {
 	return editorial.Source{}, errUnexpectedCall
 }

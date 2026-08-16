@@ -108,7 +108,7 @@ export const SOURCE_FIXTURES: readonly SourceRow[] = [
   {
     id: '11111111-1111-4111-8111-111111111111',
     name: 'Münchner Tagblatt',
-    feed_path: '/rss/muenchen',
+    url: 'https://tagblatt-muenchen.example/rss/muenchen',
     language: 'de',
     jurisdiction: 'DE',
     usage_rule: 'extract_and_link',
@@ -119,7 +119,7 @@ export const SOURCE_FIXTURES: readonly SourceRow[] = [
   {
     id: '22222222-2222-4222-8222-222222222222',
     name: 'Isar Kurier',
-    feed_path: '/rss/lokales',
+    url: 'https://isarkurier.example/rss/lokales',
     language: 'de',
     jurisdiction: 'DE',
     usage_rule: 'extract_and_link',
@@ -130,7 +130,7 @@ export const SOURCE_FIXTURES: readonly SourceRow[] = [
   {
     id: '33333333-3333-4333-8333-333333333333',
     name: 'Bayerischer Rundblick',
-    feed_path: '/nachrichten/bayern.xml',
+    url: 'https://rundblick-bayern.example/nachrichten/bayern.xml',
     language: 'de',
     jurisdiction: 'DE',
     usage_rule: 'extract_and_link',
@@ -141,7 +141,7 @@ export const SOURCE_FIXTURES: readonly SourceRow[] = [
   {
     id: '44444444-4444-4444-8444-444444444444',
     name: 'Πρωινός Τύπος',
-    feed_path: '/rss/politics',
+    url: 'https://proinostypos.example/rss/politics',
     language: 'el',
     jurisdiction: 'GR',
     usage_rule: 'extract_and_link',
@@ -152,7 +152,7 @@ export const SOURCE_FIXTURES: readonly SourceRow[] = [
   {
     id: '55555555-5555-4555-8555-555555555555',
     name: 'Αιγαίο Νέα',
-    feed_path: '/feed/general',
+    url: 'https://aigaionea.example/feed/general',
     language: 'el',
     jurisdiction: 'GR',
     usage_rule: 'extract_and_link',

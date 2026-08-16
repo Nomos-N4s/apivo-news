@@ -39,6 +39,9 @@ type Handler struct {
 	log   *slog.Logger
 	store Store
 	auth  EditorAuthenticator
+	// allow is the 405 classifier, derived from routes() in NewHandler so
+	// it cannot drift from what is actually registered.
+	allow allowTable
 }
 
 // NewHandler builds the editorial route table as an http.Handler for the
@@ -47,10 +50,18 @@ type Handler struct {
 // added unauthenticated by omission.
 func NewHandler(log *slog.Logger, store Store, auth EditorAuthenticator) http.Handler {
 	h := &Handler{log: log, store: store, auth: auth}
+	h.allow = buildAllowTable(h.routes())
 	mux := http.NewServeMux()
 	for pattern, handler := range h.routes() {
 		mux.HandleFunc(pattern, handler)
 	}
+	// Every error under this prefix is problem+json, including the ones
+	// nobody wrote a handler for - mirroring the content module, which owns
+	// the same convention for the rest of /api/v1. Without this catch-all
+	// the ServeMux answers an unknown path or a wrong method with a
+	// text/plain body, which was the one corner where the API's single
+	// error convention did not hold.
+	mux.HandleFunc("/api/v1/editorial/", h.handleUnrouted)
 	return h.requireEditor(mux)
 }
 
@@ -66,15 +77,112 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"POST /api/v1/editorial/articles/{id}/withdrawal":  h.withdrawArticle,
 		"GET /api/v1/editorial/articles/{id}/provenance":   h.articleProvenance,
 		"POST /api/v1/editorial/sources":                   h.createSource,
+		"GET /api/v1/editorial/sources":                    h.listSources,
 	}
 }
 
 // Patterns lists this module's ServeMux patterns ("METHOD /path"), sorted.
 // Every one of them sits under the prefix the composition root mounts, and
-// behind the requireEditor gate.
+// behind the requireEditor gate. The catch-all is deliberately absent: it
+// is the error convention for paths nobody serves, not an endpoint a
+// client can call.
 func Patterns() []string {
 	var h Handler
 	return slices.Sorted(maps.Keys(h.routes()))
+}
+
+// handleUnrouted answers anything under the editorial prefix that no route
+// claimed - still behind the auth gate, so an unauthenticated probe of an
+// unknown path answers 401 before this runs. A known path reached with the
+// wrong method is 405 (with Allow, as HTTP requires); anything else is 404.
+func (h *Handler) handleUnrouted(w http.ResponseWriter, r *http.Request) {
+	if allow := h.allow.methodsFor(r.URL.Path); allow != "" {
+		w.Header().Set("Allow", allow)
+		platformhttp.Problem(w, http.StatusMethodNotAllowed,
+			r.Method+" is not allowed on this endpoint; use "+allow)
+		return
+	}
+	platformhttp.Problem(w, http.StatusNotFound, "no such endpoint")
+}
+
+// allowTable answers what methods a known editorial path accepts - the
+// test for "wrong method" rather than "wrong address". It is derived from
+// routes() itself in NewHandler, never written by hand, so a route added
+// there is classified here by construction: drift between the mux and the
+// 405 classifier is unrepresentable rather than merely tested for.
+type allowTable []allowEntry
+
+// allowEntry is one registered path pattern, pre-split into segments (a
+// "{name}" segment matches any single non-empty path segment) beside the
+// Allow header its methods render to.
+type allowEntry struct {
+	segments []string
+	methods  string
+}
+
+// buildAllowTable groups the route table's "METHOD /path" keys by path and
+// renders each path's Allow header. GET implies HEAD, exactly as ServeMux
+// serves every "GET /path" pattern for HEAD requests too.
+func buildAllowTable(routes map[string]http.HandlerFunc) allowTable {
+	byPath := make(map[string][]string, len(routes))
+	for pattern := range routes {
+		method, path, ok := strings.Cut(pattern, " ")
+		if !ok {
+			// routes() keys are always "METHOD /path"; a bare path would
+			// register for every method and never reach the catch-all.
+			continue
+		}
+		byPath[path] = append(byPath[path], method)
+		if method == http.MethodGet {
+			byPath[path] = append(byPath[path], http.MethodHead)
+		}
+	}
+	table := make(allowTable, 0, len(byPath))
+	for path, methods := range byPath {
+		slices.Sort(methods)
+		table = append(table, allowEntry{
+			segments: strings.Split(path, "/"),
+			methods:  strings.Join(slices.Compact(methods), ", "),
+		})
+	}
+	return table
+}
+
+// methodsFor reports the Allow header for a path some registered pattern
+// matches, or "" for a path this module does not serve.
+func (t allowTable) methodsFor(path string) string {
+	segments := strings.Split(path, "/")
+	for _, entry := range t {
+		if matchesPattern(entry.segments, segments) {
+			return entry.methods
+		}
+	}
+	return ""
+}
+
+// matchesPattern reports whether a request path's segments satisfy a
+// registered pattern's, segment by segment: a "{name}" wildcard takes any
+// single non-empty segment, everything else matches literally. This mirrors
+// how ServeMux itself reads the pattern, minus the corners the catch-all
+// never sees (ServeMux canonicalises doubled slashes and dots away with a
+// redirect before any handler runs).
+func matchesPattern(pattern, path []string) bool {
+	if len(pattern) != len(path) {
+		return false
+	}
+	for i, want := range pattern {
+		wildcard := strings.HasPrefix(want, "{") && strings.HasSuffix(want, "}")
+		if wildcard {
+			if path[i] == "" {
+				return false
+			}
+			continue
+		}
+		if want != path[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // approvalRequest is the approval payload: exactly one origin, the
@@ -512,6 +620,12 @@ type queueResponse struct {
 
 // queueItemResponse is one origin awaiting a decision. translation_id and
 // the translated columns are null together, for an untranslated origin.
+//
+// The second block is the evidence the approval rests on (#87): the
+// approval is permanent and article_guard freezes the attribution at the
+// click, so the original text, its author and declared publication date,
+// the content fingerprint and the translation lineage with its cost have
+// to be on the screen before the click, not discoverable after it.
 type queueItemResponse struct {
 	SourceItemID       string  `json:"source_item_id"`
 	TranslationID      *string `json:"translation_id"`
@@ -521,6 +635,31 @@ type queueItemResponse struct {
 	ExtractTranslated  *string `json:"extract_translated"`
 	RetrievedAt        string  `json:"retrieved_at"`
 	LicenceSnapshot    string  `json:"licence_snapshot"`
+	// SourceURL is the original article at the publisher.
+	SourceURL string `json:"source_url"`
+	// OriginalAuthor is null when the feed named none - absent stays
+	// absent, never invented (FR-002).
+	OriginalAuthor *string `json:"original_author"`
+	// OriginalPublishedAt is the publication date the feed declared, null
+	// when it declared none. The attribution default MUST come from this
+	// field: falling back to retrieved_at would freeze the retrieval date
+	// into the attribution as the publication date, permanently.
+	OriginalPublishedAt *string `json:"original_published_at"`
+	// ContentHash is the database-computed fingerprint of the evidence.
+	ContentHash string `json:"content_hash"`
+	// ExtractOriginal is the retrieved original reduced to bounded prose
+	// (D9, at most 300 runes): evidence beside the translation, never the
+	// unbounded raw body.
+	ExtractOriginal string `json:"extract_original"`
+	// SourceLang and TargetLang are the two ends of the translation;
+	// target_lang is null for an untranslated origin.
+	SourceLang string  `json:"source_lang"`
+	TargetLang *string `json:"target_lang"`
+	// Model, PromptVersion and CostMicroUSD are the lineage (FR-005) and
+	// recorded cost (FR-006), null together for an untranslated origin.
+	Model         *string `json:"model"`
+	PromptVersion *string `json:"prompt_version"`
+	CostMicroUSD  *int64  `json:"cost_microusd"`
 	// CorrectionCandidate marks an origin whose only articles were
 	// withdrawn: it is back in the queue on purpose, and the editor is
 	// looking at a correction rather than a first approval.
@@ -557,13 +696,18 @@ func (h *Handler) reviewQueue(w http.ResponseWriter, r *http.Request) {
 		body.Items = append(body.Items, queueItem(item))
 	}
 	if page.NextCursor != nil {
-		next := encodeCursor(*page.NextCursor)
+		next := encodeCursor(queueCursors, page.NextCursor.RetrievedAt, page.NextCursor.RowID)
 		body.NextCursor = &next
 	}
 	h.writeJSON(w, r, http.StatusOK, body)
 }
 
-// queueItem renders one queue row for the wire.
+// queueItem renders one queue row for the wire. Every timestamp is
+// normalised to UTC before formatting: pgx decodes timestamptz into the
+// PROCESS's local zone, so without .UTC() a non-UTC host would render
+// `2026-08-13T07:58:00+02:00` where the contract's every other timestamp
+// reads Z - and original_published_at is the date the attribution freezes
+// forever, which does not get to depend on where the server stood.
 func queueItem(item QueueItem) queueItemResponse {
 	out := queueItemResponse{
 		SourceItemID:        item.SourceItemID.String(),
@@ -571,8 +715,17 @@ func queueItem(item QueueItem) queueItemResponse {
 		HeadlineOriginal:    item.HeadlineOriginal,
 		HeadlineTranslated:  item.HeadlineTranslated,
 		ExtractTranslated:   item.ExtractTranslated,
-		RetrievedAt:         item.RetrievedAt.Format(timeFormat),
+		RetrievedAt:         item.RetrievedAt.UTC().Format(timeFormat),
 		LicenceSnapshot:     item.LicenceSnapshot,
+		SourceURL:           item.SourceURL,
+		OriginalAuthor:      item.OriginalAuthor,
+		ContentHash:         item.ContentHash,
+		ExtractOriginal:     item.ExtractOriginal,
+		SourceLang:          item.SourceLang,
+		TargetLang:          item.TargetLang,
+		Model:               item.Model,
+		PromptVersion:       item.PromptVersion,
+		CostMicroUSD:        item.CostMicroUSD,
 		CorrectionCandidate: item.CorrectionCandidate(),
 		Withdrawals:         make([]withdrawalResponse, 0, len(item.Withdrawals)),
 	}
@@ -580,10 +733,14 @@ func queueItem(item QueueItem) queueItemResponse {
 		id := item.TranslationID.String()
 		out.TranslationID = &id
 	}
+	if item.OriginalPublishedAt != nil {
+		published := item.OriginalPublishedAt.UTC().Format(timeFormat)
+		out.OriginalPublishedAt = &published
+	}
 	for _, wd := range item.Withdrawals {
 		out.Withdrawals = append(out.Withdrawals, withdrawalResponse{
 			ArticleID:   wd.ArticleID.String(),
-			WithdrawnAt: wd.WithdrawnAt.Format(timeFormat),
+			WithdrawnAt: wd.WithdrawnAt.UTC().Format(timeFormat),
 			WithdrawnBy: wd.WithdrawnBy.String(),
 			Reason:      wd.Reason,
 		})
@@ -636,11 +793,11 @@ func parseQueueQuery(values url.Values) (query QueueQuery, detail string, ok boo
 	}
 
 	if values.Has("cursor") {
-		cursor, err := decodeCursor(values.Get("cursor"))
+		at, rowID, err := decodeCursor(queueCursors, values.Get("cursor"))
 		if err != nil {
 			return QueueQuery{}, "cursor is not one this endpoint issued; pass back the next_cursor from the previous page", false
 		}
-		query.Cursor = &cursor
+		query.Cursor = &QueueCursor{RetrievedAt: at, RowID: rowID}
 	}
 	return query, "", true
 }
@@ -716,6 +873,158 @@ func (h *Handler) createSource(w http.ResponseWriter, r *http.Request) {
 		UsageRule:    created.UsageRule,
 		CreatedAt:    created.CreatedAt.Format(timeFormat),
 	})
+}
+
+// listedSourceResponse is one registered source on the wire. The licensing
+// fields are the CURRENT row and the payload says so in the contract: the
+// legal basis of anything already retrieved is the snapshot on source_item
+// (I-4), served by the provenance endpoint, never by this list.
+//
+// permission_evidence is served deliberately: the screen exists to make the
+// licensing basis visible, this whole route sits behind the editor gate,
+// and the field is what separates a lawful full_text source from an
+// impossible one (#70 named it as part of the read). A founder call,
+// reversible in one line.
+type listedSourceResponse struct {
+	ID                 string  `json:"id"`
+	Name               string  `json:"name"`
+	URL                string  `json:"url"`
+	Language           string  `json:"language"`
+	Jurisdiction       string  `json:"jurisdiction"`
+	LicenceTerms       string  `json:"licence_terms"`
+	UsageRule          string  `json:"usage_rule"`
+	PermissionEvidence *string `json:"permission_evidence"`
+	Active             bool    `json:"active"`
+	// LastPolledAt is null for a feed the poll loop has never attempted.
+	LastPolledAt *string `json:"last_polled_at"`
+	CreatedAt    string  `json:"created_at"`
+}
+
+// pollCycleResponse is the last poll cycle: sums of the active sources'
+// last-poll counters, and the failed feeds by name. duplicates_skipped is
+// the FR-014 fingerprint at work.
+type pollCycleResponse struct {
+	Retrieved         int64    `json:"retrieved"`
+	DuplicatesSkipped int64    `json:"duplicates_skipped"`
+	Failures          []string `json:"failures"`
+}
+
+// sourcesListResponse is one page of the source list, plus the cycle the
+// screen renders beside it.
+type sourcesListResponse struct {
+	Items []listedSourceResponse `json:"items"`
+	// NextCursor is null on the last page, like every list here.
+	NextCursor *string           `json:"next_cursor"`
+	Cycle      pollCycleResponse `json:"cycle"`
+}
+
+// listSources implements GET /api/v1/editorial/sources.
+func (h *Handler) listSources(w http.ResponseWriter, r *http.Request) {
+	query, detail, ok := parseSourcesQuery(r.URL.Query())
+	if !ok {
+		platformhttp.Problem(w, http.StatusBadRequest, detail)
+		return
+	}
+
+	page, err := h.store.ListSources(r.Context(), query)
+	if err != nil {
+		h.internalError(w, r, "listing sources", err)
+		return
+	}
+	cycle, err := h.store.LastPollCycle(r.Context())
+	if err != nil {
+		h.internalError(w, r, "reading last poll cycle", err)
+		return
+	}
+
+	body := sourcesListResponse{
+		Items: make([]listedSourceResponse, 0, len(page.Items)),
+		Cycle: pollCycleResponse{
+			Retrieved:         cycle.Retrieved,
+			DuplicatesSkipped: cycle.Duplicates,
+			// Empty renders as [], never null: "no failures" is a reading.
+			Failures: cycle.Failures,
+		},
+	}
+	for _, item := range page.Items {
+		body.Items = append(body.Items, listedSource(item))
+	}
+	if page.NextCursor != nil {
+		next := encodeCursor(sourcesCursors, page.NextCursor.CreatedAt, page.NextCursor.ID)
+		body.NextCursor = &next
+	}
+	h.writeJSON(w, r, http.StatusOK, body)
+}
+
+// listedSource renders one source row for the wire.
+func listedSource(item ListedSource) listedSourceResponse {
+	out := listedSourceResponse{
+		ID:                 item.ID.String(),
+		Name:               item.Name,
+		URL:                item.URL,
+		Language:           item.Language,
+		Jurisdiction:       item.Jurisdiction,
+		LicenceTerms:       item.LicenceTerms,
+		UsageRule:          item.UsageRule,
+		PermissionEvidence: item.PermissionEvidence,
+		Active:             item.Active,
+		CreatedAt:          item.CreatedAt.Format(timeFormat),
+	}
+	if item.LastPolledAt != nil {
+		polled := item.LastPolledAt.Format(timeFormat)
+		out.LastPolledAt = &polled
+	}
+	return out
+}
+
+// parseSourcesQuery validates the query string and builds the store query,
+// reporting the 400 detail when it cannot. Unknown and repeated parameters
+// are rejected for parseQueueQuery's reasons: a misspelled or contradictory
+// filter silently half-honoured would read as acceptance.
+func parseSourcesQuery(values url.Values) (query SourcesQuery, detail string, ok bool) {
+	for name, supplied := range values {
+		switch name {
+		case "active", "limit", "cursor":
+			if len(supplied) > 1 {
+				return SourcesQuery{}, "query parameter " + strconv.Quote(name) + " was supplied " + strconv.Itoa(len(supplied)) + " times; supply it at most once", false
+			}
+		default:
+			return SourcesQuery{}, "unknown query parameter " + strconv.Quote(name) + "; this endpoint accepts active, limit and cursor", false
+		}
+	}
+
+	query.Limit = defaultQueueLimit
+	if values.Has("limit") {
+		limit, err := strconv.ParseInt(values.Get("limit"), 10, 32)
+		if err != nil || limit < 1 || limit > maxQueueLimit {
+			return SourcesQuery{}, "limit must be a whole number between 1 and " + strconv.Itoa(maxQueueLimit), false
+		}
+		query.Limit = int32(limit)
+	}
+
+	// Exactly the JSON booleans, not ParseBool's zoo of aliases: `active=1`
+	// accepted here would be a second spelling the contract never made.
+	if values.Has("active") {
+		switch values.Get("active") {
+		case "true":
+			active := true
+			query.Active = &active
+		case "false":
+			active := false
+			query.Active = &active
+		default:
+			return SourcesQuery{}, "active must be true or false", false
+		}
+	}
+
+	if values.Has("cursor") {
+		at, rowID, err := decodeCursor(sourcesCursors, values.Get("cursor"))
+		if err != nil {
+			return SourcesQuery{}, "cursor is not one this endpoint issued; pass back the next_cursor from the previous page", false
+		}
+		query.Cursor = &SourceCursor{CreatedAt: at, ID: rowID}
+	}
+	return query, "", true
 }
 
 // validateNewSource checks a registration for blank fields and a usable

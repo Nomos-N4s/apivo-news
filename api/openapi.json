@@ -4,7 +4,7 @@
     "title": "epiloYES internal HTTP API",
     "version": "1.0.0-alpha",
     "summary": "Public reader endpoints, editorial writes behind a bearer JWT, and the operational probes served by the Go binary.",
-    "description": "Machine-readable description of what the Go binary actually serves. It is written from the handlers, not from prose: where this document and `specs/001-epiloyes-alpha/contracts/http-api.md` disagree, the handlers won and this document follows them.\n\n**Topology.** The API is not publicly routable. In every deployment (compose, Cloudflare, Kubernetes) it listens on an internal network and the Astro server is the only public HTTP surface. As defence in depth every response - this document included - carries `X-Robots-Tag: noindex, nofollow`.\n\n**Errors.** Every handler-produced error is an RFC 9457 `application/problem+json` body: `type` (always `about:blank`), `title` (the plain rendering of the status code), `status`, and `detail` (omitted when empty). See the `Problem` schema.\n\n**Pagination.** Lists take `limit` (default 20) and `cursor` (opaque, keyset) and answer `{ items, next_cursor }`, where `next_cursor` is `null` on the last page. A `limit` outside 1-100 is rejected with 400 rather than clamped; a malformed or oversized `cursor` is rejected with 400.\n\n**Auth.** Only the editorial endpoints require authentication: `Authorization: Bearer <JWT>`, verified against the configured JWKS, and the subject's account must hold the editor role. The database enforces the same rule again on write. When `JWKS_URL` is unset the whole `/api/v1/editorial/` prefix is left unmounted deliberately, and those paths answer 404 instead of authenticating nobody.\n\n**Unrouted paths under `/api/v1/`.** The content module owns a catch-all across the whole namespace: a known reader path reached with the wrong method answers 405 with an `Allow` header, and anything else under `/api/v1/` answers 404, both in problem+json. Outside its reach - the editorial prefix - an unrouted path or a wrong method is answered by the router itself with a `text/plain` body. That is the one corner where the single error convention does not hold.\n\n**Completeness.** Every operation described here is served by the binary, and every route the binary registers is described here; a test in the composition root compares the two in both directions on every build.\n\n**Availability.** The editorial routes are mounted only when the deployment configures JWKS verification; without it they answer 404 rather than authenticating nobody. The reader endpoints and the probes mount unconditionally."
+    "description": "Machine-readable description of what the Go binary actually serves. It is written from the handlers, not from prose: where this document and `specs/001-epiloyes-alpha/contracts/http-api.md` disagree, the handlers won and this document follows them.\n\n**Topology.** The API is not publicly routable. In every deployment (compose, Cloudflare, Kubernetes) it listens on an internal network and the Astro server is the only public HTTP surface. As defence in depth every response - this document included - carries `X-Robots-Tag: noindex, nofollow`.\n\n**Errors.** Every handler-produced error is an RFC 9457 `application/problem+json` body: `type` (always `about:blank`), `title` (the plain rendering of the status code), `status`, and `detail` (omitted when empty). See the `Problem` schema.\n\n**Pagination.** Lists take `limit` (default 20) and `cursor` (opaque, keyset) and answer `{ items, next_cursor }`, where `next_cursor` is `null` on the last page. A `limit` outside 1-100 is rejected with 400 rather than clamped; a malformed or oversized `cursor` is rejected with 400.\n\n**Auth.** Only the editorial endpoints require authentication: `Authorization: Bearer <JWT>`, verified against the configured JWKS, and the subject's account must hold the editor role. The database enforces the same rule again on write. When `JWKS_URL` is unset the whole `/api/v1/editorial/` prefix is left unmounted deliberately, and those paths answer 404 instead of authenticating nobody.\n\n**Unrouted paths under `/api/v1/`.** Each half of the namespace owns a catch-all. The content module answers everything under `/api/v1/` it did not route, and the editorial module answers everything under its own `/api/v1/editorial/` prefix the same way: a known path reached with the wrong method is 405 with an `Allow` header, anything else is 404, both in problem+json. The editorial prefix used to be the one corner where the router's `text/plain` answer broke the single error convention; that corner is closed, and the convention holds everywhere under `/api/v1/`.\n\n**Completeness.** Every operation described here is served by the binary, and every route the binary registers is described here; a test in the composition root compares the two in both directions on every build.\n\n**Availability.** The editorial routes are mounted only when the deployment configures JWKS verification; without it they answer 404 rather than authenticating nobody. The reader endpoints and the probes mount unconditionally."
   },
   "servers": [
     {
@@ -262,13 +262,74 @@
       }
     },
     "/api/v1/editorial/sources": {
+      "get": {
+        "tags": [
+          "editorial"
+        ],
+        "operationId": "listSources",
+        "summary": "List registered sources and their poll state",
+        "description": "The registered feeds, newest registration first, keyset-paginated on (created_at, id), with the last poll cycle summed from each active source's poll state - so the screen's cycle numbers are readings, not invented figures.\n\n**The licensing fields are the CURRENT row, and the payload says so.** The legal basis of anything already retrieved is the retrieval-time snapshot on `source_item` (I-4), which the provenance endpoint serves and this list deliberately does not.\n\n`permission_evidence` is returned, behind the editor gate: the screen exists to make the licensing basis visible, and it is what separates a lawful `full_text` source from an impossible one.\n\nUnknown and repeated query parameters are rejected with 400, like the queue's.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "active",
+            "in": "query",
+            "required": false,
+            "description": "Filter to polled (`true`) or paused (`false`) feeds - `source.active` is the operator's pause switch, and this list is its one read path. Exactly `true` or `false`; any other value is a 400. Absent means no filter.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the source list, with the last poll cycle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unparseable limit (outside 1-100), an `active` that is not exactly true or false, a cursor this endpoint did not issue, or an unknown or repeated query parameter.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotEditor"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
       "post": {
         "tags": [
           "editorial"
         ],
         "operationId": "createSource",
         "summary": "Register a licensed source",
-        "description": "Registers a feed the crawler may poll. The usage rule is not an input: every new source is `extract_and_link`, and upgrades are a separate founder-gated flow outside alpha scope. Sending `usage_rule` - any value, `null` included - is a 400 rather than a silently ignored field, as is any other unknown field.\n\nThe whole `/api/v1/editorial/` prefix sits behind one auth gate, so a request without a usable token answers 401 whether or not the path exists. Behind the gate the router answers a wrong method with a `text/plain` 405 carrying `Allow: POST`, and an unknown path with a `text/plain` 404 - neither is problem+json.",
+        "description": "Registers a feed the crawler may poll. The usage rule is not an input: every new source is `extract_and_link`, and upgrades are a separate founder-gated flow outside alpha scope. Sending `usage_rule` - any value, `null` included - is a 400 rather than a silently ignored field, as is any other unknown field.\n\nThe whole `/api/v1/editorial/` prefix sits behind one auth gate, so a request without a usable token answers 401 whether or not the path exists. Behind the gate the module's catch-all answers a wrong method with a problem+json 405 carrying `Allow`, and an unknown path with a problem+json 404, like everywhere else under `/api/v1/`.",
         "security": [
           {
             "bearerAuth": []
@@ -1326,6 +1387,142 @@
           }
         }
       },
+      "ListedSource": {
+        "type": "object",
+        "title": "ListedSource",
+        "description": "One registered source as the list shows it. The licensing fields are the CURRENT source row - the legal basis of anything already retrieved is the snapshot on `source_item` (I-4), served by the provenance endpoint, never by this list.",
+        "required": [
+          "id",
+          "name",
+          "url",
+          "language",
+          "jurisdiction",
+          "licence_terms",
+          "usage_rule",
+          "permission_evidence",
+          "active",
+          "last_polled_at",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The feed URL the crawler polls - the same column the registration wrote, under one name across both source endpoints."
+          },
+          "language": {
+            "type": "string",
+            "examples": [
+              "el"
+            ]
+          },
+          "jurisdiction": {
+            "type": "string",
+            "examples": [
+              "GR"
+            ]
+          },
+          "licence_terms": {
+            "type": "string",
+            "description": "The terms currently on record - not the terms that applied to any given retrieval."
+          },
+          "usage_rule": {
+            "type": "string",
+            "enum": [
+              "extract_and_link",
+              "full_text"
+            ]
+          },
+          "permission_evidence": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The recorded written permission behind a full_text rule, or null when none is on record. Served behind the editor gate, deliberately: the list exists to make the licensing basis visible."
+          },
+          "active": {
+            "type": "boolean",
+            "description": "Whether the crawler currently polls this feed - the operator's pause switch, observable here and nowhere else."
+          },
+          "last_polled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the poll loop last completed an attempt, success or failure alike; null for a feed never polled."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PollCycle": {
+        "type": "object",
+        "title": "PollCycle",
+        "description": "The last poll cycle, summed from each ACTIVE source's poll-state columns - real readings, never invented figures. Paused sources are excluded: their state describes a poll no longer running.",
+        "required": [
+          "retrieved",
+          "duplicates_skipped",
+          "failures"
+        ],
+        "properties": {
+          "retrieved": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many new items the last poll of each active source stored, summed."
+          },
+          "duplicates_skipped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many items the content fingerprint recognised as already on record (FR-014), summed."
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names of the active feeds whose last poll failed, sorted by name; [] (never null) when every last poll succeeded."
+          }
+        }
+      },
+      "SourceList": {
+        "type": "object",
+        "title": "SourceList",
+        "description": "One page of the source list, with the last poll cycle beside it. All three fields are always present.",
+        "required": [
+          "items",
+          "next_cursor",
+          "cycle"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "Newest registration first.",
+            "items": {
+              "$ref": "#/components/schemas/ListedSource"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as cursor to fetch the next page. null on the last page - an absent cursor always means the list is exhausted."
+          },
+          "cycle": {
+            "$ref": "#/components/schemas/PollCycle"
+          }
+        }
+      },
       "Withdrawal": {
         "type": "object",
         "title": "Withdrawal",
@@ -1359,7 +1556,7 @@
       "QueueItem": {
         "type": "object",
         "title": "QueueItem",
-        "description": "One origin awaiting an editorial decision: a retrieved item, with its translation when one exists. translation_id and the translated fields are null together, for an untranslated origin.",
+        "description": "One origin awaiting an editorial decision: a retrieved item, with its translation when one exists. translation_id and the translated fields are null together, for an untranslated origin.\n\nThe evidence block - original text, author, declared publication date, content fingerprint, translation lineage and cost - is carried BEFORE the decision, because the approval is permanent and `article_guard` freezes the attribution at the click (I-1, I-4).",
         "required": [
           "source_item_id",
           "translation_id",
@@ -1369,6 +1566,16 @@
           "extract_translated",
           "retrieved_at",
           "licence_snapshot",
+          "source_url",
+          "original_author",
+          "original_published_at",
+          "content_hash",
+          "extract_original",
+          "source_lang",
+          "target_lang",
+          "model",
+          "prompt_version",
+          "cost_microusd",
           "correction_candidate",
           "withdrawals"
         ],
@@ -1415,6 +1622,70 @@
           "licence_snapshot": {
             "type": "string",
             "description": "The licence terms in force when this item was retrieved (I-4), not the source row today."
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The original article at the publisher - the link the editor opens to check the evidence."
+          },
+          "original_author": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The author as the feed named them; null when it named none - absent stays absent, never invented (FR-002)."
+          },
+          "original_published_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The publication date the feed declared, null when it declared none. The attribution default MUST come from this field: the attribution is frozen at approval, and a client that substitutes retrieved_at freezes the retrieval date in as the publication date."
+          },
+          "content_hash": {
+            "type": "string",
+            "description": "SHA-256 hex digest of the retrieved body, computed by the database (I-3) - the evidence's own fingerprint."
+          },
+          "extract_original": {
+            "type": "string",
+            "description": "The retrieved original reduced to bounded prose by the shared D9 rule: markup dropped, at most 300 runes, cut at a sentence boundary. Evidence beside the translation - never the unbounded raw body."
+          },
+          "source_lang": {
+            "type": "string",
+            "description": "The source's language code.",
+            "examples": [
+              "de"
+            ]
+          },
+          "target_lang": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "translation.target_locale; null for an untranslated origin."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The translation lineage's model (FR-005); null for an untranslated origin."
+          },
+          "prompt_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The lineage's prompt version (FR-005); null for an untranslated origin."
+          },
+          "cost_microusd": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The provider-reported cost recorded at insert (FR-006), in micro-USD; null for an untranslated origin."
           },
           "correction_candidate": {
             "type": "boolean",

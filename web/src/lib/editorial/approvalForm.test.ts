@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { PLACE_CATALOG } from '../reader/axes';
-import { APPROVAL_PLACES, parseApprovalForm } from './approvalForm';
+import {
+  APPROVAL_PLACES,
+  attributionDefault,
+  hasApprovalEvidence,
+  parseApprovalForm,
+} from './approvalForm';
+import { editorialStrings } from './strings';
 
 function approvalForm(entries: readonly (readonly [string, string])[]): FormData {
   const form = new FormData();
@@ -19,6 +25,140 @@ describe('APPROVAL_PLACES', () => {
     // unreachability FR-009 exists to end.
     expect(APPROVAL_PLACES).toEqual(PLACE_CATALOG.filter((place) => place.selectable));
     expect(APPROVAL_PLACES.map((place) => place.slug)).toEqual(['munich', 'greece']);
+  });
+});
+
+describe('attributionDefault', () => {
+  const strings = {
+    originallyPublishedBy: 'Originally published by',
+    publicationDateNotSupplied: 'publication date not supplied by the feed',
+  };
+  // A queue row carrying both dates: the default must use the declared
+  // publication date, and the retrieval date must never appear.
+  const item = {
+    source_name: 'Münchner Tagblatt',
+    retrieved_at: '2026-08-14T06:12:04Z',
+    original_published_at: '2026-08-13T05:58:00Z',
+  };
+  const formatDate = (iso: string): string => iso.slice(0, 10);
+
+  it('composes from the publication date the feed declared', () => {
+    expect(attributionDefault(item, strings, formatDate)).toBe(
+      'Originally published by Münchner Tagblatt, 2026-08-13.',
+    );
+  });
+
+  it('never silently substitutes the retrieval date', () => {
+    // The attribution is frozen at approval (article_guard), so a
+    // substituted retrieval date would become the publication date
+    // permanently. The formatter must not even be called: a fallback
+    // date does not exist to format.
+    const format = vi.fn(formatDate);
+    const line = attributionDefault(
+      { ...item, original_published_at: null },
+      strings,
+      format,
+    );
+    expect(line).toBe(
+      'Originally published by Münchner Tagblatt (publication date not supplied by the feed).',
+    );
+    expect(line).not.toContain('2026-08-14');
+    expect(format).not.toHaveBeenCalled();
+  });
+
+  it('treats an absent field like a null one — older APIs omit it', () => {
+    const { original_published_at, ...withoutDate } = item;
+    void original_published_at;
+    const line = attributionDefault(withoutDate, strings, formatDate);
+    expect(line).toContain(strings.publicationDateNotSupplied);
+    expect(line).not.toContain('2026-08-14');
+  });
+
+  it('says the gap in both chrome languages', () => {
+    for (const lang of ['el', 'de'] as const) {
+      const t = editorialStrings(lang);
+      expect(t.publicationDateNotSupplied).not.toBe('');
+      const line = attributionDefault(
+        { ...item, original_published_at: null },
+        {
+          originallyPublishedBy: 'Πηγή:',
+          publicationDateNotSupplied: t.publicationDateNotSupplied,
+        },
+        formatDate,
+      );
+      expect(line).toContain(t.publicationDateNotSupplied);
+    }
+  });
+});
+
+describe('hasApprovalEvidence', () => {
+  // The full evidence block the backend serves since #87. Null author and
+  // date are DECLARED absences - values, not gaps.
+  const untranslated = {
+    translation_id: null,
+    source_url: 'https://x.example/a',
+    extract_original: 'The retrieved original.',
+    original_author: null,
+    original_published_at: null,
+    content_hash: '3f9c81b0',
+    source_lang: 'el',
+    model: null,
+    prompt_version: null,
+    cost_microusd: null,
+  };
+  const translated = {
+    ...untranslated,
+    translation_id: 'tr-1',
+    model: 'translate-alpha-1',
+    prompt_version: 'v4',
+    cost_microusd: 4000,
+  };
+
+  it('accepts a complete row, declared absences included', () => {
+    expect(hasApprovalEvidence(untranslated)).toBe(true);
+    expect(hasApprovalEvidence(translated)).toBe(true);
+  });
+
+  it('refuses a row from an API predating the evidence block (#87)', () => {
+    // The pre-#87 wire shape: the contract's first block only. The pane
+    // would render dashes, and a permanent approval must not be offered
+    // over dashes.
+    expect(hasApprovalEvidence({ translation_id: 'tr-1' })).toBe(false);
+    expect(hasApprovalEvidence({ translation_id: null })).toBe(false);
+  });
+
+  it('refuses a row missing any single evidence field', () => {
+    for (const field of [
+      'source_url',
+      'extract_original',
+      'original_author',
+      'original_published_at',
+      'content_hash',
+      'source_lang',
+    ] as const) {
+      const { [field]: gone, ...partial } = untranslated;
+      void gone;
+      expect(hasApprovalEvidence(partial), `${field} absent`).toBe(false);
+    }
+  });
+
+  it('requires the lineage on a translated row, but not on an untranslated one', () => {
+    // FR-005: what the editor approves on a translated row was produced
+    // by a model and prompt version, and they must be on record.
+    expect(hasApprovalEvidence({ ...translated, model: null })).toBe(false);
+    expect(hasApprovalEvidence({ ...translated, prompt_version: null })).toBe(false);
+    const { cost_microusd, ...noCostField } = translated;
+    void cost_microusd;
+    expect(hasApprovalEvidence(noCostField)).toBe(false);
+    // A recorded null cost is a value; only the missing FIELD refuses.
+    expect(hasApprovalEvidence({ ...translated, cost_microusd: null })).toBe(true);
+  });
+
+  it('holds for every fixture row - the preview must demonstrate the enabled state', async () => {
+    const { QUEUE_FIXTURES } = await import('./fixtures');
+    for (const row of QUEUE_FIXTURES) {
+      expect(hasApprovalEvidence(row), row.source_item_id).toBe(true);
+    }
   });
 });
 

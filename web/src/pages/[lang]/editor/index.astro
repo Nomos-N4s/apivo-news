@@ -10,13 +10,18 @@ import {
   type ApprovalOutcome,
   type QueuePage,
 } from '../../../lib/editorial/api';
-import { APPROVAL_PLACES, parseApprovalForm } from '../../../lib/editorial/approvalForm';
+import {
+  APPROVAL_PLACES,
+  attributionDefault,
+  hasApprovalEvidence,
+  parseApprovalForm,
+} from '../../../lib/editorial/approvalForm';
 import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings, languageName } from '../../../lib/editorial/strings';
 import { authConfigured } from '../../../lib/editorial/supabase';
 import { findPlace, isReadingLanguage } from '../../../lib/reader/axes';
-import { formatDateTime, formatItemDate, safeSourceUrl } from '../../../lib/reader/format';
+import { formatDateTime, safeSourceUrl } from '../../../lib/reader/format';
 import { uiStrings } from '../../../lib/reader/strings';
 
 // The editorial review queue — mockup 1g, the approval gate (issue #61,
@@ -151,6 +156,16 @@ const selected = items.find((item) => item.source_item_id === selectedId) ?? ite
 const here = `/${lang}/editor`;
 const itemHref = (id: string): string => `${here}?item=${encodeURIComponent(id)}`;
 
+// The withdrawal that freed a correction candidate, newest first per the
+// contract; undefined for a fresh candidate or an API predating #87.
+const lastWithdrawal = selected?.withdrawals?.at(0);
+
+// Whether the selected row carries the evidence the approval rests on.
+// Against an API predating the evidence block the pane renders dashes -
+// and a permanent approval must not be offered over dashes, so the
+// approve button is disabled with a visible reason instead (#87).
+const evidenceComplete = selected !== undefined && hasApprovalEvidence(selected);
+
 const placeName = (slugs: readonly string[] | undefined): string => {
   const slug = slugs?.at(0);
   return slug === undefined ? '' : (findPlace(slug)?.endonym ?? slug);
@@ -158,14 +173,27 @@ const placeName = (slugs: readonly string[] | undefined): string => {
 
 // The attribution the article will carry (FR-008), composed from what the
 // queue row states and left editable — the editor is the one who stands
-// behind the wording, so it is a field, not a hidden value.
-const defaultAttribution = (item: (typeof items)[number]): string => {
-  const published = item.original_published_at ?? item.retrieved_at;
-  return `${reader.originallyPublishedBy} ${item.source_name}, ${formatItemDate(
-    lang,
-    new Date(published),
-  )}.`;
-};
+// behind the wording, so it is a field, not a hidden value. The date is
+// the one the feed DECLARED; when it declared none, the gap is said out
+// loud rather than papered over with the retrieval date, which
+// article_guard would freeze into the attribution permanently (#87).
+//
+// Date AND time, deliberately: the instant renders in the reader zone
+// (Europe/Berlin), so a Greek item published just after midnight Athens
+// time carries the previous calendar date here — with the clock beside it,
+// that boundary is visible to the editor before the wording freezes,
+// instead of a silently shifted date. The honest fix — preserving the
+// feed's declared offset at ingestion and formatting in it — is a schema
+// addition, tracked as issue #114.
+const defaultAttribution = (item: (typeof items)[number]): string =>
+  attributionDefault(
+    item,
+    {
+      originallyPublishedBy: reader.originallyPublishedBy,
+      publicationDateNotSupplied: t.publicationDateNotSupplied,
+    },
+    (iso) => formatDateTime(lang, new Date(iso)),
+  );
 ---
 
 <ReaderLayout lang={lang} title={`epiloYES — ${t.editorial}`} description={reader.tagline}>
@@ -220,6 +248,11 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                 {item.headline_translated ?? item.headline_original ?? item.source_item_id}
               </span>
               <span class="row-tags">
+                {/* A re-queued origin is a correction, and the row says so
+                    before the editor even opens it (#87). */}
+                {item.correction_candidate === true && (
+                  <span class="tag tag-correction">{t.correctionTag}</span>
+                )}
                 {item.translation_id === null ? (
                   <span class="tag tag-outline">{t.noTranslationNeeded}</span>
                 ) : (
@@ -304,6 +337,25 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                 </div>
                 <h3>{t.reviewBeforeApproval}</h3>
               </div>
+
+              {/* A re-queued origin is a correction: the withdrawal that
+                  freed it is part of what the editor reviews, so it renders
+                  here — when it happened and the recorded reason — rather
+                  than staying an invisible backend flag (#87). */}
+              {
+                selected.correction_candidate === true && (
+                  <div class="correction" role="note">
+                    <span class="tag tag-correction">{t.correctionTag}</span>
+                    <span class="correction-body">{t.correctionBody}</span>
+                    {lastWithdrawal !== undefined && (
+                      <span class="muted">
+                        {formatDateTime(lang, new Date(lastWithdrawal.withdrawn_at))} · «
+                        {lastWithdrawal.reason}»
+                      </span>
+                    )}
+                  </div>
+                )
+              }
 
               <div class="split">
                 <section class="original">
@@ -452,10 +504,13 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                       <span class="ack-text">{t.acknowledgement}</span>
                     </label>
                     <div class="actions">
-                      <button class="btn btn-primary" type="submit">{t.approveAndPublish}</button>
+                      <button class="btn btn-primary" type="submit" disabled={!evidenceComplete}>
+                        {t.approveAndPublish}
+                      </button>
                       <button class="btn btn-secondary" type="button" disabled>{t.reject}</button>
                       <a class="btn btn-ghost skip" href={here}>{t.skip}</a>
                     </div>
+                    {!evidenceComplete && <p class="muted reject-note">{t.evidenceIncomplete}</p>}
                     <p class="muted reject-note">{t.rejectNote}</p>
                   </form>
                 </section>
@@ -586,6 +641,23 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
   .review {
     display: flex;
     flex-direction: column;
+  }
+  .tag-correction {
+    background: var(--color-text);
+    color: var(--color-accent-400);
+  }
+  .correction {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    padding: var(--space-2) var(--space-6);
+    border-bottom: 1px solid var(--color-divider);
+    background: var(--color-surface);
+  }
+  .correction-body {
+    font-size: 12.5px;
+    text-wrap: pretty;
   }
   .banner {
     display: flex;

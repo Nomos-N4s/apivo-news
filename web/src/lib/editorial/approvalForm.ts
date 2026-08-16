@@ -11,6 +11,7 @@
  */
 
 import { PLACE_CATALOG, type Place } from '../reader/axes';
+import type { QueueItem } from './api';
 
 /**
  * The places the approval form offers: the reader vocabulary, exactly.
@@ -25,6 +26,80 @@ import { PLACE_CATALOG, type Place } from '../reader/axes';
 export const APPROVAL_PLACES: readonly Place[] = PLACE_CATALOG.filter(
   (place) => place.selectable,
 );
+
+/** The two strings the attribution default composes from. */
+export interface AttributionStrings {
+  readonly originallyPublishedBy: string;
+  readonly publicationDateNotSupplied: string;
+}
+
+/**
+ * The attribution the form pre-fills (FR-008): source name and the
+ * publication date the feed DECLARED — `original_published_at`, never
+ * `retrieved_at`. The two are different claims, and `article_guard`
+ * freezes whatever the editor approves, permanently; a silently
+ * substituted retrieval date would be frozen in as the publication date.
+ *
+ * When the feed declared no date, the absence is said out loud —
+ * "publication date not supplied by the feed", in the chrome's language —
+ * so the editor decides what to write over a visible gap rather than
+ * approving an invented fact. The formatter is only ever called with the
+ * declared date; a fallback date does not exist to format.
+ */
+export function attributionDefault(
+  item: Pick<QueueItem, 'source_name' | 'original_published_at'>,
+  strings: AttributionStrings,
+  formatDate: (iso: string) => string,
+): string {
+  const published = item.original_published_at;
+  if (published === null || published === undefined) {
+    return `${strings.originallyPublishedBy} ${item.source_name} (${strings.publicationDateNotSupplied}).`;
+  }
+  return `${strings.originallyPublishedBy} ${item.source_name}, ${formatDate(published)}.`;
+}
+
+/**
+ * Whether a queue row carries the evidence the approval rests on (#87).
+ *
+ * Presence, not truthiness: a null author or publication date is a value
+ * the feed genuinely declared (none), while an ABSENT property means the
+ * row came from an API that predates the evidence block — and a permanent
+ * approval must not be offered over placeholder dashes, which is the exact
+ * failure mode the evidence work exists to close. A translated row must
+ * additionally carry its lineage: the model and prompt version that
+ * produced the text being approved (FR-005), and the recorded cost field
+ * (FR-006 — the value may be null, the field may not be missing).
+ */
+export function hasApprovalEvidence(
+  item: Pick<
+    QueueItem,
+    | 'translation_id'
+    | 'source_url'
+    | 'extract_original'
+    | 'original_author'
+    | 'original_published_at'
+    | 'content_hash'
+    | 'source_lang'
+    | 'model'
+    | 'prompt_version'
+    | 'cost_microusd'
+  >,
+): boolean {
+  if (
+    item.source_url === undefined ||
+    item.extract_original === undefined ||
+    item.original_author === undefined ||
+    item.original_published_at === undefined ||
+    item.content_hash === undefined ||
+    item.source_lang === undefined
+  ) {
+    return false;
+  }
+  if (item.translation_id !== null) {
+    return item.model != null && item.prompt_version != null && item.cost_microusd !== undefined;
+  }
+  return true;
+}
 
 /** A submission the API client can carry as-is. */
 export interface ApprovalSubmission {
