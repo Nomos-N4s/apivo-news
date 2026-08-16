@@ -189,7 +189,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
     text-decoration: none;
   }
   .headline-link:hover {
-    color: var(--color-accent);
+    color: var(--color-accent-700);
   }
 
   /* — the lead: the 1a two-cell composition, photograph slot left,
@@ -246,7 +246,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
     font-size: 10.5px;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--color-accent);
+    color: var(--color-accent-700);
   }
   .meta-rule {
     width: 1px;
@@ -257,7 +257,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
     font-size: 10.5px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+    color: var(--ink-soft);
   }
   .lead h1 {
     font-size: clamp(28px, 3vw, 38px);
@@ -284,7 +284,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
     font-size: 12.5px;
     margin: 0 0 var(--space-3);
     max-width: 72ch;
-    color: color-mix(in srgb, var(--color-text) 70%, transparent);
+    color: var(--ink-muted);
   }
   .source-link {
     font-weight: 600;
@@ -308,7 +308,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
   }
   .unavailable h6 {
     margin: 0 0 var(--space-1);
-    color: var(--color-accent);
+    color: var(--color-accent-700);
   }
   .unavailable p {
     margin: 0;

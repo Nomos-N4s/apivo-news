@@ -143,8 +143,12 @@ const activeCount = sources.filter((source) => source.active).length;
         {failed && <p class="notice">{reader.unavailableBody}</p>}
         {!failed && sources.length === 0 && <p class="notice">{t.sourcesEmpty}</p>}
 
+        {/* The six-column table scrolls sideways on narrow viewports;
+            tabindex + role make that scroll reachable by keyboard
+            (WCAG 2.1.1) and give it a name for screen readers. */}
         {
           sources.length > 0 && (
+            <div class="table-scroll" tabindex="0" role="region" aria-label={t.sources}>
             <table class="table">
               <thead>
                 <tr>
@@ -181,6 +185,7 @@ const activeCount = sources.filter((source) => source.active).length;
                 ))}
               </tbody>
             </table>
+            </div>
           )
         }
 
@@ -283,7 +288,7 @@ const activeCount = sources.filter((source) => source.active).length;
     gap: var(--space-3);
     flex-wrap: wrap;
     padding: var(--space-3) var(--space-6);
-    background: var(--color-accent);
+    background: var(--color-accent-700);
     color: var(--color-bg);
   }
   .banner-warn {
@@ -323,7 +328,7 @@ const activeCount = sources.filter((source) => source.active).length;
   .notice {
     margin: 0;
     padding: var(--space-6) 0;
-    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    color: var(--ink-soft);
   }
   .strong {
     font-weight: 600;
@@ -338,12 +343,19 @@ const activeCount = sources.filter((source) => source.active).length;
   .table .tag {
     font-size: 10px;
   }
+  .table-scroll {
+    overflow-x: auto;
+  }
+  .table-scroll:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
   .state-active {
     color: var(--color-accent-700);
     font-weight: 600;
   }
   .state-paused {
-    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+    color: var(--ink-soft);
   }
 
   .cycle {
@@ -360,7 +372,7 @@ const activeCount = sources.filter((source) => source.active).length;
   .cycle p {
     margin: 0;
     font-size: 12.5px;
-    color: color-mix(in srgb, var(--color-text) 65%, transparent);
+    color: var(--ink-soft);
     text-wrap: pretty;
   }
 
@@ -395,7 +407,7 @@ const activeCount = sources.filter((source) => source.active).length;
     background: var(--color-accent-100);
   }
   .rule-off {
-    opacity: 0.5;
+    color: var(--ink-soft);
   }
   .mark {
     width: 16px;
@@ -407,7 +419,7 @@ const activeCount = sources.filter((source) => source.active).length;
     box-shadow: inset 0 0 0 3px var(--color-accent-100);
   }
   .mark-off {
-    border-color: var(--color-divider);
+    border-color: var(--border-strong);
     background: transparent;
     box-shadow: none;
   }
@@ -427,7 +439,7 @@ const activeCount = sources.filter((source) => source.active).length;
   .rule-note {
     margin: 0 0 var(--space-4);
     font-size: 11.5px;
-    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    color: var(--ink-soft);
     text-wrap: pretty;
   }
 

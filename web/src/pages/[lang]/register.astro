@@ -115,7 +115,9 @@ const here = `/${lang}/register`;
 
         <h6>{t.placesToFollow}</h6>
         <div class="places">
-          {followed.map((place) => <span class="tag tag-accent">{place.endonym}</span>)}
+          {followed.map((place) => (
+            <span class="tag tag-accent" lang={place.endonymLang}>{place.endonym}</span>
+          ))}
           <a class="btn btn-ghost" href={`/${lang}/setup`}>{t.editPlaces}</a>
         </div>
         <p class="note">{t.followNote}</p>
@@ -204,7 +206,7 @@ const here = `/${lang}/register`;
     margin: 0;
     font-size: 14px;
     max-width: 56ch;
-    color: color-mix(in srgb, var(--color-text) 70%, transparent);
+    color: var(--ink-muted);
     text-wrap: pretty;
   }
 
@@ -227,7 +229,7 @@ const here = `/${lang}/register`;
     flex: none;
   }
   .banner-ok {
-    background: var(--color-accent);
+    background: var(--color-accent-700);
   }
   .banner-ok .banner-label {
     color: var(--color-bg);
@@ -264,7 +266,7 @@ const here = `/${lang}/register`;
   .note {
     margin: 0 0 var(--space-4);
     font-size: 11.5px;
-    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    color: var(--ink-soft);
     text-wrap: pretty;
   }
   .pending {
@@ -299,7 +301,7 @@ const here = `/${lang}/register`;
     padding: 0;
     border: 0;
     cursor: pointer;
-    background: var(--color-neutral-400);
+    background: var(--color-neutral-600);
   }
   .switch-on {
     background: var(--color-accent);
@@ -327,7 +329,7 @@ const here = `/${lang}/register`;
   }
   .purpose-meta {
     font-size: 11.5px;
-    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    color: var(--ink-soft);
   }
   .purpose-meta code {
     font-family: ui-monospace, Menlo, monospace;
@@ -348,7 +350,7 @@ const here = `/${lang}/register`;
     font-family: ui-monospace, Menlo, monospace;
     font-size: 11.5px;
     line-height: 1.9;
-    color: color-mix(in srgb, var(--color-text) 70%, transparent);
+    color: var(--ink-muted);
   }
   .rec-purpose {
     color: var(--color-text);

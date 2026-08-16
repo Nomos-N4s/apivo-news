@@ -370,3 +370,45 @@ describe('the editor identity', () => {
     expect(resolveEditorSession).not.toHaveBeenCalled();
   });
 });
+
+describe('usage rollup logging', () => {
+  // The counter is a per-process singleton, so this suite works with
+  // whatever the earlier tests already recorded: it only asserts on the
+  // final rollup and on the buckets its own requests must have produced.
+  it('emits a usage_rollup once the interval elapses, holding only aggregates', async () => {
+    vi.useFakeTimers();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      vi.setSystemTime(new Date('2026-08-16T10:00:00Z'));
+      await run({ path: '/el/munich+greece' });
+      await run({ path: '/el/munich+greece' });
+
+      vi.setSystemTime(new Date('2026-08-16T10:06:00Z'));
+      await run({ path: '/el/munich+greece' });
+
+      const lastLine = log.mock.calls.at(-1)?.[0] as string;
+      expect(lastLine).toBeDefined();
+      const rollup = JSON.parse(lastLine) as {
+        event: string;
+        window_ended_at: string;
+        counts: Record<string, unknown>[];
+      };
+      expect(rollup.event).toBe('usage_rollup');
+      expect(rollup.window_ended_at).toBe('2026-08-16T10:06:00.000Z');
+
+      const mine = rollup.counts.find(
+        (count) => count['route'] === 'front' && count['lang'] === 'el' && count['status'] === 200,
+      );
+      expect(mine).toBeDefined();
+      expect(mine?.['day']).toBe('2026-08-16');
+      // The whole point: nothing beyond the five aggregate dimensions —
+      // no IP, no User-Agent, no identifier of any kind.
+      for (const count of rollup.counts) {
+        expect(Object.keys(count).sort()).toEqual(['count', 'day', 'lang', 'route', 'status']);
+      }
+    } finally {
+      log.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+});
