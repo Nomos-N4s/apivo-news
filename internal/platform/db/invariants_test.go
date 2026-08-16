@@ -1139,10 +1139,18 @@ func TestEditorDemotionRaceIsSerialized(t *testing.T) {
 		}
 		defer func() { _ = txA.Rollback(ctx) }()
 		// The insert trigger takes FOR SHARE on the editor's account row.
-		if _, err := txA.Exec(ctx,
+		var articleID string
+		if err := txA.QueryRow(ctx,
 			`insert into article (source_item_id, approved_by, attribution_block)
-			 values ($1, $2, 'Quelle: Race Feed')`, sourceItemID, editorID); err != nil {
+			 values ($1, $2, 'Quelle: Race Feed') returning id`, sourceItemID, editorID).Scan(&articleID); err != nil {
 			t.Fatalf("approval insert: %v", err)
+		}
+		// This transaction commits for real, so the 0006 rule applies: the
+		// article must carry a place row by COMMIT or the commit raises.
+		if _, err := txA.Exec(ctx,
+			`insert into article_place (article_id, place_id)
+			 select $1, id from place where slug = 'munich'`, articleID); err != nil {
+			t.Fatalf("tagging the approval's place: %v", err)
 		}
 
 		done := make(chan error, 1)
@@ -1210,6 +1218,45 @@ func TestEditorDemotionRaceIsSerialized(t *testing.T) {
 			t.Fatal("approval still blocked after the demotion committed")
 		}
 	})
+}
+
+// TestAnArticleWithNoPlaceIsRejectedAtCommit asserts the 0006 rule: the
+// front page is scoped by place, so an article with no article_place row
+// can appear on none of them - and the database refuses to let such an
+// article exist. The trigger is DEFERRED, so the raise happens at COMMIT,
+// not at the insert: the assertion is on tx.Commit, and the savepoint
+// pattern the other guard tests use does not apply - releasing a savepoint
+// runs no deferred checks. A failed commit leaves nothing behind.
+func TestAnArticleWithNoPlaceIsRejectedAtCommit(t *testing.T) {
+	t.Parallel()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set DATABASE_URL to exercise schema invariants")
+	}
+	ctx := context.Background()
+
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	f := seed(t, tx)
+
+	// The insert itself succeeds: the trigger's whole point is to let the
+	// article and its place rows arrive in either order within the
+	// transaction, so nothing can be judged until COMMIT.
+	if _, err := tx.Exec(ctx,
+		`insert into article (translation_id, approved_by, published_at, attribution_block)
+		 values ($1, $2, now(), 'Quelle: Test Feed')`, f.translationID, f.accountID); err != nil {
+		t.Fatalf("placeless insert must succeed until commit: %v", err)
+	}
+	wantPgCode(t, tx.Commit(ctx), codeRaiseException)
 }
 
 // TestTranslationZeroCostIsAccepted is the positive control for the cost
