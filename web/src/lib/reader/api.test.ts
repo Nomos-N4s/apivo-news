@@ -4,6 +4,7 @@ import {
   createReaderApi,
   probeEmptyPlaces,
   ReaderApiError,
+  ReaderConfigurationError,
   type FrontPageData,
   type ReaderApi,
 } from './api';
@@ -76,6 +77,43 @@ describe('the fixture client (no API_BASE_URL)', () => {
   });
 });
 
+// The heart of issue #134. The fixtures are complete articles from
+// publishers that do not exist, and their attribution blocks name an
+// editor who never approved anything. Serving them unmarked is the one
+// failure this product cannot have, so a fixture client must always be
+// recognisable as one — and in a deployed environment it must not exist.
+describe('where the answers come from', () => {
+  it('marks a fixture client as fixture data', () => {
+    expect(createReaderApi(undefined).source).toBe('fixture');
+    expect(createReaderApi('').source).toBe('fixture');
+  });
+
+  it('marks a real client as the API', () => {
+    expect(createReaderApi('http://api:8080').source).toBe('api');
+  });
+
+  it('refuses to build a fixture client in a deployed environment', () => {
+    for (const baseUrl of [undefined, '']) {
+      expect(() => createReaderApi(baseUrl, { appEnv: 'prod' })).toThrow(
+        ReaderConfigurationError,
+      );
+    }
+  });
+
+  it('names API_BASE_URL in the refusal, so the cause is not a puzzle', () => {
+    expect(() => createReaderApi(undefined, { appEnv: 'prod' })).toThrow(/API_BASE_URL/);
+  });
+
+  it('does not refuse a configured deployment', () => {
+    expect(createReaderApi('http://api:8080', { appEnv: 'prod' }).source).toBe('api');
+  });
+
+  it('still serves fixtures in development, where they are the point', () => {
+    expect(createReaderApi(undefined, { appEnv: 'dev' }).source).toBe('fixture');
+    expect(createReaderApi(undefined, { appEnv: undefined }).source).toBe('fixture');
+  });
+});
+
 describe('the HTTP client (API_BASE_URL set)', () => {
   const page: FrontPageData = {
     items: [FRONT_FIXTURES[0] as FrontPageData['items'][number]],
@@ -100,7 +138,7 @@ describe('the HTTP client (API_BASE_URL set)', () => {
 
   it('speaks the contract: lang, repeatable place, limit — and strips trailing slashes', async () => {
     const { fetched, fetchImpl } = respondingWith(jsonResponse(page));
-    const api = createReaderApi('http://api:8080/', fetchImpl);
+    const api = createReaderApi('http://api:8080/', { fetch: fetchImpl });
     const data = await api.front({ lang: 'el', places: ['munich', 'greece'] });
 
     expect(data.items).toHaveLength(1);
@@ -113,7 +151,7 @@ describe('the HTTP client (API_BASE_URL set)', () => {
 
   it('sends an explicit limit through', async () => {
     const { fetched, fetchImpl } = respondingWith(jsonResponse(page));
-    await createReaderApi('http://api:8080', fetchImpl).front({
+    await createReaderApi('http://api:8080', { fetch: fetchImpl }).front({
       lang: 'de',
       places: ['munich'],
       limit: 5,
@@ -123,7 +161,7 @@ describe('the HTTP client (API_BASE_URL set)', () => {
 
   it('surfaces a non-2xx answer as a ReaderApiError with the status', async () => {
     const { fetchImpl } = respondingWith(jsonResponse({ title: 'unknown place' }, 400));
-    const api = createReaderApi('http://api:8080', fetchImpl);
+    const api = createReaderApi('http://api:8080', { fetch: fetchImpl });
     await expect(api.front({ lang: 'el', places: ['munich'] })).rejects.toMatchObject({
       name: 'ReaderApiError',
       status: 400,
@@ -132,7 +170,7 @@ describe('the HTTP client (API_BASE_URL set)', () => {
 
   it('rejects a body without an items array', async () => {
     const { fetchImpl } = respondingWith(jsonResponse({ nonsense: true }));
-    const api = createReaderApi('http://api:8080', fetchImpl);
+    const api = createReaderApi('http://api:8080', { fetch: fetchImpl });
     await expect(api.front({ lang: 'el', places: ['munich'] })).rejects.toBeInstanceOf(
       ReaderApiError,
     );
@@ -141,7 +179,7 @@ describe('the HTTP client (API_BASE_URL set)', () => {
   it('fetches an article by id at the contract path', async () => {
     const detail = FRONT_FIXTURES[0];
     const { fetched, fetchImpl } = respondingWith(jsonResponse(detail));
-    const api = createReaderApi('http://api:8080', fetchImpl);
+    const api = createReaderApi('http://api:8080', { fetch: fetchImpl });
     const article = await api.article(detail?.id ?? '');
     expect(article?.id).toBe(detail?.id);
     expect(fetched.at(0)?.pathname).toBe(`/api/v1/articles/${detail?.id ?? ''}`);
@@ -149,19 +187,19 @@ describe('the HTTP client (API_BASE_URL set)', () => {
 
   it('reads the contract 404 as null — withdrawn and unknown look identical', async () => {
     const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
-    const api = createReaderApi('http://api:8080', fetchImpl);
+    const api = createReaderApi('http://api:8080', { fetch: fetchImpl });
     await expect(api.article('anything')).resolves.toBeNull();
   });
 
   it('surfaces other article errors as ReaderApiError', async () => {
     const { fetchImpl } = respondingWith(jsonResponse({ title: 'boom' }, 500));
-    const api = createReaderApi('http://api:8080', fetchImpl);
+    const api = createReaderApi('http://api:8080', { fetch: fetchImpl });
     await expect(api.article('anything')).rejects.toMatchObject({ status: 500 });
   });
 
   it('rejects an article body without an id', async () => {
     const { fetchImpl } = respondingWith(jsonResponse({ nonsense: true }));
-    const api = createReaderApi('http://api:8080', fetchImpl);
+    const api = createReaderApi('http://api:8080', { fetch: fetchImpl });
     await expect(api.article('anything')).rejects.toBeInstanceOf(ReaderApiError);
   });
 
@@ -170,13 +208,13 @@ describe('the HTTP client (API_BASE_URL set)', () => {
     const mistyped = { ...detail, headline: 42 };
     const { fetchImpl } = respondingWith(jsonResponse(mistyped));
     await expect(
-      createReaderApi('http://api:8080', fetchImpl).article('x'),
+      createReaderApi('http://api:8080', { fetch: fetchImpl }).article('x'),
     ).rejects.toBeInstanceOf(ReaderApiError);
 
     const { places: _places, ...withoutPlaces } = detail as NonNullable<typeof detail>;
     const { fetchImpl: fetchImpl2 } = respondingWith(jsonResponse(withoutPlaces));
     await expect(
-      createReaderApi('http://api:8080', fetchImpl2).article('x'),
+      createReaderApi('http://api:8080', { fetch: fetchImpl2 }).article('x'),
     ).rejects.toBeInstanceOf(ReaderApiError);
   });
 });
@@ -194,6 +232,7 @@ describe('probeEmptyPlaces', () => {
     // only Munich items — the probe must clear it.
     const bavariaItem = { ...FRONT_FIXTURES[0], places: ['bavaria'] };
     const crowded: ReaderApi = {
+      source: 'fixture',
       front: (query) =>
         Promise.resolve({
           items: query.places.includes('bavaria') ? [bavariaItem] : [],
@@ -212,6 +251,7 @@ describe('probeEmptyPlaces', () => {
   it('never probes a place already visible on the page', async () => {
     let probes = 0;
     const counting: ReaderApi = {
+      source: 'fixture',
       front: () => {
         probes += 1;
         return Promise.resolve({ items: [], next_cursor: null });

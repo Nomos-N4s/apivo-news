@@ -1,7 +1,8 @@
 ---
-import { API_BASE_URL } from 'astro:env/server';
+import { API_BASE_URL, APP_ENV } from 'astro:env/server';
 import AxisBar from '../../../components/AxisBar.astro';
 import EmptyPlaceBand from '../../../components/EmptyPlaceBand.astro';
+import FixtureNotice from '../../../components/FixtureNotice.astro';
 import Masthead from '../../../components/Masthead.astro';
 import ProvenanceDisclosure from '../../../components/ProvenanceDisclosure.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
@@ -34,7 +35,7 @@ const { lang, places } = axes;
 const slugs = places.map((place) => place.slug);
 
 const t = uiStrings(lang);
-const api = createReaderApi(API_BASE_URL);
+const api = createReaderApi(API_BASE_URL, { appEnv: APP_ENV });
 
 // An API hiccup must degrade into the calm 503 band below, never into an
 // unhandled SSR exception: the page still renders its chrome and axes.
@@ -93,6 +94,15 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
   <AxisBar lang={lang} places={places} />
 
   <main>
+    {/* Before anything else on the page: what follows is either the
+        published record or invented sample data, and a reader must never
+        have to guess which. */}
+    {
+      api.source === 'fixture' && (
+        <FixtureNotice title={t.fixtureNoticeTitle} body={t.fixtureNoticeBody} />
+      )
+    }
+
     {
       apiUnavailable && (
         <div class="unavailable">

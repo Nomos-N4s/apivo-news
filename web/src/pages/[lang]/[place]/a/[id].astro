@@ -1,5 +1,6 @@
 ---
-import { API_BASE_URL } from 'astro:env/server';
+import { API_BASE_URL, APP_ENV } from 'astro:env/server';
+import FixtureNotice from '../../../../components/FixtureNotice.astro';
 import ReaderLayout from '../../../../layouts/ReaderLayout.astro';
 import {
   createReaderApi,
@@ -36,7 +37,7 @@ if (axes === null || id === undefined || id === '') {
 const { lang, places } = axes;
 const slugs = places.map((place) => place.slug);
 
-const api = createReaderApi(API_BASE_URL);
+const api = createReaderApi(API_BASE_URL, { appEnv: APP_ENV });
 let article: ArticleDetail | null;
 try {
   article = await api.article(id);
@@ -128,6 +129,14 @@ const title = `${article.headline} · epiloYES`;
   </header>
 
   <div class="body">
+    {/* Above the article itself: this page names an approver and a
+        publisher, and both are invented when the data is. */}
+    {
+      api.source === 'fixture' && (
+        <FixtureNotice title={t.fixtureNoticeTitle} body={t.fixtureNoticeBody} />
+      )
+    }
+
     <article class="reading">
       <div class="meta">
         <span class="kicker">{kickerLabel}</span>
