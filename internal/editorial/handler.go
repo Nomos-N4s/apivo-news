@@ -702,7 +702,12 @@ func (h *Handler) reviewQueue(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, r, http.StatusOK, body)
 }
 
-// queueItem renders one queue row for the wire.
+// queueItem renders one queue row for the wire. Every timestamp is
+// normalised to UTC before formatting: pgx decodes timestamptz into the
+// PROCESS's local zone, so without .UTC() a non-UTC host would render
+// `2026-08-13T07:58:00+02:00` where the contract's every other timestamp
+// reads Z - and original_published_at is the date the attribution freezes
+// forever, which does not get to depend on where the server stood.
 func queueItem(item QueueItem) queueItemResponse {
 	out := queueItemResponse{
 		SourceItemID:        item.SourceItemID.String(),
@@ -710,7 +715,7 @@ func queueItem(item QueueItem) queueItemResponse {
 		HeadlineOriginal:    item.HeadlineOriginal,
 		HeadlineTranslated:  item.HeadlineTranslated,
 		ExtractTranslated:   item.ExtractTranslated,
-		RetrievedAt:         item.RetrievedAt.Format(timeFormat),
+		RetrievedAt:         item.RetrievedAt.UTC().Format(timeFormat),
 		LicenceSnapshot:     item.LicenceSnapshot,
 		SourceURL:           item.SourceURL,
 		OriginalAuthor:      item.OriginalAuthor,
@@ -729,13 +734,13 @@ func queueItem(item QueueItem) queueItemResponse {
 		out.TranslationID = &id
 	}
 	if item.OriginalPublishedAt != nil {
-		published := item.OriginalPublishedAt.Format(timeFormat)
+		published := item.OriginalPublishedAt.UTC().Format(timeFormat)
 		out.OriginalPublishedAt = &published
 	}
 	for _, wd := range item.Withdrawals {
 		out.Withdrawals = append(out.Withdrawals, withdrawalResponse{
 			ArticleID:   wd.ArticleID.String(),
-			WithdrawnAt: wd.WithdrawnAt.Format(timeFormat),
+			WithdrawnAt: wd.WithdrawnAt.UTC().Format(timeFormat),
 			WithdrawnBy: wd.WithdrawnBy.String(),
 			Reason:      wd.Reason,
 		})
