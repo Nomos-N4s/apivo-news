@@ -45,6 +45,12 @@ const (
 	// on; the name is hashed, not stored, so it only ever needs to stay
 	// equal to itself.
 	pollLockName = "apivo.poll"
+	// pollUnlockTimeout bounds releasing the advisory lock. serve() waits
+	// for the poll loop before closing the pool, so an unlock left to a
+	// dead-but-undetected connection would hold the whole process's
+	// shutdown past its grace period; after this long the connection is
+	// destroyed instead, and Postgres frees the session's locks with it.
+	pollUnlockTimeout = 5 * time.Second
 )
 
 // PollConfig describes how the loop paces itself and how it fetches.
@@ -141,15 +147,22 @@ func (p *Poller) PollOnce(ctx context.Context) (bool, error) {
 	defer func() {
 		// Unlocked even when ctx has ended - a shutdown must not strand
 		// the fleet lock on a pooled session, where it would outlive this
-		// cycle and block every future one for the process's lifetime. If
-		// the unlock itself fails, the session is destroyed instead:
-		// Postgres releases its advisory locks with it.
-		unlockCtx := context.WithoutCancel(ctx)
+		// cycle and block every future one for the process's lifetime -
+		// but never waited on for longer than pollUnlockTimeout: serve()
+		// holds shutdown open for this loop, and an unresponsive
+		// connection must not hold it past the grace period. If the
+		// unlock fails or times out, the connection is destroyed instead
+		// - the Close below runs under the same expiring deadline, so on
+		// timeout it abandons the socket rather than waiting for a clean
+		// goodbye - and Postgres frees the session's advisory locks when
+		// the backend dies.
+		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pollUnlockTimeout)
+		defer cancel()
 		var released bool
 		err := conn.QueryRow(unlockCtx,
 			`select pg_advisory_unlock(hashtext($1))`, pollLockName).Scan(&released)
 		if err != nil || !released {
-			p.log.ErrorContext(ctx, "releasing the poll lock failed; closing its connection instead", "error", err)
+			p.log.ErrorContext(ctx, "releasing the poll lock failed; destroying its connection instead", "error", err)
 			_ = conn.Conn().Close(unlockCtx)
 		}
 	}()
