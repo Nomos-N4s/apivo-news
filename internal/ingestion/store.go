@@ -94,7 +94,11 @@ func (s *Store) RecordRetrieval(ctx context.Context, sourceID uuid.UUID, item No
 			"source_id":      sourceID.String(),
 			"source_url":     item.Link,
 			"content_hash":   contentHash,
-			"retrieved_at":   retrievedAt,
+			// Normalised to UTC before it is frozen into the append-only
+			// stream: pgx decodes timestamptz into the process's local zone,
+			// and the recorded rendering must not depend on where the server
+			// stood.
+			"retrieved_at": retrievedAt.UTC(),
 		},
 	); err != nil {
 		return RetrievalResult{}, fmt.Errorf("ingestion: record retrieval: insert domain event: %w", err)

@@ -186,10 +186,14 @@ func (s *PGStore) Approve(ctx context.Context, a NewApproval) (Article, error) {
 		article.PublishedAt = &published
 	}
 
+	// Timestamps in audit payloads are normalised to UTC before formatting:
+	// pgx decodes timestamptz into the process's local zone, and what lands
+	// in the append-only stream is frozen forever - the recorded rendering
+	// must not depend on where the server stood.
 	if err := recordEvent(ctx, q, eventArticleApproved, approvedEvent{
 		ArticleID:     article.ID.String(),
 		ApprovedBy:    article.ApprovedBy.String(),
-		ApprovedAt:    article.ApprovedAt.Format(timeFormat),
+		ApprovedAt:    article.ApprovedAt.UTC().Format(timeFormat),
 		TranslationID: uuidText(a.TranslationID),
 		SourceItemID:  uuidText(a.SourceItemID),
 	}); err != nil {
@@ -199,7 +203,7 @@ func (s *PGStore) Approve(ctx context.Context, a NewApproval) (Article, error) {
 		if err := recordEvent(ctx, q, eventArticlePublished, publishedEvent{
 			ArticleID:   article.ID.String(),
 			PublishedBy: article.ApprovedBy.String(),
-			PublishedAt: article.PublishedAt.Format(timeFormat),
+			PublishedAt: article.PublishedAt.UTC().Format(timeFormat),
 		}); err != nil {
 			return Article{}, err
 		}
@@ -264,7 +268,7 @@ func (s *PGStore) Publish(ctx context.Context, articleID, editorID uuid.UUID) (A
 	if err := recordEvent(ctx, q, eventArticlePublished, publishedEvent{
 		ArticleID:   article.ID.String(),
 		PublishedBy: editorID.String(),
-		PublishedAt: published.Format(timeFormat),
+		PublishedAt: published.UTC().Format(timeFormat),
 	}); err != nil {
 		return Article{}, err
 	}

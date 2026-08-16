@@ -259,13 +259,17 @@ func (h *Handler) createApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Every timestamp is normalised to UTC before formatting, here and in
+	// every response below, for queueItem's reason: pgx decodes timestamptz
+	// into the PROCESS's local zone, and the contract's timestamps read Z
+	// wherever the server stands.
 	body := approvalResponse{
 		ArticleID:  article.ID.String(),
 		ApprovedBy: article.ApprovedBy.String(),
-		ApprovedAt: article.ApprovedAt.Format(timeFormat),
+		ApprovedAt: article.ApprovedAt.UTC().Format(timeFormat),
 	}
 	if article.PublishedAt != nil {
-		published := article.PublishedAt.Format(timeFormat)
+		published := article.PublishedAt.UTC().Format(timeFormat)
 		body.PublishedAt = &published
 	}
 	h.writeJSON(w, r, http.StatusCreated, body)
@@ -299,7 +303,7 @@ func (h *Handler) publishArticle(w http.ResponseWriter, r *http.Request) {
 	}
 	h.writeJSON(w, r, http.StatusOK, publicationResponse{
 		ArticleID:   article.ID.String(),
-		PublishedAt: article.PublishedAt.Format(timeFormat),
+		PublishedAt: article.PublishedAt.UTC().Format(timeFormat),
 	})
 }
 
@@ -365,7 +369,7 @@ func (h *Handler) withdrawArticle(w http.ResponseWriter, r *http.Request) {
 
 	h.writeJSON(w, r, http.StatusOK, withdrawalResult{
 		ArticleID:   withdrawal.ArticleID.String(),
-		WithdrawnAt: withdrawal.WithdrawnAt.Format(timeFormat),
+		WithdrawnAt: withdrawal.WithdrawnAt.UTC().Format(timeFormat),
 		WithdrawnBy: withdrawal.WithdrawnBy.String(),
 		Reason:      withdrawal.Reason,
 	})
@@ -534,7 +538,7 @@ func provenanceBody(p Provenance) provenanceResponse {
 		SourceItem: provenanceSourceItem{
 			SourceURL:                  p.SourceItem.SourceURL,
 			OriginalTitle:              p.SourceItem.OriginalTitle,
-			RetrievedAt:                p.SourceItem.RetrievedAt.Format(timeFormat),
+			RetrievedAt:                p.SourceItem.RetrievedAt.UTC().Format(timeFormat),
 			ContentHash:                p.SourceItem.ContentHash,
 			LicenceSnapshot:            p.SourceItem.LicenceSnapshot,
 			UsageRuleSnapshot:          p.SourceItem.UsageRuleSnapshot,
@@ -544,7 +548,7 @@ func provenanceBody(p Provenance) provenanceResponse {
 		Approval: provenanceApproval{
 			ApproverName:  p.Approval.ApproverName,
 			ApproverEmail: p.Approval.ApproverEmail,
-			ApprovedAt:    p.Approval.ApprovedAt.Format(timeFormat),
+			ApprovedAt:    p.Approval.ApprovedAt.UTC().Format(timeFormat),
 		},
 		Events: make([]provenanceEventResponse, 0, len(p.Events)),
 	}
@@ -554,17 +558,17 @@ func provenanceBody(p Provenance) provenanceResponse {
 			Model:         p.Translation.Model,
 			PromptVersion: p.Translation.PromptVersion,
 			TargetLocale:  p.Translation.TargetLocale,
-			GeneratedAt:   p.Translation.GeneratedAt.Format(timeFormat),
+			GeneratedAt:   p.Translation.GeneratedAt.UTC().Format(timeFormat),
 			CostMicroUSD:  p.Translation.CostMicroUSD,
 		}
 	}
 	if p.PublishedAt != nil {
-		published := p.PublishedAt.Format(timeFormat)
+		published := p.PublishedAt.UTC().Format(timeFormat)
 		body.PublishedAt = &published
 	}
 	if p.Withdrawal != nil {
 		body.Withdrawal = &provenanceWithdrawal{
-			WithdrawnAt: p.Withdrawal.WithdrawnAt.Format(timeFormat),
+			WithdrawnAt: p.Withdrawal.WithdrawnAt.UTC().Format(timeFormat),
 			WithdrawnBy: p.Withdrawal.WithdrawnBy.String(),
 			Reason:      p.Withdrawal.Reason,
 		}
@@ -572,7 +576,7 @@ func provenanceBody(p Provenance) provenanceResponse {
 	for _, e := range p.Events {
 		body.Events = append(body.Events, provenanceEventResponse{
 			Type:       e.Type,
-			OccurredAt: e.OccurredAt.Format(timeFormat),
+			OccurredAt: e.OccurredAt.UTC().Format(timeFormat),
 			Detail:     eventDetail(e.Payload),
 		})
 	}
@@ -871,7 +875,7 @@ func (h *Handler) createSource(w http.ResponseWriter, r *http.Request) {
 		Jurisdiction: created.Jurisdiction,
 		LicenceTerms: created.LicenceTerms,
 		UsageRule:    created.UsageRule,
-		CreatedAt:    created.CreatedAt.Format(timeFormat),
+		CreatedAt:    created.CreatedAt.UTC().Format(timeFormat),
 	})
 }
 
@@ -968,10 +972,10 @@ func listedSource(item ListedSource) listedSourceResponse {
 		UsageRule:          item.UsageRule,
 		PermissionEvidence: item.PermissionEvidence,
 		Active:             item.Active,
-		CreatedAt:          item.CreatedAt.Format(timeFormat),
+		CreatedAt:          item.CreatedAt.UTC().Format(timeFormat),
 	}
 	if item.LastPolledAt != nil {
-		polled := item.LastPolledAt.Format(timeFormat)
+		polled := item.LastPolledAt.UTC().Format(timeFormat)
 		out.LastPolledAt = &polled
 	}
 	return out
