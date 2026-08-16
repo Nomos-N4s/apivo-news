@@ -344,6 +344,11 @@ function isSourcesPage(body: unknown): body is SourcesPage {
     const source = row as Record<string, unknown>;
     const polled = source['last_polled_at'];
     return (
+      // id and jurisdiction became load-bearing with the filters (#120):
+      // the id keys every row action and the jurisdiction fills a filter
+      // control, so a payload missing either must not reach the screen.
+      typeof source['id'] === 'string' &&
+      typeof source['jurisdiction'] === 'string' &&
       typeof source['name'] === 'string' &&
       typeof source['url'] === 'string' &&
       typeof source['language'] === 'string' &&
