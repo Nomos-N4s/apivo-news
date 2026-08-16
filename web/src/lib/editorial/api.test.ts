@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  allSources,
   approvalRecordLine,
   createEditorialApi,
   EditorialApiError,
@@ -29,6 +30,27 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+/**
+ * Answers each call with the next response; the last repeats. Factories,
+ * not Response instances: a body can only be read once, and the repeating
+ * last answer must be fresh every time.
+ */
+function respondingInTurn(responses: readonly (() => Response)[]): {
+  calls: { url: URL; init: RequestInit | undefined }[];
+  fetchImpl: typeof fetch;
+} {
+  const calls: { url: URL; init: RequestInit | undefined }[] = [];
+  const fetchImpl: typeof fetch = (input, init) => {
+    const respond = responses[Math.min(calls.length, responses.length - 1)];
+    calls.push({ url: new URL(input instanceof URL ? input.href : String(input)), init });
+    if (respond === undefined) {
+      throw new Error('respondingInTurn needs at least one response');
+    }
+    return Promise.resolve(respond());
+  };
+  return { calls, fetchImpl };
 }
 
 describe('the fixture client (no API_BASE_URL)', () => {
@@ -487,6 +509,61 @@ describe('the source list payload', () => {
     await expect(
       createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources(),
     ).resolves.toBeTruthy();
+  });
+});
+
+describe('allSources', () => {
+  const cycle = { retrieved: 3, duplicates_skipped: 1, failures: [] };
+  const row = (name: string) => ({
+    id: name,
+    name,
+    url: `https://x.example/${name}`,
+    language: 'de',
+    jurisdiction: 'DE',
+    licence_terms: 'terms',
+    usage_rule: 'extract_and_link',
+    permission_evidence: null,
+    active: true,
+    last_polled_at: null,
+    created_at: '2026-08-01T09:00:00Z',
+  });
+
+  it('follows next_cursor to exhaustion — the 21st source renders (#86)', async () => {
+    const { calls, fetchImpl } = respondingInTurn([
+      () => jsonResponse({ items: [row('a'), row('b')], next_cursor: 'c1', cycle }),
+      () => jsonResponse({ items: [row('c')], next_cursor: null, cycle }),
+    ]);
+    const list = await allSources(createEditorialApi('http://api:8080', 'jwt', fetchImpl));
+
+    expect(list.items.map((s) => s.name)).toEqual(['a', 'b', 'c']);
+    expect(list.truncated).toBe(false);
+    expect(list.cycle).toEqual(cycle);
+    // Two round trips: the first without a cursor, the second echoing the
+    // first page's next_cursor, both at the contract's maximum limit.
+    expect(calls).toHaveLength(2);
+    expect(calls.at(0)?.url.searchParams.get('cursor')).toBeNull();
+    expect(calls.at(0)?.url.searchParams.get('limit')).toBe('100');
+    expect(calls.at(1)?.url.searchParams.get('cursor')).toBe('c1');
+  });
+
+  it('declares truncation when the page bound is hit with a cursor on offer', async () => {
+    // A cursor chain that never exhausts: the walk must stop at its
+    // bound and say the list is incomplete, never loop or stay silent.
+    const { calls, fetchImpl } = respondingInTurn([
+      () => jsonResponse({ items: [row('endless')], next_cursor: 'again', cycle }),
+    ]);
+    const list = await allSources(createEditorialApi('http://api:8080', 'jwt', fetchImpl), 3);
+
+    expect(calls).toHaveLength(3);
+    expect(list.items).toHaveLength(3);
+    expect(list.truncated).toBe(true);
+  });
+
+  it('carries the fixture flag through, and fixtures are never truncated', async () => {
+    const list = await allSources(createEditorialApi(undefined));
+    expect(list.fixture).toBe(true);
+    expect(list.truncated).toBe(false);
+    expect(list.items.length).toBeGreaterThan(0);
   });
 });
 

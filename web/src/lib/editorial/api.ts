@@ -426,7 +426,12 @@ export interface EditorialApi {
   /** The audit trace; null when the id matches no article. */
   provenance(articleId: string): Promise<ArticleProvenance | null>;
   withdraw(articleId: string, reason: string): Promise<WithdrawalOutcome>;
-  sources(): Promise<SourcesPage>;
+  /**
+   * One page of the source list. With a cursor, the page that follows the
+   * one whose `next_cursor` it was; the fixtures have a single page and
+   * ignore it.
+   */
+  sources(cursor?: string): Promise<SourcesPage>;
   addSource(input: NewSource): Promise<SourceOutcome>;
 }
 
@@ -653,8 +658,16 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
       }
       return { recorded: true, ...body };
     },
-    async sources(): Promise<SourcesPage> {
-      const response = await fetchImpl(new URL(`${base}/api/v1/editorial/sources`), { headers });
+    async sources(cursor?: string): Promise<SourcesPage> {
+      const url = new URL(`${base}/api/v1/editorial/sources`);
+      // The endpoint's maximum page: the walk to exhaustion exists to
+      // show every source, so it takes the fewest round trips the
+      // contract allows.
+      url.searchParams.set('limit', '100');
+      if (cursor !== undefined) {
+        url.searchParams.set('cursor', cursor);
+      }
+      const response = await fetchImpl(url, { headers });
       // A deployment can still serve the reader while the editorial
       // prefix is unmounted, so a 404 here means the read is not deployed
       // rather than that the screen is broken.
@@ -729,6 +742,54 @@ export function approvalRecordLine(outcome: ApprovalOutcome): string {
     parts.push(`article ${outcome.article_id}`);
   }
   return parts.join(' · ');
+}
+
+/** The whole source list, as the sources screen renders it. */
+export interface SourceList {
+  readonly items: readonly SourceRow[];
+  readonly cycle: PollCycle;
+  /** True when the list is fixture data; see `QueuePage.fixture`. */
+  readonly fixture: boolean;
+  /**
+   * True when the page bound was reached with a cursor still on offer:
+   * sources exist beyond `items`, and the screen must say so rather than
+   * present the count as the whole registry.
+   */
+  readonly truncated: boolean;
+}
+
+/**
+ * Follows `next_cursor` to exhaustion, bounded. The sources screen exists
+ * to make the licensing base visible, so rendering page one as the whole
+ * registry — the 21st source invisible, the summary counting only what
+ * one page held — is the one failure its purpose rules out. Every page is
+ * fetched and concatenated; if the bound is hit with a cursor still on
+ * offer, the result says so explicitly instead of truncating silently.
+ *
+ * The bound is generous by construction: pages arrive at the contract's
+ * maximum limit of 100 and feeds are registered by hand, so the default
+ * covers a registry far beyond reality while still refusing to loop
+ * forever on a cursor chain that never exhausts.
+ */
+export async function allSources(api: EditorialApi, maxPages = 10): Promise<SourceList> {
+  const first = await api.sources();
+  const items: SourceRow[] = [...first.items];
+  let cursor = first.next_cursor ?? null;
+  let pages = 1;
+  while (cursor !== null && pages < maxPages) {
+    const page = await api.sources(cursor);
+    items.push(...page.items);
+    cursor = page.next_cursor ?? null;
+    pages += 1;
+  }
+  return {
+    items,
+    // The cycle is one aggregate reading, not a paged list: the first
+    // page's copy is the one the screen renders.
+    cycle: first.cycle,
+    fixture: first.fixture === true,
+    truncated: cursor !== null,
+  };
 }
 
 /** What the audit page's withdrawal banner shows. */
