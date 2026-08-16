@@ -64,6 +64,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"POST /api/v1/editorial/approvals":                 h.createApproval,
 		"POST /api/v1/editorial/articles/{id}/publication": h.publishArticle,
 		"POST /api/v1/editorial/articles/{id}/withdrawal":  h.withdrawArticle,
+		"GET /api/v1/editorial/articles/{id}/provenance":   h.articleProvenance,
 		"POST /api/v1/editorial/sources":                   h.createSource,
 	}
 }
@@ -310,6 +311,177 @@ func newApproval(req approvalRequest, editor Editor) (approval NewApproval, deta
 		approval.TranslationID = &id
 	}
 	return approval, "", true
+}
+
+// provenanceResponse is the audit trace of one article (I-5, US5): the
+// full chain the article_provenance view answers in one query, plus the
+// article's slice of the audit stream. The `source` object is identity
+// only - the legal basis is always the retrieval-time snapshots inside
+// `source_item` (I-4).
+type provenanceResponse struct {
+	ArticleID   string                    `json:"article_id"`
+	Headline    string                    `json:"headline"`
+	Places      []string                  `json:"places"`
+	Source      provenanceSource          `json:"source"`
+	SourceItem  provenanceSourceItem      `json:"source_item"`
+	Translation *provenanceTranslation    `json:"translation"`
+	Approval    provenanceApproval        `json:"approval"`
+	PublishedAt *string                   `json:"published_at"`
+	Withdrawal  *provenanceWithdrawal     `json:"withdrawal"`
+	Events      []provenanceEventResponse `json:"events"`
+}
+
+// provenanceSource is the feed's identity. Identity ONLY: no licence
+// fields belong here, because the mutable source row is never the legal
+// basis of anything already retrieved (I-4).
+type provenanceSource struct {
+	Name         string `json:"name"`
+	FeedURL      string `json:"feed_url"`
+	Jurisdiction string `json:"jurisdiction"`
+}
+
+// provenanceSourceItem is the immutable retrieval evidence with its
+// trigger-written snapshots.
+type provenanceSourceItem struct {
+	SourceURL                  string  `json:"source_url"`
+	OriginalTitle              *string `json:"original_title"`
+	RetrievedAt                string  `json:"retrieved_at"`
+	ContentHash                string  `json:"content_hash"`
+	LicenceSnapshot            string  `json:"licence_snapshot"`
+	UsageRuleSnapshot          string  `json:"usage_rule_snapshot"`
+	PermissionEvidenceSnapshot *string `json:"permission_evidence_snapshot"`
+	OriginalAuthor             *string `json:"original_author"`
+}
+
+// provenanceTranslation is the translation lineage (FR-005) and its
+// recorded cost (FR-006); the whole object is null for an article
+// published untranslated.
+type provenanceTranslation struct {
+	Model         string `json:"model"`
+	PromptVersion string `json:"prompt_version"`
+	TargetLocale  string `json:"target_locale"`
+	GeneratedAt   string `json:"generated_at"`
+	CostMicroUSD  int64  `json:"cost_microusd"`
+}
+
+// provenanceApproval names the human whose decision the article is (I-1).
+type provenanceApproval struct {
+	ApproverName  string `json:"approver_name"`
+	ApproverEmail string `json:"approver_email"`
+	ApprovedAt    string `json:"approved_at"`
+}
+
+// provenanceWithdrawal is the recorded end of publication, null while
+// publication has not ended.
+type provenanceWithdrawal struct {
+	WithdrawnAt string `json:"withdrawn_at"`
+	WithdrawnBy string `json:"withdrawn_by"`
+	Reason      string `json:"reason"`
+}
+
+// provenanceEventResponse is one audit-stream row, oldest first.
+type provenanceEventResponse struct {
+	Type       string `json:"type"`
+	OccurredAt string `json:"occurred_at"`
+	Detail     string `json:"detail"`
+}
+
+// articleProvenance implements GET /api/v1/editorial/articles/{id}/provenance.
+func (h *Handler) articleProvenance(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathArticleID(w, r)
+	if !ok {
+		return
+	}
+	p, err := h.store.Provenance(r.Context(), id)
+	switch {
+	case errors.Is(err, ErrArticleNotFound):
+		platformhttp.Problem(w, http.StatusNotFound, "no article with this id")
+		return
+	case err != nil:
+		h.internalError(w, r, "reading article provenance", err)
+		return
+	}
+	h.writeJSON(w, r, http.StatusOK, provenanceBody(p))
+}
+
+// provenanceBody renders the audit chain for the wire.
+func provenanceBody(p Provenance) provenanceResponse {
+	body := provenanceResponse{
+		ArticleID: p.ArticleID.String(),
+		Headline:  p.Headline,
+		// Empty renders as [], never null: an article with no places is not
+		// the same claim as one whose places are unknown.
+		Places: make([]string, 0, len(p.Places)),
+		Source: provenanceSource{
+			Name:         p.Source.Name,
+			FeedURL:      p.Source.FeedURL,
+			Jurisdiction: p.Source.Jurisdiction,
+		},
+		SourceItem: provenanceSourceItem{
+			SourceURL:                  p.SourceItem.SourceURL,
+			OriginalTitle:              p.SourceItem.OriginalTitle,
+			RetrievedAt:                p.SourceItem.RetrievedAt.Format(timeFormat),
+			ContentHash:                p.SourceItem.ContentHash,
+			LicenceSnapshot:            p.SourceItem.LicenceSnapshot,
+			UsageRuleSnapshot:          p.SourceItem.UsageRuleSnapshot,
+			PermissionEvidenceSnapshot: p.SourceItem.PermissionEvidenceSnapshot,
+			OriginalAuthor:             p.SourceItem.OriginalAuthor,
+		},
+		Approval: provenanceApproval{
+			ApproverName:  p.Approval.ApproverName,
+			ApproverEmail: p.Approval.ApproverEmail,
+			ApprovedAt:    p.Approval.ApprovedAt.Format(timeFormat),
+		},
+		Events: make([]provenanceEventResponse, 0, len(p.Events)),
+	}
+	body.Places = append(body.Places, p.Places...)
+	if p.Translation != nil {
+		body.Translation = &provenanceTranslation{
+			Model:         p.Translation.Model,
+			PromptVersion: p.Translation.PromptVersion,
+			TargetLocale:  p.Translation.TargetLocale,
+			GeneratedAt:   p.Translation.GeneratedAt.Format(timeFormat),
+			CostMicroUSD:  p.Translation.CostMicroUSD,
+		}
+	}
+	if p.PublishedAt != nil {
+		published := p.PublishedAt.Format(timeFormat)
+		body.PublishedAt = &published
+	}
+	if p.Withdrawal != nil {
+		body.Withdrawal = &provenanceWithdrawal{
+			WithdrawnAt: p.Withdrawal.WithdrawnAt.Format(timeFormat),
+			WithdrawnBy: p.Withdrawal.WithdrawnBy.String(),
+			Reason:      p.Withdrawal.Reason,
+		}
+	}
+	for _, e := range p.Events {
+		body.Events = append(body.Events, provenanceEventResponse{
+			Type:       e.Type,
+			OccurredAt: e.OccurredAt.Format(timeFormat),
+			Detail:     eventDetail(e.Payload),
+		})
+	}
+	return body
+}
+
+// eventDetail renders an event payload as the audit screen's one-line
+// detail: the recorded payload itself, compact, with sorted keys - minus
+// article_id, which every listed event carries and the screen is already
+// scoped to. The record, not a paraphrase of it: inventing prose here
+// would put words into an audit stream that deliberately has none.
+func eventDetail(payload json.RawMessage) string {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		// Not an object; the recorded bytes are still the honest answer.
+		return string(payload)
+	}
+	delete(fields, "article_id")
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return string(payload)
+	}
+	return string(out)
 }
 
 // pathArticleID parses the {id} path segment, answering the 400 itself when
