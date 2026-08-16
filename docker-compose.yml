@@ -42,6 +42,31 @@ services:
       # like JWKS_URL above. Empty means the binary's documented 15m
       # default; "0" disables the loop - the only disable switch.
       POLL_INTERVAL: ${POLL_INTERVAL:-}
+      # Translation provider and budget (T018), taken from the host
+      # environment (or .env). NO DEFAULTS on purpose: unset means the
+      # translation pipeline stays OFF and the api logs one line saying
+      # so - the provider and the budget are a founder decision, and
+      # nothing here may make it by accident. A var not forwarded here
+      # never reaches the container, so every key is passed through even
+      # though all of them ship empty. Example shapes, once decided:
+      #   TRANSLATION_BASE_URL=https://<host>/v1   (OpenAI-compatible root)
+      #   TRANSLATION_MODEL=<model-as-the-host-names-it>
+      #   TRANSLATION_INPUT_USD_PER_MTOK=0.05   (USD per million tokens)
+      #   TRANSLATION_OUTPUT_USD_PER_MTOK=0.08
+      #   TRANSLATION_ARTICLE_CEILING_MICROUSD=20000    ($0.02/article)
+      #   TRANSLATION_MONTHLY_CAP_MICROUSD=25000000     ($25/month)
+      # TRANSLATION_FREE_OF_CHARGE=true replaces both price lines for a
+      # self-hosted host; TRANSLATION_INTERVAL empty means the binary's
+      # 15m default and "0" disables the pipeline, like POLL_INTERVAL.
+      TRANSLATION_BASE_URL: ${TRANSLATION_BASE_URL:-}
+      TRANSLATION_MODEL: ${TRANSLATION_MODEL:-}
+      TRANSLATION_API_KEY: ${TRANSLATION_API_KEY:-}
+      TRANSLATION_INPUT_USD_PER_MTOK: ${TRANSLATION_INPUT_USD_PER_MTOK:-}
+      TRANSLATION_OUTPUT_USD_PER_MTOK: ${TRANSLATION_OUTPUT_USD_PER_MTOK:-}
+      TRANSLATION_FREE_OF_CHARGE: ${TRANSLATION_FREE_OF_CHARGE:-}
+      TRANSLATION_INTERVAL: ${TRANSLATION_INTERVAL:-}
+      TRANSLATION_ARTICLE_CEILING_MICROUSD: ${TRANSLATION_ARTICLE_CEILING_MICROUSD:-}
+      TRANSLATION_MONTHLY_CAP_MICROUSD: ${TRANSLATION_MONTHLY_CAP_MICROUSD:-}
     depends_on:
       postgres:
         condition: service_healthy

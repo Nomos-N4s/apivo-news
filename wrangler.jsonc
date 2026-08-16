@@ -18,9 +18,13 @@
 //
 //   DATABASE_URL   Supabase (EU region) Postgres connection string for the
 //                  Go API.
+//   TRANSLATION_API_KEY
+//                  The translation provider's credential (T018), once a
+//                  provider is decided. Optional even then: a self-hosted
+//                  server started without a key expects none.
 //
 // Later phases add, through the same mechanism with no config change: the
-// translation-provider API key and the Supabase Auth keys for the web SSR.
+// Supabase Auth keys for the web SSR.
 //
 // Non-secret vars — plain configuration in "vars" below, handed to the API
 // container by deploy/cloudflare/worker.js:
@@ -40,6 +44,21 @@
 //                  Empty means the binary's documented 15m default; "0"
 //                  disables the loop — the only disable switch. Forwarded
 //                  to the API container only when set.
+//   TRANSLATION_BASE_URL, TRANSLATION_MODEL,
+//   TRANSLATION_INPUT_USD_PER_MTOK, TRANSLATION_OUTPUT_USD_PER_MTOK,
+//   TRANSLATION_FREE_OF_CHARGE, TRANSLATION_INTERVAL,
+//   TRANSLATION_ARTICLE_CEILING_MICROUSD, TRANSLATION_MONTHLY_CAP_MICROUSD
+//                  Machine translation (T018): an OpenAI-compatible
+//                  provider root and model, its prices in USD per million
+//                  tokens (or FREE_OF_CHARGE=true for a host that charges
+//                  nothing), the FR-006 budget in micro-USD, and the
+//                  cadence (like POLL_INTERVAL). NO DEFAULTS on purpose:
+//                  all empty means the translation pipeline is OFF and the
+//                  binary logs one line saying so — the provider and the
+//                  budget are a founder decision, and nothing picks either
+//                  by accident. Setting only some of them is a mistake the
+//                  binary names at startup. Each is forwarded to the API
+//                  container only when set (deploy/cloudflare/worker.js).
 //
 // Handed to the WEB container by the same file:
 //
@@ -70,6 +89,14 @@
 		"JWKS_URL": "",
 		"JWT_AUDIENCE": "",
 		"POLL_INTERVAL": "",
+		"TRANSLATION_BASE_URL": "",
+		"TRANSLATION_MODEL": "",
+		"TRANSLATION_INPUT_USD_PER_MTOK": "",
+		"TRANSLATION_OUTPUT_USD_PER_MTOK": "",
+		"TRANSLATION_FREE_OF_CHARGE": "",
+		"TRANSLATION_INTERVAL": "",
+		"TRANSLATION_ARTICLE_CEILING_MICROUSD": "",
+		"TRANSLATION_MONTHLY_CAP_MICROUSD": "",
 		"API_BASE_URL": "",
 		"PUBLIC_SUPABASE_URL": "",
 		"PUBLIC_SUPABASE_ANON_KEY": ""
