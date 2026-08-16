@@ -35,6 +35,7 @@ import {
 	isRateLimitedApiPath,
 	matchesCrawlerSignature,
 	normalisePath,
+	rateLimitKey,
 	withEdgeHeaders,
 } from "./routing.js";
 
@@ -260,15 +261,23 @@ function tooManyRequests(detail) {
  * Applies the rate limit to a non-reader API request, returning a refusal
  * or null.
  *
- * Keyed on the client IP: the point is to bound how much token
- * verification a stranger can make us do, and a stranger has no account to
- * key on. An authenticated editor works well inside the limit — the
- * screens make a handful of requests per action.
+ * Keyed on the caller, not on the connection: rateLimitKey has the whole
+ * reasoning, and the short version is that every editorial call is made
+ * server-side by the web container, so the address on that hop is the
+ * container's and buckets all editors together.
  *
- * A missing binding refuses rather than passes. Serving the editorial
- * prefix unlimited while believing it limited is the silent state this
- * whole issue is about; the reader path is untouched by the refusal, which
- * is the same trade JWKS_URL already makes.
+ * What the binding actually promises is worth naming here, because the
+ * word "limit" invites more: Cloudflare's Workers Rate Limiting is
+ * enforced per Cloudflare LOCATION and is documented as approximate, not
+ * an accounting system. So this is "about 60 a minute per caller per
+ * edge location", not a single global bound — enough to keep an invalid
+ * token from costing us unbounded verification, and not something to
+ * describe as a quota.
+ *
+ * A missing binding refuses rather than passes. Serving these endpoints
+ * unlimited while believing them limited is the silent state this whole
+ * issue is about; the reader path is untouched by the refusal, which is
+ * the same trade JWKS_URL already makes.
  */
 async function limitApi(request, env) {
 	if (!env.EDITORIAL_RATE_LIMIT) {
@@ -276,13 +285,15 @@ async function limitApi(request, env) {
 			"the editorial rate limiter is not configured on this deployment, so the editorial endpoints are refused; the EDITORIAL_RATE_LIMIT binding is declared in wrangler.jsonc",
 		);
 	}
-	const key = request.headers.get("cf-connecting-ip") ?? "unknown";
+	const { key, keyedOn } = rateLimitKey(request);
 	const { success } = await env.EDITORIAL_RATE_LIMIT.limit({ key });
 	if (success) {
 		return null;
 	}
 	return tooManyRequests(
-		"too many requests to the editorial endpoints from this address; retry shortly",
+		keyedOn === "token"
+			? "too many requests to the editorial endpoints for this signed-in caller; retry shortly"
+			: "too many requests to the editorial endpoints from this address; retry shortly",
 	);
 }
 

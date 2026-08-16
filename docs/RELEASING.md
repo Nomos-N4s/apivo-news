@@ -81,6 +81,15 @@ because `/api/v1/%65ditorial/queue` is editorial to the api and looked
 like nothing in particular to a prefix test. A path that does not decode
 at all is answered `400` rather than routed.
 
+The count is **per caller**: the bearer token's subject where a request
+carries one, the client address otherwise. Keying on the address alone
+would bucket every editor together, because `API_BASE_URL` is the
+deployment's own origin and the editorial calls are therefore made
+server-side by the web container. And it is **per Cloudflare location and
+approximate** — the platform documents its rate-limiting binding that way.
+Read it as a bound on invalid-token load, roughly 60 a minute per caller
+per location, not as a quota anyone is owed.
+
 **The deployment is https-only, and says so twice.** The Worker states
 `Strict-Transport-Security: max-age=31536000; includeSubDomains` on every
 https response — `preload` deliberately not among them, since submitting a

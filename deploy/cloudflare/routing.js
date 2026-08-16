@@ -194,6 +194,86 @@ export function isRateLimitedApiPath(path) {
 }
 
 /**
+ * The credential of a `Bearer` Authorization header, or null when the
+ * request carries none in that form.
+ */
+export function bearerToken(authorization) {
+	if (authorization === null || authorization === undefined) {
+		return null;
+	}
+	const match = /^\s*Bearer\s+(\S+)\s*$/i.exec(authorization);
+	return match === null ? null : match[1];
+}
+
+/**
+ * The `sub` claim of a structurally valid JWT, or null.
+ *
+ * UNVERIFIED, and it must stay that way: verification belongs to the api,
+ * which has the JWKS and the audience. This reads the claim only to tell
+ * one caller from another — see rateLimitKey for why that is sound and
+ * where it stops being sound.
+ */
+export function tokenSubject(token) {
+	if (token === null || token === undefined) {
+		return null;
+	}
+	const segments = token.split('.');
+	if (segments.length !== 3) {
+		return null;
+	}
+	const base64url = segments[1].replace(/-/g, '+').replace(/_/g, '/');
+	const padded = base64url + '='.repeat((4 - (base64url.length % 4)) % 4);
+	try {
+		const claims = JSON.parse(atob(padded));
+		const subject = claims?.sub;
+		return typeof subject === 'string' && subject !== '' ? subject : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * How long a limiter key may be. A subject is a UUID; anything longer is
+ * somebody testing what this accepts.
+ */
+export const RATE_LIMIT_KEY_MAX = 128;
+
+/**
+ * Who the rate limiter counts this request against.
+ *
+ * NOT the client address alone, which is what shipped first and what the
+ * topology quietly broke: `API_BASE_URL` is the deployment's own origin,
+ * so every editorial call is made server-side by the web container. On
+ * that second hop `cf-connecting-ip` is the container's egress address —
+ * all signed-in editors in one bucket (or in the `unknown` bucket, when
+ * container-originated traffic carries no such header), two of them
+ * working a backlog 429-ing each other, while the anonymous flood the
+ * limit was written for keeps a per-address allowance each.
+ *
+ * So: a request that carries a bearer token is counted against that
+ * token's subject, and only a tokenless or unreadable-token request falls
+ * back to the address.
+ *
+ * The honest limit of this, stated because it is a trade and not a
+ * victory: the Worker cannot verify a signature, so the subject is
+ * whatever the caller wrote. Someone forging tokens can mint a fresh
+ * subject per request and so a fresh bucket. What that buys them is a
+ * signature check against a JWKS the api keeps cached — the database is
+ * never touched without a VERIFIED token, and the editor role is enforced
+ * there a second time. What the address bucket still bounds is the
+ * cheapest flood to mount and the one this limit was written for: no
+ * token at all, or a token that is not even a JWT.
+ */
+export function rateLimitKey(request) {
+	const subject = tokenSubject(bearerToken(request.headers.get('authorization')));
+	if (subject !== null) {
+		return { key: `sub:${subject.slice(0, RATE_LIMIT_KEY_MAX)}`, keyedOn: 'token' };
+	}
+	const address = request.headers.get('cf-connecting-ip') ?? 'unknown';
+	return { key: `ip:${address.slice(0, RATE_LIMIT_KEY_MAX)}`, keyedOn: 'address' };
+}
+
+/**
  * Rewrites `Origin` and `Referer` from `https://<host>` to `http://<host>`
  * FOR THIS SITE'S OWN HOST ONLY, in place.
  *

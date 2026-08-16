@@ -160,14 +160,24 @@
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["ApiContainer", "WebContainer"] }
 	],
-	// Rate limiting for /api/v1/editorial/* (issue #134). Routing the API
-	// namespace onto the public surface makes the editorial endpoints
-	// reachable by anyone, and an invalid bearer token still costs a JWKS
-	// verification and a database round trip. 60 requests per minute per
-	// client IP is far above what the editorial screens do per action and
-	// far below what a stranger needs to be a nuisance. The token gate and
-	// the database's second role check are unchanged; this only bounds how
-	// fast someone may make us check one.
+	// Rate limiting for every /api/… path that is not a public reader
+	// endpoint (issue #134). Routing the API namespace onto the public
+	// surface makes the editorial endpoints reachable by anyone, and an
+	// invalid bearer token still costs a JWKS verification. 60 requests
+	// per minute is far above what the editorial screens do per action
+	// and far below what a stranger needs to be a nuisance. The token
+	// gate and the database's second role check are unchanged; this only
+	// bounds how fast someone may make us check one.
+	//
+	// Counted per CALLER — the bearer token's subject where there is one,
+	// the client address otherwise (deploy/cloudflare/routing.js,
+	// rateLimitKey): the editorial calls are made server-side by the web
+	// container, so the address alone would bucket every editor together.
+	//
+	// And counted per Cloudflare LOCATION: this binding is documented as
+	// per-location and approximate, not an accounting system. It is a
+	// bound on invalid-token load, not a quota, and nothing here should
+	// be described as one.
 	"ratelimits": [
 		{
 			"name": "EDITORIAL_RATE_LIMIT",

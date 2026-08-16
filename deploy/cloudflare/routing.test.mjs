@@ -21,9 +21,13 @@ import {
 	isApiPath,
 	isRateLimitedApiPath,
 	isReaderApiPath,
+	bearerToken,
 	matchesCrawlerSignature,
 	normalisePath,
+	RATE_LIMIT_KEY_MAX,
+	rateLimitKey,
 	rewriteSameSiteOriginHeaders,
+	tokenSubject,
 	varyOnUserAgent,
 	withEdgeHeaders,
 } from './routing.js';
@@ -148,6 +152,104 @@ describe('isRateLimitedApiPath', () => {
 		assert.equal(isRateLimitedApiPath(encodedNamespace), false, 'not under /api/ as written');
 		assert.equal(isRateLimitedApiPath(normalisePath(encodedNamespace)), true);
 		assert.equal(isApiPath(normalisePath(encodedNamespace)), true);
+	});
+});
+
+/** A JWT-shaped token carrying these claims. Unsigned: nothing here verifies. */
+const jwtWith = (claims) => {
+	const encode = (value) =>
+		Buffer.from(JSON.stringify(value))
+			.toString('base64')
+			.replace(/\+/g, '-')
+			.replace(/\//g, '_')
+			.replace(/=+$/, '');
+	return `${encode({ alg: 'RS256', typ: 'JWT' })}.${encode(claims)}.c2lnbmF0dXJl`;
+};
+
+describe('rateLimitKey', () => {
+	// The finding: API_BASE_URL is the deployment's own origin, so every
+	// editorial call is made server-side by the web container and
+	// cf-connecting-ip on that hop is the container's. Keyed on the
+	// address, all editors share one bucket and 429 each other.
+	it('counts a signed-in caller against their own subject, not the connection', () => {
+		const request = new Request('https://news.example/api/v1/editorial/queue', {
+			headers: {
+				authorization: `Bearer ${jwtWith({ sub: 'eleni-uuid' })}`,
+				'cf-connecting-ip': '203.0.113.7',
+			},
+		});
+		assert.deepEqual(rateLimitKey(request), { key: 'sub:eleni-uuid', keyedOn: 'token' });
+	});
+
+	it('gives two editors behind one container address two buckets', () => {
+		const from = (sub) =>
+			rateLimitKey(
+				new Request('https://news.example/api/v1/editorial/queue', {
+					headers: {
+						authorization: `Bearer ${jwtWith({ sub })}`,
+						'cf-connecting-ip': '203.0.113.7',
+					},
+				}),
+			).key;
+		assert.notEqual(from('eleni-uuid'), from('dimitris-uuid'));
+	});
+
+	// Tokenless and unreadable-token traffic is the cheapest flood to
+	// mount and the one this limit was written for; the address is what
+	// bounds it.
+	it('falls back to the address for a request carrying no usable token', () => {
+		const from = (headers) =>
+			rateLimitKey(new Request('https://news.example/api/v1/editorial/queue', { headers }));
+		assert.deepEqual(from({ 'cf-connecting-ip': '203.0.113.7' }), {
+			key: 'ip:203.0.113.7',
+			keyedOn: 'address',
+		});
+		for (const authorization of [
+			'Bearer not-a-jwt',
+			'Basic ZWxlbmk6cHc=',
+			'Bearer ',
+			`Bearer ${jwtWith({ role: 'editor' })}`, // structurally fine, no subject
+		]) {
+			assert.deepEqual(
+				from({ authorization, 'cf-connecting-ip': '203.0.113.7' }),
+				{ key: 'ip:203.0.113.7', keyedOn: 'address' },
+				authorization,
+			);
+		}
+	});
+
+	it('names the bucket "unknown" when there is no address either', () => {
+		const key = rateLimitKey(new Request('https://news.example/api/v1/editorial/queue')).key;
+		assert.equal(key, 'ip:unknown');
+	});
+
+	it('caps the key, so a caller cannot choose how long it is', () => {
+		const request = new Request('https://news.example/api/v1/editorial/queue', {
+			headers: { authorization: `Bearer ${jwtWith({ sub: 'x'.repeat(4096) })}` },
+		});
+		assert.equal(rateLimitKey(request).key.length, 'sub:'.length + RATE_LIMIT_KEY_MAX);
+	});
+});
+
+describe('bearerToken and tokenSubject', () => {
+	it('reads the credential of a Bearer header, whatever its case', () => {
+		assert.equal(bearerToken('Bearer abc'), 'abc');
+		assert.equal(bearerToken('bearer  abc  '), 'abc');
+		assert.equal(bearerToken('Basic abc'), null);
+		assert.equal(bearerToken(null), null);
+		assert.equal(bearerToken(''), null);
+	});
+
+	it('reads the subject out of a JWT payload without verifying anything', () => {
+		assert.equal(tokenSubject(jwtWith({ sub: 'eleni-uuid' })), 'eleni-uuid');
+	});
+
+	it('reports anything it cannot read as no subject at all', () => {
+		assert.equal(tokenSubject(null), null);
+		assert.equal(tokenSubject('a.b'), null);
+		assert.equal(tokenSubject('a.@@@.c'), null);
+		assert.equal(tokenSubject(jwtWith({ sub: 42 })), null);
+		assert.equal(tokenSubject(jwtWith({})), null);
 	});
 });
 
