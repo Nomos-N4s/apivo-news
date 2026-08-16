@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -408,6 +409,124 @@ func TestAFailedCallsSpendStillReachesTheLedger(t *testing.T) {
 	}
 	if got := month.UnmeteredAttempts - before.UnmeteredAttempts; got != 1 {
 		t.Errorf("month's unmetered attempts moved by %d, want 1", got)
+	}
+}
+
+// TestPermanentlyIneligibleItemsDoNotWallOffTheBacklog asserts that the
+// cycle's bound counts provider calls, never skips: a window of
+// markup-only bodies ahead of one translatable item - more of them than
+// the whole bound - must not stop that item being reached in a single
+// cycle. Before the keyset continuation, ten such items starved the
+// pipeline for good: skipped in Go, they stayed eligible in SQL and
+// re-filled the newest-first window every cycle.
+//
+// The SQL-decidable exclusions ride along: an over-long title and a
+// whitespace body never reach the provider at all, because no translation
+// row will ever be written for them and a Go-side skip would hold them in
+// the window forever.
+//
+// The seeds sit hours in the future so they are strictly the newest
+// eligible items in the shared database: the bound is small here, and
+// another suite's committed items must not consume it first.
+func TestPermanentlyIneligibleItemsDoNotWallOffTheBacklog(t *testing.T) {
+	t.Parallel()
+	tx := ledgerTx(t)
+	ctx := context.Background()
+
+	source := seedPipelineSource(t, tx, "el", true)
+	future := time.Now().Add(2 * time.Hour)
+
+	// The wall: more markup-only items than the cycle's whole bound, all
+	// newer than the translatable item behind them.
+	markupTitles := make([]string, 12)
+	for i := range markupTitles {
+		markupTitles[i] = fmt.Sprintf("Άρθρο μόνο με σήμανση %d %s", i, uuid.NewString())
+		// The script text keeps each body unique for the per-source
+		// content-hash constraint; script text is code, never prose, so
+		// the derived extract stays empty.
+		body := fmt.Sprintf("<div><script>var onlyCode = %q;</script></div>", uuid.NewString())
+		seedPipelineItem(t, tx, source, &markupTitles[i], body, future.Add(time.Duration(i)*time.Minute))
+	}
+	// The SQL-decidable residue, also ahead of the translatable item.
+	longTitle := strings.Repeat("Τ", translation.MaxSourceTitleChars+1)
+	seedPipelineItem(t, tx, source, &longTitle, "Κανονικό σώμα πίσω από υπερμεγέθη τίτλο.", future.Add(-30*time.Minute))
+	blankBody := "Άρθρο με κενό σώμα " + uuid.NewString()
+	seedPipelineItem(t, tx, source, &blankBody, "   ", future.Add(-29*time.Minute))
+
+	translatable := "Μεταφράσιμο πίσω από τον τοίχο " + uuid.NewString()
+	item := seedPipelineItem(t, tx, source, &translatable, "Σώμα με αρκετό κείμενο για ένα απόσπασμα.", future.Add(-time.Hour))
+
+	fake := &scriptedTranslator{results: map[string]translation.Result{
+		translatable: pipelineResult(1_000),
+	}}
+	month := lockedMonth(t, tx)
+	caps := translation.Caps{PerArticleMicroUSD: 20_000, MonthlyMicroUSD: month.SpentMicroUSD + 10_000_000}
+
+	pipeline, err := translation.NewPipeline(slog.New(slog.DiscardHandler), tx, fake, translation.PipelineConfig{
+		Interval:      time.Minute,
+		Limit:         3, // smaller than the wall: reaching the item at all proves skips are free
+		ReaderLocales: []string{"de"},
+		Caps:          caps,
+	})
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+	if err := pipeline.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce() = %v, want nil", err)
+	}
+
+	calls := fake.requestsFor(translatable)
+	if len(calls) != 1 || calls[0].TargetLanguage != "de" {
+		t.Errorf("the translatable item was requested as %+v, want exactly one request into \"de\": the wall of skipped items must not consume the cycle's bound", calls)
+	}
+	if !hasTranslation(t, tx, item, "de") {
+		t.Error("the translatable item behind the wall was not translated in one cycle")
+	}
+	for _, excluded := range append(markupTitles, longTitle, blankBody) {
+		if n := len(fake.requestsFor(excluded)); n != 0 {
+			t.Errorf("permanently ineligible item %q reached the provider %d time(s), want none", excluded, n)
+		}
+	}
+}
+
+// TestTheReCheckUnderTheClaimSkipsAPaidPair asserts the one line standing
+// between a stale work list and a double payment - without staging
+// concurrency. An English item with its Greek translation already on
+// record stays eligible (German is missing), so the cycle still claims
+// (item, el); the re-check under that claim finds the row, and the
+// provider must NOT be paid again for el - while de, genuinely missing,
+// is translated in the same cycle.
+func TestTheReCheckUnderTheClaimSkipsAPaidPair(t *testing.T) {
+	t.Parallel()
+	tx := ledgerTx(t)
+	ctx := context.Background()
+
+	title := "English item already translated for Greek readers " + uuid.NewString()
+	source := seedPipelineSource(t, tx, "en", true)
+	item := seedPipelineItem(t, tx, source, &title, "A body with enough text for an extract.", time.Now().Add(3*time.Hour))
+	seedTranslation(t, tx, item, "el")
+
+	fake := &scriptedTranslator{results: map[string]translation.Result{
+		title: pipelineResult(1_000),
+	}}
+	month := lockedMonth(t, tx)
+	caps := translation.Caps{PerArticleMicroUSD: 20_000, MonthlyMicroUSD: month.SpentMicroUSD + 10_000_000}
+
+	pipeline := newTestPipeline(t, tx, fake, []string{"el", "de"}, caps)
+	if err := pipeline.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce() = %v, want nil", err)
+	}
+
+	calls := fake.requestsFor(title)
+	if len(calls) != 1 || calls[0].TargetLanguage != "de" {
+		locales := make([]string, 0, len(calls))
+		for _, req := range calls {
+			locales = append(locales, req.TargetLanguage)
+		}
+		t.Errorf("the item was requested into %v, want exactly [de]: the re-check under the claim must skip the pair already paid for", locales)
+	}
+	if !hasTranslation(t, tx, item, "de") {
+		t.Error("the genuinely missing German translation was not recorded")
 	}
 }
 
