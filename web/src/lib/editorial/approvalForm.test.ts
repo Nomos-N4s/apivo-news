@@ -52,16 +52,50 @@ describe('parseApprovalForm', () => {
     const result = parseApprovalForm(
       approvalForm(complete.filter(([name]) => name !== 'place')),
     );
-    expect(result).toEqual({ ok: false, refusal: 'no-place' });
+    expect(result).toEqual({
+      ok: false,
+      refusal: 'no-place',
+      stale: {
+        sourceItemId: 'src-1',
+        attribution: 'Originally published by X.',
+        places: [],
+      },
+    });
   });
 
   it('treats blank place values as no place', () => {
     const withBlank = complete
       .filter(([name]) => name !== 'place')
       .concat([['place', '   ']]);
-    expect(parseApprovalForm(approvalForm(withBlank))).toEqual({
-      ok: false,
-      refusal: 'no-place',
+    const result = parseApprovalForm(approvalForm(withBlank));
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.refusal).toBe('no-place');
+  });
+
+  it('a refusal keeps what was typed and picked, so the re-render can put it back', () => {
+    // The no-place refusal must not also cost the typed attribution —
+    // the one thing on the form typed rather than selected — and the
+    // no-attribution refusal must not cost the checked places.
+    const noPlace = parseApprovalForm(
+      approvalForm(complete.filter(([name]) => name !== 'place')),
+    );
+    expect(!noPlace.ok && noPlace.stale).toEqual({
+      sourceItemId: 'src-1',
+      attribution: 'Originally published by X.',
+      places: [],
+    });
+
+    const noAttribution = parseApprovalForm(
+      approvalForm(
+        complete.map(([name, value]) =>
+          name === 'attribution' ? ([name, '   '] as const) : ([name, value] as const),
+        ),
+      ),
+    );
+    expect(!noAttribution.ok && noAttribution.stale).toEqual({
+      sourceItemId: 'src-1',
+      attribution: null,
+      places: ['munich', 'greece'],
     });
   });
 
@@ -81,19 +115,22 @@ describe('parseApprovalForm', () => {
   });
 
   it('refuses a form naming no item', () => {
-    expect(
-      parseApprovalForm(approvalForm(complete.filter(([name]) => name !== 'source_item_id'))),
-    ).toEqual({ ok: false, refusal: 'no-item' });
+    const result = parseApprovalForm(
+      approvalForm(complete.filter(([name]) => name !== 'source_item_id')),
+    );
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.refusal).toBe('no-item');
+    // Nothing to re-select: the stale item is null, not ''.
+    expect(!result.ok && result.stale.sourceItemId).toBe(null);
   });
 
   it('refuses a blank attribution — it becomes the rendered attribution block (FR-008)', () => {
     const blank = complete.map(([name, value]) =>
       name === 'attribution' ? ([name, '   '] as const) : ([name, value] as const),
     );
-    expect(parseApprovalForm(approvalForm(blank))).toEqual({
-      ok: false,
-      refusal: 'no-attribution',
-    });
+    const result = parseApprovalForm(approvalForm(blank));
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.refusal).toBe('no-attribution');
   });
 
   it('trims the attribution the way the API stores it', () => {

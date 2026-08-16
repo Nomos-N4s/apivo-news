@@ -43,9 +43,24 @@ export interface ApprovalSubmission {
  */
 export type ApprovalFormRefusal = 'no-item' | 'no-attribution' | 'no-place';
 
+/**
+ * What the POST did carry, kept through a refusal so the re-render can put
+ * it back: the attribution is the one thing on the form typed rather than
+ * selected, and the checked boxes are the editor's judgement — a refusal
+ * that discarded either would charge the editor for the form's own rule.
+ */
+export interface StaleFields {
+  /** Null when the POST named no item — there is nothing to re-select. */
+  readonly sourceItemId: string | null;
+  /** Trimmed; null when blank — the default would be put back anyway. */
+  readonly attribution: string | null;
+  /** Possibly empty — for `no-place` it necessarily is. */
+  readonly places: readonly string[];
+}
+
 export type ApprovalFormResult =
   | { readonly ok: true; readonly submission: ApprovalSubmission }
-  | { readonly ok: false; readonly refusal: ApprovalFormRefusal };
+  | { readonly ok: false; readonly refusal: ApprovalFormRefusal; readonly stale: StaleFields };
 
 /**
  * Parses the approval form's fields. The place checkboxes arrive as
@@ -54,16 +69,10 @@ export type ApprovalFormResult =
  */
 export function parseApprovalForm(form: FormData): ApprovalFormResult {
   const sourceItemId = String(form.get('source_item_id') ?? '');
-  if (sourceItemId === '') {
-    return { ok: false, refusal: 'no-item' };
-  }
   const rawTranslationId = form.get('translation_id');
   const translationId =
     typeof rawTranslationId === 'string' && rawTranslationId !== '' ? rawTranslationId : null;
   const attribution = String(form.get('attribution') ?? '').trim();
-  if (attribution === '') {
-    return { ok: false, refusal: 'no-attribution' };
-  }
   const places: string[] = [];
   for (const value of form.getAll('place')) {
     const slug = String(value).trim();
@@ -71,8 +80,23 @@ export function parseApprovalForm(form: FormData): ApprovalFormResult {
       places.push(slug);
     }
   }
+  const refuse = (refusal: ApprovalFormRefusal): ApprovalFormResult => ({
+    ok: false,
+    refusal,
+    stale: {
+      sourceItemId: sourceItemId === '' ? null : sourceItemId,
+      attribution: attribution === '' ? null : attribution,
+      places,
+    },
+  });
+  if (sourceItemId === '') {
+    return refuse('no-item');
+  }
+  if (attribution === '') {
+    return refuse('no-attribution');
+  }
   if (places.length === 0) {
-    return { ok: false, refusal: 'no-place' };
+    return refuse('no-place');
   }
   return { ok: true, submission: { sourceItemId, translationId, attribution, places } };
 }

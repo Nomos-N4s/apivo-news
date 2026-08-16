@@ -60,6 +60,7 @@ let outcome: ApprovalOutcome | null = null;
 let signedOutPost = false;
 let staleItemId: string | null = null;
 let staleAttribution: string | null = null;
+let stalePlaces: readonly string[] | null = null;
 if (Astro.request.method === 'POST') {
   // Approval is a privileged, named act. A cross-site form must never be
   // able to drive it with a logged-in editor's browser — the check is in
@@ -73,15 +74,26 @@ if (Astro.request.method === 'POST') {
   // article's attribution block, which FR-008 renders on every item) and
   // at least one place — the parse names which requirement a POST missed.
   const parsed = parseApprovalForm(form);
-  const sourceItemId = String(form.get('source_item_id') ?? '');
-  const attribution = String(form.get('attribution') ?? '').trim();
+  // A POST the screen refuses — signed out, or short of a requirement —
+  // must not also cost the editor their work: the attribution is the one
+  // thing on this form that was typed rather than selected, and the
+  // checked boxes are their judgement. The re-render puts both back.
+  if (signedOut || !parsed.ok) {
+    const typed = parsed.ok
+      ? {
+          sourceItemId: parsed.submission.sourceItemId,
+          attribution: parsed.submission.attribution,
+          places: parsed.submission.places,
+        }
+      : parsed.stale;
+    staleItemId = typed.sourceItemId;
+    staleAttribution = typed.attribution;
+    stalePlaces = typed.places;
+  }
   if (signedOut) {
-    // No token, so nothing can be recorded — but the attribution is this
-    // editor's wording, and losing it to a redirect would cost the one
-    // thing on this form that was typed rather than selected.
+    // No token, so nothing can be recorded — the banner says so and the
+    // preserved fields above survive the sign-in round trip's cost.
     signedOutPost = true;
-    staleItemId = sourceItemId === '' ? null : sourceItemId;
-    staleAttribution = attribution === '' ? null : attribution;
   } else if (parsed.ok) {
     try {
       const { submission } = parsed;
@@ -131,8 +143,8 @@ try {
 }
 
 const items = queue?.items ?? [];
-// A signed-out POST re-selects the item it was about, so the re-render
-// puts the preserved attribution back into its own form.
+// A signed-out or refused POST re-selects the item it was about, so the
+// re-render puts the preserved attribution and places back into its form.
 const selectedId = Astro.url.searchParams.get('item') ?? staleItemId;
 const selected = items.find((item) => item.source_item_id === selectedId) ?? items.at(0);
 
@@ -419,7 +431,11 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                                 type="checkbox"
                                 name="place"
                                 value={place.slug}
-                                checked={selected.places?.includes(place.slug)}
+                                checked={
+                                  selected.source_item_id === staleItemId && stalePlaces !== null
+                                    ? stalePlaces.includes(place.slug)
+                                    : selected.places?.includes(place.slug)
+                                }
                               />
                               <span class="box" aria-hidden="true" />
                               <span lang={place.endonymLang !== lang ? place.endonymLang : undefined}>
