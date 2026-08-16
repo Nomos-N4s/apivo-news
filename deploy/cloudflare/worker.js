@@ -301,4 +301,32 @@ export default {
 			: env.WEB.get(env.WEB.idFromName("web"));
 		return withRobotsTag(await container.fetch(request));
 	},
+
+	/**
+	 * The cron trigger (wrangler.jsonc `triggers.crons`), and the reason
+	 * ingestion keeps happening at all.
+	 *
+	 * A container lives inside its Durable Object, and the platform stops
+	 * an idle one — taking the feed poll loop and the translation pipeline
+	 * with it. Nothing in the Go binary can prevent that: it is not
+	 * running to prevent anything. So the schedule does what traffic would
+	 * otherwise have to. It fetches the api, which starts the container if
+	 * it had stopped, and every start runs one poll cycle and one
+	 * translation cycle before sleeping (ingestion.Poller.Run,
+	 * translation.Pipeline.Run). A container that never stopped is already
+	 * looping on POLL_INTERVAL, and the wake costs it one /healthz.
+	 *
+	 * The cadence matches POLL_INTERVAL's default, so ingestion runs at the
+	 * documented rate whether or not anyone is reading. The alternative —
+	 * ingestion only alongside traffic — is a paper that silently stops
+	 * updating on a quiet night, which is why this is written down here, in
+	 * wrangler.jsonc and in docs/RELEASING.md rather than assumed.
+	 */
+	async scheduled(_event, env, ctx) {
+		const api = env.API.get(env.API.idFromName("api"));
+		// The host is arbitrary: a Durable Object stub routes by binding,
+		// not by name. The path is the api's own liveness endpoint, so the
+		// wake costs one handler call and asserts the process answers.
+		ctx.waitUntil(api.fetch("http://apivo-api/healthz"));
+	},
 };

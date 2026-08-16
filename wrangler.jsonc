@@ -60,7 +60,8 @@
 //                  Only meaningful alongside a non-empty JWKS_URL — setting
 //                  it alone fails startup, by design.
 //   POLL_INTERVAL  Feed poll loop cadence, a Go duration (e.g. "15m").
-//                  Unset means the binary's documented 15m default; "0"
+//                  Unset means the binary's documented 15m default, which
+//                  is what "triggers.crons" below is set to match; "0"
 //                  disables the loop — the only disable switch.
 //   TRANSLATION_BASE_URL, TRANSLATION_MODEL,
 //   TRANSLATION_INPUT_USD_PER_MTOK, TRANSLATION_OUTPUT_USD_PER_MTOK,
@@ -109,6 +110,18 @@
 	// Empty on purpose, and not a placeholder wall: see the note above.
 	// Every key here is deployed truth; every key absent is unset.
 	"vars": {},
+	// Keeping ingestion alive. A container lives inside its Durable Object
+	// and the platform stops an idle one, which stops the feed poll loop and
+	// the translation pipeline with it. The schedule wakes the api every 15
+	// minutes; each start runs one poll cycle and one translation cycle
+	// immediately (deploy/cloudflare/worker.js, scheduled). This is the
+	// decision, taken rather than left implicit: ingestion runs on the clock,
+	// not only alongside traffic, because a paper that quietly stops updating
+	// on a quiet night is the failure mode. Matches the binary's default
+	// POLL_INTERVAL - change both together.
+	"triggers": {
+		"crons": ["*/15 * * * *"]
+	},
 	"containers": [
 		{
 			// Go API, built from the repo-root Dockerfile (T001). Reached at
