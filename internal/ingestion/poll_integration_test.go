@@ -31,13 +31,16 @@ import (
 // newTestPoller builds a poller that fails fast and spaces tightly: one
 // fetch attempt per source and a millisecond between sources, so a cycle
 // over test servers (and over any unreachable leftovers other suites may
-// have seeded) completes in test time.
+// have seeded) completes in test time. The hour-long interval is also the
+// freshness gate: a source polled once is not polled again until a test
+// backdates it with agePollState, which is how each test drives exactly
+// the cycles it means to.
 func newTestPoller(pool *pgxpool.Pool) *ingestion.Poller {
 	return ingestion.NewPoller(
 		slog.New(slog.DiscardHandler),
 		pool,
 		ingestion.PollConfig{
-			Interval: time.Hour, // Run is never called; PollOnce ignores it
+			Interval: time.Hour, // Run is never called; PollOnce gates on it
 			Spacing:  time.Millisecond,
 			Fetch: ingestion.FetchConfig{
 				Timeout:     5 * time.Second,
@@ -45,6 +48,19 @@ func newTestPoller(pool *pgxpool.Pool) *ingestion.Poller {
 			},
 		},
 	)
+}
+
+// agePollState backdates a source's last attempt past the freshness gate,
+// so the next cycle finds it due again. It touches last_polled_at only:
+// a standing next_poll_not_before deferral is deliberately left in place,
+// which is what lets a test tell the two gates apart.
+func agePollState(t *testing.T, pool *pgxpool.Pool, id uuid.UUID) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`update source set last_polled_at = now() - interval '2 hours' where id = $1`,
+		id.String()); err != nil {
+		t.Fatalf("backdating last_polled_at: %v", err)
+	}
 }
 
 // seedPollSource commits an active source pointing at the given feed URL
@@ -77,21 +93,22 @@ func seedPollSource(t *testing.T, pool *pgxpool.Pool, feedURL string) uuid.UUID 
 
 // pollState is the source row's poll columns, as one readable value.
 type pollState struct {
-	ETag         string
-	LastModified string
-	LastPolledAt *time.Time
-	Error        *string
-	Retrieved    int
-	Duplicates   int
+	ETag              string
+	LastModified      string
+	LastPolledAt      *time.Time
+	Error             *string
+	Retrieved         int
+	Duplicates        int
+	NextPollNotBefore *time.Time
 }
 
 func readPollState(t *testing.T, pool *pgxpool.Pool, id uuid.UUID) pollState {
 	t.Helper()
 	var s pollState
 	err := pool.QueryRow(context.Background(),
-		`select etag, last_modified, last_polled_at, last_poll_error, last_poll_retrieved, last_poll_duplicates
+		`select etag, last_modified, last_polled_at, last_poll_error, last_poll_retrieved, last_poll_duplicates, next_poll_not_before
 		   from source where id = $1`, id.String(),
-	).Scan(&s.ETag, &s.LastModified, &s.LastPolledAt, &s.Error, &s.Retrieved, &s.Duplicates)
+	).Scan(&s.ETag, &s.LastModified, &s.LastPolledAt, &s.Error, &s.Retrieved, &s.Duplicates, &s.NextPollNotBefore)
 	if err != nil {
 		t.Fatalf("reading poll state: %v", err)
 	}
@@ -209,6 +226,9 @@ func TestPollCycleRetrievesThenDeduplicates(t *testing.T) {
 
 	// Second cycle: the same document again. The stored validators must
 	// arrive at the server, and every item is now a duplicate (FR-014).
+	// The source is backdated first - the freshness gate would otherwise
+	// rule a just-polled source out, which is its job.
+	agePollState(t, pool, sourceID)
 	if _, err := poller.PollOnce(context.Background()); err != nil {
 		t.Fatalf("second PollOnce() error: %v", err)
 	}
@@ -266,6 +286,7 @@ func TestPollCycleNotModifiedRefreshesValidatorsAndZeroesCounters(t *testing.T) 
 		t.Fatalf("planting stale error: %v", err)
 	}
 
+	agePollState(t, pool, sourceID)
 	if _, err := poller.PollOnce(context.Background()); err != nil {
 		t.Fatalf("second PollOnce() error: %v", err)
 	}
@@ -368,6 +389,7 @@ func TestPollCycleStoreFailureKeepsStoredValidators(t *testing.T) {
 	// The next cycle must refetch unconditionally, so the source hands the
 	// complete document over again; the already-stored item is absorbed by
 	// the content_hash dedupe.
+	agePollState(t, pool, sourceID)
 	if _, err := poller.PollOnce(context.Background()); err != nil {
 		t.Fatalf("second PollOnce() error: %v", err)
 	}
@@ -429,7 +451,7 @@ func TestPollCycleFailingSourceDoesNotStopOthers(t *testing.T) {
 	}
 }
 
-func TestPollCycleRetryAfterDefersOnlyThatSource(t *testing.T) {
+func TestPollCycleRetryAfterDefersOnlyThatSourceAcrossReplicas(t *testing.T) {
 	pool := storePool(t)
 	var (
 		limitedMu    sync.Mutex
@@ -444,7 +466,7 @@ func TestPollCycleRetryAfterDefersOnlyThatSource(t *testing.T) {
 		limitedMu.Lock()
 		limitedCount++
 		limitedMu.Unlock()
-		w.Header().Set("Retry-After", "20")
+		w.Header().Set("Retry-After", "60")
 		http.Error(w, "slow down", http.StatusTooManyRequests)
 	}))
 	t.Cleanup(limitedServer.Close)
@@ -453,11 +475,12 @@ func TestPollCycleRetryAfterDefersOnlyThatSource(t *testing.T) {
 	t.Cleanup(steadyServer.Close)
 
 	limitedID := seedPollSource(t, pool, limitedServer.URL)
-	seedPollSource(t, pool, steadyServer.URL)
+	steadyID := seedPollSource(t, pool, steadyServer.URL)
 	poller := newTestPoller(pool)
 
 	// First cycle: the rate-limited source answers 429 with Retry-After,
-	// which defers it - it alone - past the next cycle.
+	// and the ask lands on the row - the deferral is fleet state, not the
+	// memory of the process that saw the 429.
 	if _, err := poller.PollOnce(context.Background()); err != nil {
 		t.Fatalf("first PollOnce() error: %v", err)
 	}
@@ -468,17 +491,64 @@ func TestPollCycleRetryAfterDefersOnlyThatSource(t *testing.T) {
 	if state.Error == nil {
 		t.Fatal("rate-limited source: last_poll_error is NULL, want the refusal recorded")
 	}
+	if state.NextPollNotBefore == nil {
+		t.Fatal("rate-limited source: next_poll_not_before is NULL, want the source's ask persisted")
+	}
+	if until := time.Until(*state.NextPollNotBefore); until <= 0 || until > time.Minute {
+		t.Errorf("next_poll_not_before is %v away, want within the next minute: the source asked for 60s", until)
+	}
 
-	// Second cycle, beginning well before the 20s wait has passed: the
-	// deferred source is not asked again, the other one is.
-	if _, err := poller.PollOnce(context.Background()); err != nil {
+	// Second cycle from a different replica: a fresh poller on a fresh
+	// pool, with no in-process memory of the 429. Both sources are aged
+	// past the freshness gate, so what keeps the limited one unasked can
+	// only be the persisted deferral - and it defers that source alone.
+	agePollState(t, pool, limitedID)
+	agePollState(t, pool, steadyID)
+	otherPool, err := pgxpool.New(context.Background(), pool.Config().ConnString())
+	if err != nil {
+		t.Fatalf("second pool: %v", err)
+	}
+	t.Cleanup(otherPool.Close)
+	replica := newTestPoller(otherPool)
+	if _, err := replica.PollOnce(context.Background()); err != nil {
 		t.Fatalf("second PollOnce() error: %v", err)
 	}
 	if got := limitedRequests(); got != 1 {
-		t.Errorf("rate-limited source requests after second cycle = %d, want still 1: Retry-After defers it", got)
+		t.Errorf("rate-limited source requests after the other replica's cycle = %d, want still 1: its ask binds the fleet", got)
 	}
 	if got := len(steady.recorded()); got != 2 {
-		t.Errorf("steady source requests after second cycle = %d, want 2: only the limited source is deferred", got)
+		t.Errorf("steady source requests after the other replica's cycle = %d, want 2: only the limited source is deferred", got)
+	}
+}
+
+func TestPollCycleSkipsSourcePolledWithinInterval(t *testing.T) {
+	pool := storePool(t)
+	feed := &recordingFeed{body: rssFeed("Φρέσκο κείμενο (" + uuid.NewString() + ")")}
+	server := httptest.NewServer(feed)
+	t.Cleanup(server.Close)
+	seedPollSource(t, pool, server.URL)
+	poller := newTestPoller(pool)
+
+	if _, err := poller.PollOnce(context.Background()); err != nil {
+		t.Fatalf("first PollOnce() error: %v", err)
+	}
+	if got := len(feed.recorded()); got != 1 {
+		t.Fatalf("feed requests after first cycle = %d, want 1", got)
+	}
+
+	// A second cycle beginning well inside the interval - another
+	// replica's, in production - runs, and fetches nothing: the advisory
+	// lock only prevents overlap, so it is last_polled_at that must keep
+	// two interleaved schedules from doubling the requests to the source.
+	ran, err := poller.PollOnce(context.Background())
+	if err != nil {
+		t.Fatalf("second PollOnce() error: %v", err)
+	}
+	if !ran {
+		t.Fatal("second PollOnce() did not run: the advisory lock should have been free")
+	}
+	if got := len(feed.recorded()); got != 1 {
+		t.Errorf("feed requests after an intra-interval cycle = %d, want still 1: one interval is one fetch", got)
 	}
 }
 

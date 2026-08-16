@@ -10,4 +10,5 @@ alter table source
     drop column last_polled_at,
     drop column last_poll_error,
     drop column last_poll_retrieved,
-    drop column last_poll_duplicates;
+    drop column last_poll_duplicates,
+    drop column next_poll_not_before;

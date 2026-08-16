@@ -140,6 +140,8 @@ type Source struct {
 	LastPollRetrieved int32
 	// How many items the last poll recognised as already on record, overwritten each cycle. The last poll's outcome only - history lives in domain_event/source_item, not here.
 	LastPollDuplicates int32
+	// When a Retry-After the source asked for expires: no replica polls this source before it. Written from the source's own ask on a rate limit, cleared by the next completed attempt; null when the source has no standing ask.
+	NextPollNotBefore pgtype.Timestamptz
 }
 
 // IMMUTABLE (I-3). Exactly what was retrieved, when, and under which licence terms (I-2, I-4). Legal evidence; never updated, never deleted.

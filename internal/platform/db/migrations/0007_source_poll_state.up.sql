@@ -15,7 +15,8 @@ alter table source
     add column last_polled_at timestamptz,
     add column last_poll_error text,
     add column last_poll_retrieved integer not null default 0,
-    add column last_poll_duplicates integer not null default 0;
+    add column last_poll_duplicates integer not null default 0,
+    add column next_poll_not_before timestamptz;
 
 comment on column source.etag is
     'The source''s own ETag from its last answer, sent back as If-None-Match on the next conditional GET. Empty when the source has never stated one.';
@@ -29,3 +30,5 @@ comment on column source.last_poll_retrieved is
     'How many new items the last poll stored, overwritten each cycle. The last poll''s outcome only - history lives in domain_event/source_item, not here.';
 comment on column source.last_poll_duplicates is
     'How many items the last poll recognised as already on record, overwritten each cycle. The last poll''s outcome only - history lives in domain_event/source_item, not here.';
+comment on column source.next_poll_not_before is
+    'When a Retry-After the source asked for expires: no replica polls this source before it. Written from the source''s own ask on a rate limit, cleared by the next completed attempt; null when the source has no standing ask.';

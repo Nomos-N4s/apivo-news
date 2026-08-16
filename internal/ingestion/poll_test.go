@@ -1,8 +1,8 @@
 package ingestion
 
 // Unit tests for the poll loop's arithmetic - the jitter bounds and the
-// Retry-After deferral - in-package because both are deliberately private:
-// they are pacing details, not API. Everything that touches a feed or the
+// freshness gate - in-package because both are deliberately private: they
+// are pacing details, not API. Everything that touches a feed or the
 // database is exercised in poll_integration_test.go.
 
 import (
@@ -57,27 +57,26 @@ func TestJitteredIntervalZeroInterval(t *testing.T) {
 	}
 }
 
-func TestSourceDeferred(t *testing.T) {
+func TestPollGate(t *testing.T) {
 	t.Parallel()
-	attemptEnd := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
-	until := attemptEnd.Add(30 * time.Second) // last attempt + RetryAfter
-
+	// The gate is the interval less the jitter's full early swing: the
+	// earliest cycle Run can produce (interval minus 10%) must still find
+	// its sources due, or every early cycle would be a fleet-wide skip and
+	// the real cadence would stretch toward twice the interval.
 	tests := []struct {
-		name       string
-		cycleStart time.Time
-		want       bool
+		name     string
+		interval time.Duration
+		want     time.Duration
 	}{
-		// Cycles that begin before last attempt + RetryAfter skip the
-		// source; the moment the wait is served in full, polling resumes.
-		{name: "cycle beginning during the wait skips", cycleStart: until.Add(-time.Second), want: true},
-		{name: "cycle beginning exactly when the wait ends polls", cycleStart: until, want: false},
-		{name: "cycle beginning after the wait polls", cycleStart: until.Add(time.Second), want: false},
+		{name: "the default interval", interval: 15 * time.Minute, want: 810 * time.Second},
+		{name: "an hour", interval: time.Hour, want: 54 * time.Minute},
+		{name: "zero stays zero", interval: 0, want: 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := sourceDeferred(tt.cycleStart, until); got != tt.want {
-				t.Errorf("sourceDeferred(%v, %v) = %v, want %v", tt.cycleStart, until, got, tt.want)
+			if got := pollGate(tt.interval); got != tt.want {
+				t.Errorf("pollGate(%v) = %v, want %v", tt.interval, got, tt.want)
 			}
 		})
 	}

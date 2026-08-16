@@ -340,6 +340,7 @@ export type Database = {
           last_polled_at: string | null
           licence_terms: string
           name: string
+          next_poll_not_before: string | null
           permission_evidence: string | null
           url: string
           usage_rule: string
@@ -358,6 +359,7 @@ export type Database = {
           last_polled_at?: string | null
           licence_terms: string
           name: string
+          next_poll_not_before?: string | null
           permission_evidence?: string | null
           url: string
           usage_rule?: string
@@ -376,6 +378,7 @@ export type Database = {
           last_polled_at?: string | null
           licence_terms?: string
           name?: string
+          next_poll_not_before?: string | null
           permission_evidence?: string | null
           url?: string
           usage_rule?: string

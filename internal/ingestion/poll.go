@@ -8,6 +8,15 @@ package ingestion
 // spaced within a cycle and jittered between cycles, and a source that asks
 // to be left alone (Retry-After) is left alone.
 //
+// Both halves of that posture are enforced by persisted state, because the
+// api deployment is replicated and every replica runs this loop: a cycle
+// only fetches sources whose last_polled_at is older than the interval, so
+// N replicas' interleaved schedules still produce one fetch per source per
+// interval, and a Retry-After is written to next_poll_not_before, so a
+// source's ask binds the fleet and not just the process that saw the 429.
+// The advisory lock underneath prevents overlap only - two cycles running
+// at once - not repetition; repetition is the row state's job.
+//
 // A per-source failure is recorded and stepped over, never allowed to stop
 // the cycle: one broken feed must not silence every other source.
 
@@ -18,7 +27,6 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -41,9 +49,12 @@ const (
 
 // PollConfig describes how the loop paces itself and how it fetches.
 type PollConfig struct {
-	// Interval is the wait between cycles, before jitter. The composition
-	// root only starts the loop with a positive interval; POLL_INTERVAL=0
-	// means the loop is never constructed at all.
+	// Interval is the wait between cycles, before jitter, and the promise
+	// the cycle enforces against the database: a source polled within the
+	// interval (less the jitter's early swing - see pollGate) is not
+	// fetched again, whichever replica's cycle asks. The composition root
+	// only starts the loop with a positive interval; POLL_INTERVAL=0 means
+	// the loop is never constructed at all.
 	Interval time.Duration
 	// Spacing is the pause between two sources within a cycle. Zero means
 	// DefaultPollSpacing.
@@ -63,14 +74,6 @@ type Poller struct {
 	store   *Store
 	cfg     PollConfig
 
-	// deferredUntil holds, per source, when a Retry-After the source asked
-	// for expires. It defers that source alone - cycles beginning before
-	// the moment skip it, everything else polls normally - and it is
-	// in-memory deliberately: a restart forgetting a deferral costs one
-	// polite request, which the source answers with another Retry-After if
-	// it still means it.
-	deferredUntil map[uuid.UUID]time.Time
-
 	// random feeds the jitter; a field so tests can pin it.
 	random func() float64
 }
@@ -82,12 +85,11 @@ func NewPoller(log *slog.Logger, pool *pgxpool.Pool, cfg PollConfig) *Poller {
 		cfg.Spacing = DefaultPollSpacing
 	}
 	return &Poller{
-		log:           log,
-		pool:          pool,
-		sources:       NewSourceStore(pool),
-		store:         NewStore(pool),
-		cfg:           cfg,
-		deferredUntil: make(map[uuid.UUID]time.Time),
+		log:     log,
+		pool:    pool,
+		sources: NewSourceStore(pool),
+		store:   NewStore(pool),
+		cfg:     cfg,
 		//nolint:gosec // G404: jitter spreads schedules; it guards nothing.
 		random: rand.Float64,
 	}
@@ -110,13 +112,16 @@ func (p *Poller) Run(ctx context.Context) {
 }
 
 // PollOnce runs one cycle under the fleet-wide advisory lock, reporting
-// whether this process actually polled. The lock exists because the api
+// whether this process ran a cycle at all. The lock exists because the api
 // deployment is replicated - deploy/k8s/api-hpa.yaml runs minReplicas: 2 -
-// and every replica runs this loop: pg_try_advisory_lock makes them one
-// poller, with whoever tries second skipping the cycle instead of doubling
-// the requests to every source. The lock is session-scoped, so it is taken
-// on a dedicated connection held for exactly one cycle and released with
-// it.
+// and every replica runs this loop: pg_try_advisory_lock keeps two cycles
+// from running at once, so no source is mid-fetch from two processes. It
+// prevents overlap and nothing else - the rate promise (one fetch per
+// source per interval, Retry-After honoured fleet-wide) is enforced by the
+// persisted state ListActiveSources filters on, which makes a cycle that
+// wins the lock when nothing is due a natural no-op. The lock is
+// session-scoped, so it is taken on a dedicated connection held for
+// exactly one cycle and released with it.
 func (p *Poller) PollOnce(ctx context.Context) (bool, error) {
 	conn, err := p.pool.Acquire(ctx)
 	if err != nil {
@@ -152,22 +157,20 @@ func (p *Poller) PollOnce(ctx context.Context) (bool, error) {
 	return true, p.cycle(ctx)
 }
 
-// cycle walks the active sources once. Only infrastructure failures - the
-// source list being unreadable, the context ending - surface as its error;
-// a single source failing is recorded on that source and stepped over.
+// cycle walks the active sources once. The list itself is the gate: it
+// omits sources polled within pollGate of the interval and sources still
+// inside a Retry-After window, so a cycle beginning when nothing is due -
+// another replica's, typically - is a natural no-op. Only infrastructure
+// failures - the source list being unreadable, the context ending -
+// surface as its error; a single source failing is recorded on that source
+// and stepped over.
 func (p *Poller) cycle(ctx context.Context) error {
-	start := time.Now()
-	sources, err := p.sources.ListActiveSources(ctx)
+	sources, err := p.sources.ListActiveSources(ctx, pollGate(p.cfg.Interval))
 	if err != nil {
 		return err
 	}
 	polled := false
 	for _, src := range sources {
-		if until, ok := p.deferredUntil[src.ID]; ok && sourceDeferred(start, until) {
-			p.log.InfoContext(ctx, "source deferred by its own Retry-After; skipping this cycle",
-				"source_id", src.ID, "until", until)
-			continue
-		}
 		// The spacing sleeps between requests, so it precedes every fetch
 		// but the cycle's first.
 		if polled {
@@ -189,20 +192,18 @@ func (p *Poller) cycle(ctx context.Context) error {
 // source alone, and the cycle continues regardless.
 func (p *Poller) pollSource(ctx context.Context, src PolledSource) {
 	result, err := p.cfg.Fetch.Fetch(ctx, src.URL, src.Validators)
-	// The attempt happened, so any standing deferral is spent; a new
-	// Retry-After below starts a fresh one.
-	delete(p.deferredUntil, src.ID)
 
 	outcome := PollOutcome{Validators: refreshedValidators(src.Validators, result)}
 	switch {
 	case err != nil:
 		// A failed exchange refreshes nothing: the stored validators still
-		// describe the last document actually seen.
+		// describe the last document actually seen. A Retry-After the
+		// source sent is written with the outcome, deferring the source
+		// for every replica; recording the outcome without one clears any
+		// standing deferral, because this attempt has spent it.
 		outcome.Validators = src.Validators
 		outcome.Error = err.Error()
-		if result.RetryAfter > 0 {
-			p.deferredUntil[src.ID] = time.Now().Add(result.RetryAfter)
-		}
+		outcome.RetryAfter = result.RetryAfter
 		p.log.WarnContext(ctx, "polling source failed",
 			"source_id", src.ID, "url", redactedFeedURL(src.URL), "error", err)
 	case result.NotModified:
@@ -273,12 +274,16 @@ func refreshedValidators(stored Validators, result Result) Validators {
 	return next
 }
 
-// sourceDeferred reports whether a cycle beginning at cycleStart must leave
-// a source deferred until the given moment alone. Only cycles that begin
-// strictly before the deferral ends skip it; a cycle beginning exactly then
-// polls, because the source's wait has been served in full.
-func sourceDeferred(cycleStart, until time.Time) bool {
-	return cycleStart.Before(until)
+// pollGate is how long a source must have gone unpolled before a cycle
+// fetches it again: the interval, less the jitter's full early swing. The
+// gate cannot be the interval itself - Run deliberately lets a cycle begin
+// up to pollJitterFraction early, and a gate at the full interval would
+// turn every early cycle into a fleet-wide skip, stretching the real
+// cadence toward twice the interval. At interval minus the maximum early
+// jitter, the earliest cycle Run can produce still finds its sources due,
+// and the fetch rate stays bounded by one per source per jittered interval.
+func pollGate(interval time.Duration) time.Duration {
+	return time.Duration((1 - pollJitterFraction) * float64(interval))
 }
 
 // jitteredInterval is one between-cycles wait: the interval, moved up to

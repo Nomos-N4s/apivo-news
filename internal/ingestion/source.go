@@ -8,6 +8,7 @@ package ingestion
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -48,6 +49,11 @@ type PollOutcome struct {
 	Retrieved int
 	// Duplicates counts the items already on record (FR-014 no-ops).
 	Duplicates int
+	// RetryAfter is the wait the source asked for on a rate limit, zero
+	// otherwise. Positive, it writes next_poll_not_before so the whole
+	// fleet leaves the source alone; zero clears any standing deferral,
+	// because the attempt that just completed has spent it.
+	RetryAfter time.Duration
 }
 
 // SourceStore reads the pollable sources and records poll outcomes.
@@ -62,12 +68,24 @@ func NewSourceStore(db SourceQuerier) *SourceStore {
 
 // ListActiveSources returns every source the poll loop should walk, with
 // the validators stored from each one's last answer. Paused sources
-// (active = false) are simply absent. The order is by URL: stable across
-// cycles, so the spacing between two given sources stays roughly constant
-// rather than shuffling every cycle.
-func (s *SourceStore) ListActiveSources(ctx context.Context) ([]PolledSource, error) {
+// (active = false) are simply absent, and so are two kinds the persisted
+// poll state rules out: sources polled within the last notPolledFor - the
+// gate that makes one interval mean one fetch across every replica, not
+// per process - and sources whose next_poll_not_before has not passed,
+// which is a Retry-After binding the fleet rather than the one process
+// that happened to see the 429. The order is by URL: stable across cycles,
+// so the spacing between two given sources stays roughly constant rather
+// than shuffling every cycle.
+func (s *SourceStore) ListActiveSources(ctx context.Context, notPolledFor time.Duration) ([]PolledSource, error) {
 	rows, err := s.db.Query(ctx,
-		`select id, url, etag, last_modified from source where active order by url`)
+		`select id, url, etag, last_modified
+		   from source
+		  where active
+		    and (last_polled_at is null
+		         or last_polled_at < now() - make_interval(secs => $1))
+		    and (next_poll_not_before is null or next_poll_not_before <= now())
+		  order by url`,
+		notPolledFor.Seconds())
 	if err != nil {
 		return nil, fmt.Errorf("ingestion: list active sources: %w", err)
 	}
@@ -98,7 +116,9 @@ func (s *SourceStore) ListActiveSources(ctx context.Context) ([]PolledSource, er
 // single UPDATE: validators for the next conditional GET, the attempt time,
 // and the counters. A success (empty outcome.Error) clears last_poll_error;
 // a failure stores the error string, which the fetcher has already redacted
-// URLs from.
+// URLs from. A positive outcome.RetryAfter sets next_poll_not_before to the
+// moment the source's ask expires; otherwise the column is cleared - the
+// attempt that just completed spent any standing deferral.
 func (s *SourceStore) RecordPollOutcome(ctx context.Context, sourceID uuid.UUID, outcome PollOutcome) error {
 	tag, err := s.db.Exec(ctx,
 		`update source
@@ -107,10 +127,15 @@ func (s *SourceStore) RecordPollOutcome(ctx context.Context, sourceID uuid.UUID,
 		        last_polled_at = now(),
 		        last_poll_error = $4,
 		        last_poll_retrieved = $5,
-		        last_poll_duplicates = $6
+		        last_poll_duplicates = $6,
+		        next_poll_not_before = case
+		            when $7::double precision > 0 then now() + make_interval(secs => $7)
+		            else null
+		        end
 		  where id = $1`,
 		sourceID.String(), outcome.Validators.ETag, outcome.Validators.LastModified,
 		nullIfEmpty(outcome.Error), outcome.Retrieved, outcome.Duplicates,
+		outcome.RetryAfter.Seconds(),
 	)
 	if err != nil {
 		return fmt.Errorf("ingestion: record poll outcome: %w", err)
