@@ -34,6 +34,7 @@ export default getViteConfig({
         'src/lib/csrf.ts',
         'src/lib/editorial/api.ts',
         'src/lib/editorial/session.ts',
+        'src/lib/editorial/sourceForm.ts',
         'src/lib/editorial/strings.ts',
         'src/lib/usage.ts',
       ],

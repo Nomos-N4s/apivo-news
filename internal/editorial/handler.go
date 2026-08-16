@@ -78,6 +78,8 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"GET /api/v1/editorial/articles/{id}/provenance":   h.articleProvenance,
 		"POST /api/v1/editorial/sources":                   h.createSource,
 		"GET /api/v1/editorial/sources":                    h.listSources,
+		"PATCH /api/v1/editorial/sources/{id}":             h.patchSource,
+		"DELETE /api/v1/editorial/sources/{id}":            h.deleteSource,
 	}
 }
 
@@ -981,6 +983,124 @@ func listedSource(item ListedSource) listedSourceResponse {
 	return out
 }
 
+// sourcePatchRequest is the PATCH payload: any subset of the editable
+// fields, each a pointer so "absent" never reads as "set to the zero
+// value". usage_rule is not among them - it stays a founder-gated flow -
+// and supplying it is the decoder's unknown-field 400, like any other
+// field the contract does not name.
+type sourcePatchRequest struct {
+	Name         *string `json:"name"`
+	URL          *string `json:"url"`
+	Active       *bool   `json:"active"`
+	LicenceTerms *string `json:"licence_terms"`
+}
+
+// patchSource implements PATCH /api/v1/editorial/sources/{id}.
+func (h *Handler) patchSource(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathSourceID(w, r)
+	if !ok {
+		return
+	}
+	var req sourcePatchRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	patch := SourcePatch{
+		Name:         req.Name,
+		Active:       req.Active,
+		LicenceTerms: req.LicenceTerms,
+	}
+	if req.URL != nil {
+		// Trimmed before validation, exactly as on registration: the stored
+		// feed URL is the polled one, and a trailing space would 404 forever.
+		trimmed := strings.TrimSpace(*req.URL)
+		patch.URL = &trimmed
+	}
+	if patch.Empty() {
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"supply at least one of name, url, active or licence_terms: an empty patch edits nothing, and confirming it would claim an edit that never happened")
+		return
+	}
+	// Each supplied field passes the SAME validation the registration runs -
+	// validateSourceField is one function, so a value createSource would
+	// refuse cannot arrive through the side door of an edit.
+	supplied := []struct {
+		name  string
+		value *string
+	}{
+		{"name", patch.Name},
+		{"url", patch.URL},
+		{"licence_terms", patch.LicenceTerms},
+	}
+	for _, field := range supplied {
+		if field.value == nil {
+			continue
+		}
+		if detail, ok := validateSourceField(field.name, *field.value); !ok {
+			platformhttp.Problem(w, http.StatusBadRequest, detail)
+			return
+		}
+	}
+
+	updated, err := h.store.UpdateSource(r.Context(), id, editorFrom(r.Context()).ID, patch)
+	switch {
+	case errors.Is(err, ErrSourceNotFound):
+		platformhttp.Problem(w, http.StatusNotFound, "no source with this id")
+		return
+	case errors.Is(err, ErrDuplicateSourceURL):
+		platformhttp.Problem(w, http.StatusConflict, "a source with this feed URL is already registered")
+		return
+	case err != nil:
+		h.internalError(w, r, "updating source", err)
+		return
+	}
+	h.writeJSON(w, r, http.StatusOK, listedSource(updated))
+}
+
+// deleteSource implements DELETE /api/v1/editorial/sources/{id}.
+//
+// The database decides what delete may mean: a source referenced by
+// retrieved items is part of the provenance chain (I-4 snapshots point
+// back to it for identity, I-3 makes the items immutable), so the FK
+// refuses the delete and this handler reports the refusal as a 409 naming
+// the evidence count - never as a silent deactivation, which is a
+// different decision that belongs to the editor.
+func (h *Handler) deleteSource(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathSourceID(w, r)
+	if !ok {
+		return
+	}
+	err := h.store.DeleteSource(r.Context(), id)
+	var evidence SourceEvidenceError
+	switch {
+	case errors.Is(err, ErrSourceNotFound):
+		platformhttp.Problem(w, http.StatusNotFound, "no source with this id")
+		return
+	case errors.As(err, &evidence):
+		platformhttp.Problem(w, http.StatusConflict,
+			"this source cannot be deleted: "+strconv.FormatInt(evidence.Items, 10)+
+				" retrieved item(s) reference it as evidence, and deleting the source would destroy their provenance chain; deactivate it instead (PATCH active=false) to stop polling while the history stays intact")
+		return
+	case err != nil:
+		h.internalError(w, r, "deleting source", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// pathSourceID parses the {id} path segment for the source routes,
+// answering the 400 itself when it is not a uuid - pathArticleID's rule,
+// applied to this table's ids.
+func pathSourceID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		platformhttp.Problem(w, http.StatusBadRequest, "the source id in the path must be a uuid")
+		return uuid.UUID{}, false
+	}
+	return id, true
+}
+
 // parseSourcesQuery validates the query string and builds the store query,
 // reporting the 400 detail when it cannot. Unknown and repeated parameters
 // are rejected for parseQueueQuery's reasons: a misspelled or contradictory
@@ -1033,21 +1153,34 @@ func parseSourcesQuery(values url.Values) (query SourcesQuery, detail string, ok
 
 // validateNewSource checks a registration for blank fields and a usable
 // feed URL. The database enforces the non-blank rules again; this is the
-// polite 400 with a nameable field, not the guarantee.
+// polite 400 with a nameable field, not the guarantee. Each field goes
+// through validateSourceField - the same code the PATCH runs, so the two
+// paths cannot drift into accepting different values for the same column.
 func validateNewSource(src NewSource) (detail string, ok bool) {
-	switch {
-	case blank(src.Name):
-		return "name is required and must not be blank", false
-	case blank(src.URL):
-		return "url is required and must not be blank", false
-	case !feedURL(src.URL):
+	fields := []struct{ name, value string }{
+		{"name", src.Name},
+		{"url", src.URL},
+		{"language", src.Language},
+		{"jurisdiction", src.Jurisdiction},
+		{"licence_terms", src.LicenceTerms},
+	}
+	for _, field := range fields {
+		if detail, ok := validateSourceField(field.name, field.value); !ok {
+			return detail, false
+		}
+	}
+	return "", true
+}
+
+// validateSourceField answers the 400 detail for one source field, or ok.
+// Shared verbatim between registration and PATCH: "the same validation"
+// is a property of this function existing, not of two copies agreeing.
+func validateSourceField(field, value string) (detail string, ok bool) {
+	if blank(value) {
+		return field + " is required and must not be blank", false
+	}
+	if field == "url" && !feedURL(value) {
 		return "url must be an absolute http or https URL with a host, e.g. https://example.org/feed.xml", false
-	case blank(src.Language):
-		return "language is required and must not be blank", false
-	case blank(src.Jurisdiction):
-		return "jurisdiction is required and must not be blank", false
-	case blank(src.LicenceTerms):
-		return "licence_terms is required and must not be blank", false
 	}
 	return "", true
 }
