@@ -36,6 +36,7 @@ export default getViteConfig({
         'src/lib/editorial/approvalForm.ts',
         'src/lib/editorial/notices.ts',
         'src/lib/editorial/session.ts',
+        'src/lib/editorial/sourceFilters.ts',
         'src/lib/editorial/sourceForm.ts',
         'src/lib/editorial/strings.ts',
         'src/lib/usage.ts',
