@@ -1577,7 +1577,8 @@
         "required": [
           "article_id",
           "withdrawn_at",
-          "withdrawn_by"
+          "withdrawn_by",
+          "reason"
         ],
         "properties": {
           "article_id": {
@@ -1592,6 +1593,10 @@
             "type": "string",
             "format": "uuid",
             "description": "The authenticated editor who ended the publication."
+          },
+          "reason": {
+            "type": "string",
+            "description": "The justification as the database froze it into `article.withdrawal_reason` - guarded all-or-none with the other withdrawal columns and permanent once written. The record, not an echo of the request; never blank."
           }
         }
       },
