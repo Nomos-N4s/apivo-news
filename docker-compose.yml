@@ -38,6 +38,10 @@ services:
       # meaningful alongside JWKS_URL.
       JWKS_URL: ${JWKS_URL:-}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-}
+      # Feed poll loop cadence, taken from the host environment (or .env)
+      # like JWKS_URL above. Empty means the binary's documented 15m
+      # default; "0" disables the loop - the only disable switch.
+      POLL_INTERVAL: ${POLL_INTERVAL:-}
     depends_on:
       postgres:
         condition: service_healthy

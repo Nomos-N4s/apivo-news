@@ -15,6 +15,11 @@
 #                aud claim. Supabase access tokens carry "authenticated".
 #                Only meaningful alongside JWKS_URL - setting it alone fails
 #                startup.
+#   POLL_INTERVAL — feed poll loop cadence, a Go duration. Empty means the
+#                binary's documented 15m default; "0" disables the loop and
+#                is the only disable switch. The HPA runs 2+ api replicas
+#                and each runs the loop; a Postgres advisory lock inside the
+#                binary keeps exactly one of them polling per cycle.
 #   DATABASE_URL is deliberately absent: it is a credential and lives in the
 #   Secret (see secret.yaml).
 #
@@ -43,3 +48,7 @@ data:
   # Optional, and only alongside a non-empty JWKS_URL (the binary rejects an
   # audience without a verification endpoint). Supabase tokens: "authenticated".
   JWT_AUDIENCE: ""
+  # Feed poll loop cadence (Go duration). Empty = the binary's 15m default;
+  # "0" disables polling entirely. Delivered via the deployment's envFrom
+  # like every other key here.
+  POLL_INTERVAL: ""

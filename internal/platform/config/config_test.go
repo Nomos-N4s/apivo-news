@@ -3,6 +3,7 @@ package config_test
 import (
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 )
@@ -24,10 +25,11 @@ func TestFromEnv(t *testing.T) {
 			name: "defaults applied",
 			env:  map[string]string{"DATABASE_URL": "postgres://x"},
 			want: config.Config{
-				DatabaseURL: "postgres://x",
-				HTTPAddr:    ":8080",
-				Env:         config.EnvDev,
-				LogLevel:    slog.LevelInfo,
+				DatabaseURL:  "postgres://x",
+				HTTPAddr:     ":8080",
+				Env:          config.EnvDev,
+				LogLevel:     slog.LevelInfo,
+				PollInterval: config.DefaultPollInterval,
 			},
 		},
 		{
@@ -39,30 +41,33 @@ func TestFromEnv(t *testing.T) {
 				"LOG_LEVEL":    "debug",
 			},
 			want: config.Config{
-				DatabaseURL: "postgres://y",
-				HTTPAddr:    ":9999",
-				Env:         config.EnvProd,
-				LogLevel:    slog.LevelDebug,
+				DatabaseURL:  "postgres://y",
+				HTTPAddr:     ":9999",
+				Env:          config.EnvProd,
+				LogLevel:     slog.LevelDebug,
+				PollInterval: config.DefaultPollInterval,
 			},
 		},
 		{
 			name: "warn level parsed",
 			env:  map[string]string{"DATABASE_URL": "postgres://x", "LOG_LEVEL": "WARN"},
 			want: config.Config{
-				DatabaseURL: "postgres://x",
-				HTTPAddr:    ":8080",
-				Env:         config.EnvDev,
-				LogLevel:    slog.LevelWarn,
+				DatabaseURL:  "postgres://x",
+				HTTPAddr:     ":8080",
+				Env:          config.EnvDev,
+				LogLevel:     slog.LevelWarn,
+				PollInterval: config.DefaultPollInterval,
 			},
 		},
 		{
 			name: "error level parsed",
 			env:  map[string]string{"DATABASE_URL": "postgres://x", "LOG_LEVEL": "error"},
 			want: config.Config{
-				DatabaseURL: "postgres://x",
-				HTTPAddr:    ":8080",
-				Env:         config.EnvDev,
-				LogLevel:    slog.LevelError,
+				DatabaseURL:  "postgres://x",
+				HTTPAddr:     ":8080",
+				Env:          config.EnvDev,
+				LogLevel:     slog.LevelError,
+				PollInterval: config.DefaultPollInterval,
 			},
 		},
 		{
@@ -73,12 +78,13 @@ func TestFromEnv(t *testing.T) {
 				"JWT_AUDIENCE": "authenticated",
 			},
 			want: config.Config{
-				DatabaseURL: "postgres://x",
-				HTTPAddr:    ":8080",
-				Env:         config.EnvDev,
-				LogLevel:    slog.LevelInfo,
-				JWKSURL:     "https://auth.example.test/jwks.json",
-				JWTAudience: "authenticated",
+				DatabaseURL:  "postgres://x",
+				HTTPAddr:     ":8080",
+				Env:          config.EnvDev,
+				LogLevel:     slog.LevelInfo,
+				JWKSURL:      "https://auth.example.test/jwks.json",
+				JWTAudience:  "authenticated",
+				PollInterval: config.DefaultPollInterval,
 			},
 		},
 		{
@@ -88,11 +94,12 @@ func TestFromEnv(t *testing.T) {
 				"JWKS_URL":     "https://auth.example.test/jwks.json",
 			},
 			want: config.Config{
-				DatabaseURL: "postgres://x",
-				HTTPAddr:    ":8080",
-				Env:         config.EnvDev,
-				LogLevel:    slog.LevelInfo,
-				JWKSURL:     "https://auth.example.test/jwks.json",
+				DatabaseURL:  "postgres://x",
+				HTTPAddr:     ":8080",
+				Env:          config.EnvDev,
+				LogLevel:     slog.LevelInfo,
+				JWKSURL:      "https://auth.example.test/jwks.json",
+				PollInterval: config.DefaultPollInterval,
 			},
 		},
 		{
@@ -107,11 +114,45 @@ func TestFromEnv(t *testing.T) {
 				"JWT_AUDIENCE": "",
 			},
 			want: config.Config{
+				DatabaseURL:  "postgres://x",
+				HTTPAddr:     ":8080",
+				Env:          config.EnvDev,
+				LogLevel:     slog.LevelInfo,
+				PollInterval: config.DefaultPollInterval,
+			},
+		},
+		{
+			name: "poll interval parsed",
+			env:  map[string]string{"DATABASE_URL": "postgres://x", "POLL_INTERVAL": "90s"},
+			want: config.Config{
+				DatabaseURL:  "postgres://x",
+				HTTPAddr:     ":8080",
+				Env:          config.EnvDev,
+				LogLevel:     slog.LevelInfo,
+				PollInterval: 90 * time.Second,
+			},
+		},
+		{
+			// POLL_INTERVAL=0 is the one disable switch: zero interval, no
+			// poll loop. There is deliberately no POLL_ENABLED beside it.
+			name: "poll interval zero disables polling",
+			env:  map[string]string{"DATABASE_URL": "postgres://x", "POLL_INTERVAL": "0"},
+			want: config.Config{
 				DatabaseURL: "postgres://x",
 				HTTPAddr:    ":8080",
 				Env:         config.EnvDev,
 				LogLevel:    slog.LevelInfo,
 			},
+		},
+		{
+			name:    "non-duration POLL_INTERVAL rejected",
+			env:     map[string]string{"DATABASE_URL": "postgres://x", "POLL_INTERVAL": "often"},
+			wantErr: true,
+		},
+		{
+			name:    "negative POLL_INTERVAL rejected",
+			env:     map[string]string{"DATABASE_URL": "postgres://x", "POLL_INTERVAL": "-5m"},
+			wantErr: true,
 		},
 		{
 			name:    "missing DATABASE_URL rejected",

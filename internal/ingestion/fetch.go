@@ -63,10 +63,17 @@ const (
 )
 
 const (
-	// maxFetchBackoff caps every wait, including one a source asks for in
-	// Retry-After: a source demanding minutes gets a bounded wait and is
-	// then left to the next poll, rather than a worker sleeping on it.
+	// maxFetchBackoff caps every wait this call sleeps. A source asking
+	// for more than this in Retry-After is never slept on under the cap:
+	// the call ends instead (overCap) and the ask travels to the poll loop
+	// in Result.RetryAfter, so the source is left alone rather than a
+	// worker sleeping on it.
 	maxFetchBackoff = 30 * time.Second
+	// maxRetryAfterAsk bounds the ask relayed in Result.RetryAfter: a
+	// source may ask to be left alone for up to a day, and anything beyond
+	// that is treated as a day. The bound keeps a broken or hostile header
+	// from deferring a source into next year.
+	maxRetryAfterAsk = 24 * time.Hour
 	// maxFeedRedirects bounds a redirect chain. Feeds move, and one or two
 	// hops (http to https, a CDN) are ordinary; a chain longer than this is
 	// a loop or a trap.
@@ -162,9 +169,11 @@ type Result struct {
 	LastModified string
 
 	// RetryAfter is how long a rate-limited source asked us to wait,
-	// already clamped to the same ceiling our own backoff uses. It is set
-	// on the failure it describes, so the poll loop can defer this one
-	// source without reading the error's prose.
+	// bounded to a day (maxRetryAfterAsk). It is the poll loop's deferral
+	// input, not a wait this call sleeps: in-call retrying has its own
+	// ceiling, and an ask over it ends the call instead of shortening the
+	// ask. It is set on the failure it describes, so the poll loop can
+	// defer this one source without reading the error's prose.
 	RetryAfter time.Duration
 }
 
@@ -478,11 +487,12 @@ func refuseUnsafeLocation(req *http.Request, via []*http.Request) error {
 }
 
 // feedRetryAfter reads the wait a source asked for. The returned duration is
-// already clamped to maxFetchBackoff; overCap reports that the source asked
-// for more than that, which is Fetch's cue to stop asking this call and
-// leave the source to the next poll. Only the delta-seconds form is read,
-// which is what a rate limiter sends; an HTTP-date falls through to our own
-// backoff rather than being guessed at.
+// the source's actual ask, bounded to maxRetryAfterAsk - deferral input for
+// the poll loop, not a sleep this call performs. overCap reports an ask at
+// or over maxFetchBackoff, which is Fetch's cue to stop asking this call
+// and leave the source to the poll loop's deferral. Only the delta-seconds
+// form is read, which is what a rate limiter sends; an HTTP-date falls
+// through to our own backoff rather than being guessed at.
 func feedRetryAfter(header http.Header) (wait time.Duration, overCap bool) {
 	value := strings.TrimSpace(header.Get("Retry-After"))
 	if value == "" {
@@ -492,15 +502,16 @@ func feedRetryAfter(header http.Header) (wait time.Duration, overCap bool) {
 	if err != nil || math.IsNaN(seconds) || seconds <= 0 {
 		return 0, false
 	}
-	// The clamp happens in float space, before the conversion: converting
+	overCap = seconds >= maxFetchBackoff.Seconds()
+	// The bound happens in float space, before the conversion: converting
 	// first would overflow int64 for a large enough ask, and an overflowed
 	// float-to-int conversion is implementation-defined - on amd64 it lands
 	// on math.MinInt64, a negative "wait" a min() would then keep. +Inf is
-	// caught here too, being over any cap.
-	if seconds >= maxFetchBackoff.Seconds() {
-		return maxFetchBackoff, true
+	// caught here too, being over any bound.
+	if seconds >= maxRetryAfterAsk.Seconds() {
+		return maxRetryAfterAsk, overCap
 	}
-	return time.Duration(seconds * float64(time.Second)), false
+	return time.Duration(seconds * float64(time.Second)), overCap
 }
 
 // fetchBackoff is the wait before the attempt after this one: the source's

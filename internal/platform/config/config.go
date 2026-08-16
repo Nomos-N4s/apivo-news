@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 )
 
 // Environment names accepted in APP_ENV.
@@ -16,6 +17,12 @@ const (
 	// EnvProd is the production environment: JSON logs.
 	EnvProd = "prod"
 )
+
+// DefaultPollInterval is how often the feed poll loop starts a cycle when
+// POLL_INTERVAL is unset (or empty, which every environment lookup renders
+// the same way). Fifteen minutes suits a handful of municipal feeds: far
+// gentler than a reader's feed reader, fresh enough for local news.
+const DefaultPollInterval = 15 * time.Minute
 
 // Config holds everything the process needs to start. All values come from
 // the environment; nothing is read from files.
@@ -38,6 +45,13 @@ type Config struct {
 	// token's aud claim to contain this value. Only meaningful alongside
 	// JWKSURL; setting it alone is a configuration error.
 	JWTAudience string
+	// PollInterval is how often the feed poll loop starts a cycle, from
+	// POLL_INTERVAL (a Go duration, e.g. "15m"). Unset means
+	// DefaultPollInterval; POLL_INTERVAL=0 is the one disable switch, and
+	// zero here means the loop is never started. There is deliberately no
+	// separate POLL_ENABLED: two switches for one behaviour invite the
+	// combination that says both yes and no.
+	PollInterval time.Duration
 }
 
 // FromEnv builds a Config from the given environment lookup function,
@@ -71,7 +85,28 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.LogLevel = level
+	interval, err := parsePollInterval(getenv("POLL_INTERVAL"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.PollInterval = interval
 	return cfg, nil
+}
+
+// parsePollInterval reads POLL_INTERVAL: empty means DefaultPollInterval,
+// "0" disables polling, anything else must be a positive Go duration.
+func parsePollInterval(s string) (time.Duration, error) {
+	if s == "" {
+		return DefaultPollInterval, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("config: POLL_INTERVAL %q is not a Go duration (e.g. \"15m\", or \"0\" to disable polling): %w", s, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("config: POLL_INTERVAL must not be negative, got %q", s)
+	}
+	return d, nil
 }
 
 func parseLevel(s string) (slog.Level, error) {
