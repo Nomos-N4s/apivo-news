@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release pipeline (release.yml, issue #119) replays this exact matrix
+  # on the tagged commit by calling the workflow, rather than duplicating its
+  # jobs. An extra trigger changes nothing about what runs on PRs or pushes.
+  workflow_call:
 
 permissions:
   contents: read
