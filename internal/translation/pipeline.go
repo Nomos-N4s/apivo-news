@@ -379,8 +379,15 @@ func (p *Pipeline) translatePair(ctx context.Context, item workItem, locale stri
 
 // settleFailedCall books what a failed provider call still cost. A failure
 // that cost nothing books nothing; either way the Translate error is
-// returned for the cycle to classify, with the booking's own failure - a
-// billed call the ledger does not yet show - joined on when it happens.
+// returned for the cycle to classify.
+//
+// When the BOOKING itself fails, the booking failure is the error and the
+// provider's failure is quoted as text (%v), never wrapped: wrapping both
+// would let errors.Is find the provider sentinel inside the join, classify
+// the pair as one item's problem, and walk on - with a billed call
+// recorded nowhere, which is the one state the ledger exists to forbid.
+// A database that cannot book this call's spend cannot book the next
+// item's either, so the unclassified error ends the cycle.
 func (p *Pipeline) settleFailedCall(ctx context.Context, tx pgx.Tx, terr error) (stop bool, err error) {
 	var spent *SpendError
 	if !errors.As(terr, &spent) {
@@ -388,10 +395,10 @@ func (p *Pipeline) settleFailedCall(ctx context.Context, tx pgx.Tx, terr error) 
 	}
 	recorded, rerr := NewWriter(tx, p.cfg.Caps).RecordFailedCall(ctx, spent.Spend)
 	if rerr != nil {
-		return false, errors.Join(terr, p.uncommittedSpend(rerr, spent.Spend))
+		return false, p.uncommittedSpend(fmt.Errorf("translation: booking a failed call's spend: %w (the provider call it books had failed with: %v)", rerr, terr), spent.Spend)
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
-		return false, errors.Join(terr, p.uncommittedSpend(fmt.Errorf("translation: committing a failed call's spend: %w", cerr), spent.Spend))
+		return false, p.uncommittedSpend(fmt.Errorf("translation: committing a failed call's spend: %w (the provider call it books had failed with: %v)", cerr, terr), spent.Spend)
 	}
 	return recorded.Halted(), terr
 }
