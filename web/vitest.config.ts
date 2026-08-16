@@ -41,6 +41,10 @@ export default getViteConfig({
         'src/lib/editorial/sourceForm.ts',
         'src/lib/editorial/strings.ts',
         'src/lib/usage.ts',
+        // An endpoint rather than a lib, and included for the same reason
+        // the libs are: it decides where a reader lands and what is
+        // remembered of their choice.
+        'src/pages/go.ts',
       ],
       // Constitution: TypeScript coverage minimum is 80%, enforced in CI —
       // the build fails below these thresholds.

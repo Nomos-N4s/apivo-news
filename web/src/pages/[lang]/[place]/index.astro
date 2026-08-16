@@ -20,6 +20,11 @@ import {
   safeSourceUrl,
   sourceHost,
 } from '../../../lib/reader/format';
+import {
+  isSecureRequest,
+  PREFERENCE_COOKIE,
+  rememberPreference,
+} from '../../../lib/reader/preference';
 import { uiStrings } from '../../../lib/reader/strings';
 
 // The locale-scoped reader front page — mockup 1a: one edited page, place
@@ -55,6 +60,17 @@ const rest = items.slice(1);
 
 const now = new Date();
 const homeHref = frontPagePath(lang, slugs);
+
+// The URL decides what renders here, always — a shared /de/munich link
+// opens Munich in German for whoever follows it. It also becomes what `/`
+// opens for this browser, so the address and the remembered preference can
+// never describe two different papers (issue #133). The axis-bar controls
+// need nothing of their own: each is a plain link to another front page,
+// and arriving is what stores the change.
+rememberPreference(Astro.cookies, homeHref, {
+  current: Astro.cookies.get(PREFERENCE_COOKIE)?.value,
+  secure: isSecureRequest(Astro.url),
+});
 
 // Kicker: the endonym + scope label of the place that put the item on
 // THIS page (the first of the item's places the reader follows), falling

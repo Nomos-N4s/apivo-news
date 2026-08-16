@@ -1,13 +1,30 @@
 ---
-import { DEFAULT_FRONT_PAGE } from '../lib/reader/axes';
+import {
+  FIRST_RUN_SETUP_PATH,
+  forgetPreference,
+  preferenceFrontPage,
+  PREFERENCE_COOKIE,
+  readPreference,
+} from '../lib/reader/preference';
 
 // `/` carries no axes, so it cannot be a front page itself (FR-009): it
-// forwards to the US1 flagship journey — Munich local + Greek national,
-// read in Greek. The template below is the 302's body, for clients that
-// show it instead of following the Location header.
-if (Astro.url.pathname === '/') {
-  return Astro.redirect(DEFAULT_FRONT_PAGE, 302);
+// either asks the two questions or opens the paper this reader already
+// answered them with (issue #133). It never opens a third thing.
+const stored = Astro.cookies.get(PREFERENCE_COOKIE)?.value;
+const preference = readPreference(stored);
+
+// A stored value we cannot honour — a slug the catalog dropped, a
+// language the alpha does not mount — is not a preference, and guessing
+// past it would open a paper the reader never chose. It goes, and the
+// reader is asked again.
+if (preference === null && stored !== undefined) {
+  forgetPreference(Astro.cookies);
 }
+
+const target = preference === null ? FIRST_RUN_SETUP_PATH : preferenceFrontPage(preference);
+// The template below is the 302's body, for clients that show it instead
+// of following the Location header.
+return Astro.redirect(target, 302);
 ---
 
-<a href={DEFAULT_FRONT_PAGE}>epiloYES</a>
+<a href={target}>epiloYES</a>
