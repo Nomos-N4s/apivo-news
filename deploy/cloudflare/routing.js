@@ -86,6 +86,60 @@ export function crawlerRefusal() {
 export const EDITORIAL_PREFIX = '/api/v1/editorial/';
 
 /**
+ * The path as the Go router will read it, or null if it cannot be read at
+ * all.
+ *
+ * The Worker sees the raw, percent-encoded pathname; Go's ServeMux matches
+ * after unescaping each segment and after cleaning the path. So
+ * `/api/v1/%65ditorial/queue` was not editorial to this file and was
+ * editorial to the api — one encoded character walked past the rate limit
+ * and reached the handler. Deciding anything on the raw pathname is
+ * deciding on a different string from the one that routes.
+ *
+ * Decoded ONCE, like the router: `%2565` decodes to `%65`, which is not
+ * `e` to Go either, so a second pass would invent a match nobody will
+ * serve. Repeated slashes are collapsed because `path.Clean` does the
+ * same before the mux matches.
+ *
+ * A pathname that does not decode returns null and the caller refuses the
+ * request. An undecodable path is not a request we owe a best effort: we
+ * cannot say what it addresses, and guessing is how the encoded-path
+ * bypass happened in the first place.
+ */
+export function normalisePath(pathname) {
+	let decoded;
+	try {
+		decoded = decodeURIComponent(pathname);
+	} catch {
+		return null;
+	}
+	return decoded.replace(/\/{2,}/g, '/');
+}
+
+/**
+ * The reader endpoints: public data by design, answered without a token,
+ * and the only paths under `/api/` that the limiter lets through.
+ *
+ * They are listed positively (cmd/apivo/main.go, internal/content/http.go)
+ * because the rule below is inverted: everything else under `/api/` is
+ * limited. A route added to the API later is limited from its first
+ * request rather than from the day somebody remembers to name it here,
+ * which is the failure direction worth having.
+ */
+export const READER_PATHS = ['/api/v1/front', '/api/v1/openapi.json'];
+
+/** Reader endpoints identified by prefix — `/api/v1/articles/{id}`. */
+export const READER_PREFIXES = ['/api/v1/articles/'];
+
+/** Whether this normalised path is one of the public reader endpoints. */
+export function isReaderApiPath(path) {
+	return (
+		READER_PATHS.includes(path) ||
+		READER_PREFIXES.some((prefix) => path.startsWith(prefix))
+	);
+}
+
+/**
  * Whether this path is answered by the Go API container rather than the
  * Astro web container.
  *
@@ -109,15 +163,34 @@ export function isApiPath(pathname) {
 }
 
 /**
- * Whether this path is an editorial endpoint — the rate-limited prefix.
+ * Whether this normalised path is rate-limited.
  *
- * Routing `/api/*` publicly makes the editorial endpoints reachable by
- * anyone, and an invalid bearer token still costs a JWKS verification and a
- * database round trip. The token gate is unchanged; this only bounds how
- * fast a stranger may make us check one.
+ * The rule is INVERTED on purpose: everything the api answers is limited
+ * EXCEPT the reader endpoints and the two probes. The editorial prefix is
+ * what the limit was written for — routing `/api/*` publicly makes it
+ * reachable by anyone, and an invalid bearer token still costs a
+ * verification — but a rule shaped as "limit this one prefix" fails open
+ * for every path nobody thought of, and the encoded-path bypass was
+ * exactly that shape of mistake. Shaped this way, an unrecognised path
+ * under `/api/` is limited, and the cost of being wrong is a stranger
+ * waiting rather than a stranger unbounded.
+ *
+ * `/healthz` and `/readyz` stay out: the release probe polls them on every
+ * deploy (.github/workflows/release.yml) and a rate-limited probe would
+ * report a healthy deployment as a failed release. They take no argument
+ * and touch no token.
+ *
+ * The caller must pass a normalised path (see normalisePath) — this is
+ * the predicate the encoded-path bypass walked past.
  */
-export function isEditorialPath(pathname) {
-	return pathname.startsWith(EDITORIAL_PREFIX);
+export function isRateLimitedApiPath(path) {
+	if (path === '/healthz' || path === '/readyz') {
+		return false;
+	}
+	if (!isApiPath(path)) {
+		return false;
+	}
+	return !isReaderApiPath(path);
 }
 
 /**

@@ -19,8 +19,10 @@ import {
 	containerRequest,
 	crawlerRefusal,
 	isApiPath,
-	isEditorialPath,
+	isRateLimitedApiPath,
+	isReaderApiPath,
 	matchesCrawlerSignature,
+	normalisePath,
 	rewriteSameSiteOriginHeaders,
 	varyOnUserAgent,
 	withEdgeHeaders,
@@ -64,17 +66,88 @@ describe('isApiPath', () => {
 	});
 });
 
-describe('isEditorialPath', () => {
-	it('covers exactly the prefix the Go binary mounts editorial under', () => {
-		assert.equal(EDITORIAL_PREFIX, '/api/v1/editorial/');
-		assert.equal(isEditorialPath('/api/v1/editorial/queue'), true);
-		assert.equal(isEditorialPath('/api/v1/editorial/'), true);
+describe('normalisePath', () => {
+	// The bypass this function exists for: the Worker saw the raw
+	// percent-encoded pathname while Go's ServeMux matched after
+	// unescaping, so one encoded character was not editorial here and was
+	// editorial there - the limiter skipped, the handler ran.
+	it('decodes an encoded ordinary character, as the Go router does', () => {
+		assert.equal(normalisePath('/api/v1/%65ditorial/queue'), '/api/v1/editorial/queue');
+		assert.equal(normalisePath('/%61pi/v1/front'), '/api/v1/front');
 	});
 
-	it('does not rate-limit the reader endpoints', () => {
-		assert.equal(isEditorialPath('/api/v1/front'), false);
-		assert.equal(isEditorialPath('/api/v1/articles/123'), false);
-		assert.equal(isEditorialPath('/el/editor'), false);
+	it('decodes once, not repeatedly: %2565 is not an `e` to Go either', () => {
+		assert.equal(normalisePath('/api/v1/%2565ditorial/queue'), '/api/v1/%65ditorial/queue');
+	});
+
+	it('collapses repeated slashes, as path.Clean does before the mux matches', () => {
+		assert.equal(normalisePath('/api//v1///editorial/queue'), '/api/v1/editorial/queue');
+		assert.equal(normalisePath('/api/v1/%2Feditorial/queue'), '/api/v1/editorial/queue');
+	});
+
+	it('leaves an ordinary path exactly as it stands', () => {
+		assert.equal(normalisePath('/el/munich+greece'), '/el/munich+greece');
+		assert.equal(normalisePath('/api/v1/articles/9f0c'), '/api/v1/articles/9f0c');
+	});
+
+	// A path we cannot read is not a path we may guess at: the caller
+	// refuses the request rather than routing a string it could not
+	// resolve.
+	it('reports an undecodable path as unreadable rather than guessing', () => {
+		assert.equal(normalisePath('/api/v1/%ZZ'), null);
+		assert.equal(normalisePath('/api/v1/%E0%A4%A'), null);
+	});
+});
+
+describe('isRateLimitedApiPath', () => {
+	it('covers the prefix the Go binary mounts editorial under', () => {
+		assert.equal(EDITORIAL_PREFIX, '/api/v1/editorial/');
+		assert.equal(isRateLimitedApiPath('/api/v1/editorial/queue'), true);
+		assert.equal(isRateLimitedApiPath('/api/v1/editorial/'), true);
+	});
+
+	// The rule is inverted: everything under /api/ that is not provably a
+	// reader path is limited, so a route added later is limited from its
+	// first request rather than from the day somebody remembers it.
+	it('limits an api path nobody has named yet', () => {
+		assert.equal(isRateLimitedApiPath('/api/v1/whatever-lands-next'), true);
+		assert.equal(isRateLimitedApiPath('/api/v2/front'), true);
+		assert.equal(isRateLimitedApiPath('/api'), true);
+	});
+
+	it('lets the reader endpoints through: they are public data by design', () => {
+		assert.equal(isRateLimitedApiPath('/api/v1/front'), false);
+		assert.equal(isRateLimitedApiPath('/api/v1/articles/123'), false);
+		assert.equal(isRateLimitedApiPath('/api/v1/openapi.json'), false);
+		assert.equal(isReaderApiPath('/api/v1/front'), true);
+	});
+
+	// The release probe polls these on every deploy; a limited probe would
+	// report a healthy deployment as a failed release.
+	it('leaves the probe endpoints unlimited', () => {
+		assert.equal(isRateLimitedApiPath('/healthz'), false);
+		assert.equal(isRateLimitedApiPath('/readyz'), false);
+	});
+
+	it('says nothing about the pages, which the web container answers', () => {
+		assert.equal(isRateLimitedApiPath('/el/editor'), false);
+		assert.equal(isRateLimitedApiPath('/'), false);
+		assert.equal(isRateLimitedApiPath('/apidocs'), false);
+	});
+
+	// The predicates are only sound on the string the router will read.
+	// The prefix test the bypass walked past is the first assertion here;
+	// the third is the case the inversion alone would not have caught,
+	// because an encoded `/api` is not under `/api/` either.
+	it('catches an encoded editorial path once it is normalised', () => {
+		const raw = '/api/v1/%65ditorial/queue';
+		assert.equal(raw.startsWith(EDITORIAL_PREFIX), false, 'what the prefix test missed');
+		assert.equal(isRateLimitedApiPath(normalisePath(raw)), true);
+
+		const encodedNamespace = '/%61pi/v1/editorial/queue';
+		assert.equal(isRateLimitedApiPath(encodedNamespace), false, 'not under /api/ as written');
+		assert.equal(isRateLimitedApiPath(normalisePath(encodedNamespace)), true);
+		assert.equal(isApiPath(normalisePath(encodedNamespace)), true);
 	});
 });
 

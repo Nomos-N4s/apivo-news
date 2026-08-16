@@ -66,9 +66,20 @@ only through its Durable Object, that is, from Worker code — so the
 deployment's own public origin is the only address the web container can
 use for the api. The reader endpoints are public data by design; the
 editorial endpoints stay JWT-gated, the database enforces the editor role
-a second time, and the Worker rate-limits `/api/v1/editorial/*` at 60
-requests per minute per address because public reachability makes
-invalid-token load possible.
+a second time, and the Worker rate-limits the API because public
+reachability makes invalid-token load possible.
+
+The limit is stated as an **inversion**: every `/api/…` path that is not
+one of the public reader endpoints (`/api/v1/front`,
+`/api/v1/articles/{id}`, `/api/v1/openapi.json`) is limited, `/healthz`
+and `/readyz` excepted so the release probe is never throttled. A rule
+shaped as "limit this one prefix" fails open for every route nobody
+thought of; shaped this way, a route added to the API later is limited
+from its first request. The Worker decides on the path **as the Go router
+will read it** — decoded once and with repeated slashes collapsed —
+because `/api/v1/%65ditorial/queue` is editorial to the api and looked
+like nothing in particular to a prefix test. A path that does not decode
+at all is answered `400` rather than routed.
 
 **The deployment is https-only, and says so twice.** The Worker states
 `Strict-Transport-Security: max-age=31536000; includeSubDomains` on every

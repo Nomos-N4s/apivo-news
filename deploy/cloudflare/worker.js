@@ -32,8 +32,9 @@ import {
 	containerRequest,
 	crawlerRefusal,
 	isApiPath,
-	isEditorialPath,
+	isRateLimitedApiPath,
 	matchesCrawlerSignature,
+	normalisePath,
 	withEdgeHeaders,
 } from "./routing.js";
 
@@ -236,30 +237,28 @@ export class WebContainer extends ContainerHost {
 }
 
 /**
- * The 429 the rate limiter answers with, in the API's own error vocabulary
- * (internal/platform/http/problem.go) so a client sees one shape whether
- * the refusal came from the Worker or from the Go binary.
+ * A refusal in the API's own error vocabulary
+ * (internal/platform/http/problem.go), so a client sees one shape whether
+ * it came from the Worker or from the Go binary.
  */
-function tooManyRequests(detail) {
+function problem(status, title, detail, headers = {}) {
 	return new Response(
-		JSON.stringify({
-			type: "about:blank",
-			title: "Too Many Requests",
-			status: 429,
-			detail,
-		}),
+		JSON.stringify({ type: "about:blank", title, status, detail }),
 		{
-			status: 429,
-			headers: {
-				"Content-Type": "application/problem+json",
-				"Retry-After": "60",
-			},
+			status,
+			headers: { "Content-Type": "application/problem+json", ...headers },
 		},
 	);
 }
 
+/** The 429 the rate limiter answers with. */
+function tooManyRequests(detail) {
+	return problem(429, "Too Many Requests", detail, { "Retry-After": "60" });
+}
+
 /**
- * Applies the editorial rate limit, returning a refusal or null.
+ * Applies the rate limit to a non-reader API request, returning a refusal
+ * or null.
  *
  * Keyed on the client IP: the point is to bound how much token
  * verification a stranger can make us do, and a stranger has no account to
@@ -271,7 +270,7 @@ function tooManyRequests(detail) {
  * whole issue is about; the reader path is untouched by the refusal, which
  * is the same trade JWKS_URL already makes.
  */
-async function limitEditorial(request, env) {
+async function limitApi(request, env) {
 	if (!env.EDITORIAL_RATE_LIMIT) {
 		return tooManyRequests(
 			"the editorial rate limiter is not configured on this deployment, so the editorial endpoints are refused; the EDITORIAL_RATE_LIMIT binding is declared in wrangler.jsonc",
@@ -295,13 +294,30 @@ export default {
 	 */
 	async fetch(request, env) {
 		const url = new URL(request.url);
-		const { pathname } = url;
+		// The path as the Go router will read it. Every decision below is
+		// taken on this string and not on the raw pathname, because the
+		// raw one is not what routes: `/api/v1/%65ditorial/queue` reached
+		// the editorial handler while looking like nothing in particular
+		// to a prefix test here.
+		const pathname = normalisePath(url.pathname);
 		// The public hop's scheme, which only the Worker can see: the
 		// container is proxied over plain HTTP. Every response leaves
 		// through `stamp`, refusals included — a 403 to a crawler is as
 		// much a chance to state the HSTS policy as a 200 to a reader.
 		const secure = url.protocol === "https:";
 		const stamp = (response) => withEdgeHeaders(response, secure);
+		if (pathname === null) {
+			// An undecodable path is not a request we owe a best effort:
+			// we cannot say what it addresses, and passing on a string we
+			// could not read is how the encoded-path bypass happened.
+			return stamp(
+				problem(
+					400,
+					"Bad Request",
+					"the request path is not valid percent-encoding and cannot be resolved to a route",
+				),
+			);
+		}
 		// The crawler fence, at the edge. It lives inside the web
 		// container too — that copy is the one Kubernetes relies on — but
 		// the api container has no middleware, and routing /api/… onto the
@@ -312,8 +328,8 @@ export default {
 		if (matchesCrawlerSignature(request.headers.get("user-agent"))) {
 			return stamp(crawlerRefusal());
 		}
-		if (isEditorialPath(pathname)) {
-			const refusal = await limitEditorial(request, env);
+		if (isRateLimitedApiPath(pathname)) {
+			const refusal = await limitApi(request, env);
 			if (refusal !== null) {
 				return stamp(refusal);
 			}
