@@ -4,7 +4,7 @@ import type {
   SourceOutcome,
   WithdrawalOutcome,
 } from './api';
-import { approvalRecordLine } from './api';
+import { approvalRecordLine, isTimestamp } from './api';
 import type { EditorialStrings } from './strings';
 
 /**
@@ -64,7 +64,12 @@ export function noticeForApproval(
   if (line !== '') {
     record.push(line);
   }
-  if (typeof outcome.published_at === 'string') {
+  // Only a readable timestamp is formatted: Intl throws on anything else,
+  // and an approval that WAS recorded must not become an error page
+  // because its confirmation carried an unreadable date. The body below
+  // still reports publication — the server sent a value for it — but the
+  // record line states only what can be rendered.
+  if (isTimestamp(outcome.published_at)) {
     record.push(`published_at = ${formatDate(outcome.published_at)}`);
   }
   return {
@@ -100,7 +105,11 @@ export function noticeForWithdrawal(
     };
   }
   const record: string[] = [];
-  if (outcome.withdrawn_at !== undefined) {
+  // Same guard as the approval notice: a withdrawal is irreversible, and
+  // an unreadable withdrawn_at must cost the editor a missing line, not
+  // the confirmation that it happened. A null slips past a bare
+  // undefined check and would render the 1970 epoch as a frozen fact.
+  if (isTimestamp(outcome.withdrawn_at)) {
     record.push(`withdrawn_at = ${formatDate(outcome.withdrawn_at)}`);
   }
   if (outcome.withdrawn_by !== undefined && outcome.withdrawn_by !== '') {

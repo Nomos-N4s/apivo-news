@@ -62,6 +62,26 @@ describe('noticeForApproval', () => {
     const notice = noticeForApproval({ recorded: false }, t, stampDate);
     expect(notice.body).toBe('');
   });
+
+  it('an unreadable published_at costs a record line, never the confirmation', () => {
+    const throwing = (iso: string): string => {
+      // What Intl actually does with an unparseable date.
+      if (Number.isNaN(new Date(iso).getTime())) {
+        throw new RangeError('Invalid time value');
+      }
+      return iso;
+    };
+    const notice = noticeForApproval(
+      { recorded: true, article_id: 'a1', published_at: 'not a date' },
+      t,
+      throwing,
+    );
+    expect(notice.tone).toBe('recorded');
+    // The server sent a publication value, so the body still reports it…
+    expect(notice.body).toBe(t.approvalPublishedBody);
+    // …while the line that cannot be rendered is simply absent.
+    expect(notice.record).toEqual(['article a1']);
+  });
 });
 
 describe('noticeForWithdrawal', () => {
@@ -95,6 +115,25 @@ describe('noticeForWithdrawal', () => {
       stampDate,
     );
     expect(notice.record).toEqual(['article art-9']);
+  });
+
+  it('refuses to render an unreadable or null withdrawn_at as a frozen fact', () => {
+    for (const withdrawn_at of ['not a date', null as unknown as string]) {
+      const notice = noticeForWithdrawal(
+        { recorded: true, article_id: 'art-9', withdrawn_at, reason: 'why' },
+        t,
+        (iso) => {
+          if (Number.isNaN(new Date(iso).getTime())) {
+            throw new RangeError('Invalid time value');
+          }
+          return iso;
+        },
+      );
+      // A withdrawal that happened is still confirmed; the line that
+      // would have said 1970 — or thrown — is left out.
+      expect(notice.tone).toBe('recorded');
+      expect(notice.record).toEqual(['article art-9']);
+    }
   });
 
   it('a refusal keeps the not-recorded label and the refusing words', () => {

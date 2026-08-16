@@ -238,8 +238,15 @@ function isArticleProvenance(body: unknown): body is ArticleProvenance {
   );
 }
 
-/** A value usable as a date — a string the Date constructor can read. */
-function isTimestamp(value: unknown): boolean {
+/**
+ * A value usable as a date — a string the Date constructor can read.
+ *
+ * Exported because the screens format wire timestamps through Intl, which
+ * throws on an unreadable one: a write that was genuinely recorded must
+ * not turn into an error page because its confirmation carried a date the
+ * formatter cannot parse.
+ */
+export function isTimestamp(value: unknown): value is string {
   return typeof value === 'string' && !Number.isNaN(new Date(value).getTime());
 }
 
