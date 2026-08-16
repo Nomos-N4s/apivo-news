@@ -297,6 +297,35 @@ async function limitApi(request, env) {
 	);
 }
 
+/**
+ * Wakes the api container and says so when it did not wake.
+ *
+ * The host is arbitrary: a Durable Object stub routes by binding, not by
+ * name. The path is the api's own liveness endpoint, so the wake costs one
+ * handler call and asserts the process answers.
+ *
+ * The verdict is read rather than discarded. This one fetch is the whole
+ * reason ingestion keeps running on a quiet night, and a crashed container
+ * answering 500 - or not answering at all - would otherwise complete the
+ * scheduled event with no signal anywhere that the poll and translation
+ * cycles did not run. A paper that silently stops updating is the failure
+ * this trigger exists to prevent, so its own failure may not be silent.
+ */
+async function wakeApi(api) {
+	try {
+		const response = await api.fetch("http://apivo-api/healthz");
+		if (!response.ok) {
+			console.error(
+				`apivo: scheduled wake-up: the api container answered ${response.status} at /healthz; this cycle's feed poll and translation did not run`,
+			);
+		}
+	} catch (error) {
+		console.error(
+			`apivo: scheduled wake-up failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}; this cycle's feed poll and translation did not run`,
+		);
+	}
+}
+
 export default {
 	/**
 	 * The only public entry point. Path decides the container: the api
@@ -373,9 +402,6 @@ export default {
 	 */
 	async scheduled(_event, env, ctx) {
 		const api = env.API.get(env.API.idFromName("api"));
-		// The host is arbitrary: a Durable Object stub routes by binding,
-		// not by name. The path is the api's own liveness endpoint, so the
-		// wake costs one handler call and asserts the process answers.
-		ctx.waitUntil(api.fetch("http://apivo-api/healthz"));
+		ctx.waitUntil(wakeApi(api));
 	},
 };
