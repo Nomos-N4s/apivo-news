@@ -49,6 +49,12 @@ select
                     'occurred_at', e.occurred_at,
                     'payload', e.payload
                 )
+                -- The tie-break is semantic, not random: approve-and-publish
+                -- writes both events in one transaction, so occurred_at -
+                -- the transaction timestamp - is identical for the pair, and
+                -- breaking the tie on a random uuid would show publication
+                -- before approval on half of all audited articles. Lifecycle
+                -- order is the truth the timeline exists to state.
                 order by e.occurred_at,
                     case e.type
                         when 'article.approved' then 0
