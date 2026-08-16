@@ -233,6 +233,16 @@ describe('noticeForBulk', () => {
     expect(noticeForBulk(t.bulkDeactivate, 'summary', 0, '').body).toBe('summary');
   });
 
+  it('never lets a consequence speak for rows that refused', () => {
+    // "Polling has stopped" is a statement about the action, so a mixed
+    // result must not carry it: for the refused rows polling carries on.
+    // The caller withholds it; the builder must not resurrect it.
+    expect(noticeForBulk(t.bulkDeactivate, '3 · 2', 2, undefined).body).toBe('3 · 2');
+    expect(noticeForBulk(t.bulkDeactivate, '3 · 2', 2).body).not.toContain(
+      t.deactivationKeepsRecord,
+    );
+  });
+
   it('takes the attention tone as soon as one row refused', () => {
     expect(noticeForBulk('Διαγραφή', 'summary', 0).tone).toBe('recorded');
     expect(noticeForBulk('Διαγραφή', 'summary', 1).tone).toBe('refused');

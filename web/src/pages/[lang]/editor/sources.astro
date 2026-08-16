@@ -289,8 +289,12 @@ const views: readonly { key: SourceView; label: string }[] = [
             bulkSummary,
             counts.refused,
             // Deactivation is the one action whose consequences are widely
-            // misread, so a recorded one says what it kept.
-            bulkAction === 'deactivate' && counts.recorded > 0
+            // misread, so a recorded one says what it kept — but only when
+            // every row was recorded. "Polling has stopped" is an
+            // unqualified statement about the action, and over a mixed
+            // result it would cover the rows that refused, where polling
+            // carries on.
+            bulkAction === 'deactivate' && counts.recorded > 0 && counts.refused === 0
               ? t.deactivationKeepsRecord
               : undefined,
           )}

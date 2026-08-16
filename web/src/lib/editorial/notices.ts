@@ -212,9 +212,10 @@ export function noticeForBulk(
   refused: number,
   /**
    * What the action did and did not do, when that is worth saying — a
-   * deactivation stops polling and keeps everything else. Appended only
-   * when something was actually recorded, since an action that changed
-   * nothing has no consequences to describe.
+   * deactivation stops polling and keeps everything else. These sentences
+   * speak about the action as a whole, so the caller passes one only when
+   * the whole action succeeded: over a mixed result it would claim the
+   * consequence for rows where nothing was recorded.
    */
   consequence?: string,
 ): RecordNoticeModel {
