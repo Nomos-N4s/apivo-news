@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,13 +42,15 @@ func TestFromEnv(t *testing.T) {
 		{
 			name: "all values set",
 			env: map[string]string{
-				"DATABASE_URL": "postgres://y",
+				// APP_ENV=prod, so the URL must carry an sslmode that
+				// cannot fall back to cleartext.
+				"DATABASE_URL": "postgres://y?sslmode=verify-full",
 				"HTTP_ADDR":    ":9999",
 				"APP_ENV":      config.EnvProd,
 				"LOG_LEVEL":    "debug",
 			},
 			want: config.Config{
-				DatabaseURL:  "postgres://y",
+				DatabaseURL:  "postgres://y?sslmode=verify-full",
 				HTTPAddr:     ":9999",
 				Env:          config.EnvProd,
 				LogLevel:     slog.LevelDebug,
@@ -389,5 +392,116 @@ func TestTranslationConfigGate(t *testing.T) {
 				t.Fatalf("FromEnv() = %+v, want error for %s=%q", got.Translation, tt.key, tt.value)
 			}
 		})
+	}
+}
+
+// TestFromEnvProdRequiresEncryptedDatabase covers the one configuration
+// mistake this repository actively invites: every documented example uses
+// sslmode=disable, because every example describes the local compose
+// Postgres on a loopback address. Copied into production it would put the
+// whole public record on the wire in cleartext, so in APP_ENV=prod the
+// binary refuses to start rather than connecting.
+func TestFromEnvProdRequiresEncryptedDatabase(t *testing.T) {
+	t.Parallel()
+
+	refused := []string{
+		"postgres://apivo:apivo@db.example:5432/apivo?sslmode=disable",
+		"postgres://apivo:apivo@db.example:5432/apivo?sslmode=allow",
+		"postgres://apivo:apivo@db.example:5432/apivo?sslmode=prefer",
+		// Absent means libpq's "prefer": encryption at the server's
+		// discretion, which is not a decision anyone here made.
+		"postgres://apivo:apivo@db.example:5432/apivo",
+		"postgresql://apivo@db.example/apivo?sslmode=DISABLE",
+		// The keyword/value form libpq also accepts.
+		"host=db.example user=apivo dbname=apivo sslmode=disable",
+		"host=db.example user=apivo dbname=apivo",
+	}
+	for _, databaseURL := range refused {
+		t.Run(databaseURL, func(t *testing.T) {
+			t.Parallel()
+			got, err := config.FromEnv(envFrom(map[string]string{
+				"DATABASE_URL": databaseURL,
+				"APP_ENV":      config.EnvProd,
+			}))
+			if err == nil {
+				t.Fatalf("FromEnv() = %+v, want a refusal for %q", got, databaseURL)
+			}
+			if !strings.Contains(err.Error(), "verify-full") {
+				t.Fatalf("FromEnv() error = %q, want it to name the value to use", err)
+			}
+		})
+	}
+
+	accepted := []string{
+		"postgres://apivo:apivo@db.example:5432/apivo?sslmode=verify-full",
+		"postgres://apivo:apivo@db.example:5432/apivo?sslmode=verify-ca",
+		"postgres://apivo:apivo@db.example:5432/apivo?sslmode=require",
+		"host=db.example user=apivo dbname=apivo sslmode=verify-full",
+	}
+	for _, databaseURL := range accepted {
+		t.Run(databaseURL, func(t *testing.T) {
+			t.Parallel()
+			if _, err := config.FromEnv(envFrom(map[string]string{
+				"DATABASE_URL": databaseURL,
+				"APP_ENV":      config.EnvProd,
+			})); err != nil {
+				t.Fatalf("FromEnv() error for %q: %v", databaseURL, err)
+			}
+		})
+	}
+}
+
+// TestFromEnvUnparseableDatabaseURLKeepsThePasswordOut pins the one thing
+// a startup refusal must never do: print the credential it was refusing.
+//
+// net/url returns a *url.Error whose Error() embeds the whole string it was
+// given, so wrapping it put the production database password into the error
+// that main.go prints to stderr - a container log Cloudflare keeps, readable
+// by anyone with log access. A typo in the DSN would have leaked it.
+func TestFromEnvUnparseableDatabaseURLKeepsThePasswordOut(t *testing.T) {
+	t.Parallel()
+
+	const password = "sup3rs3cr3t"
+	// A control character: url.Parse refuses it, and refuses it late
+	// enough to have the whole string in hand.
+	databaseURL := "postgres://apivo:" + password + "@db.example:5432/apivo?sslmode=verify-full\x7f"
+
+	got, err := config.FromEnv(envFrom(map[string]string{
+		"DATABASE_URL": databaseURL,
+		"APP_ENV":      config.EnvProd,
+	}))
+	if err == nil {
+		t.Fatalf("FromEnv() = %+v, want a refusal for an unparseable DATABASE_URL", got)
+	}
+	if strings.Contains(err.Error(), password) {
+		t.Fatalf("FromEnv() error contains the database password: %q", err)
+	}
+	if strings.Contains(err.Error(), databaseURL) {
+		t.Fatalf("FromEnv() error repeats the connection string: %q", err)
+	}
+	// Still a usable report: it names what is wrong, just not with what.
+	if !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("FromEnv() error = %q, want it to name the variable", err)
+	}
+	if !strings.Contains(err.Error(), "invalid control character") {
+		t.Fatalf("FromEnv() error = %q, want it to name the parse failure", err)
+	}
+}
+
+// TestFromEnvDevAcceptsPlaintextDatabase pins the other half: the check is
+// about production. Development runs against the compose Postgres over a
+// loopback address with sslmode=disable, and demanding TLS there would
+// mean either a certificate ceremony for every contributor or a second,
+// untested code path.
+func TestFromEnvDevAcceptsPlaintextDatabase(t *testing.T) {
+	t.Parallel()
+
+	for _, env := range []map[string]string{
+		{"DATABASE_URL": "postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable"},
+		{"DATABASE_URL": "postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable", "APP_ENV": config.EnvDev},
+	} {
+		if _, err := config.FromEnv(envFrom(env)); err != nil {
+			t.Fatalf("FromEnv(%v) error: %v", env, err)
+		}
 	}
 }

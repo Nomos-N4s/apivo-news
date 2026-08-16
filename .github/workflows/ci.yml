@@ -230,6 +230,11 @@ jobs:
   # --dry-run needs no Cloudflare credentials and uploads nothing;
   # --containers-rollout none skips the Docker image builds, which have
   # their own jobs; config validation runs against the real Dockerfiles.
+  #
+  # The Worker's own routing rules are proved here too. They decide which
+  # container answers, what the container is told about the caller, and what
+  # the caller is told about indexing — decisions that used to be provable
+  # only by deploying. Node's built-in test runner, no dependency to add.
   wrangler:
     runs-on: ubuntu-latest
     steps:
@@ -239,6 +244,8 @@ jobs:
           node-version: 24
       - name: Validate Cloudflare configuration (dry run, no credentials)
         run: npx --yes wrangler@4 deploy --dry-run --containers-rollout none
+      - name: Prove the Worker's routing rules
+        run: node --test 'deploy/cloudflare/*.test.mjs'
 
   frontend:
     runs-on: ubuntu-latest

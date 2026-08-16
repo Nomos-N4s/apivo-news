@@ -6,33 +6,52 @@
 // Worker whose Durable Object classes host the containers) lives in
 // deploy/cloudflare/worker.js, next to the other deployment artefacts.
 //
-// Topology (specs/001-epiloyes-alpha/contracts/http-api.md): the Astro web
-// container is the only public HTTP surface. The Go API container is never
-// routed from the Worker's public fetch handler — it is addressable solely
-// through its Durable Object binding, i.e. from Worker code, not from the
-// internet.
+// Topology (issue #134): the Worker is the single public entry point and
+// routes by path. `/api/…`, `/healthz` and `/readyz` reach the Go API
+// container; every other path reaches the Astro web container. Cloudflare
+// containers share no private network, so the public origin is the only
+// address either container can use to reach the other — the reader
+// endpoints are public data by design, the editorial endpoints stay
+// JWT-gated with the database enforcing the editor role a second time, and
+// their prefix is rate-limited at the Worker (EDITORIAL_RATE_LIMIT below).
 //
-// Secrets — set with `npx wrangler secret put <NAME>`, delivered to the
-// Worker environment and handed to the container at start (see
-// deploy/cloudflare/worker.js). No secret value is ever committed.
+// ── THIS FILE IS THE ONLY SOURCE OF CONFIGURATION ───────────────────────
+//
+// `wrangler deploy` REPLACES the deployed Worker's variables with exactly
+// what this file declares. Anything typed into the Cloudflare dashboard's
+// Variables screen is erased by the next release, silently and without a
+// diff. So: the dashboard is never used to configure this Worker. A var is
+// set by adding it to "vars" below and cutting a release; a var that is not
+// here is not set anywhere.
+//
+// Two consequences worth stating plainly. First, "vars" carries only keys
+// that have a real value — an empty placeholder is a value too, and shipping
+// a wall of them made the wipe look like configuration. Second, secrets are
+// NOT vars and are NOT in this file: `wrangler secret put` stores them
+// against the Worker and a deploy leaves them alone.
+//
+// Cloudflare Worker secrets — set once with `npx wrangler secret put <NAME>`
+// (docs/RELEASING.md). These are Worker secrets, NOT GitHub repository
+// secrets: the deploy never reads the repository's.
 //
 //   DATABASE_URL   Supabase (EU region) Postgres connection string for the
-//                  Go API.
+//                  Go API. It must carry `sslmode=verify-full` — with
+//                  APP_ENV=prod, which the Worker sets, the binary refuses
+//                  to start on a URL that permits an unencrypted session.
 //   TRANSLATION_API_KEY
 //                  The translation provider's credential (T018), once a
 //                  provider is decided. Optional even then: a self-hosted
 //                  server started without a key expects none.
 //
-// Later phases add, through the same mechanism with no config change: the
-// Supabase Auth keys for the web SSR.
-//
 // Non-secret vars — plain configuration in "vars" below, handed to the API
-// container by deploy/cloudflare/worker.js:
+// container by deploy/cloudflare/worker.js. None of them has a value yet, so
+// none of them is listed there; add the key with its value to switch the
+// behaviour on.
 //
 //   JWKS_URL       The auth provider's JWKS endpoint, e.g.
 //                  https://<project>.supabase.co/auth/v1/.well-known/jwks.json
 //                  NOT a secret: it names where PUBLIC keys are published.
-//                  Required for the editorial endpoints — left EMPTY the API
+//                  Required for the editorial endpoints — unset, the API
 //                  starts and serves readers normally, logs an ERROR line
 //                  naming the consequence, and every /api/v1/editorial/ route
 //                  answers 404.
@@ -41,9 +60,9 @@
 //                  Only meaningful alongside a non-empty JWKS_URL — setting
 //                  it alone fails startup, by design.
 //   POLL_INTERVAL  Feed poll loop cadence, a Go duration (e.g. "15m").
-//                  Empty means the binary's documented 15m default; "0"
-//                  disables the loop — the only disable switch. Forwarded
-//                  to the API container only when set.
+//                  Unset means the binary's documented 15m default, which
+//                  is what "triggers.crons" below is set to match; "0"
+//                  disables the loop — the only disable switch.
 //   TRANSLATION_BASE_URL, TRANSLATION_MODEL,
 //   TRANSLATION_INPUT_USD_PER_MTOK, TRANSLATION_OUTPUT_USD_PER_MTOK,
 //   TRANSLATION_FREE_OF_CHARGE, TRANSLATION_INTERVAL,
@@ -53,7 +72,7 @@
 //                  tokens (or FREE_OF_CHARGE=true for a host that charges
 //                  nothing), the FR-006 budget in micro-USD, and the
 //                  cadence (like POLL_INTERVAL). NO DEFAULTS on purpose:
-//                  all empty means the translation pipeline is OFF and the
+//                  all unset means the translation pipeline is OFF and the
 //                  binary logs one line saying so — the provider and the
 //                  budget are a founder decision, and nothing picks either
 //                  by accident. Setting only some of them is a mistake the
@@ -62,56 +81,51 @@
 //
 // Handed to the WEB container by the same file:
 //
-//   API_BASE_URL   Where the Astro server finds the Go api. There is no
-//                  in-platform value for it: containers are reachable only
-//                  through their Durable Object binding, so the api container
-//                  has no address the web container can fetch, and the public
-//                  hostname routes to the web container. Set it only when the
-//                  api runs somewhere addressable; empty, the pages render
-//                  from built-in fixtures.
+//   API_BASE_URL   Optional, and normally absent. The web container reaches
+//                  the api through the deployment's own public origin, and
+//                  the Worker DERIVES that from the request that started the
+//                  container — the origin is not knowable when this file is
+//                  written, and a committed guess would be an invented
+//                  value. Set it only to name a custom domain explicitly,
+//                  where two hostnames in front of one deployment would
+//                  otherwise let whichever request arrives first decide.
 //   PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY
 //                  Supabase Auth for the editorial sign-in — the other half
 //                  of JWKS_URL above, which verifies the tokens it issues.
 //                  NOT secrets: the anon key identifies the project and
-//                  grants nothing on its own. Empty, the sign-in page says
+//                  grants nothing on its own. Unset, the sign-in page says
 //                  no auth is configured and the editorial screens stay a
 //                  preview.
 //   PUBLIC_APP_VERSION
 //                  The release version rendered in the footer's fine print
-//                  (issue #119). Set per deployment by the release workflow
-//                  (`wrangler deploy --var PUBLIC_APP_VERSION:vX.Y.Z`), never
-//                  by hand; empty means the deployment was not cut by a
-//                  release tag and the footer shows no version.
-//
-// All of them ship EMPTY on purpose. A placeholder hostname is a real value
-// to the binary, so it would select the fail-fast verifier path and a fresh
-// deploy would crash-loop until someone edited it; empty means exactly "not
-// configured yet", and nothing in between can fake a configuration.
+//                  (issue #119). Passed per deployment on the command line
+//                  by the release workflow
+//                  (`wrangler deploy --var PUBLIC_APP_VERSION:vX.Y.Z`),
+//                  never written here; absent means the deployment was not
+//                  cut by a release tag and the footer shows no version.
 {
 	"name": "apivo-news",
 	"main": "deploy/cloudflare/worker.js",
 	"compatibility_date": "2026-08-01",
-	"vars": {
-		"JWKS_URL": "",
-		"JWT_AUDIENCE": "",
-		"POLL_INTERVAL": "",
-		"TRANSLATION_BASE_URL": "",
-		"TRANSLATION_MODEL": "",
-		"TRANSLATION_INPUT_USD_PER_MTOK": "",
-		"TRANSLATION_OUTPUT_USD_PER_MTOK": "",
-		"TRANSLATION_FREE_OF_CHARGE": "",
-		"TRANSLATION_INTERVAL": "",
-		"TRANSLATION_ARTICLE_CEILING_MICROUSD": "",
-		"TRANSLATION_MONTHLY_CAP_MICROUSD": "",
-		"API_BASE_URL": "",
-		"PUBLIC_SUPABASE_URL": "",
-		"PUBLIC_SUPABASE_ANON_KEY": "",
-		"PUBLIC_APP_VERSION": ""
+	// Empty on purpose, and not a placeholder wall: see the note above.
+	// Every key here is deployed truth; every key absent is unset.
+	"vars": {},
+	// Keeping ingestion alive. A container lives inside its Durable Object
+	// and the platform stops an idle one, which stops the feed poll loop and
+	// the translation pipeline with it. The schedule wakes the api every 15
+	// minutes; each start runs one poll cycle and one translation cycle
+	// immediately (deploy/cloudflare/worker.js, scheduled). This is the
+	// decision, taken rather than left implicit: ingestion runs on the clock,
+	// not only alongside traffic, because a paper that quietly stops updating
+	// on a quiet night is the failure mode. Matches the binary's default
+	// POLL_INTERVAL - change both together.
+	"triggers": {
+		"crons": ["*/15 * * * *"]
 	},
 	"containers": [
 		{
-			// Go API, built from the repo-root Dockerfile (T001). Internal
-			// only: no public route exists to this container.
+			// Go API, built from the repo-root Dockerfile (T001). Reached at
+			// /api/…, /healthz and /readyz through the Worker.
 			"name": "apivo-api",
 			"class_name": "ApiContainer",
 			"image": "./Dockerfile",
@@ -125,7 +139,7 @@
 			}
 		},
 		{
-			// Astro web frontend (T002) — the single public surface, carrying
+			// Astro web frontend (T002) — every path but the API's, carrying
 			// the D6 crawler gate inside the artefact.
 			"name": "apivo-web",
 			"class_name": "WebContainer",
@@ -145,5 +159,32 @@
 	},
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["ApiContainer", "WebContainer"] }
+	],
+	// Rate limiting for every /api/… path that is not a public reader
+	// endpoint (issue #134). Routing the API namespace onto the public
+	// surface makes the editorial endpoints reachable by anyone, and an
+	// invalid bearer token still costs a JWKS verification. 60 requests
+	// per minute is far above what the editorial screens do per action
+	// and far below what a stranger needs to be a nuisance. The token
+	// gate and the database's second role check are unchanged; this only
+	// bounds how fast someone may make us check one.
+	//
+	// Counted per CALLER — the bearer token's subject where there is one,
+	// the client address otherwise (deploy/cloudflare/routing.js,
+	// rateLimitKey): the editorial calls are made server-side by the web
+	// container, so the address alone would bucket every editor together.
+	//
+	// And counted per Cloudflare LOCATION: this binding is documented as
+	// per-location and approximate, not an accounting system. It is a
+	// bound on invalid-token load, not a quota, and nothing here should
+	// be described as one.
+	"ratelimits": [
+		{
+			"name": "EDITORIAL_RATE_LIMIT",
+			// Namespace ids are Worker-local and arbitrary; this is the only
+			// limiter, so it takes the first slot.
+			"namespace_id": "1001",
+			"simple": { "limit": 60, "period": 60 }
+		}
 	]
 }
