@@ -20,18 +20,23 @@ const role =
   notice.tone === 'refused' ? 'alert' : notice.tone === 'recorded' ? 'status' : 'note';
 ---
 
-<div class:list={['record-notice', `tone-${notice.tone}`]} role={role}>
-  <span class="label">{notice.label}</span>
-  <span class="body">{notice.body}</span>
-  {
-    notice.record.length > 0 && (
-      <span class="record">
-        {notice.record.map((line) => (
-          <span class="record-line">{line}</span>
-        ))}
-      </span>
-    )
-  }
+{/* The live region wraps the words only. An alert should not contain
+    interactive content — the role announces text and never moves focus —
+    so the adjacent action sits outside it, in the same row. */}
+<div class:list={['record-notice', `tone-${notice.tone}`]}>
+  <span class="announced" role={role}>
+    <span class="label">{notice.label}</span>
+    <span class="body">{notice.body}</span>
+    {
+      notice.record.length > 0 && (
+        <span class="record">
+          {notice.record.map((line) => (
+            <span class="record-line">{line}</span>
+          ))}
+        </span>
+      )
+    }
+  </span>
   {
     action !== undefined && (
       <a class="action" href={action.href}>
@@ -48,6 +53,9 @@ const role =
     gap: var(--space-3);
     flex-wrap: wrap;
     padding: var(--space-3) var(--space-6);
+  }
+  .announced {
+    display: contents;
   }
   .tone-recorded {
     background: var(--color-accent-700);
@@ -96,6 +104,11 @@ const role =
   .action {
     font-size: 13px;
     color: var(--color-accent-400);
+  }
+  /* accent-400 reaches only 3.4:1 on the recorded tone's accent-700 fill;
+     the page background colour carries the link at 6.4:1 instead. */
+  .tone-recorded .action {
+    color: var(--color-bg);
   }
   .tone-context .action {
     color: var(--color-accent-700);
