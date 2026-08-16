@@ -257,9 +257,21 @@ jobs:
             echo "probing $base$path"
             # Retries cover the containers' cold start; after that, a refusal
             # is a refusal: the release did not come up, so the release failed.
-            if ! curl --fail --silent --show-error --retry 10 --retry-delay 15 --retry-all-errors --max-time 20 "$base$path"; then
+            if ! curl --fail --silent --show-error --retry 10 --retry-delay 15 --retry-all-errors --max-time 20 "$base$path" > answer.json; then
               echo "::error::release $VERSION deployed but $base$path does not answer 200: the release did not come up. Roll back by re-running this workflow from the previous tag with dry_run unchecked (docs/RELEASING.md)."
               exit 1
             fi
+            # A 200 only says something is serving, and the previous
+            # container answers 200 just as happily. What proves the release
+            # is the version in the payload - stamped into the binary at
+            # build time, and proven to be there before anything deployed.
+            # Anything but $VERSION means this deployment did not roll
+            # forward, whatever the status code says.
+            served=$(jq -r '.version // ""' answer.json 2>/dev/null || true)
+            if [ "$served" != "$VERSION" ]; then
+              echo "::error::release $VERSION deployed but $base$path is answered by version '${served:-none}', not $VERSION: the deployment did not roll forward and something else is still serving. Roll back by re-running this workflow from the previous tag with dry_run unchecked (docs/RELEASING.md)."
+              exit 1
+            fi
+            echo "$path answered 200 as version $served"
           done
-          echo "release $VERSION serves: /healthz and /readyz answered 200" >> "$GITHUB_STEP_SUMMARY"
+          echo "release $VERSION serves: /healthz and /readyz answered 200 as $VERSION" >> "$GITHUB_STEP_SUMMARY"
