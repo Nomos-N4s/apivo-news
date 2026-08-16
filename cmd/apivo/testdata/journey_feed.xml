@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The T033 journey feed: a Greek-language RSS 2.0 document of the shape a
+     licensed national feed actually serves. Three items, deliberately
+     uneven: the tram item states an author and a publication date, the
+     water item states neither (FR-002: absent stays absent), the festival
+     item states a date but no author. The journey test derives its
+     expectations from these values - change one and change the test. -->
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Ελληνικές Ειδήσεις — Ροή Ταξιδιού</title>
+    <link>https://news.example.gr/journey</link>
+    <description>Ειδήσεις για τη διαδρομή αποδοχής του άλφα: τοπικά του Μονάχου και εθνικά της Ελλάδας.</description>
+    <language>el</language>
+    <item>
+      <title>Νέα γραμμή τραμ συνδέει το κέντρο του Μονάχου με τα βόρεια προάστια</title>
+      <link>https://news.example.gr/journey/tram-monacho</link>
+      <dc:creator>Ελένη Παπαδοπούλου</dc:creator>
+      <pubDate>Mon, 04 Aug 2025 06:30:00 +0300</pubDate>
+      <description>Η νέα γραμμή τραμ ξεκίνησε σήμερα τα δρομολόγιά της, συνδέοντας το κέντρο του Μονάχου με τα βόρεια προάστια σε λιγότερο από είκοσι λεπτά. Οι κάτοικοι της περιοχής υποδέχθηκαν το έργο μετά από πέντε χρόνια κατασκευής.</description>
+    </item>
+    <item>
+      <title>Αναβάθμιση του δικτύου ύδρευσης στη Θεσσαλονίκη</title>
+      <link>https://news.example.gr/journey/ydreysi-thessaloniki</link>
+      <description>Ξεκινούν τον επόμενο μήνα οι εργασίες αναβάθμισης του δικτύου ύδρευσης στη Θεσσαλονίκη. Το έργο αφορά την αντικατάσταση αγωγών σε δεκατέσσερις δήμους της πόλης.</description>
+    </item>
+    <item>
+      <title>Φεστιβάλ ελληνικής μουσικής επιστρέφει στη Βαυαρία τον Σεπτέμβριο</title>
+      <link>https://news.example.gr/journey/festival-bavaria</link>
+      <pubDate>Tue, 05 Aug 2025 09:00:00 +0300</pubDate>
+      <description>Το ετήσιο φεστιβάλ ελληνικής μουσικής επιστρέφει στη Βαυαρία τον Σεπτέμβριο με συναυλίες σε τρεις πόλεις. Οι διοργανωτές περιμένουν χιλιάδες επισκέπτες από όλη τη νότια Γερμανία.</description>
+    </item>
+  </channel>
+</rss>
