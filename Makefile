@@ -17,7 +17,7 @@ DATABASE_URL_TEST ?= postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
 # `make test RACE=` and let CI cover the race detection.
 RACE ?= -race
 
-.PHONY: setup db-up db-down test test-unit cover vet lint openapi-lint sqlc ts-types web-install web-check web-build
+.PHONY: setup db-up db-down test test-unit cover vet lint openapi-lint sqlc ts-types web-install web-check web-build worker-test worker-validate
 
 ## setup: one-time developer setup - route git hooks through .githooks
 setup:
@@ -80,3 +80,14 @@ web-check:
 ## web-build: production build of the frontend
 web-build:
 	cd web && npm run build
+
+## worker-test: prove the Cloudflare Worker's routing rules (matches CI)
+# Node's built-in test runner over the standard web objects - no dependency,
+# no Cloudflare runtime. What only a real deploy can prove stays out of it.
+worker-test:
+	node --test 'deploy/cloudflare/*.test.mjs'
+
+## worker-validate: full wrangler config parse and Worker bundle (matches CI)
+# --dry-run needs no credentials and uploads nothing.
+worker-validate:
+	npx --yes wrangler@4 deploy --dry-run --containers-rollout none

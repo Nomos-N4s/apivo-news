@@ -235,7 +235,8 @@ jobs:
             echo "created the GitHub Release for $VERSION (pre-release: $prerelease)"
           fi
 
-  # A release that did not come up is a failed release, reported honestly.
+  # A release that did not come up is a failed release, reported honestly -
+  # and so is a release nobody asked. Both paths below exit non-zero.
   #
   # The gate is the DEPLOY, not the release job's verdict: once production
   # has changed it must be probed, even if publishing the Release afterwards
@@ -254,16 +255,25 @@ jobs:
     steps:
       - name: Probe /healthz and /readyz
         run: |
+          # An unprobed release is a failed release. This used to warn and
+          # pass, from a time when /healthz was not on the public surface
+          # and no satisfiable value for the variable existed - so every
+          # release certified itself unverified and read green. The Worker
+          # now routes /healthz and /readyz to the api container (#134),
+          # which makes the variable satisfiable, which makes leaving it
+          # unset a choice: a deploy nobody checked came up.
           if [ -z "$RELEASE_HEALTH_URL" ]; then
-            echo "::warning::RELEASE_HEALTH_URL repository variable is not set: $VERSION was deployed but NOT probed. Nothing verified that the release actually serves. Set the variable (docs/RELEASING.md) so the next release proves itself."
+            echo "::error::release $VERSION was deployed but NOT probed: the RELEASE_HEALTH_URL repository variable is not set, so nothing verified that production came up. Set it to the deployment's public base URL (docs/RELEASING.md) and re-run. Production HAS changed - roll back by re-running this workflow from the previous tag with dry_run unchecked."
             {
-              echo "## WARNING: release $VERSION was NOT probed"
+              echo "## FAILED: release $VERSION was deployed but NOT probed"
               echo
               echo "The RELEASE_HEALTH_URL repository variable is not set, so nothing"
               echo "verified that the deployed release actually serves traffic."
-              echo "Set it to the deployment's base URL (docs/RELEASING.md)."
+              echo "Production has changed regardless: set the variable to the"
+              echo "deployment's public base URL (docs/RELEASING.md), then either"
+              echo "re-run this tag or roll back to the previous one."
             } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            exit 1
           fi
           base="${RELEASE_HEALTH_URL%/}"
           for path in /healthz /readyz; do

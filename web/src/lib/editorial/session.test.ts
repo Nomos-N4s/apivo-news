@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { isSecureRequest } from '../secure-request';
 import {
   astroCookieOptions,
   editorSession,
@@ -127,13 +128,25 @@ describe('astroCookieOptions', () => {
     expect(astroCookieOptions({ httpOnly: false }, true).httpOnly).toBe(true);
   });
 
-  it('derives secure from the request protocol rather than hard-coding it', () => {
+  it('takes secure from the caller rather than hard-coding it', () => {
     // https deployments get an https-only cookie; the plain-http dev
     // stack still works.
     expect(astroCookieOptions({}, true).secure).toBe(true);
     expect(astroCookieOptions({}, false).secure).toBe(false);
     // And the SDK cannot opt the cookie out of it.
     expect(astroCookieOptions({ secure: false }, true).secure).toBe(true);
+  });
+
+  // The composition supabase.ts performs, stated end to end: the request
+  // the container sees is http:// on a deployed site, because the Worker
+  // proxies it that way, and the session cookie must still be Secure. A
+  // refresh token without it rides the next cleartext request to the same
+  // host, and whoever captures it can POST an approval under a real
+  // editor's name.
+  it('writes a Secure session cookie on a deployed request whose URL is http', () => {
+    const proxied = new Request('http://news.example/el/editor');
+    expect(new URL(proxied.url).protocol).toBe('http:');
+    expect(astroCookieOptions({}, isSecureRequest(proxied, 'prod')).secure).toBe(true);
   });
 
   it('passes through the options the SDK set and omits the ones it did not', () => {

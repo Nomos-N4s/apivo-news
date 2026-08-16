@@ -1,0 +1,46 @@
+---
+// The fixture marker (issue #134).
+//
+// A reader page rendered from the built-in sample data looks exactly like
+// the newspaper: same masthead, same attribution blocks, same "approved by"
+// line — naming a publisher that does not exist and an editor who never
+// read anything. Whatever else is true of a page in that state, a reader
+// must not be able to mistake it for the record.
+//
+// So this sits above the content, not below it, and states the fact
+// plainly rather than in developer shorthand. `role="alert"` classifies it
+// correctly for assistive technology; the band is the loudest thing on the
+// page on purpose, because a fixture page reaching a reader is a failure
+// and should look like one.
+interface Props {
+  title: string;
+  body: string;
+}
+
+const { title, body } = Astro.props;
+---
+
+<aside class="fixtures" role="alert">
+  <strong>{title}</strong>
+  <p>{body}</p>
+</aside>
+
+<style>
+  .fixtures {
+    padding: var(--space-5) calc(var(--space-6) + var(--space-1));
+    border: 2px solid var(--color-accent-700);
+    background: var(--color-surface);
+    margin-bottom: var(--space-5);
+  }
+  strong {
+    display: block;
+    color: var(--color-accent-700);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    font-size: 13px;
+  }
+  p {
+    margin: var(--space-2) 0 0;
+    font-size: 14px;
+  }
+</style>

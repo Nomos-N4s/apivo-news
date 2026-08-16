@@ -4,9 +4,11 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -36,7 +38,9 @@ const DefaultTranslationInterval = 15 * time.Minute
 // Config holds everything the process needs to start. All values come from
 // the environment; nothing is read from files.
 type Config struct {
-	// DatabaseURL is the Postgres connection string. Required.
+	// DatabaseURL is the Postgres connection string. Required. In
+	// APP_ENV=prod it must carry an sslmode that cannot fall back to an
+	// unencrypted session - see requireEncryptedDatabase.
 	DatabaseURL string
 	// HTTPAddr is the listen address for the HTTP server, e.g. ":8080".
 	HTTPAddr string
@@ -189,6 +193,11 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	if cfg.Env != EnvDev && cfg.Env != EnvProd {
 		return Config{}, fmt.Errorf("config: APP_ENV must be %q or %q, got %q", EnvDev, EnvProd, cfg.Env)
 	}
+	if cfg.Env == EnvProd {
+		if err := requireEncryptedDatabase(cfg.DatabaseURL); err != nil {
+			return Config{}, err
+		}
+	}
 	level, err := parseLevel(getenv("LOG_LEVEL"))
 	if err != nil {
 		return Config{}, err
@@ -205,6 +214,97 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	}
 	cfg.Translation = translation
 	return cfg, nil
+}
+
+// sslModesPermittingCleartext are the libpq sslmode values under which the
+// driver will happily speak an unencrypted session: "disable" never
+// negotiates TLS, "allow" and "prefer" fall back to plaintext when the
+// server does not insist, and an absent sslmode means "prefer" - the
+// default that made every deployment's TLS the server's decision rather
+// than ours.
+var sslModesPermittingCleartext = map[string]struct{}{
+	"":        {},
+	"disable": {},
+	"allow":   {},
+	"prefer":  {},
+}
+
+// requireEncryptedDatabase refuses a production DATABASE_URL whose sslmode
+// permits an unencrypted session.
+//
+// The database holds the whole public record and, in production, lives at
+// a managed provider across the public internet. Every example in this
+// repository says sslmode=disable, because every example describes the
+// local compose Postgres on a loopback address - so the value most likely
+// to be copied into production is the one that must never be there. This
+// is the check that turns copying it into a refusal at startup rather than
+// a plaintext session nobody notices.
+//
+// The refusal names sslmode=verify-full, which is what the managed
+// provider (Supabase, EU region) documents and the only mode that also
+// verifies the server is who it claims. "require" and "verify-ca" encrypt
+// and are accepted; they are the operator's call to make, and only
+// cleartext is ours.
+func requireEncryptedDatabase(databaseURL string) error {
+	mode, err := sslMode(databaseURL)
+	if err != nil {
+		return err
+	}
+	if _, cleartext := sslModesPermittingCleartext[mode]; !cleartext {
+		return nil
+	}
+	named := "carries no sslmode, so libpq defaults to \"prefer\""
+	if mode != "" {
+		named = fmt.Sprintf("carries sslmode=%s", mode)
+	}
+	return fmt.Errorf("config: DATABASE_URL %s, which permits an unencrypted session, and APP_ENV=%s: refusing to start. Production connects to a managed database over the public internet - use sslmode=verify-full (the documented value; sslmode=disable belongs to the local compose database only)", named, EnvProd)
+}
+
+// sslMode reads the sslmode out of a connection string in either shape
+// libpq accepts: a URL (postgres://…?sslmode=…) or a keyword/value DSN
+// (host=… sslmode=…). An unparseable string is an error here rather than
+// at the first query, because a startup check that silently passes on
+// input it did not understand is not a check.
+//
+// NOTHING returned from here may carry the connection string. It holds the
+// production database password, the error travels up to main.go and is
+// printed to stderr, and stderr on this deployment is a container log
+// Cloudflare keeps - so a DSN with one typo in it would put the password
+// where anyone with log access reads it. That is the same hazard as a
+// credential in a feed URL, and it gets the same treatment the fetcher
+// gives one (#83): report the cause, never the value.
+func sslMode(databaseURL string) (string, error) {
+	if strings.Contains(databaseURL, "://") {
+		parsed, err := url.Parse(databaseURL)
+		if err != nil {
+			// net/url returns a *url.Error whose Error() embeds the WHOLE
+			// string it was given. Wrapping that with %w prints the DSN,
+			// password and all. Only the inner cause is reportable.
+			var parseErr *url.Error
+			if errors.As(err, &parseErr) {
+				err = parseErr.Err
+			}
+			return "", fmt.Errorf("config: DATABASE_URL is not a valid connection URL (the value is not repeated here: it carries the database password): %w", err)
+		}
+		query, err := url.ParseQuery(parsed.RawQuery)
+		if err != nil {
+			// Safe to wrap: ParseQuery names only the offending escape
+			// sequence ("invalid URL escape \"%zz\""), never the query it
+			// was reading.
+			return "", fmt.Errorf("config: DATABASE_URL has an unparseable query string: %w", err)
+		}
+		return strings.ToLower(query.Get("sslmode")), nil
+	}
+	// Keyword/value form. Values may be single-quoted; nothing else in a
+	// realistic sslmode needs unquoting, and a value we cannot read is
+	// reported as absent, which fails closed.
+	for _, field := range strings.Fields(databaseURL) {
+		key, value, found := strings.Cut(field, "=")
+		if found && strings.EqualFold(key, "sslmode") {
+			return strings.ToLower(strings.Trim(value, "'\"")), nil
+		}
+	}
+	return "", nil
 }
 
 // parseTranslation reads the TRANSLATION_* environment. Absence is legal

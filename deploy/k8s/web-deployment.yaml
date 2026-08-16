@@ -65,6 +65,15 @@ spec:
             # deployment does not read.
             - name: API_BASE_URL
               value: "http://api:8080"
+            # A cluster is a deployed environment, and the frontend must
+            # know it: in prod the reader REFUSES to answer from the
+            # built-in fixtures rather than presenting invented publishers
+            # under an invented approver as the published record. The line
+            # above is what keeps that refusal from ever firing here; this
+            # line is what makes forgetting the line above a loud failure
+            # instead of a quiet fabrication.
+            - name: APP_ENV
+              value: "prod"
             # Supabase Auth for the editorial sign-in. Neither is a
             # credential: the anon key identifies the project and grants
             # nothing on its own. They belong to the web container alone,

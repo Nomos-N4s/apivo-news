@@ -45,10 +45,93 @@ The pipeline (`.github/workflows/release.yml`) runs on every pushed
    released**: a 200 alone would be answered just as happily by the
    previous container, so a deployment that did not roll forward is caught
    rather than reported green. A release that does not answer, or answers
-   as another version, is a **failed release** and the run says so. If the
-   variable is unset the probe is skipped with a loud warning in the run
-   summary — never silently. The probe runs on any deploy that actually
-   happened, even if publishing the Release afterwards failed.
+   as another version, is a **failed release** and the run says so. So is
+   a release that was never probed: with the variable unset the step
+   fails, because production has changed and nothing checked it. The probe
+   runs on any deploy that actually happened, even if publishing the
+   Release afterwards failed.
+
+## What the deployment looks like
+
+The Cloudflare Worker (`deploy/cloudflare/worker.js`) is the single public
+entry point and routes by path:
+
+| Path | Container |
+| --- | --- |
+| `/api/…`, `/healthz`, `/readyz` | the Go API (`./Dockerfile`) |
+| everything else | the Astro web frontend (`./web/Dockerfile`) |
+
+Cloudflare containers share no private network — a container is reachable
+only through its Durable Object, that is, from Worker code — so the
+deployment's own public origin is the only address the web container can
+use for the api. The reader endpoints are public data by design; the
+editorial endpoints stay JWT-gated, the database enforces the editor role
+a second time, and the Worker rate-limits the API because public
+reachability makes invalid-token load possible.
+
+The limit is stated as an **inversion**: every `/api/…` path that is not
+one of the public reader endpoints (`/api/v1/front`,
+`/api/v1/articles/{id}`, `/api/v1/openapi.json`) is limited, `/healthz`
+and `/readyz` excepted so the release probe is never throttled. A rule
+shaped as "limit this one prefix" fails open for every route nobody
+thought of; shaped this way, a route added to the API later is limited
+from its first request. The Worker decides on the path **as the Go router
+will read it** — decoded once and with repeated slashes collapsed —
+because `/api/v1/%65ditorial/queue` is editorial to the api and looked
+like nothing in particular to a prefix test. A path that does not decode
+at all is answered `400` rather than routed.
+
+The count is **per caller**: the bearer token's subject where a request
+carries one, the client address otherwise. Keying on the address alone
+would bucket every editor together, because `API_BASE_URL` is the
+deployment's own origin and the editorial calls are therefore made
+server-side by the web container. And it is **per Cloudflare location and
+approximate** — the platform documents its rate-limiting binding that way.
+Read it as a bound on invalid-token load, roughly 60 a minute per caller
+per location, not as a quota anyone is owed.
+
+**On a custom domain, set `API_BASE_URL` as well.** The web container
+reaches the api through the deployment's own public origin, and the Worker
+derives that origin from the request that started the container — it
+cannot be known when `wrangler.jsonc` is written, and a committed guess
+would be an invented value. With two hostnames in front of one deployment
+(the `workers.dev` one and a custom domain), whichever request happens to
+wake the container pins that choice for its lifetime. Both hostnames reach
+the same Worker, so the calls still land on the right api; what pinning
+costs is a hop out and back through the wrong name, and a dependency on a
+hostname the operator may later retire. Naming it in `vars` removes the
+question.
+
+**The deployment is https-only, and says so twice.** The Worker states
+`Strict-Transport-Security: max-age=31536000; includeSubDomains` on every
+https response — `preload` deliberately not among them, since submitting a
+domain to the browser-vendor list is a commitment that outlives it. That
+header matters on a **custom domain**: `workers.dev` sits under an
+HSTS-preloaded TLD and is upgraded before a request leaves the browser,
+while a custom domain has nothing supplying that and its first visit is
+plain http. The Worker also stamps `X-Forwarded-Proto` on the proxied
+request, because the containers are reached over plain HTTP and cannot see
+the TLS hop; together with `APP_ENV=prod` that is what makes every cookie
+this deployment writes `Secure` (`web/src/lib/secure-request.ts`).
+
+**Ingestion runs on a schedule, not only alongside traffic.** A container
+lives inside its Durable Object and the platform stops an idle one, which
+would stop the feed poll loop and the translation pipeline with it — a
+paper that quietly stops updating on a quiet night. A cron trigger
+(`triggers.crons` in `wrangler.jsonc`, every 15 minutes, matching the
+binary's default `POLL_INTERVAL`) fetches the api's `/healthz`, which
+starts the container if it had stopped; every start runs one poll cycle
+and one translation cycle immediately. Change the cron and `POLL_INTERVAL`
+together.
+
+**`wrangler.jsonc` is the only source of configuration.** `wrangler deploy`
+replaces the deployed Worker's variables with exactly what the file
+declares, so anything typed into the Cloudflare dashboard's Variables
+screen is erased by the next release — silently, and without a diff. Never
+configure this Worker from the dashboard. A variable is set by adding it to
+`vars` in the file and cutting a release. Secrets are the exception: they
+are not variables, they are stored against the Worker by
+`wrangler secret put`, and a deploy leaves them alone.
 
 ## Semver discipline (pre-1.0)
 
@@ -88,8 +171,15 @@ Release is created. The workflow refuses to run from a branch ref.
 
 ## One-time setup
 
-The deploy authenticates with two repository **secrets** (Settings →
-Secrets and variables → Actions → Secrets), created once by the founder:
+Secrets live in **two different places**, and putting one in the other's
+place is a silent failure — GitHub secrets are read by the workflow,
+Cloudflare Worker secrets are read by the running deployment, and neither
+can see the other's.
+
+### 1. Repository secrets — how the workflow authenticates
+
+Settings → Secrets and variables → Actions → Secrets. These are read by
+GitHub Actions and by nothing else:
 
 | Secret | Value |
 | --- | --- |
@@ -99,17 +189,56 @@ Secrets and variables → Actions → Secrets), created once by the founder:
 The workflow fails before deploying, naming the missing secret, if either
 is unset — it never invents placeholder values.
 
-The probe reads one repository **variable** (same page, Variables tab):
+### 2. Cloudflare Worker secrets — what the deployment runs on
+
+These are stored against the Worker itself, from a checkout of this
+repository, and are **never** repository secrets: the deploy does not read
+GitHub's, and a `DATABASE_URL` set there reaches nothing. Set once; a later
+`wrangler deploy` leaves them untouched.
+
+```sh
+npx wrangler@4 secret put DATABASE_URL
+npx wrangler@4 secret put TRANSLATION_API_KEY   # only once a provider is chosen
+```
+
+Each command prompts for the value and stores it encrypted. To see which
+are set (names only, never values): `npx wrangler@4 secret list`.
+
+| Worker secret | Value |
+| --- | --- |
+| `DATABASE_URL` | The Supabase (EU region) Postgres connection string. **It must carry `sslmode=verify-full`** — see below. Required: without it the api container refuses to start, naming this command. |
+| `TRANSLATION_API_KEY` | The translation provider's credential (T018), once a provider and budget are decided. Optional even then: a self-hosted server started without a key expects none. |
+
+**`sslmode` is load-bearing.** Every `DATABASE_URL` example in this
+repository ends in `sslmode=disable`, because every example describes the
+local compose Postgres on a loopback address. Production reaches a managed
+database across the public internet, so the api runs with `APP_ENV=prod`
+and **refuses to start** on a URL whose `sslmode` permits an unencrypted
+session — `disable`, `allow`, `prefer`, or absent (libpq then defaults to
+`prefer`). Use `verify-full`, which Supabase documents and which also
+proves the server is the one it claims to be:
+
+```
+postgres://USER:PASSWORD@HOST:5432/postgres?sslmode=verify-full
+```
+
+Everything that is *not* a secret — `JWKS_URL`, `JWT_AUDIENCE`,
+`PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, the `TRANSLATION_*`
+provider and budget settings — is a plain variable and belongs in `vars`
+in `wrangler.jsonc`, committed. Not the dashboard: see "What the
+deployment looks like" above.
+
+### 3. The probe's repository variable
+
+Settings → Secrets and variables → Actions → Variables:
 
 | Variable | Value |
 | --- | --- |
-| `RELEASE_HEALTH_URL` | The base URL under which the deployed service answers `GET /healthz` and `GET /readyz` with 200. |
+| `RELEASE_HEALTH_URL` | The deployment's public base URL — the Cloudflare hostname itself, e.g. `https://apivo-news.<subdomain>.workers.dev` or the custom domain. The Worker routes `/healthz` and `/readyz` there to the api container. |
 
-Until it is set, every release warns loudly that nothing verified the
-deployment came up. Note the public Cloudflare hostname routes to the web
-container, which does not serve these endpoints today — point the variable
-at wherever the api's health endpoints are reachable, and leave it unset
-(accepting the warning) until such an address exists.
+Unset, a real release **fails** at the probe: production has changed and
+nothing verified it came up, which is not a state to report green. Set it
+before the first release.
 
 ## Rollback
 

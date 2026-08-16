@@ -19,6 +19,25 @@ export default defineConfig({
         access: 'secret',
         optional: true,
       }),
+      // Which environment this container is running in, the same name and
+      // the same two values the Go binary uses (internal/platform/config).
+      // "prod" means deployed and readable by the public, and the reader
+      // client refuses to answer from fixtures there: invented publishers
+      // under an invented approver are the one thing this product may
+      // never print. Unset means development, where fixtures answer but
+      // every page that shows them says so.
+      //
+      // Declared as a plain optional string rather than an enum because
+      // the schema's own failure would be an opaque runtime throw at
+      // first access. The two values are enforced where they mean
+      // something instead: src/lib/app-env.ts reads them, and
+      // createReaderApi refuses a value that is neither, so `production`
+      // stops the page rather than quietly meaning "not prod".
+      APP_ENV: envField.string({
+        context: 'server',
+        access: 'secret',
+        optional: true,
+      }),
       // Supabase Auth, for the editorial sign-in. Both keep the PUBLIC_
       // names the Supabase tooling uses — the anon key is public by
       // design, it identifies the project and grants nothing on its own.

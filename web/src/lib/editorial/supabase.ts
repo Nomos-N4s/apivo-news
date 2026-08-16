@@ -1,9 +1,10 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AstroCookies } from 'astro';
-import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from 'astro:env/server';
+import { APP_ENV, PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from 'astro:env/server';
 
 import type { Database } from '../database.types';
+import { isSecureRequest } from '../secure-request';
 import {
   astroCookieOptions,
   editorSessionFrom,
@@ -42,7 +43,12 @@ export function authClient(
   if (config === null) {
     return null;
   }
-  const secure = new URL(request.url).protocol === 'https:';
+  // NOT `new URL(request.url).protocol`: the Worker proxies to this
+  // container over plain HTTP and @astrojs/node builds the request URL
+  // from the socket, so that test was false on every deployed shape and
+  // the refresh token shipped without `Secure`. lib/secure-request.ts is
+  // the one signal, and APP_ENV=prod is what makes it true here.
+  const secure = isSecureRequest(request, APP_ENV);
   return createServerClient<Database>(config.url, config.anonKey, {
     cookies: {
       getAll: (): { name: string; value: string }[] =>

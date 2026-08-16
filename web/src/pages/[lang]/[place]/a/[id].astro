@@ -1,10 +1,13 @@
 ---
-import { API_BASE_URL } from 'astro:env/server';
+import { API_BASE_URL, APP_ENV } from 'astro:env/server';
+import FixtureNotice from '../../../../components/FixtureNotice.astro';
 import ReaderLayout from '../../../../layouts/ReaderLayout.astro';
 import {
   createReaderApi,
+  ReaderConfigurationError,
   type ArticleDetail,
   type FrontItem,
+  type ReaderApi,
 } from '../../../../lib/reader/api';
 import {
   articlePath,
@@ -36,11 +39,22 @@ if (axes === null || id === undefined || id === '') {
 const { lang, places } = axes;
 const slugs = places.map((place) => place.slug);
 
-const api = createReaderApi(API_BASE_URL);
+// Building the client is inside the try: it refuses a deployment it
+// would have to answer from fixtures, and that refusal is a
+// configuration failure, not a reason for a stack trace where a page
+// should be.
+let api: ReaderApi;
 let article: ArticleDetail | null;
 try {
+  api = createReaderApi(API_BASE_URL, { appEnv: APP_ENV });
   article = await api.article(id);
-} catch {
+} catch (error) {
+  // A misconfigured deployment is silent otherwise: every page answers
+  // 503 and nothing says why. The operator is the only one who can fix
+  // it, and the log is the only place they will look.
+  if (error instanceof ReaderConfigurationError) {
+    console.error(`reader: ${error.message}`);
+  }
   // The reader API is away; the article may well exist. Say
   // "unavailable", never "not found".
   return Astro.rewrite('/503');
@@ -128,6 +142,14 @@ const title = `${article.headline} · epiloYES`;
   </header>
 
   <div class="body">
+    {/* Above the article itself: this page names an approver and a
+        publisher, and both are invented when the data is. */}
+    {
+      api.source === 'fixture' && (
+        <FixtureNotice title={t.fixtureNoticeTitle} body={t.fixtureNoticeBody} />
+      )
+    }
+
     <article class="reading">
       <div class="meta">
         <span class="kicker">{kickerLabel}</span>

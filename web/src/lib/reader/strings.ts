@@ -48,6 +48,16 @@ export interface UiStrings {
   /** Calm degraded state when the reader API cannot be reached (503). */
   readonly unavailableTitle: string;
   readonly unavailableBody: string;
+  /**
+   * The fixture marker (issue #134). Shown whenever the page was rendered
+   * from the built-in sample data rather than the published record — the
+   * one state in which the names on the page are not real people and the
+   * articles were approved by nobody. It is not decoration and not a
+   * developer aid: an unmarked fixture page is indistinguishable from the
+   * newspaper, which is the failure this exists to prevent.
+   */
+  readonly fixtureNoticeTitle: string;
+  readonly fixtureNoticeBody: string;
   /** Masthead sign-in (mockup 1a) — disabled until registration ships (T031). */
   readonly signIn: string;
   readonly signInPending: string;
@@ -149,6 +159,9 @@ const EL: UiStrings = {
   unavailableTitle: 'Η σελίδα δεν είναι διαθέσιμη αυτή τη στιγμή',
   unavailableBody:
     'Δοκιμάστε ξανά σε λίγο. Δεν χάθηκε τίποτα — τα άρθρα θα εμφανιστούν μόλις αποκατασταθεί η σύνδεση.',
+  fixtureNoticeTitle: 'Δείγμα δεδομένων — όχι δημοσιευμένη ύλη',
+  fixtureNoticeBody:
+    'Αυτή η σελίδα δεν συνδέεται με τη βάση δεδομένων. Τα άρθρα, οι εκδότες και τα ονόματα των συντακτών παρακάτω είναι επινοημένα: κανένα δεν εγκρίθηκε από άνθρωπο και κανένα δεν αποτελεί δημοσιευμένη ύλη.',
   signIn: 'Σύνδεση',
   signInPending: 'Διαθέσιμο με την εγγραφή',
   alphaLabel: 'Άλφα',
@@ -256,6 +269,9 @@ const DE: UiStrings = {
   unavailableTitle: 'Die Seite ist gerade nicht erreichbar',
   unavailableBody:
     'Versuchen Sie es gleich noch einmal. Nichts ist verloren — die Beiträge erscheinen, sobald die Verbindung wieder steht.',
+  fixtureNoticeTitle: 'Beispieldaten — keine veröffentlichten Beiträge',
+  fixtureNoticeBody:
+    'Diese Seite ist mit keiner Datenbank verbunden. Die Beiträge, die Verlage und die genannten Redaktionsnamen sind erfunden: nichts davon wurde von einem Menschen freigegeben, nichts davon ist veröffentlicht.',
   signIn: 'Anmelden',
   signInPending: 'Verfügbar mit der Registrierung',
   alphaLabel: 'Alpha',
