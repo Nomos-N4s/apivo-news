@@ -3,9 +3,16 @@ import type { RecordNoticeModel } from '../lib/editorial/notices';
 
 // The one shape every behaviour explanation takes (#121): a label, what
 // happened (or refused to, or is about to be reviewed), and the frozen
-// facts echoed from the response beneath. Tones map to live-region roles:
-// a recorded outcome is a status, a refusal (nothing written) is an
-// alert, and pre-action context is a note.
+// facts echoed from the response beneath.
+//
+// Tone chooses the role by what the notice IS, not by how loud it should
+// be. An outcome arrives in answer to something the editor just did, so
+// it is a live region — status for a recorded write, alert for a refusal
+// that needs reading before anything else. Context is different: it
+// renders with the page, describing what the editor is about to review,
+// so it takes `note` — deliberately not a live region, because
+// announcing static page content over the reader's own navigation is
+// noise, not help.
 interface Props {
   notice: RecordNoticeModel;
   /**
@@ -54,8 +61,16 @@ const role =
     flex-wrap: wrap;
     padding: var(--space-3) var(--space-6);
   }
+  /* A real box, not `display: contents`: the element carries the live
+     region's role, and a contents box can drop out of the accessibility
+     tree in some browser and screen-reader pairings. */
   .announced {
-    display: contents;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    flex: 1 1 auto;
+    min-width: 0;
   }
   .tone-recorded {
     background: var(--color-accent-700);
