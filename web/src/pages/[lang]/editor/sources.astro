@@ -2,12 +2,14 @@
 import { API_BASE_URL } from 'astro:env/server';
 import EditorChrome from '../../../components/EditorChrome.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
+import RecordNotice from '../../../components/RecordNotice.astro';
 import {
   allSources,
   createEditorialApi,
   type SourceList,
   type SourceOutcome,
 } from '../../../lib/editorial/api';
+import { noticeForSignedOut, noticeForSource } from '../../../lib/editorial/notices';
 import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings } from '../../../lib/editorial/strings';
@@ -116,33 +118,17 @@ const activeCount = sources.filter((source) => source.active).length;
     note={t.sourcesSummary(sources.length, activeCount)}
     previewData={page?.fixture === true}
   >
+    {/* The typed licensing details go back into the form on the signed-out
+        re-render, so the notice carries no stale text of its own. */}
     {
       signedOutPost && (
-        <div class="banner banner-warn">
-          <span class="banner-label">{t.notRecordedTitle}</span>
-          <span class="banner-body">{t.signedOutMidPost}</span>
-          <a class="banner-link" href={`/${lang}/editor/signin`}>
-            {t.signIn}
-          </a>
-        </div>
+        <RecordNotice
+          notice={noticeForSignedOut(t, null)}
+          action={{ href: `/${lang}/editor/signin`, label: t.signIn }}
+        />
       )
     }
-    {
-      outcome !== null && (
-        <div class:list={['banner', { 'banner-warn': !outcome.recorded }]}>
-          <span class="banner-label">
-            {outcome.recorded ? t.addSource : t.notRecordedTitle}
-          </span>
-          {/* A 201 carries an id, not prose, so success states itself
-              rather than rendering an optional reason that may be absent. */}
-          <span class="banner-body">
-            {outcome.recorded
-              ? t.sourceAdded(outcome.source_id ?? '')
-              : outcome.reason}
-          </span>
-        </div>
-      )
-    }
+    {outcome !== null && <RecordNotice notice={noticeForSource(outcome, t)} />}
 
     <div class="split">
       <div class="list">
@@ -293,38 +279,6 @@ const activeCount = sources.filter((source) => source.active).length;
 </ReaderLayout>
 
 <style>
-  .banner {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    flex-wrap: wrap;
-    padding: var(--space-3) var(--space-6);
-    background: var(--color-accent-700);
-    color: var(--color-bg);
-  }
-  .banner-warn {
-    background: var(--color-text);
-  }
-  .banner-label {
-    font-family: var(--font-heading);
-    font-weight: 600;
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    flex: none;
-  }
-  .banner-warn .banner-label {
-    color: var(--color-accent-400);
-  }
-  .banner-link {
-    font-size: 13px;
-    color: var(--color-accent-400);
-  }
-  .banner-body {
-    font-size: 13px;
-    max-width: 80ch;
-  }
-
   .split {
     flex: 1;
     display: grid;
