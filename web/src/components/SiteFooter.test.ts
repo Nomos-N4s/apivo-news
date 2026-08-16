@@ -1,5 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+/**
+ * These cases render a real Astro component through the container, and
+ * the first one pays the whole cold start: a module-registry reset, the
+ * container import, its creation, and a first render. Idle that is about
+ * two seconds; on a loaded machine it crosses vitest's five-second
+ * default and the suite goes red over work that was merely slow (#132).
+ * The bound stays well above the real cost so a genuine hang still fails.
+ */
+const RENDER_TIMEOUT_MS = 20_000;
+
 // The footer's one piece of logic: whether this deployment can name the
 // release it is running (issue #119). It is rendered for real here - the
 // Astro container renders the component itself - because the bug being
@@ -46,21 +56,29 @@ describe('SiteFooter version', () => {
     vi.doUnmock('astro:env/server');
   });
 
-  it('renders the deployed version after a separator', async () => {
-    const html = await renderFooter('v1.2.3');
-    expect(versionChip(html)).toBe('· v1.2.3');
-  });
+  it(
+    'renders the deployed version after a separator',
+    async () => {
+      const html = await renderFooter('v1.2.3');
+      expect(versionChip(html)).toBe('· v1.2.3');
+    },
+    RENDER_TIMEOUT_MS,
+  );
 
   it('trims the value it renders', async () => {
     const html = await renderFooter('  v1.2.3\n');
     expect(versionChip(html)).toBe('· v1.2.3');
   });
 
-  it('renders nothing at all when no version is set', async () => {
-    const html = await renderFooter(undefined);
-    expect(versionChip(html)).toBeUndefined();
-    expect(copyLine(html)).toMatch(/^© \d{4} epiloYES$/);
-  });
+  it(
+    'renders nothing at all when no version is set',
+    async () => {
+      const html = await renderFooter(undefined);
+      expect(versionChip(html)).toBeUndefined();
+      expect(copyLine(html)).toMatch(/^© \d{4} epiloYES$/);
+    },
+    RENDER_TIMEOUT_MS,
+  );
 
   // The regression: an empty string is not a version, and neither is
   // whitespace. Both must render exactly what an unset variable renders -
@@ -68,9 +86,13 @@ describe('SiteFooter version', () => {
   it.each([
     ['empty', ''],
     ['whitespace', '   '],
-  ])('renders no dangling separator for a %s version', async (_name, value) => {
-    const html = await renderFooter(value);
-    expect(versionChip(html)).toBeUndefined();
-    expect(copyLine(html)).toMatch(/^© \d{4} epiloYES$/);
-  });
+  ])(
+    'renders no dangling separator for a %s version',
+    async (_name, value) => {
+      const html = await renderFooter(value);
+      expect(versionChip(html)).toBeUndefined();
+      expect(copyLine(html)).toMatch(/^© \d{4} epiloYES$/);
+    },
+    RENDER_TIMEOUT_MS,
+  );
 });
