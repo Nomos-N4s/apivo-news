@@ -2,8 +2,8 @@
 import { API_BASE_URL } from 'astro:env/server';
 import EditorChrome from '../../../components/EditorChrome.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
+import RecordNotice from '../../../components/RecordNotice.astro';
 import {
-  approvalRecordLine,
   createEditorialApi,
   EditorialApiError,
   formatItemCost,
@@ -16,6 +16,11 @@ import {
   hasApprovalEvidence,
   parseApprovalForm,
 } from '../../../lib/editorial/approvalForm';
+import {
+  noticeForApproval,
+  noticeForCorrection,
+  noticeForSignedOut,
+} from '../../../lib/editorial/notices';
 import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings, languageName } from '../../../lib/editorial/strings';
@@ -292,33 +297,26 @@ const defaultAttribution = (item: (typeof items)[number]): string =>
       </div>
 
       <div class="review">
+        {/* The notice carries the typed attribution whenever no form will:
+            the queue unreadable without a token, or the posted item gone
+            from it — another editor approved it meanwhile — leaving a
+            different row selected whose form refills from its own row. */}
         {
           signedOutPost && (
-            <div class="banner banner-warn">
-              <span class="banner-label">{t.notRecordedTitle}</span>
-              <span class="banner-body">
-                {t.signedOutMidPost}
-                {/* The queue may be unreadable without a token, and then
-                    there is no form to put the wording back into — so the
-                    notice itself carries it. */}
-                {staleAttribution !== null && selected === undefined && ` «${staleAttribution}»`}
-              </span>
-              <a class="banner-link" href={`/${lang}/editor/signin`}>
-                {t.signIn}
-              </a>
-            </div>
+            <RecordNotice
+              notice={noticeForSignedOut(
+                t,
+                selected?.source_item_id === staleItemId ? null : staleAttribution,
+              )}
+              action={{ href: `/${lang}/editor/signin`, label: t.signIn }}
+            />
           )
         }
         {
           outcome !== null && (
-            <div class:list={['banner', { 'banner-warn': !outcome.recorded }]}>
-              <span class="banner-label">
-                {outcome.recorded ? t.approvedTitle : t.notRecordedTitle}
-              </span>
-              <span class="banner-body">
-                {outcome.recorded ? approvalRecordLine(outcome) : outcome.reason}
-              </span>
-            </div>
+            <RecordNotice
+              notice={noticeForApproval(outcome, t, (iso) => formatDateTime(lang, new Date(iso)))}
+            />
           )
         }
 
@@ -344,16 +342,11 @@ const defaultAttribution = (item: (typeof items)[number]): string =>
                   than staying an invisible backend flag (#87). */}
               {
                 selected.correction_candidate === true && (
-                  <div class="correction" role="note">
-                    <span class="tag tag-correction">{t.correctionTag}</span>
-                    <span class="correction-body">{t.correctionBody}</span>
-                    {lastWithdrawal !== undefined && (
-                      <span class="muted">
-                        {formatDateTime(lang, new Date(lastWithdrawal.withdrawn_at))} · «
-                        {lastWithdrawal.reason}»
-                      </span>
+                  <RecordNotice
+                    notice={noticeForCorrection(lastWithdrawal, t, (iso) =>
+                      formatDateTime(lang, new Date(iso)),
                     )}
-                  </div>
+                  />
                 )
               }
 
@@ -503,6 +496,10 @@ const defaultAttribution = (item: (typeof items)[number]): string =>
                       <span class="box" aria-hidden="true" />
                       <span class="ack-text">{t.acknowledgement}</span>
                     </label>
+                    {/* Publication happens with this button — there is no
+                        separate publish step to warn at — so the one-way
+                        statement lives here (#121). */}
+                    <p class="muted reject-note">{t.publicationOneWayNote}</p>
                     <div class="actions">
                       <button class="btn btn-primary" type="submit" disabled={!evidenceComplete}>
                         {t.approveAndPublish}
@@ -644,50 +641,6 @@ const defaultAttribution = (item: (typeof items)[number]): string =>
   }
   .tag-correction {
     background: var(--color-text);
-    color: var(--color-accent-400);
-  }
-  .correction {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
-    flex-wrap: wrap;
-    padding: var(--space-2) var(--space-6);
-    border-bottom: 1px solid var(--color-divider);
-    background: var(--color-surface);
-  }
-  .correction-body {
-    font-size: 12.5px;
-    text-wrap: pretty;
-  }
-  .banner {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    padding: var(--space-3) var(--space-6);
-    background: var(--color-accent-700);
-    color: var(--color-bg);
-    flex-wrap: wrap;
-  }
-  .banner-warn {
-    background: var(--color-text);
-  }
-  .banner-label {
-    font-family: var(--font-heading);
-    font-weight: 600;
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    flex: none;
-  }
-  .banner-warn .banner-label {
-    color: var(--color-accent-400);
-  }
-  .banner-body {
-    font-size: 13px;
-    max-width: 80ch;
-  }
-  .banner-link {
-    font-size: 13px;
     color: var(--color-accent-400);
   }
   .empty-review {

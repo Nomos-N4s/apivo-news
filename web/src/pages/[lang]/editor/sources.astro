@@ -2,6 +2,15 @@
 import { API_BASE_URL } from 'astro:env/server';
 import EditorChrome from '../../../components/EditorChrome.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
+import RecordNotice from '../../../components/RecordNotice.astro';
+import {
+  noticeForBulk,
+  noticeForNothingSelected,
+  noticeForRowRefusal,
+  noticeForSignedOut,
+  noticeForSource,
+  noticeForSourceEdit,
+} from '../../../lib/editorial/notices';
 import {
   allSources,
   bulkCounts,
@@ -257,61 +266,35 @@ const views: readonly { key: SourceView; label: string }[] = [
     note={t.sourcesSummary(sources.length, activeCount)}
     previewData={page?.fixture === true}
   >
+    {/* The typed licensing details go back into the form on the signed-out
+        re-render, so the notice carries no stale text of its own. */}
     {
       signedOutPost && (
-        <div class="banner banner-warn">
-          <span class="banner-label">{t.notRecordedTitle}</span>
-          <span class="banner-body">{t.signedOutMidPost}</span>
-          <a class="banner-link" href={`/${lang}/editor/signin`}>
-            {t.signIn}
-          </a>
-        </div>
+        <RecordNotice
+          notice={noticeForSignedOut(t, null)}
+          action={{ href: `/${lang}/editor/signin`, label: t.signIn }}
+        />
       )
     }
-    {
-      outcome !== null && (
-        <div class:list={['banner', { 'banner-warn': !outcome.recorded }]}>
-          <span class="banner-label">
-            {outcome.recorded ? t.addSource : t.notRecordedTitle}
-          </span>
-          {/* A 201 carries an id, not prose, so success states itself
-              rather than rendering an optional reason that may be absent. */}
-          <span class="banner-body">
-            {outcome.recorded
-              ? t.sourceAdded(outcome.source_id ?? '')
-              : outcome.reason}
-          </span>
-        </div>
-      )
-    }
-    {
-      editOutcome !== null && (
-        <div class:list={['banner', { 'banner-warn': !editOutcome.recorded }]}>
-          <span class="banner-label">
-            {editOutcome.recorded ? t.editSource : t.notRecordedTitle}
-          </span>
-          <span class="banner-body">
-            {editOutcome.recorded ? t.sourceUpdated : (editOutcome.reason ?? '')}
-          </span>
-        </div>
-      )
-    }
-    {
-      noneSelected && (
-        <div class="banner banner-warn">
-          <span class="banner-label">{t.notRecordedTitle}</span>
-          <span class="banner-body">{t.noneSelected}</span>
-        </div>
-      )
-    }
+    {outcome !== null && <RecordNotice notice={noticeForSource(outcome, t)} />}
+    {editOutcome !== null && <RecordNotice notice={noticeForSourceEdit(editOutcome, t)} />}
+    {noneSelected && <RecordNotice notice={noticeForNothingSelected(t)} />}
+    {/* The exact arithmetic of what happened, refusals counted and named
+        per row below — never a partial-success lie. */}
     {
       counts !== null && (
-        <div class:list={['banner', { 'banner-warn': counts.refused > 0 }]}>
-          <span class="banner-label">{bulkLabel}</span>
-          {/* The exact arithmetic of what happened, refusals counted and
-              named per row below — never a partial-success lie. */}
-          <span class="banner-body">{bulkSummary}</span>
-        </div>
+        <RecordNotice
+          notice={noticeForBulk(
+            bulkLabel,
+            bulkSummary,
+            counts.refused,
+            // Deactivation is the one action whose consequences are widely
+            // misread, so a recorded one says what it kept.
+            bulkAction === 'deactivate' && counts.recorded > 0
+              ? t.deactivationKeepsRecord
+              : undefined,
+          )}
+        />
       )
     }
 
@@ -422,10 +405,27 @@ const views: readonly { key: SourceView; label: string }[] = [
                             <td />
                             <td colspan="7">
                               {/* The API's own words — a refused delete names
-                                  the evidence count here. Reported, never
-                                  converted into a deactivation. */}
-                              <span class="refusal-label">{t.notRecordedTitle}</span>
-                              {refusedById.get(source.id)?.reason ?? ''}
+                                  the evidence count — followed by what the
+                                  refusal means. Deactivation is offered as a
+                                  way in to the row's own edit form, where the
+                                  editor performs it: nothing here converts a
+                                  refused delete into an action they did not
+                                  choose, and the audited PATCH stays the one
+                                  path that changes a source. */}
+                              <RecordNotice
+                                notice={noticeForRowRefusal(
+                                  refusedById.get(source.id) as SourceActionOutcome,
+                                  t,
+                                )}
+                                action={
+                                  refusedById.get(source.id)?.status === 409 && source.active
+                                    ? {
+                                        href: pageURL({ edit: source.id }),
+                                        label: t.deactivateInstead,
+                                      }
+                                    : undefined
+                                }
+                              />
                             </td>
                           </tr>
                         )}
@@ -622,38 +622,6 @@ const views: readonly { key: SourceView; label: string }[] = [
 </script>
 
 <style>
-  .banner {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    flex-wrap: wrap;
-    padding: var(--space-3) var(--space-6);
-    background: var(--color-accent-700);
-    color: var(--color-bg);
-  }
-  .banner-warn {
-    background: var(--color-text);
-  }
-  .banner-label {
-    font-family: var(--font-heading);
-    font-weight: 600;
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    flex: none;
-  }
-  .banner-warn .banner-label {
-    color: var(--color-accent-400);
-  }
-  .banner-link {
-    font-size: 13px;
-    color: var(--color-accent-400);
-  }
-  .banner-body {
-    font-size: 13px;
-    max-width: 80ch;
-  }
-
   .split {
     flex: 1;
     display: grid;
@@ -754,19 +722,10 @@ const views: readonly { key: SourceView; label: string }[] = [
   .check-col {
     width: 28px;
   }
+  /* The refusal cell carries a RecordNotice, which brings its own tone;
+     the cell only has to stop the table's padding fighting it. */
   .row-refusal td {
-    font-size: 12px;
-    color: var(--color-text);
-    background: var(--color-accent-100);
-    text-wrap: pretty;
-  }
-  .refusal-label {
-    font-family: var(--font-heading);
-    font-weight: 600;
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-right: var(--space-2);
+    padding: 0;
   }
 
   .cycle {

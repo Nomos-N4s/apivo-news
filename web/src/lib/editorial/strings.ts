@@ -76,6 +76,12 @@ export interface EditorialStrings {
   readonly atLeastOnePlace: string;
   readonly acknowledgement: string;
   readonly approveAndPublish: string;
+  /**
+   * Beside the approve button, which is also the publish button: there is
+   * no separate publish step to warn at, so the one-way nature of
+   * publication is stated where it actually happens (#121, FR-016).
+   */
+  readonly publicationOneWayNote: string;
   readonly reject: string;
   readonly skip: string;
   readonly rejectNote: string;
@@ -100,6 +106,15 @@ export interface EditorialStrings {
   /** Outcome banners. */
   readonly approvedTitle: string;
   readonly notRecordedTitle: string;
+  /**
+   * Recorded-approval bodies, keyed to what the response actually said
+   * about publication: a `published_at` timestamp, an explicit null, or
+   * nothing at all — three different facts, three different sentences,
+   * never merged (#121).
+   */
+  readonly approvalPublishedBody: string;
+  readonly approvalNotPublishedBody: string;
+  readonly approvalRecordedBody: string;
   readonly emptyQueue: string;
   readonly selectAnItem: string;
   /** Provenance audit (mockup 1h) — the five-minute trace (US5, FR-010). */
@@ -118,6 +133,12 @@ export interface EditorialStrings {
   readonly withdrawBody: string;
   readonly withdrawReasonLabel: string;
   readonly withdraw: string;
+  /**
+   * The confirmation after a recorded withdrawal: what it did (the article
+   * left the reader site) and did not do (the record keeps everything,
+   * with the frozen reason) — not just the bare word "withdrawn" (#121).
+   */
+  readonly withdrawalRecordedBody: (reason: string) => string;
   readonly requiresEditorRole: string;
   readonly withdrawnAlready: string;
   readonly traceNotFound: string;
@@ -156,8 +177,14 @@ export interface EditorialStrings {
    * and the screen must say so rather than truncate silently.
    */
   readonly sourcesTruncated: string;
-  /** Success confirmation; a 201 carries an id, not prose. */
-  readonly sourceAdded: (id: string) => string;
+  /**
+   * The recorded-source body. It states registration and nothing else:
+   * the 201 carries the source's identity, not its poll state, so the
+   * notice must not announce that retrieval has begun. The id, when the
+   * response names one, rides in the notice's record line instead of
+   * being interpolated here (#121).
+   */
+  readonly sourceRecordedBody: string;
   /** Source management (#118): selection, bulk bar, edit flow, view toggle. */
   readonly selectAll: string;
   readonly selectRow: (name: string) => string;
@@ -201,6 +228,19 @@ export interface EditorialStrings {
    * nothing is sent and the form is offered again.
    */
   readonly editFormIncomplete: string;
+  /**
+   * A delete the database refused because evidence exists (409). The API
+   * names the count; this says what that means and points at the action
+   * that does work — offered as a way in, never performed for the editor
+   * (#121, invariants I-3/I-4).
+   */
+  readonly deleteRefusedBody: string;
+  readonly deactivateInstead: string;
+  /**
+   * After a recorded deactivation: what it did, and what it deliberately
+   * did not do. Polling is the only thing that stops (#121).
+   */
+  readonly deactivationKeepsRecord: string;
   /** The all/active/inactive toggle over the table. */
   readonly viewLabel: string;
   readonly viewAll: string;
@@ -257,6 +297,8 @@ const EL: EditorialStrings = {
   acknowledgement:
     'Διάβασα το απόσπασμα και τους όρους της άδειας. Η έγκριση με καταγράφει ως τον επώνυμο εγκρίνοντα· η εγγραφή δεν μπορεί να τροποποιηθεί μετά.',
   approveAndPublish: 'Έγκριση και δημοσίευση',
+  publicationOneWayNote:
+    'Η δημοσίευση γίνεται με την έγκριση και είναι μονόδρομη: το άρθρο βγαίνει στην πρώτη σελίδα με την υποβολή, και μετά μόνο η απόσυρση το κατεβάζει — καταγεγραμμένη, με αιτιολογία.',
   reject: 'Απόρριψη',
   skip: 'Παράλειψη',
   rejectNote:
@@ -271,6 +313,12 @@ const EL: EditorialStrings = {
     'Η σύνδεση έγινε, αλλά το συντακτικό API απορρίπτει κάθε κλήση: δεν υπάρχει εγγραφή account για τον λογαριασμό σας στη βάση δεδομένων του API. Χρειάζεται το βήμα «Provision an editor» του quickstart (specs/001-epiloyes-alpha/quickstart.md) — μία εγγραφή account με το Supabase user id σας και ρόλο editor, στη βάση όπου δείχνει το DATABASE_URL.',
   approvedTitle: 'Εγκρίθηκε',
   notRecordedTitle: 'Δεν καταγράφηκε',
+  approvalPublishedBody:
+    'Η έγκριση καταγράφηκε μόνιμα και το άρθρο είναι δημοσιευμένο. Από εδώ και πέρα μόνο η απόσυρση το αφαιρεί από τον αναγνωστικό ιστότοπο — καταγεγραμμένη, με αιτιολογία.',
+  approvalNotPublishedBody:
+    'Η έγκριση καταγράφηκε μόνιμα· το άρθρο δεν έχει δημοσιευθεί ακόμη.',
+  approvalRecordedBody:
+    'Η έγκριση καταγράφηκε μόνιμα. Ο διακομιστής δεν δήλωσε αναγνώσιμη κατάσταση δημοσίευσης.',
   emptyQueue: 'Η ουρά είναι άδεια. Τίποτα δεν περιμένει έγκριση.',
   selectAnItem: 'Επιλέξτε ένα στοιχείο από την ουρά για έλεγχο.',
   readOnlyAccess: 'Πρόσβαση μόνο για ανάγνωση · ιδρυτής, νομικός σύμβουλος, εκδότης που ρωτά',
@@ -290,6 +338,8 @@ const EL: EditorialStrings = {
     'Η απόσυρση τερματίζει τη δημοσίευση. Το άρθρο, η έγκρισή του και τα ανακτημένα τεκμήρια παραμένουν, και η ίδια η ενέργεια καταγράφεται. Τίποτα δεν διαγράφεται.',
   withdrawReasonLabel: 'Αιτιολογία (καταγράφεται στη ροή συμβάντων)',
   withdraw: 'Απόσυρση',
+  withdrawalRecordedBody: (reason) =>
+    `Η δημοσίευση τερματίστηκε: το άρθρο έφυγε από τον αναγνωστικό ιστότοπο. Το ίδιο, η έγκρισή του και η απόσυρση παραμένουν στο μητρώο με την αιτιολογία «${reason}».`,
   requiresEditorRole: 'Απαιτεί ρόλο συντάκτη',
   withdrawnAlready: 'Έχει ήδη αποσυρθεί',
   traceNotFound: 'Δεν βρέθηκε άρθρο με αυτό το αναγνωριστικό.',
@@ -328,7 +378,8 @@ const EL: EditorialStrings = {
   sourcesEmpty: 'Δεν έχει ρυθμιστεί καμία πηγή ακόμη.',
   sourcesTruncated:
     'Υπάρχουν κι άλλες πηγές που δεν εμφανίζονται εδώ· ο πίνακας και τα σύνολα καλύπτουν όσες φορτώθηκαν.',
-  sourceAdded: (id) => `Η πηγή ρυθμίστηκε (${id}) και η λήψη ξεκίνησε.`,
+  sourceRecordedBody:
+    'Η πηγή καταχωρίστηκε στο μητρώο με κανόνα χρήσης «απόσπασμα και σύνδεσμος». Θα εμφανιστεί στη λίστα πηγών· ο επόμενος κύκλος λήψης δείχνει τι ανακτήθηκε.',
   selectAll: 'Επιλογή όλων',
   selectRow: (name) => `Επιλογή: ${name}`,
   bulkActivate: 'Ενεργοποίηση',
@@ -355,6 +406,11 @@ const EL: EditorialStrings = {
     'Κανένα πεδίο δεν άλλαξε σε σχέση με αυτό που εμφάνιζε η φόρμα, οπότε δεν στάλθηκε τίποτα και δεν καταγράφηκε καμία αλλαγή.',
   editFormIncomplete:
     'Η φόρμα δεν έφερε τις τιμές με τις οποίες εμφανίστηκε, οπότε δεν ήταν δυνατό να ξεχωριστεί τι άλλαξε. Δεν στάλθηκε τίποτα — δοκιμάστε ξανά από τη λίστα.',
+  deleteRefusedBody:
+    'Τα ανακτημένα τεκμήρια αυτής της πηγής είναι μέρος της μόνιμης εγγραφής και δεν καταστρέφονται: η αλυσίδα προέλευσης κάθε δημοσιευμένου άρθρου ξεκινά από αυτά. Η απενεργοποίηση σταματά τη λήψη και τα κρατά.',
+  deactivateInstead: 'Απενεργοποίηση αντ’ αυτού',
+  deactivationKeepsRecord:
+    'Η λήψη σταμάτησε. Τα ανακτημένα τεκμήρια και τα δημοσιευμένα άρθρα παραμένουν στην εγγραφή.',
   viewLabel: 'Προβολή',
   viewAll: 'Όλες',
   viewActive: 'Ενεργές',
@@ -410,6 +466,8 @@ const DE: EditorialStrings = {
   acknowledgement:
     'Ich habe den Auszug und die Lizenzbedingungen gelesen. Die Freigabe verzeichnet mich namentlich als freigebende Person; der Eintrag kann danach nicht geändert werden.',
   approveAndPublish: 'Freigeben und veröffentlichen',
+  publicationOneWayNote:
+    'Die Veröffentlichung geschieht mit der Freigabe und ist einbahnig: der Artikel erscheint mit dem Absenden auf der Titelseite, und danach nimmt ihn nur ein Rückzug herunter — verzeichnet, mit Begründung.',
   reject: 'Ablehnen',
   skip: 'Überspringen',
   rejectNote:
@@ -424,6 +482,12 @@ const DE: EditorialStrings = {
     'Die Anmeldung war erfolgreich, aber das redaktionelle API weist jeden Aufruf zurück: für Ihr Konto gibt es keine account-Zeile in der Datenbank des API. Es fehlt der Schritt „Provision an editor“ aus dem Quickstart (specs/001-epiloyes-alpha/quickstart.md) — eine account-Zeile mit Ihrer Supabase-Benutzer-ID und der Rolle editor, in der Datenbank, auf die DATABASE_URL zeigt.',
   approvedTitle: 'Freigegeben',
   notRecordedTitle: 'Nicht verzeichnet',
+  approvalPublishedBody:
+    'Die Freigabe ist dauerhaft verzeichnet und der Artikel ist veröffentlicht. Von jetzt an nimmt ihn nur ein Rückzug von der Leseseite — verzeichnet, mit Begründung.',
+  approvalNotPublishedBody:
+    'Die Freigabe ist dauerhaft verzeichnet; der Artikel ist noch nicht veröffentlicht.',
+  approvalRecordedBody:
+    'Die Freigabe ist dauerhaft verzeichnet. Der Server hat keinen lesbaren Veröffentlichungsstand genannt.',
   emptyQueue: 'Die Liste ist leer. Nichts wartet auf Freigabe.',
   selectAnItem: 'Wählen Sie einen Beitrag aus der Liste zur Prüfung.',
   readOnlyAccess: 'Nur-Lese-Zugriff · Gründung, Rechtsberatung, anfragender Verlag',
@@ -443,6 +507,8 @@ const DE: EditorialStrings = {
     'Der Rückzug beendet die Veröffentlichung. Der Artikel, seine Freigabe und die abgerufenen Nachweise bleiben erhalten, und der Vorgang selbst wird verzeichnet. Nichts wird gelöscht.',
   withdrawReasonLabel: 'Begründung (wird im Ereignisstrom verzeichnet)',
   withdraw: 'Zurückziehen',
+  withdrawalRecordedBody: (reason) =>
+    `Die Veröffentlichung wurde beendet: der Artikel ist von der Leseseite genommen. Er selbst, seine Freigabe und der Rückzug bleiben mit der Begründung „${reason}“ im Register.`,
   requiresEditorRole: 'Erfordert die Redaktionsrolle',
   withdrawnAlready: 'Bereits zurückgezogen',
   traceNotFound: 'Zu dieser Kennung wurde kein Artikel gefunden.',
@@ -481,7 +547,8 @@ const DE: EditorialStrings = {
   sourcesEmpty: 'Noch keine Quelle eingerichtet.',
   sourcesTruncated:
     'Es gibt weitere Quellen, die hier nicht angezeigt werden; Tabelle und Summen decken nur die geladenen ab.',
-  sourceAdded: (id) => `Quelle eingerichtet (${id}); der Abruf läuft.`,
+  sourceRecordedBody:
+    'Die Quelle ist im Register verzeichnet, mit der Nutzungsregel „Auszug und Link“. Sie erscheint in der Quellenliste; was abgerufen wurde, zeigt der nächste Abrufzyklus.',
   selectAll: 'Alle auswählen',
   selectRow: (name) => `Auswählen: ${name}`,
   bulkActivate: 'Aktivieren',
@@ -508,6 +575,11 @@ const DE: EditorialStrings = {
     'Kein Feld weicht von dem ab, was das Formular anzeigte; es wurde nichts gesendet und nichts verzeichnet.',
   editFormIncomplete:
     'Das Formular trug die Werte nicht mit, mit denen es angezeigt wurde, also ließ sich nicht unterscheiden, was geändert wurde. Es wurde nichts gesendet — bitte erneut aus der Liste heraus bearbeiten.',
+  deleteRefusedBody:
+    'Die abgerufenen Nachweise dieser Quelle sind Teil des dauerhaften Registers und werden nicht zerstört: die Herkunftskette jedes veröffentlichten Artikels beginnt bei ihnen. Deaktivieren stoppt den Abruf und behält sie.',
+  deactivateInstead: 'Stattdessen deaktivieren',
+  deactivationKeepsRecord:
+    'Der Abruf ist gestoppt. Die abgerufenen Nachweise und die veröffentlichten Artikel bleiben im Register.',
   viewLabel: 'Ansicht',
   viewAll: 'Alle',
   viewActive: 'Aktive',

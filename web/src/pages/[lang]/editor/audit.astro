@@ -2,13 +2,14 @@
 import { API_BASE_URL } from 'astro:env/server';
 import EditorChrome from '../../../components/EditorChrome.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
+import RecordNotice from '../../../components/RecordNotice.astro';
 import {
   createEditorialApi,
   formatItemCost,
-  withdrawalBanner,
   type ArticleProvenance,
   type WithdrawalOutcome,
 } from '../../../lib/editorial/api';
+import { noticeForSignedOut, noticeForWithdrawal } from '../../../lib/editorial/notices';
 import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings } from '../../../lib/editorial/strings';
@@ -87,9 +88,13 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-// The banner is derived by one tested function: the success label only
-// over a real record, and the reason — recorded or refusing — as the body.
-const banner = withdrawal === null ? null : withdrawalBanner(withdrawal, t);
+// The notice is derived by one tested builder: the recorded tone only
+// over a real record, the body stating what withdrawal did and did not
+// do, and the frozen facts echoed only when the response carried them.
+const banner =
+  withdrawal === null
+    ? null
+    : noticeForWithdrawal(withdrawal, t, (iso) => formatDateTime(lang, new Date(iso)));
 
 const queryId = Astro.url.searchParams.get('id') ?? withdrawnId;
 let record: ArticleProvenance | null = null;
@@ -134,30 +139,24 @@ const initials = (record?.approval.approver_name ?? '')
       <span class="rows">{record === null ? '0 rows' : '1 row'}</span>
     </div>
 
+    {/* The notice carries the typed reason whenever no form will: the
+        trace unreadable without a token, a different article traced, or
+        this one already withdrawn by someone else — in each case the
+        withdrawal form the editor typed into is not on the page. */}
     {
       signedOutPost && (
-        <div class="banner banner-warn">
-          <span class="banner-label">{t.notRecordedTitle}</span>
-          <span class="banner-body">
-            {t.signedOutMidPost}
-            {/* If the trace cannot be re-read without a token there is no
-                form to put the reason back into — the notice carries it. */}
-            {staleReason !== null && record === null && ` «${staleReason}»`}
-          </span>
-          <a class="banner-link" href={`/${lang}/editor/signin`}>
-            {t.signIn}
-          </a>
-        </div>
+        <RecordNotice
+          notice={noticeForSignedOut(
+            t,
+            record !== null && record.article_id === withdrawnId && record.withdrawal === null
+              ? null
+              : staleReason,
+          )}
+          action={{ href: `/${lang}/editor/signin`, label: t.signIn }}
+        />
       )
     }
-    {
-      banner !== null && (
-        <div class:list={['banner', { 'banner-warn': !banner.recorded }]}>
-          <span class="banner-label">{banner.label}</span>
-          <span class="banner-body">{banner.body}</span>
-        </div>
-      )
-    }
+    {banner !== null && <RecordNotice notice={banner} />}
 
     {traceFailed && <p class="notice">{reader.unavailableBody}</p>}
     {/* An id that matched nothing is "not found"; no id at all is simply
@@ -351,37 +350,6 @@ const initials = (record?.approval.approver_name ?? '')
     color: var(--color-accent-700);
   }
 
-  .banner {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    flex-wrap: wrap;
-    padding: var(--space-3) var(--space-6);
-    background: var(--color-accent-700);
-    color: var(--color-bg);
-  }
-  .banner-warn {
-    background: var(--color-text);
-  }
-  .banner-label {
-    font-family: var(--font-heading);
-    font-weight: 600;
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    flex: none;
-  }
-  .banner-warn .banner-label {
-    color: var(--color-accent-400);
-  }
-  .banner-body {
-    font-size: 13px;
-    max-width: 80ch;
-  }
-  .banner-link {
-    font-size: 13px;
-    color: var(--color-accent-400);
-  }
   .notice {
     margin: 0;
     padding: var(--space-8) var(--space-6);

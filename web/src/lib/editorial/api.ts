@@ -1,5 +1,4 @@
 import type { ReadingLanguage } from '../reader/axes';
-import type { EditorialStrings } from './strings';
 import {
   POLL_CYCLE_FIXTURE,
   PROVENANCE_FIXTURES,
@@ -239,8 +238,15 @@ function isArticleProvenance(body: unknown): body is ArticleProvenance {
   );
 }
 
-/** A value usable as a date — a string the Date constructor can read. */
-function isTimestamp(value: unknown): boolean {
+/**
+ * A value usable as a date — a string the Date constructor can read.
+ *
+ * Exported because the screens format wire timestamps through Intl, which
+ * throws on an unreadable one: a write that was genuinely recorded must
+ * not turn into an error page because its confirmation carried a date the
+ * formatter cannot parse.
+ */
+export function isTimestamp(value: unknown): value is string {
   return typeof value === 'string' && !Number.isNaN(new Date(value).getTime());
 }
 
@@ -787,8 +793,19 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
           response.status,
         );
       }
+      // The 201 names the new source under `id` (contract; the Go handler's
+      // sourceResponse), so the outcome reads that field rather than
+      // spreading the body and hoping one called `source_id` appears —
+      // which never does, leaving every real success with a blank id.
       const body: unknown = await response.json();
-      return { recorded: true, ...(body as Record<string, unknown>) } as SourceOutcome;
+      const id = (body as Record<string, unknown> | null)?.['id'];
+      // A 201 is a written record even when the body withholds the id, so
+      // the outcome stays recorded and the screen omits what it was not
+      // told. Denying a source that exists would be the honest-record
+      // failure in the other direction.
+      return typeof id === 'string' && id !== ''
+        ? { recorded: true, source_id: id }
+        : { recorded: true };
     },
     async updateSource(id: string, patch: SourcePatch): Promise<SourceActionOutcome> {
       const url = new URL(`${base}/api/v1/editorial/sources/${encodeURIComponent(id)}`);
@@ -916,35 +933,6 @@ export async function allSources(api: EditorialApi, maxPages = 10): Promise<Sour
     cycle: first.cycle,
     fixture: first.fixture === true,
     truncated: cursor !== null,
-  };
-}
-
-/** What the audit page's withdrawal banner shows. */
-export interface WithdrawalBanner {
-  readonly recorded: boolean;
-  readonly label: string;
-  readonly body: string;
-}
-
-/**
- * The banner after a withdrawal attempt: the success label only when the
- * record exists, and the reason either way — the justification the
- * database froze on success, the explanation of why nothing was written
- * otherwise. The honest-record rule in one testable place: the success
- * label never appears over a write that did not happen, and a recorded
- * withdrawal is never confirmed by an empty box.
- */
-export function withdrawalBanner(
-  outcome: WithdrawalOutcome,
-  t: Pick<EditorialStrings, 'withdraw' | 'notRecordedTitle'>,
-): WithdrawalBanner {
-  return {
-    recorded: outcome.recorded,
-    label: outcome.recorded ? t.withdraw : t.notRecordedTitle,
-    // A recorded outcome carries its reason by type: the client refuses a
-    // confirmation without one, so no fallback exists on that branch. Only
-    // a refusal may arrive without words.
-    body: outcome.recorded ? outcome.reason : (outcome.reason ?? ''),
   };
 }
 

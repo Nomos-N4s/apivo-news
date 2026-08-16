@@ -1,0 +1,131 @@
+---
+import type { RecordNoticeModel } from '../lib/editorial/notices';
+
+// The one shape every behaviour explanation takes (#121): a label, what
+// happened (or refused to, or is about to be reviewed), and the frozen
+// facts echoed from the response beneath.
+//
+// Tone chooses the role by what the notice IS, not by how loud it should
+// be. An outcome arrives in answer to something the editor just did, so
+// it is a live region — status for a recorded write, alert for a refusal
+// that needs reading before anything else. Context is different: it
+// renders with the page, describing what the editor is about to review,
+// so it takes `note` — deliberately not a live region, because
+// announcing static page content over the reader's own navigation is
+// noise, not help.
+interface Props {
+  notice: RecordNoticeModel;
+  /**
+   * An adjacent action offered beside the words — offered, never
+   * performed (e.g. the way back to sign-in after an expired session).
+   */
+  action?: { href: string; label: string } | undefined;
+}
+
+const { notice, action } = Astro.props;
+const role =
+  notice.tone === 'refused' ? 'alert' : notice.tone === 'recorded' ? 'status' : 'note';
+---
+
+{/* The live region wraps the words only. An alert should not contain
+    interactive content — the role announces text and never moves focus —
+    so the adjacent action sits outside it, in the same row. */}
+<div class:list={['record-notice', `tone-${notice.tone}`]}>
+  <span class="announced" role={role}>
+    <span class="label">{notice.label}</span>
+    <span class="body">{notice.body}</span>
+    {
+      notice.record.length > 0 && (
+        <span class="record">
+          {notice.record.map((line) => (
+            <span class="record-line">{line}</span>
+          ))}
+        </span>
+      )
+    }
+  </span>
+  {
+    action !== undefined && (
+      <a class="action" href={action.href}>
+        {action.label}
+      </a>
+    )
+  }
+</div>
+
+<style>
+  .record-notice {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    padding: var(--space-3) var(--space-6);
+  }
+  /* A real box, not `display: contents`: the element carries the live
+     region's role, and a contents box can drop out of the accessibility
+     tree in some browser and screen-reader pairings. */
+  .announced {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .tone-recorded {
+    background: var(--color-accent-700);
+    color: var(--color-bg);
+  }
+  .tone-refused {
+    background: var(--color-text);
+    color: var(--color-bg);
+  }
+  .tone-context {
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-divider);
+    color: var(--color-text);
+  }
+  .label {
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    flex: none;
+  }
+  .tone-refused .label {
+    color: var(--color-accent-400);
+  }
+  .tone-context .label {
+    background: var(--color-text);
+    color: var(--color-accent-400);
+    padding: 2px var(--space-2);
+  }
+  .body {
+    font-size: 13px;
+    max-width: 80ch;
+  }
+  .record {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11.5px;
+  }
+  .tone-context .record {
+    color: var(--ink-muted);
+  }
+  .action {
+    font-size: 13px;
+    color: var(--color-accent-400);
+  }
+  /* accent-400 reaches only 3.4:1 on the recorded tone's accent-700 fill;
+     the page background colour carries the link at 6.4:1 instead. */
+  .tone-recorded .action {
+    color: var(--color-bg);
+  }
+  .tone-context .action {
+    color: var(--color-accent-700);
+  }
+</style>

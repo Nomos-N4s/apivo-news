@@ -12,12 +12,10 @@ import {
   sourceView,
   spendPercent,
   viewSources,
-  withdrawalBanner,
   type SourceRow,
   type SourceRowOutcome,
 } from './api';
 import { PROVENANCE_FIXTURES, QUEUE_FIXTURES } from './fixtures';
-import { editorialStrings } from './strings';
 
 function respondingWith(response: Response): {
   calls: { url: URL; init: RequestInit | undefined }[];
@@ -781,8 +779,36 @@ describe('sources', () => {
     expect(outcome.reason).toContain('no source was configured');
   });
 
+  it('reads the id the 201 actually carries', async () => {
+    const { fetchImpl } = respondingWith(
+      jsonResponse({ id: 's1', name: 'X', usage_rule: 'extract_and_link' }, 201),
+    );
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).addSource({
+      name: 'X',
+      url: 'https://x.example/rss',
+      language: 'de',
+      jurisdiction: 'DE',
+      licence_terms: 'terms',
+    });
+    expect(outcome).toEqual({ recorded: true, source_id: 's1' });
+  });
+
+  it('a 201 that withholds the id is still a written record', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ name: 'X' }, 201));
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).addSource({
+      name: 'X',
+      url: 'https://x.example/rss',
+      language: 'de',
+      jurisdiction: 'DE',
+      licence_terms: 'terms',
+    });
+    // Denying a source the API created would be the honest-record failure
+    // in the other direction; the id is simply absent.
+    expect(outcome).toEqual({ recorded: true });
+  });
+
   it('never sends a usage rule — the contract does not accept one', async () => {
-    const { calls, fetchImpl } = respondingWith(jsonResponse({ source_id: 's1' }, 201));
+    const { calls, fetchImpl } = respondingWith(jsonResponse({ id: 's1' }, 201));
     await createEditorialApi('http://api:8080', 'jwt', fetchImpl).addSource({
       name: 'X',
       url: 'https://x.example/rss',
@@ -807,41 +833,6 @@ describe('sources', () => {
         licence_terms: 't',
       }),
     ).rejects.toMatchObject({ status: 409 });
-  });
-});
-
-describe('withdrawalBanner', () => {
-  const t = editorialStrings('el');
-
-  it('renders the recorded reason under the success label', () => {
-    const banner = withdrawalBanner(
-      { recorded: true, article_id: 'a1', reason: 'the source retracted the story' },
-      t,
-    );
-    expect(banner.recorded).toBe(true);
-    expect(banner.label).toBe(t.withdraw);
-    // The recorded reason is the banner's text — a genuine, audited,
-    // irreversible write must never confirm itself as a blank box (#85).
-    expect(banner.body).toBe('the source retracted the story');
-  });
-
-  it('renders no success label for a refused withdrawal', () => {
-    const banner = withdrawalBanner(
-      { recorded: false, reason: 'publication did not end; nothing was written' },
-      t,
-    );
-    expect(banner.recorded).toBe(false);
-    expect(banner.label).toBe(t.notRecordedTitle);
-    expect(banner.label).not.toBe(t.withdraw);
-    expect(banner.body).toContain('nothing was written');
-  });
-
-  it('holds in both chrome languages', () => {
-    const de = editorialStrings('de');
-    expect(withdrawalBanner({ recorded: false }, de).label).toBe(de.notRecordedTitle);
-    expect(withdrawalBanner({ recorded: true, article_id: 'a1', reason: 'r' }, de).label).toBe(
-      de.withdraw,
-    );
   });
 });
 
