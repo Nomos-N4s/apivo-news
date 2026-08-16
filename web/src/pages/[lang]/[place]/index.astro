@@ -27,7 +27,12 @@ import {
   safeSourceUrl,
   sourceHost,
 } from '../../../lib/reader/format';
+import {
+  PREFERENCE_COOKIE,
+  rememberPreference,
+} from '../../../lib/reader/preference';
 import { uiStrings } from '../../../lib/reader/strings';
+import { isSecureRequest } from '../../../lib/secure-request';
 
 // The locale-scoped reader front page — mockup 1a: one edited page, place
 // as kicker (issue #51, toward T025 #28). Both axes arrive in the URL
@@ -73,6 +78,22 @@ const rest = items.slice(1);
 
 const now = new Date();
 const homeHref = frontPagePath(lang, slugs);
+
+// The URL decides what renders here, always — a shared /de/munich link
+// opens Munich in German for whoever follows it. It also becomes what `/`
+// opens for this browser, so the address and the remembered preference can
+// never describe two different papers (issue #133). The axis-bar controls
+// need nothing of their own: each is a plain link to another front page,
+// and arriving is what stores the change.
+rememberPreference(Astro.cookies, homeHref, {
+  current: Astro.cookies.get(PREFERENCE_COOKIE)?.value,
+  // Astro.request and APP_ENV, never Astro.url: the Worker proxies to
+  // this container over plain HTTP and @astrojs/node builds Astro.url
+  // from the socket, so Astro.url says http:// on an https-only
+  // deployment and the cookie would ship without Secure
+  // (lib/secure-request.ts).
+  secure: isSecureRequest(Astro.request, APP_ENV),
+});
 
 // Kicker: the endonym + scope label of the place that put the item on
 // THIS page (the first of the item's places the reader follows), falling
