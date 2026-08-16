@@ -10,7 +10,6 @@ import {
   formatSpend,
   runBulkAction,
   spendPercent,
-  type SourceRow,
   type SourceRowOutcome,
 } from './api';
 import { PROVENANCE_FIXTURES, QUEUE_FIXTURES } from './fixtures';
