@@ -1,3 +1,4 @@
+import { APP_ENV_DEV, APP_ENV_PROD, parseAppEnv } from '../app-env';
 import { isReadingLanguage, type Place, type ReadingLanguage } from './axes';
 import { FRONT_FIXTURES } from './fixtures';
 
@@ -223,13 +224,27 @@ export interface ReaderApiOptions {
  *     is the only truthful alternative to showing the record.
  *   - anywhere else the client still answers, but says `source: 'fixture'`
  *     so every page can mark what it is showing. Silence was the bug.
+ *
+ * An `APP_ENV` that is neither value is refused before either branch is
+ * reached, whether or not a base URL is set. `prod` is a spelling, not a
+ * meaning: read `production` as "not prod" and the refusal above never
+ * fires, the fixtures answer a deployed reader, and the cookies lose
+ * their `Secure` attribute with them (lib/secure-request.ts). The Go
+ * binary refuses to start on the same value, and this is the same refusal
+ * at the same boundary.
  */
 export function createReaderApi(
   baseUrl: string | undefined,
   options: ReaderApiOptions = {},
 ): ReaderApi {
+  const appEnv = parseAppEnv(options.appEnv);
+  if (appEnv === null) {
+    throw new ReaderConfigurationError(
+      `APP_ENV is ${JSON.stringify(options.appEnv)}, which is neither "${APP_ENV_DEV}" nor "${APP_ENV_PROD}". A value this application cannot read is not development: it would serve a deployed reader from built-in fixtures, whose publishers and approving editor are invented. Set APP_ENV to "${APP_ENV_PROD}" on a deployment, or leave it unset.`,
+    );
+  }
   if (baseUrl === undefined || baseUrl === '') {
-    if (options.appEnv === 'prod') {
+    if (appEnv === APP_ENV_PROD) {
       throw new ReaderConfigurationError(
         'API_BASE_URL is not set in a deployed environment (APP_ENV=prod): the reader would answer from built-in fixtures, whose publishers and approving editor are invented. Set API_BASE_URL to the deployment origin that routes to the Go API.',
       );

@@ -26,6 +26,13 @@ export default defineConfig({
       // under an invented approver are the one thing this product may
       // never print. Unset means development, where fixtures answer but
       // every page that shows them says so.
+      //
+      // Declared as a plain optional string rather than an enum because
+      // the schema's own failure would be an opaque runtime throw at
+      // first access. The two values are enforced where they mean
+      // something instead: src/lib/app-env.ts reads them, and
+      // createReaderApi refuses a value that is neither, so `production`
+      // stops the page rather than quietly meaning "not prod".
       APP_ENV: envField.string({
         context: 'server',
         access: 'secret',

@@ -111,6 +111,26 @@ describe('where the answers come from', () => {
   it('still serves fixtures in development, where they are the point', () => {
     expect(createReaderApi(undefined, { appEnv: 'dev' }).source).toBe('fixture');
     expect(createReaderApi(undefined, { appEnv: undefined }).source).toBe('fixture');
+    expect(createReaderApi(undefined, { appEnv: '' }).source).toBe('fixture');
+  });
+
+  // `prod` is a spelling, not a meaning. Read `production` as "not prod"
+  // and the refusal above never fires: the fixtures answer a deployed
+  // reader, and the session cookie loses its Secure attribute with them.
+  it('refuses an APP_ENV that is neither value, base URL or no base URL', () => {
+    for (const appEnv of ['production', 'PROD', 'staging']) {
+      expect(() => createReaderApi(undefined, { appEnv }), appEnv).toThrow(
+        ReaderConfigurationError,
+      );
+      expect(() => createReaderApi('http://api:8080', { appEnv }), appEnv).toThrow(
+        ReaderConfigurationError,
+      );
+    }
+  });
+
+  it('names APP_ENV and the value it was given in that refusal', () => {
+    expect(() => createReaderApi(undefined, { appEnv: 'production' })).toThrow(/APP_ENV/);
+    expect(() => createReaderApi(undefined, { appEnv: 'production' })).toThrow(/production/);
   });
 });
 
