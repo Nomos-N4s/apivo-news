@@ -557,7 +557,7 @@ func (h *Handler) reviewQueue(w http.ResponseWriter, r *http.Request) {
 		body.Items = append(body.Items, queueItem(item))
 	}
 	if page.NextCursor != nil {
-		next := encodeCursor(*page.NextCursor)
+		next := encodeCursor(page.NextCursor.RetrievedAt, page.NextCursor.RowID)
 		body.NextCursor = &next
 	}
 	h.writeJSON(w, r, http.StatusOK, body)
@@ -636,11 +636,11 @@ func parseQueueQuery(values url.Values) (query QueueQuery, detail string, ok boo
 	}
 
 	if values.Has("cursor") {
-		cursor, err := decodeCursor(values.Get("cursor"))
+		at, rowID, err := decodeCursor(values.Get("cursor"))
 		if err != nil {
 			return QueueQuery{}, "cursor is not one this endpoint issued; pass back the next_cursor from the previous page", false
 		}
-		query.Cursor = &cursor
+		query.Cursor = &QueueCursor{RetrievedAt: at, RowID: rowID}
 	}
 	return query, "", true
 }

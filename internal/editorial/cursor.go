@@ -19,7 +19,12 @@ const cursorSeparator = "|"
 // one back when it asked for page four would loop forever.
 var errBadCursor = errors.New("editorial: malformed cursor")
 
-// encodeCursor renders a keyset position as the contract's opaque cursor.
+// encodeCursor renders a keyset position - a timestamp and the row id that
+// tie-breaks it - as the contract's opaque cursor. Every keyset list in
+// this module pages on that same pair (the queue on retrieved_at, the
+// sources on created_at), so this one codec serves them all rather than
+// each endpoint forking its own.
+//
 // The encoding is deliberately not part of the contract: it is base64url of
 // "<RFC 3339 UTC timestamp>|<uuid>", and clients must only ever echo back
 // what next_cursor gave them.
@@ -28,29 +33,30 @@ var errBadCursor = errors.New("editorial: malformed cursor")
 // whatever the server's local zone, and rendered with sub-second precision
 // so a Postgres microsecond timestamp survives the round trip - truncating
 // it would move the keyset boundary and silently skip or repeat rows.
-func encodeCursor(c QueueCursor) string {
-	raw := c.RetrievedAt.UTC().Format(time.RFC3339Nano) + cursorSeparator + c.RowID.String()
+func encodeCursor(at time.Time, rowID uuid.UUID) string {
+	raw := at.UTC().Format(time.RFC3339Nano) + cursorSeparator + rowID.String()
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
 // decodeCursor parses a cursor produced by encodeCursor, reporting
-// errBadCursor for anything else.
-func decodeCursor(raw string) (QueueCursor, error) {
+// errBadCursor for anything else. Which list's position the pair marks is
+// the endpoint's business; the codec only carries it.
+func decodeCursor(raw string) (at time.Time, rowID uuid.UUID, err error) {
 	blob, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
-		return QueueCursor{}, errBadCursor
+		return time.Time{}, uuid.UUID{}, errBadCursor
 	}
-	at, id, ok := strings.Cut(string(blob), cursorSeparator)
+	stamp, id, ok := strings.Cut(string(blob), cursorSeparator)
 	if !ok {
-		return QueueCursor{}, errBadCursor
+		return time.Time{}, uuid.UUID{}, errBadCursor
 	}
-	retrievedAt, err := time.Parse(time.RFC3339Nano, at)
+	at, err = time.Parse(time.RFC3339Nano, stamp)
 	if err != nil {
-		return QueueCursor{}, errBadCursor
+		return time.Time{}, uuid.UUID{}, errBadCursor
 	}
-	rowID, err := uuid.Parse(id)
+	rowID, err = uuid.Parse(id)
 	if err != nil {
-		return QueueCursor{}, errBadCursor
+		return time.Time{}, uuid.UUID{}, errBadCursor
 	}
-	return QueueCursor{RetrievedAt: retrievedAt, RowID: rowID}, nil
+	return at, rowID, nil
 }
