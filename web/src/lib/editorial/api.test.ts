@@ -7,8 +7,10 @@ import {
   formatItemCost,
   formatSpend,
   spendPercent,
+  withdrawalBanner,
 } from './api';
 import { PROVENANCE_FIXTURES, QUEUE_FIXTURES } from './fixtures';
+import { editorialStrings } from './strings';
 
 function respondingWith(response: Response): {
   calls: { url: URL; init: RequestInit | undefined }[];
@@ -255,7 +257,7 @@ describe('the audit trace', () => {
   it('never fakes a withdrawal — publication cannot end unrecorded (FR-016)', async () => {
     const outcome = await createEditorialApi(undefined).withdraw('any', 'publisher request');
     expect(outcome.recorded).toBe(false);
-    expect(outcome.withdrawn_at).toBeUndefined();
+    expect(outcome).not.toHaveProperty('withdrawn_at');
     // The reason must describe withdrawal, not approval.
     expect(outcome.reason).toContain('publication did not end');
   });
@@ -303,12 +305,109 @@ describe('the audit trace', () => {
     ).rejects.toBeInstanceOf(EditorialApiError);
   });
 
+  it('carries the recorded reason and article id of a withdrawal', async () => {
+    // The confirmation banner's only text is the reason; a response that
+    // dropped it rendered a genuine, audited write as a blank box (#85).
+    const { fetchImpl } = respondingWith(
+      jsonResponse({
+        article_id: 'a1',
+        withdrawn_at: '2026-08-15T14:15:00Z',
+        withdrawn_by: 'e1',
+        reason: 'the source retracted the story',
+      }),
+    );
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw(
+      'a1',
+      'the source retracted the story',
+    );
+    expect(outcome).toMatchObject({
+      recorded: true,
+      article_id: 'a1',
+      reason: 'the source retracted the story',
+    });
+  });
+
+  it('reports not-recorded rather than throwing when the route is absent', async () => {
+    // The same not-deployed branch queue(), approve() and sources() take:
+    // with the reader live and editorial unmounted, the mux answers a
+    // bare 404 — no problem+json — and the honest answer is that
+    // publication did not end.
+    const { fetchImpl } = respondingWith(
+      new Response('404 page not found', {
+        status: 404,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      }),
+    );
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw(
+      'a1',
+      'because',
+    );
+    expect(outcome.recorded).toBe(false);
+    expect(outcome).not.toHaveProperty('withdrawn_at');
+    expect(outcome.reason).toContain('publication did not end');
+  });
+
+  it("reports the API's own 404 refusal, not the not-deployed fixture text", async () => {
+    // The deployed endpoint answers 404 as a domain outcome — unknown
+    // article, or approved but never published — in problem+json. That is
+    // the API refusing, not the API missing: the banner must carry the
+    // refusal's words, never claim the API is not implemented.
+    const { fetchImpl } = respondingWith(
+      new Response(
+        JSON.stringify({
+          type: 'about:blank',
+          title: 'Not Found',
+          status: 404,
+          detail: 'no published article with this id',
+        }),
+        { status: 404, headers: { 'Content-Type': 'application/problem+json' } },
+      ),
+    );
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw(
+      'a1',
+      'because',
+    );
+    expect(outcome.recorded).toBe(false);
+    expect(outcome.reason).toBe('no published article with this id');
+    expect(outcome.reason).not.toContain('not implemented');
+  });
+
+  it('refuses a 2xx that lacks the recorded reason — no blank success box', async () => {
+    // The exact deploy skew the fallbacks exist for: an API one release
+    // behind still answers the old {article_id, withdrawn_at,
+    // withdrawn_by} shape. Spreading it into recorded: true rendered the
+    // success label over an empty body (#85); the honest path is the
+    // thrown refusal, which the audit screen shows as not recorded.
+    const { fetchImpl } = respondingWith(
+      jsonResponse({ article_id: 'a1', withdrawn_at: '2026-08-15T14:15:00Z', withdrawn_by: 'e1' }),
+    );
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw('a1', 'because'),
+    ).rejects.toBeInstanceOf(EditorialApiError);
+  });
+
+  it('refuses a 2xx whose reason is blank, not only one that is absent', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ article_id: 'a1', reason: '   ' }));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw('a1', 'because'),
+    ).rejects.toBeInstanceOf(EditorialApiError);
+  });
+
+  it('still surfaces a 409 (already withdrawn) as an error', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ title: 'conflict' }, 409));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw('a1', 'again'),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
   it('calls the contract paths for trace and withdrawal', async () => {
     const trace = respondingWith(jsonResponse(PROVENANCE_FIXTURES[0]));
     await createEditorialApi('http://api:8080', 'jwt', trace.fetchImpl).provenance('x');
     expect(trace.calls.at(0)?.url.pathname).toBe('/api/v1/editorial/articles/x/provenance');
 
-    const wd = respondingWith(jsonResponse({ article_id: 'x', withdrawn_at: 'now' }));
+    const wd = respondingWith(
+      jsonResponse({ article_id: 'x', withdrawn_at: 'now', reason: 'because' }),
+    );
     await createEditorialApi('http://api:8080', 'jwt', wd.fetchImpl).withdraw('x', 'because');
     expect(wd.calls.at(0)?.url.pathname).toBe('/api/v1/editorial/articles/x/withdrawal');
     expect(wd.calls.at(0)?.init?.method).toBe('POST');
@@ -426,6 +525,41 @@ describe('sources', () => {
         licence_terms: 't',
       }),
     ).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describe('withdrawalBanner', () => {
+  const t = editorialStrings('el');
+
+  it('renders the recorded reason under the success label', () => {
+    const banner = withdrawalBanner(
+      { recorded: true, article_id: 'a1', reason: 'the source retracted the story' },
+      t,
+    );
+    expect(banner.recorded).toBe(true);
+    expect(banner.label).toBe(t.withdraw);
+    // The recorded reason is the banner's text — a genuine, audited,
+    // irreversible write must never confirm itself as a blank box (#85).
+    expect(banner.body).toBe('the source retracted the story');
+  });
+
+  it('renders no success label for a refused withdrawal', () => {
+    const banner = withdrawalBanner(
+      { recorded: false, reason: 'publication did not end; nothing was written' },
+      t,
+    );
+    expect(banner.recorded).toBe(false);
+    expect(banner.label).toBe(t.notRecordedTitle);
+    expect(banner.label).not.toBe(t.withdraw);
+    expect(banner.body).toContain('nothing was written');
+  });
+
+  it('holds in both chrome languages', () => {
+    const de = editorialStrings('de');
+    expect(withdrawalBanner({ recorded: false }, de).label).toBe(de.notRecordedTitle);
+    expect(withdrawalBanner({ recorded: true, article_id: 'a1', reason: 'r' }, de).label).toBe(
+      de.withdraw,
+    );
   });
 });
 

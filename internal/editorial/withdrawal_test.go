@@ -69,6 +69,7 @@ type withdrawalBody struct {
 	ArticleID   string `json:"article_id"`
 	WithdrawnAt string `json:"withdrawn_at"`
 	WithdrawnBy string `json:"withdrawn_by"`
+	Reason      string `json:"reason"`
 }
 
 func postWithdrawal(t *testing.T, h http.Handler, articleID, body string) *httptest.ResponseRecorder {
@@ -196,6 +197,90 @@ func TestWithdrawalResponseShape(t *testing.T) {
 	}
 	if store.gotReason != "source retracted the story" {
 		t.Errorf("reason reaching the store = %q, want it trimmed", store.gotReason)
+	}
+}
+
+// TestWithdrawalResponseCarriesTheRecordedReason pins that the reason on
+// the wire is the one the store recorded, not an echo of the request body.
+// The confirmation banner renders this field as its only text, so a
+// response without it reports a real, audited, irreversible write as a
+// blank box - the exact inversion of the no-success-without-a-record rule.
+func TestWithdrawalResponseCarriesTheRecordedReason(t *testing.T) {
+	t.Parallel()
+	articleID := uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+
+	// The canned record deliberately differs from the request's reason:
+	// equality with the request would also pass for a handler that echoes
+	// the input, which is not the claim - the record is.
+	const recorded = "the record's own reason"
+	store := &withdrawalStore{withdrawal: editorial.Withdrawal{
+		ArticleID:   articleID,
+		WithdrawnAt: time.Date(2026, 8, 15, 14, 15, 0, 0, time.UTC),
+		WithdrawnBy: testEditor.ID,
+		Reason:      recorded,
+	}}
+	h := editorial.NewHandler(discardLogger(), store, fakeAuth{})
+	rec := postWithdrawal(t, h, articleID.String(), `{"reason":"what the request said"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	var body withdrawalBody
+	decodeInto(t, rec, &body)
+	if body.Reason != recorded {
+		t.Errorf("reason = %q, want the stored %q - the response reports the record, not the request", body.Reason, recorded)
+	}
+}
+
+// TestWithdrawalResponseReasonMatchesTheStoredRow proves, against the real
+// schema, that the reason on the wire is byte-for-byte the value the
+// database froze into article.withdrawal_reason - guarded all-or-none by
+// article_withdrawal_all_or_none and permanent under I-5 - so the
+// confirmation banner renders the audit record itself, not a paraphrase of
+// the request.
+func TestWithdrawalResponseReasonMatchesTheStoredRow(t *testing.T) {
+	t.Parallel()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise withdrawal against Postgres")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatalf("migrating: %v", err)
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("connecting: %v", err)
+	}
+	defer pool.Close()
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	f := seedWithdrawalFixture(ctx, t, tx)
+	h := editorial.NewHandler(discardLogger(), editorial.NewPGStore(tx),
+		staticAuth{editor: editorial.Editor{ID: uuid.MustParse(f.editorID), Email: "editor@example.test", DisplayName: "Reason Editor"}})
+
+	// Sent padded: the handler trims before writing, so the response can
+	// only match the stored row by reporting the row, not the input.
+	rec := postWithdrawal(t, h, f.published, `{"reason":"  ο εκδότης ζήτησε την απόσυρση  "}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	var body withdrawalBody
+	decodeInto(t, rec, &body)
+
+	var storedWhy string
+	if err := tx.QueryRow(ctx, `select withdrawal_reason from article where id = $1`, f.published).Scan(&storedWhy); err != nil {
+		t.Fatalf("reading the withdrawn article: %v", err)
+	}
+	if storedWhy == "" {
+		t.Fatal("withdrawal_reason is empty; the all-or-none guard should have made that impossible")
+	}
+	if body.Reason != storedWhy {
+		t.Errorf("reason on the wire = %q, want the stored %q", body.Reason, storedWhy)
 	}
 }
 
