@@ -186,7 +186,7 @@ func TestFetchNotModifiedYieldsNoItems(t *testing.T) {
 func TestFetchHonoursRetryAfterButClampsIt(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a wait longer than the ceiling is clamped", func(t *testing.T) {
+	t.Run("a wait longer than the in-call ceiling is relayed in full", func(t *testing.T) {
 		t.Parallel()
 
 		var hits atomic.Int64
@@ -198,14 +198,16 @@ func TestFetchHonoursRetryAfterButClampsIt(t *testing.T) {
 		defer server.Close()
 
 		// One attempt, so nothing is waited out here: what is asserted is
-		// the wait the poll loop is handed, not a sleep.
+		// the deferral the poll loop is handed, not a sleep. The ten
+		// minutes asked for arrive untouched - the 30s ceiling belongs to
+		// this call's own retrying, not to the source's ask.
 		cfg := ingestion.FetchConfig{MaxAttempts: 1}
 		result, err := cfg.Fetch(t.Context(), server.URL+"/feed.xml", ingestion.Validators{})
 		if !errors.Is(err, ingestion.ErrRateLimited) {
 			t.Fatalf("error = %v, want ErrRateLimited", err)
 		}
-		if got, want := result.RetryAfter, 30*time.Second; got != want {
-			t.Errorf("RetryAfter = %v, want %v (the ten minutes asked for, clamped)", got, want)
+		if got, want := result.RetryAfter, 600*time.Second; got != want {
+			t.Errorf("RetryAfter = %v, want %v (the source's actual ask)", got, want)
 		}
 		if got := hits.Load(); got != 1 {
 			t.Errorf("source was asked %d times, want 1", got)
@@ -216,15 +218,15 @@ func TestFetchHonoursRetryAfterButClampsIt(t *testing.T) {
 		t.Parallel()
 
 		// Values whose float-to-int conversion would overflow int64 - an
-		// epoch-milliseconds timestamp, an absurd exponent, a NaN. Clamped
+		// epoch-milliseconds timestamp, an absurd exponent, a NaN. Bounded
 		// after converting, each lands on math.MinInt64: a negative "wait"
 		// the poll loop would read as "poll again immediately", the exact
 		// opposite of what the source asked. A genuine number over the
-		// ceiling is the ceiling; NaN is not an instruction at all and
-		// falls back to our own backoff.
+		// day-long bound is the bound; NaN is not an instruction at all
+		// and falls back to our own backoff.
 		cases := map[string]time.Duration{
-			"99999999999": 30 * time.Second,
-			"1e300":       30 * time.Second,
+			"99999999999": 24 * time.Hour,
+			"1e300":       24 * time.Hour,
 			"NaN":         0,
 		}
 		for value, want := range cases {
@@ -265,12 +267,16 @@ func TestFetchHonoursRetryAfterButClampsIt(t *testing.T) {
 
 		// Three attempts are allowed. Re-asking under a 30s cap a source
 		// that said "ten minutes" would be hammering it against its own
-		// instruction, so the call must end on the first answer.
+		// instruction, so the call must end on the first answer - and
+		// still hand the poll loop the true ask to defer on.
 		cfg := ingestion.FetchConfig{MaxAttempts: 3, BaseBackoff: 30 * time.Second}
 		started := time.Now()
-		_, err := cfg.Fetch(t.Context(), server.URL+"/feed.xml", ingestion.Validators{})
+		result, err := cfg.Fetch(t.Context(), server.URL+"/feed.xml", ingestion.Validators{})
 		if !errors.Is(err, ingestion.ErrRateLimited) {
 			t.Fatalf("error = %v, want ErrRateLimited", err)
+		}
+		if got, want := result.RetryAfter, 600*time.Second; got != want {
+			t.Errorf("RetryAfter = %v, want %v (the source's actual ask)", got, want)
 		}
 		if got := hits.Load(); got != 1 {
 			t.Errorf("source was asked %d times, want 1: it asked to be left alone for longer than we ever wait", got)
