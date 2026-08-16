@@ -207,12 +207,21 @@ jobs:
           # been rolled back - a red run for a deploy that happened, and a
           # skipped probe in the one situation where "did it come up?"
           # matters most.
+          #
+          # A pre-release tag is published as a pre-release: the guard admits
+          # v0.2.0-rc.1 deliberately, and an RC published as a normal release
+          # is read as stable by everything that looks. Build metadata is
+          # stripped first, so the "-" that decides is the one before "+".
+          prerelease=false
+          case "${VERSION%%+*}" in
+          *-*) prerelease=true ;;
+          esac
           if gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release edit "$VERSION" --title "$VERSION" --notes-file release-notes.md
-            echo "updated the existing GitHub Release for $VERSION"
+            gh release edit "$VERSION" --title "$VERSION" --notes-file release-notes.md --prerelease="$prerelease"
+            echo "updated the existing GitHub Release for $VERSION (pre-release: $prerelease)"
           else
-            gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file release-notes.md
-            echo "created the GitHub Release for $VERSION"
+            gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file release-notes.md --prerelease="$prerelease"
+            echo "created the GitHub Release for $VERSION (pre-release: $prerelease)"
           fi
 
   # A release that did not come up is a failed release, reported honestly.
