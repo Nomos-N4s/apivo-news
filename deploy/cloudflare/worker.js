@@ -105,10 +105,41 @@ export class WebContainer extends ContainerHost {
 	port = 4321; // Astro node-adapter default, pinned via PORT below
 
 	containerEnv() {
-		return {
+		const containerEnv = {
 			HOST: "0.0.0.0",
 			PORT: "4321",
 		};
+		// Everything below is forwarded INDEPENDENTLY, and only when set.
+		// A var declared in wrangler.jsonc that this method does not copy
+		// never reaches the container at all: the platform hands the
+		// container exactly this object. Silence is the failure mode —
+		// the Astro server starts, serves its built-in fixtures and looks
+		// perfectly healthy while showing nobody's real data.
+		//
+		// API_BASE_URL: where the pages find the Go api. There is no
+		// in-platform value for it today — Cloudflare Containers are
+		// reachable only through their Durable Object binding, i.e. from
+		// Worker code, so the api container has no address the web
+		// container could fetch, and the public hostname routes to the
+		// web container itself. It is forwarded so a deployment whose api
+		// runs somewhere addressable can point at it; left empty the
+		// pages render from fixtures.
+		if (this.env.API_BASE_URL) {
+			containerEnv.API_BASE_URL = this.env.API_BASE_URL;
+		}
+		// Supabase Auth for the editorial sign-in. Plain vars, not
+		// secrets: the anon key identifies the project and grants nothing
+		// on its own. Missing either one is deliberately not fatal — the
+		// reader path needs no sign-in, so an editorial-only gap must not
+		// take the public site down. The sign-in page states that no auth
+		// is configured rather than offering a form that could only fail.
+		if (this.env.PUBLIC_SUPABASE_URL) {
+			containerEnv.PUBLIC_SUPABASE_URL = this.env.PUBLIC_SUPABASE_URL;
+		}
+		if (this.env.PUBLIC_SUPABASE_ANON_KEY) {
+			containerEnv.PUBLIC_SUPABASE_ANON_KEY = this.env.PUBLIC_SUPABASE_ANON_KEY;
+		}
+		return containerEnv;
 	}
 }
 

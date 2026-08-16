@@ -7,8 +7,10 @@ import {
   type SourceOutcome,
   type SourcesPage,
 } from '../../../lib/editorial/api';
+import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings } from '../../../lib/editorial/strings';
+import { authConfigured } from '../../../lib/editorial/supabase';
 import { isReadingLanguage } from '../../../lib/reader/axes';
 import { formatDateTime } from '../../../lib/reader/format';
 import { uiStrings } from '../../../lib/reader/strings';
@@ -28,12 +30,40 @@ const lang = langSegment;
 const t = editorialStrings(lang);
 const reader = uiStrings(lang);
 const session = editorSession(Astro.request);
+
+// Configuring a source is a licensing decision on the record, so it needs
+// a named editor's own token when there is an auth provider to get one
+// from. Without one this stays the fixture preview.
+//
+// Only a GET is redirected: a POST from a session that expired mid-edit
+// re-renders here with a signed-out notice and the form still filled,
+// because a redirect would arrive at sign-in as a GET with it all gone.
+const configured = authConfigured();
+const signedOut = configured && !session.authenticated;
+if (signedOut && Astro.request.method !== 'POST') {
+  return Astro.redirect(`/${lang}/editor/signin`);
+}
+
 const api = createEditorialApi(API_BASE_URL, session.token);
 
 const here = `/${lang}/editor/sources`;
 
 let outcome: SourceOutcome | null = null;
+let signedOutPost = false;
+let submitted: {
+  name: string;
+  url: string;
+  language: string;
+  jurisdiction: string;
+  licence_terms: string;
+} | null = null;
 if (Astro.request.method === 'POST') {
+  // Configuring a source is a licensing record under the editor's own
+  // credentials — the same privileged shape as approval, so it takes the
+  // same origin check before the body is even read.
+  if (!isSameOrigin(Astro.request, Astro.url.origin)) {
+    return new Response('Forbidden', { status: 403 });
+  }
   const form = await Astro.request.formData();
   const input = {
     name: String(form.get('name') ?? ''),
@@ -42,7 +72,12 @@ if (Astro.request.method === 'POST') {
     jurisdiction: String(form.get('jurisdiction') ?? ''),
     licence_terms: String(form.get('licence_terms') ?? ''),
   };
-  if (input.name.trim() !== '' && input.url.trim() !== '') {
+  if (signedOut) {
+    // No token, so nothing can be recorded; the typed licensing details
+    // go back into the form rather than into a redirect's void.
+    signedOutPost = true;
+    submitted = input;
+  } else if (input.name.trim() !== '' && input.url.trim() !== '') {
     try {
       outcome = await api.addSource(input);
     } catch (error) {
@@ -73,7 +108,19 @@ const activeCount = sources.filter((source) => source.active).length;
     session={session}
     active="sources"
     note={t.sourcesSummary(sources.length, activeCount)}
+    previewData={page?.fixture === true}
   >
+    {
+      signedOutPost && (
+        <div class="banner banner-warn">
+          <span class="banner-label">{t.notRecordedTitle}</span>
+          <span class="banner-body">{t.signedOutMidPost}</span>
+          <a class="banner-link" href={`/${lang}/editor/signin`}>
+            {t.signIn}
+          </a>
+        </div>
+      )
+    }
     {
       outcome !== null && (
         <div class:list={['banner', { 'banner-warn': !outcome.recorded }]}>
@@ -166,25 +213,45 @@ const activeCount = sources.filter((source) => source.active).length;
         <h6>{t.addSource}</h6>
         <div class="field">
           <label for="s-name">{t.publisherName}</label>
-          <input class="input" id="s-name" name="name" required />
+          <input class="input" id="s-name" name="name" value={submitted?.name ?? ''} required />
         </div>
         <div class="field">
           <label for="s-url">{t.feedUrl}</label>
-          <input class="input" id="s-url" name="url" type="url" placeholder="https://…" required />
+          <input
+            class="input"
+            id="s-url"
+            name="url"
+            type="url"
+            placeholder="https://…"
+            value={submitted?.url ?? ''}
+            required
+          />
         </div>
         <div class="pair">
           <div class="field">
             <label for="s-lang">{t.languageField}</label>
-            <input class="input" id="s-lang" name="language" value="de" required />
+            <input
+              class="input"
+              id="s-lang"
+              name="language"
+              value={submitted?.language ?? 'de'}
+              required
+            />
           </div>
           <div class="field">
             <label for="s-jur">{t.jurisdictionField}</label>
-            <input class="input" id="s-jur" name="jurisdiction" value="DE" required />
+            <input
+              class="input"
+              id="s-jur"
+              name="jurisdiction"
+              value={submitted?.jurisdiction ?? 'DE'}
+              required
+            />
           </div>
         </div>
         <div class="field">
           <label for="s-terms">{t.licenceTerms}</label>
-          <textarea class="input" id="s-terms" name="licence_terms" required />
+          <textarea class="input" id="s-terms" name="licence_terms" required>{submitted?.licence_terms}</textarea>
         </div>
 
         {/* The usage rule is stated, not chosen: the contract does not
@@ -236,6 +303,10 @@ const activeCount = sources.filter((source) => source.active).length;
     flex: none;
   }
   .banner-warn .banner-label {
+    color: var(--color-accent-400);
+  }
+  .banner-link {
+    font-size: 13px;
     color: var(--color-accent-400);
   }
   .banner-body {

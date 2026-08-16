@@ -92,6 +92,14 @@ export interface QueuePage {
   readonly items: readonly QueueItem[];
   readonly holds?: PipelineHolds;
   readonly spend?: SpendLedger;
+  /**
+   * True when this page is fixture data rather than the API's answer.
+   * The marker in the chrome keys on this — the data itself is the only
+   * party that knows its own provenance, since fixtures render both when
+   * no API is configured and when the routes answer 404. A real API
+   * response never carries the flag.
+   */
+  readonly fixture?: boolean;
 }
 
 /**
@@ -155,6 +163,8 @@ export interface ArticleProvenance {
     readonly withdrawn_by: string;
     readonly reason: string;
   } | null;
+  /** True when this trace is fixture data; see `QueuePage.fixture`. */
+  readonly fixture?: boolean;
   /**
    * The append-only `domain_event` rows for this article (FR-012). Not in
    * the contract's provenance payload — the audit screen needs the chain
@@ -256,6 +266,8 @@ export interface PollCycle {
 export interface SourcesPage {
   readonly sources: readonly SourceRow[];
   readonly cycle: PollCycle;
+  /** True when this page is fixture data; see `QueuePage.fixture`. */
+  readonly fixture?: boolean;
 }
 
 /**
@@ -387,10 +399,13 @@ const NOT_DEPLOYED = 404;
 function fixtureApi(): EditorialApi {
   return {
     queue(): Promise<QueuePage> {
+      // Every fixture answer declares itself one, so the screens can flag
+      // invented numbers as invented no matter why the fixtures rendered.
       return Promise.resolve({
         items: QUEUE_FIXTURES,
         holds: { queued_untranslated: 3, skipped_over_ceiling: 1 },
         spend: SPEND_FIXTURE,
+        fixture: true,
       });
     },
     approve(): Promise<ApprovalOutcome> {
@@ -405,12 +420,11 @@ function fixtureApi(): EditorialApi {
       // id that matches nothing is genuinely not found — falling back to
       // an unrelated article would be the one thing an audit must never
       // do, since the reader would be looking at another item's evidence.
-      if (articleId === '') {
-        return Promise.resolve(PROVENANCE_FIXTURES.at(0) ?? null);
-      }
-      return Promise.resolve(
-        PROVENANCE_FIXTURES.find((row) => row.article_id === articleId) ?? null,
-      );
+      const found =
+        articleId === ''
+          ? PROVENANCE_FIXTURES.at(0)
+          : PROVENANCE_FIXTURES.find((row) => row.article_id === articleId);
+      return Promise.resolve(found === undefined ? null : { ...found, fixture: true });
     },
     withdraw(): Promise<WithdrawalOutcome> {
       // Withdrawal is audited (FR-016); with nothing to audit into, the
@@ -418,7 +432,7 @@ function fixtureApi(): EditorialApi {
       return Promise.resolve({ recorded: false, reason: NOT_WIRED_WITHDRAWAL });
     },
     sources(): Promise<SourcesPage> {
-      return Promise.resolve({ sources: SOURCE_FIXTURES, cycle: POLL_CYCLE_FIXTURE });
+      return Promise.resolve({ sources: SOURCE_FIXTURES, cycle: POLL_CYCLE_FIXTURE, fixture: true });
     },
     addSource(): Promise<SourceOutcome> {
       return Promise.resolve({ recorded: false, reason: NOT_WIRED_SOURCE });
@@ -585,6 +599,28 @@ export function createEditorialApi(
     return fixtureApi();
   }
   return httpApi(baseUrl, fetchImpl, token);
+}
+
+/**
+ * The line the banner prints after an approval was recorded: what the
+ * response said, and nothing else.
+ *
+ * A missing `approved_by` renders as absent rather than as the signed-in
+ * person. They are not the same claim: the approver is whoever the
+ * database wrote into `article.approved_by` (I-1), and printing the name
+ * of whoever happened to submit the form over a field the server did not
+ * return would attribute one person's approval to another. If the field
+ * is missing, what the screen honestly knows is that it does not know.
+ */
+export function approvalRecordLine(outcome: ApprovalOutcome): string {
+  const parts: string[] = [];
+  if (outcome.approved_by !== undefined && outcome.approved_by !== '') {
+    parts.push(`approved_by = ${outcome.approved_by}`);
+  }
+  if (outcome.article_id !== undefined && outcome.article_id !== '') {
+    parts.push(`article ${outcome.article_id}`);
+  }
+  return parts.join(' · ');
 }
 
 /**

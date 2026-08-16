@@ -1,5 +1,7 @@
 import { defineMiddleware, sequence } from 'astro:middleware';
 
+import { rememberEditorSession } from './lib/editorial/session';
+import { resolveEditorSession } from './lib/editorial/supabase';
 import { createUsageCounter } from './lib/usage';
 
 // The single crawler enforcement point (FR-013, research D6). Three fences,
@@ -120,6 +122,44 @@ const stampAdvisoryHeader = defineMiddleware(async (_context, next) => {
 });
 
 /**
+ * Whether a path is one of the editorial screens, `/{lang}/editor…`.
+ *
+ * Deliberately a path test rather than a route test: resolving an
+ * identity costs a round trip to the auth server, and the reader pages —
+ * which are the overwhelming majority of requests — must not pay it.
+ */
+export function isEditorialPath(pathname: string): boolean {
+  return /^\/[^/]+\/editor(?:\/|$)/.test(pathname);
+}
+
+/**
+ * Resolves the editor identity once per request, before anything renders.
+ *
+ * The screens read it back through `editorSession()`. It happens here
+ * rather than in each page because resolving a session can refresh the
+ * access token, and only middleware can write the new one back to the
+ * browser — a page that cannot persist a refresh signs the editor out
+ * roughly every hour.
+ *
+ * The response is marked uncacheable for the same reason auth cookies
+ * are: an editorial page carries one named person's session, and a shared
+ * cache handing it to someone else would put the wrong name beside the
+ * word "approver".
+ */
+const resolveEditorIdentity = defineMiddleware(async (context, next) => {
+  if (!isEditorialPath(context.url.pathname)) {
+    return next();
+  }
+  rememberEditorSession(
+    context.request,
+    await resolveEditorSession(context.request, context.cookies),
+  );
+  const response = await next();
+  response.headers.set('Cache-Control', 'private, no-store');
+  return response;
+});
+
+/**
  * Aggregate usage counting (issue #91): one in-memory counter per server
  * process, flushed as a `usage_rollup` structured log line on the request
  * that finds the interval elapsed. Outermost in the sequence so the
@@ -139,4 +179,13 @@ const countUsage = defineMiddleware(async (context, next) => {
   return response;
 });
 
-export const onRequest = sequence(countUsage, stampAdvisoryHeader, denyCrawlers, serveRobotsTxt);
+// Usage counting stays outermost so the status it records is the one
+// actually sent; identity resolution stays innermost so a crawler's 403
+// never costs an auth round trip.
+export const onRequest = sequence(
+  countUsage,
+  stampAdvisoryHeader,
+  denyCrawlers,
+  serveRobotsTxt,
+  resolveEditorIdentity,
+);

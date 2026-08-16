@@ -20,10 +20,19 @@ interface Props {
   spend?: SpendLedger | undefined;
   /** Right-hand note in the bar — e.g. the audit's read-only statement. */
   note?: string | undefined;
+  /**
+   * Whether what this screen shows is fixture data rather than the API's
+   * records. Keyed to the data's own provenance, not to whether sign-in
+   * is possible: fixtures render whenever the editorial API is absent,
+   * and a signed-in editor shown invented numbers unflagged is exactly
+   * the dishonest-record state this marker exists to prevent.
+   */
+  previewData?: boolean | undefined;
 }
 
-const { lang, session, active, queueCount, spend, note } = Astro.props;
+const { lang, session, active, queueCount, spend, note, previewData = false } = Astro.props;
 const t = editorialStrings(lang);
+const signinHref = `/${lang}/editor/signin`;
 
 // Sections whose screens exist; the rest are named but not linked, so the
 // rail never promises a route that 404s.
@@ -51,13 +60,35 @@ const sections: {
     {active === 'audit' ? t.audit : active === 'sources' ? t.sources : t.editorial}
   </span>
   {/* The identity is never replaced by a note: the approver is who this
-      chrome exists to name, so a screen-specific note sits beside it. */}
+      chrome exists to name, so a screen-specific note sits beside it.
+      With nobody signed in there is no name to print — the bar says so
+      and offers the way in, rather than filling the gap with someone. */}
   <span class="who">
     {note !== undefined && <span class="who-note">{note}</span>}
-    <span>
-      {t.signedInAs} <strong>{session.displayName}</strong> · {t.roleEditor}
-    </span>
-    {!session.authenticated && <span class="preview-flag">{t.previewSession}</span>}
+    {/* The fixture flag rides with the data, not the session: it shows
+        whenever what is on screen is sample data — signed in or not. */}
+    {previewData && <span class="preview-flag">{t.previewData}</span>}
+    {
+      session.authenticated ? (
+        <>
+          <span>
+            {t.signedInAs} <strong>{session.displayName}</strong> ·{' '}
+            {session.role === 'editor' ? t.roleEditor : t.roleReader}
+          </span>
+          <form method="post" action={signinHref}>
+            <input type="hidden" name="action" value="signout" />
+            <button class="link-button" type="submit">
+              {t.signOut}
+            </button>
+          </form>
+        </>
+      ) : (
+        <>
+          <span>{t.notSignedIn}</span>
+          <a href={signinHref}>{t.signIn}</a>
+        </>
+      )
+    }
   </span>
 </header>
 
@@ -148,6 +179,17 @@ const sections: {
   .who-note {
     padding-right: var(--space-3);
     border-right: 1px solid var(--color-divider);
+  }
+  /* Sign-out is a state change, so it is a form; it should still read as
+     the link it sits beside. */
+  .link-button {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: var(--color-accent);
+    text-decoration: underline;
+    cursor: pointer;
   }
   .preview-flag {
     border: 1px solid var(--color-accent);

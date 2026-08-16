@@ -8,8 +8,10 @@ import {
   type ArticleProvenance,
   type WithdrawalOutcome,
 } from '../../../lib/editorial/api';
+import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings } from '../../../lib/editorial/strings';
+import { authConfigured } from '../../../lib/editorial/supabase';
 import { findPlace, isReadingLanguage } from '../../../lib/reader/axes';
 import { formatDateTime, safeSourceUrl } from '../../../lib/reader/format';
 import { uiStrings } from '../../../lib/reader/strings';
@@ -32,6 +34,20 @@ const lang = langSegment;
 const t = editorialStrings(lang);
 const reader = uiStrings(lang);
 const session = editorSession(Astro.request);
+
+// The audit is read-only but not public: it lays out a named approver
+// beside a source's licence terms. With an auth provider configured, an
+// unsigned visitor is sent to sign in first.
+//
+// Only a GET is redirected: a withdrawal POST from a session that expired
+// mid-edit re-renders here with a signed-out notice and the typed reason
+// kept, because a redirect would arrive at sign-in as a GET without it.
+const configured = authConfigured();
+const signedOut = configured && !session.authenticated;
+if (signedOut && Astro.request.method !== 'POST') {
+  return Astro.redirect(`/${lang}/editor/signin`);
+}
+
 const api = createEditorialApi(API_BASE_URL, session.token);
 
 const here = `/${lang}/editor/audit`;
@@ -41,11 +57,24 @@ const here = `/${lang}/editor/audit`;
 // not suggest publication ended.
 let withdrawal: WithdrawalOutcome | null = null;
 let withdrawnId = '';
+let signedOutPost = false;
+let staleReason: string | null = null;
 if (Astro.request.method === 'POST') {
+  // Withdrawal ends a publication under the editor's own credentials — a
+  // cross-site form must not be able to drive it, so it takes the same
+  // origin check as approval before the body is read.
+  if (!isSameOrigin(Astro.request, Astro.url.origin)) {
+    return new Response('Forbidden', { status: 403 });
+  }
   const form = await Astro.request.formData();
   withdrawnId = String(form.get('article_id') ?? '');
   const reason = String(form.get('reason') ?? '');
-  if (withdrawnId !== '' && reason.trim() !== '') {
+  if (signedOut) {
+    // No token, so publication did not end; the typed reason goes back
+    // into the form rather than into a redirect's void.
+    signedOutPost = true;
+    staleReason = reason === '' ? null : reason;
+  } else if (withdrawnId !== '' && reason.trim() !== '') {
     try {
       withdrawal = await api.withdraw(withdrawnId, reason);
     } catch (error) {
@@ -80,7 +109,13 @@ const initials = (record?.approval.approver_name ?? '')
 ---
 
 <ReaderLayout lang={lang} title={`epiloYES — ${t.audit}`} description={reader.tagline}>
-  <EditorChrome lang={lang} session={session} active="audit" note={t.readOnlyAccess}>
+  <EditorChrome
+    lang={lang}
+    session={session}
+    active="audit"
+    note={t.readOnlyAccess}
+    previewData={record?.fixture === true}
+  >
     <form class="trace" method="get" action={here}>
       <div class="field">
         <label for="trace-id">{t.traceLabel}</label>
@@ -94,6 +129,22 @@ const initials = (record?.approval.approver_name ?? '')
       <span class="rows">{record === null ? '0 rows' : '1 row'}</span>
     </div>
 
+    {
+      signedOutPost && (
+        <div class="banner banner-warn">
+          <span class="banner-label">{t.notRecordedTitle}</span>
+          <span class="banner-body">
+            {t.signedOutMidPost}
+            {/* If the trace cannot be re-read without a token there is no
+                form to put the reason back into — the notice carries it. */}
+            {staleReason !== null && record === null && ` «${staleReason}»`}
+          </span>
+          <a class="banner-link" href={`/${lang}/editor/signin`}>
+            {t.signIn}
+          </a>
+        </div>
+      )
+    }
     {
       withdrawal !== null && (
         <div class:list={['banner', { 'banner-warn': !withdrawal.recorded }]}>
@@ -245,7 +296,13 @@ const initials = (record?.approval.approver_name ?? '')
                   <input type="hidden" name="article_id" value={record.article_id} />
                   <div class="field">
                     <label for="withdraw-reason">{t.withdrawReasonLabel}</label>
-                    <input class="input" id="withdraw-reason" name="reason" required />
+                    <input
+                      class="input"
+                      id="withdraw-reason"
+                      name="reason"
+                      value={record.article_id === withdrawnId ? (staleReason ?? '') : ''}
+                      required
+                    />
                   </div>
                   <div class="withdraw-actions">
                     <button class="btn btn-primary" type="submit">{t.withdraw}</button>
@@ -317,6 +374,10 @@ const initials = (record?.approval.approver_name ?? '')
   .banner-body {
     font-size: 13px;
     max-width: 80ch;
+  }
+  .banner-link {
+    font-size: 13px;
+    color: var(--color-accent-400);
   }
   .notice {
     margin: 0;

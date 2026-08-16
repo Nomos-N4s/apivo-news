@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  approvalRecordLine,
   createEditorialApi,
   EditorialApiError,
   formatItemCost,
@@ -48,6 +49,14 @@ describe('the fixture client (no API_BASE_URL)', () => {
   it('treats an empty base URL like an absent one', async () => {
     const page = await createEditorialApi('').queue();
     expect(page.items.length).toBeGreaterThan(0);
+  });
+
+  it('declares every fixture answer as fixture data', async () => {
+    // The chrome's preview marker keys on this flag: invented numbers
+    // must carry their provenance whoever is signed in.
+    expect((await api.queue()).fixture).toBe(true);
+    expect((await api.sources()).fixture).toBe(true);
+    expect((await api.provenance(''))?.fixture).toBe(true);
   });
 });
 
@@ -143,6 +152,15 @@ describe('editorial endpoints not deployed yet', () => {
     const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
     const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).queue();
     expect(page.items.length).toBeGreaterThan(0);
+    // The fallback declares itself: a signed-in editor with an API base
+    // URL but absent routes still sees fixture data flagged as fixture.
+    expect(page.fixture).toBe(true);
+  });
+
+  it('does not mark a real API answer as fixture data', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ items: [] }));
+    const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).queue();
+    expect(page.fixture).toBeUndefined();
   });
 
   it('reports not-recorded rather than erroring when approvals 404', async () => {
@@ -403,5 +421,39 @@ describe('sources', () => {
         licence_terms: 't',
       }),
     ).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describe('approvalRecordLine', () => {
+  it('prints what the response recorded', () => {
+    expect(
+      approvalRecordLine({
+        recorded: true,
+        approved_by: 'Eleni Papadaki',
+        article_id: 'a1b2c3',
+      }),
+    ).toBe('approved_by = Eleni Papadaki · article a1b2c3');
+  });
+
+  it('names no approver at all when the response carried none (I-1)', () => {
+    // Not "approved_by = <whoever is signed in>". The approver is whoever
+    // the database wrote; borrowing another name would attribute one
+    // person's approval to another.
+    const line = approvalRecordLine({ recorded: true, article_id: 'a1b2c3' });
+    expect(line).toBe('article a1b2c3');
+    expect(line).not.toContain('approved_by');
+  });
+
+  it('treats a blank approver the same as a missing one', () => {
+    expect(approvalRecordLine({ recorded: true, approved_by: '', article_id: 'a1' })).toBe(
+      'article a1',
+    );
+  });
+
+  it('leaves out an article id the response did not carry', () => {
+    expect(approvalRecordLine({ recorded: true, approved_by: 'Markus Bauer' })).toBe(
+      'approved_by = Markus Bauer',
+    );
+    expect(approvalRecordLine({ recorded: true })).toBe('');
   });
 });

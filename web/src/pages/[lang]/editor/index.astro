@@ -3,7 +3,9 @@ import { API_BASE_URL } from 'astro:env/server';
 import EditorChrome from '../../../components/EditorChrome.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
 import {
+  approvalRecordLine,
   createEditorialApi,
+  EditorialApiError,
   formatItemCost,
   type ApprovalOutcome,
   type QueuePage,
@@ -11,6 +13,7 @@ import {
 import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings, languageName } from '../../../lib/editorial/strings';
+import { authConfigured } from '../../../lib/editorial/supabase';
 import { findPlace, isReadingLanguage } from '../../../lib/reader/axes';
 import { formatDateTime, formatItemDate, safeSourceUrl } from '../../../lib/reader/format';
 import { uiStrings } from '../../../lib/reader/strings';
@@ -32,12 +35,30 @@ const t = editorialStrings(lang);
 const reader = uiStrings(lang);
 const session = editorSession(Astro.request);
 
+// With an auth provider configured, a visitor nobody signed in belongs on
+// the sign-in screen: this page offers approval, and approval needs a
+// named editor's own token. Without a provider there is nothing to sign
+// in to, and the screen stays the fixture preview it has been.
+//
+// Only a GET is redirected. A POST is someone's finished work arriving
+// from a session that expired mid-edit; a redirect would land on the
+// sign-in page as a GET with the form's content gone, so the page
+// re-renders instead with a signed-out notice that keeps what was typed.
+const configured = authConfigured();
+const signedOut = configured && !session.authenticated;
+if (signedOut && Astro.request.method !== 'POST') {
+  return Astro.redirect(`/${lang}/editor/signin`);
+}
+
 const api = createEditorialApi(API_BASE_URL, session.token);
 
 // Approval carries the editor's intent; the database is what makes it
 // real. With no editorial API the client answers recorded:false and the
 // screen says so — it never claims a record it did not create.
 let outcome: ApprovalOutcome | null = null;
+let signedOutPost = false;
+let staleItemId: string | null = null;
+let staleAttribution: string | null = null;
 if (Astro.request.method === 'POST') {
   // Approval is a privileged, named act. A cross-site form must never be
   // able to drive it with a logged-in editor's browser — the check is in
@@ -54,7 +75,14 @@ if (Astro.request.method === 'POST') {
   // The contract requires a non-blank attribution: it becomes the
   // article's attribution block, which FR-008 renders on every item.
   const attribution = String(form.get('attribution') ?? '').trim();
-  if (sourceItemId !== '' && attribution !== '') {
+  if (signedOut) {
+    // No token, so nothing can be recorded — but the attribution is this
+    // editor's wording, and losing it to a redirect would cost the one
+    // thing on this form that was typed rather than selected.
+    signedOutPost = true;
+    staleItemId = sourceItemId === '' ? null : sourceItemId;
+    staleAttribution = attribution === '' ? null : attribution;
+  } else if (sourceItemId !== '' && attribution !== '') {
     try {
       outcome = await api.approve(sourceItemId, translationId, attribution);
     } catch (error) {
@@ -68,15 +96,31 @@ if (Astro.request.method === 'POST') {
 
 let queue: QueuePage | null = null;
 let queueFailed = false;
+let notProvisioned = false;
 try {
   queue = await api.queue();
-} catch {
-  queueFailed = true;
-  Astro.response.status = 503;
+} catch (error) {
+  if (
+    session.authenticated &&
+    error instanceof EditorialApiError &&
+    (error.status === 401 || error.status === 403)
+  ) {
+    // Signed in, yet refused: the quickstart's documented first-run
+    // state, where no account row was provisioned for this person. The
+    // service is not down, and saying it is would send the operator
+    // hunting for an outage instead of at the provisioning step.
+    notProvisioned = true;
+    Astro.response.status = 403;
+  } else {
+    queueFailed = true;
+    Astro.response.status = 503;
+  }
 }
 
 const items = queue?.items ?? [];
-const selectedId = Astro.url.searchParams.get('item');
+// A signed-out POST re-selects the item it was about, so the re-render
+// puts the preserved attribution back into its own form.
+const selectedId = Astro.url.searchParams.get('item') ?? staleItemId;
 const selected = items.find((item) => item.source_item_id === selectedId) ?? items.at(0);
 
 const here = `/${lang}/editor`;
@@ -102,14 +146,24 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
 <ReaderLayout lang={lang} title={`epiloYES — ${t.editorial}`} description={reader.tagline}>
   {/* The chrome, rail and ledger live in EditorChrome; the ledger is a
       proposed addition, so it renders only when the response carries
-      one. */}
+      one. The preview marker keys on the data's own provenance: fixture
+      numbers must be flagged even for a genuinely signed-in editor. */}
   <EditorChrome
     lang={lang}
     session={session}
     active="queue"
     queueCount={items.length}
     spend={queue?.spend}
+    previewData={queue?.fixture === true}
   >
+    {
+      notProvisioned && (
+        <div class="provision">
+          <h6>{t.notProvisionedTitle}</h6>
+          <p>{t.notProvisionedBody}</p>
+        </div>
+      )
+    }
     <div class="work">
       <div class="queue">
         <div class="queue-head">
@@ -172,10 +226,31 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
           )
         }
         {queueFailed && <p class="skip-note">{reader.unavailableBody}</p>}
-        {!queueFailed && items.length === 0 && <p class="skip-note">{t.emptyQueue}</p>}
+        {/* An unprovisioned account could not read the queue at all, so
+            the screen must not claim it is empty. */}
+        {!queueFailed && !notProvisioned && items.length === 0 && (
+          <p class="skip-note">{t.emptyQueue}</p>
+        )}
       </div>
 
       <div class="review">
+        {
+          signedOutPost && (
+            <div class="banner banner-warn">
+              <span class="banner-label">{t.notRecordedTitle}</span>
+              <span class="banner-body">
+                {t.signedOutMidPost}
+                {/* The queue may be unreadable without a token, and then
+                    there is no form to put the wording back into — so the
+                    notice itself carries it. */}
+                {staleAttribution !== null && selected === undefined && ` «${staleAttribution}»`}
+              </span>
+              <a class="banner-link" href={`/${lang}/editor/signin`}>
+                {t.signIn}
+              </a>
+            </div>
+          )
+        }
         {
           outcome !== null && (
             <div class:list={['banner', { 'banner-warn': !outcome.recorded }]}>
@@ -183,9 +258,7 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                 {outcome.recorded ? t.approvedTitle : t.notRecordedTitle}
               </span>
               <span class="banner-body">
-                {outcome.recorded
-                  ? `approved_by = ${outcome.approved_by ?? session.displayName} · article ${outcome.article_id ?? ''}`
-                  : outcome.reason}
+                {outcome.recorded ? approvalRecordLine(outcome) : outcome.reason}
               </span>
             </div>
           )
@@ -303,7 +376,11 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                         class="input"
                         id="attribution"
                         name="attribution"
-                        value={defaultAttribution(selected)}
+                        value={
+                          selected.source_item_id === staleItemId && staleAttribution !== null
+                            ? staleAttribution
+                            : defaultAttribution(selected)
+                        }
                         required
                       />
                     </div>
@@ -330,6 +407,23 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
 </ReaderLayout>
 
 <style>
+  /* — the unprovisioned-account guidance — */
+  .provision {
+    padding: var(--space-4) var(--space-6);
+    border-bottom: 2px solid var(--color-divider);
+    background: var(--color-accent-100);
+  }
+  .provision h6 {
+    margin: 0 0 var(--space-2);
+    color: var(--color-accent-800);
+  }
+  .provision p {
+    margin: 0;
+    font-size: 13px;
+    max-width: 90ch;
+    text-wrap: pretty;
+  }
+
   .work {
     display: grid;
     grid-template-columns: 400px 1fr;
@@ -457,6 +551,10 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
   .banner-body {
     font-size: 13px;
     max-width: 80ch;
+  }
+  .banner-link {
+    font-size: 13px;
+    color: var(--color-accent-400);
   }
   .empty-review {
     padding: var(--space-8) var(--space-6);

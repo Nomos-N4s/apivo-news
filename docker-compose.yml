@@ -48,12 +48,18 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: "4321"
-      # Reader pages render server-side from the Go API by service name
-      # (contract topology). Uncomment once the reader endpoints land
-      # (T023/T024, issues #26/#27) — the Go server does not register
-      # /api/v1/front yet, and until it does the pages preview from
-      # built-in fixtures.
-      # API_BASE_URL: http://api:8080
+      # Every page renders server-side from the Go API by service name
+      # (contract topology). The api publishes no host port, so this
+      # internal address is the only way to reach it.
+      API_BASE_URL: http://api:8080
+      # Supabase Auth for the editorial sign-in. Taken from the host
+      # environment (or .env) so no placeholder is baked in, exactly like
+      # the api's JWKS_URL above — and the two are halves of one setting:
+      # the web signs the editor in, the api verifies the token that
+      # sign-in produced. Unset, the sign-in page says so and the
+      # editorial screens keep their fixture preview.
+      PUBLIC_SUPABASE_URL: ${PUBLIC_SUPABASE_URL:-}
+      PUBLIC_SUPABASE_ANON_KEY: ${PUBLIC_SUPABASE_ANON_KEY:-}
     ports:
       - "127.0.0.1:4321:4321"
     depends_on:

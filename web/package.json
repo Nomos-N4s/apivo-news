@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@astrojs/node": "^11.1.2",
+    "@supabase/ssr": "^0.12.4",
     "astro": "^7.2.2"
   },
   "devDependencies": {
