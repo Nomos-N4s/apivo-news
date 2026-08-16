@@ -257,7 +257,7 @@ describe('noticeForBulk', () => {
 });
 
 describe('noticeForRowRefusal', () => {
-  it('explains what a delete held by evidence means, after the API says it', () => {
+  it('explains a delete held by evidence in the reading language, keeping the API’s words as the record', () => {
     const notice = noticeForRowRefusal(
       {
         recorded: false,
@@ -268,8 +268,10 @@ describe('noticeForRowRefusal', () => {
     );
     expect(notice.tone).toBe('refused');
     expect(notice.label).toBe(t.notRecordedTitle);
-    // The count the server named comes first; the meaning follows it.
-    expect(notice.body).toBe(`this source has 14 retrieved items on record ${t.deleteRefusedBody}`);
+    // The explanation is read; the server's English detail — which names
+    // the count — is quoted, not spliced into a Greek sentence.
+    expect(notice.body).toBe(t.deleteRefusedBody);
+    expect(notice.record).toEqual(['this source has 14 retrieved items on record']);
   });
 
   it('adds no evidence explanation to a refusal that is not one', () => {

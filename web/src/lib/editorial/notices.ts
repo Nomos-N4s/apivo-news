@@ -178,10 +178,14 @@ export function noticeForSourceEdit(
  * One row's refusal inside a bulk result (#118, #121). A delete the
  * database held back for evidence (409) gets the explanation the status
  * code alone does not carry: those retrieved items are the start of every
- * published article's provenance chain, and deactivation is the action
- * that does work. The API's own words come first — it names the count —
- * and the explanation follows them; nothing is converted into an action
- * the editor did not choose.
+ * published article's provenance chain.
+ *
+ * The API's detail is English prose written for operators, and it names
+ * the count — the fact the editor needs. Concatenating it with a Greek or
+ * German sentence would switch language mid-line and say the same thing
+ * twice, so it goes where the response's own words belong on every other
+ * notice: the record line. The body is the explanation in the language
+ * the editor is reading.
  */
 export function noticeForRowRefusal(
   outcome: SourceActionOutcome,
@@ -192,10 +196,8 @@ export function noticeForRowRefusal(
   return {
     tone: 'refused',
     label: t.notRecordedTitle,
-    body: heldByEvidence
-      ? [words, t.deleteRefusedBody].filter((part) => part !== '').join(' ')
-      : words,
-    record: [],
+    body: heldByEvidence ? t.deleteRefusedBody : words,
+    record: heldByEvidence && words !== '' ? [words] : [],
   };
 }
 
