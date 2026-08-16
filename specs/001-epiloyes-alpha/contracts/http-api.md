@@ -151,6 +151,36 @@ Withdrawal ends publication and preserves every record (FR-016).
   alpha scope).
 - 201: the source. 409: duplicate feed URL.
 
+### GET /api/v1/editorial/sources
+
+The registered feeds and their poll state — the licensing invariant made
+visible, and `source.active`'s one read path.
+
+- Query: `active` (optional, exactly `true` or `false`), `limit`,
+  `cursor`. Keyset on `(created_at desc, id desc)`; unknown and repeated
+  query parameters are 400, like the queue's.
+- 200: `{ items: [{ id, name, url, language, jurisdiction, licence_terms,
+  usage_rule, permission_evidence|null, active, last_polled_at|null,
+  created_at }], next_cursor: string|null, cycle: { retrieved,
+  duplicates_skipped, failures: [name, …] } }`. `url` is the same column
+  the registration wrote, under one name across both source endpoints.
+  The licensing fields are the **current** source row, and the contract
+  says so: the legal basis of anything already retrieved is the
+  retrieval-time snapshot on `source_item` (I-4), which the provenance
+  endpoint serves and this list deliberately does not.
+  `permission_evidence` is returned, behind the editor gate — the screen
+  exists to make the licensing basis visible, and it is what separates a
+  lawful `full_text` source from an impossible one.
+  `cycle` sums each **active** source's last-poll counters (0007's
+  `last_poll_retrieved`/`last_poll_duplicates`) and lists by name the
+  active feeds whose `last_poll_error` is set — readings of the poll
+  state, never invented figures. `failures` is sorted by name, `[]`
+  never null.
+- 400: unparseable `limit`, an `active` that is not exactly true/false,
+  a cursor this endpoint did not issue, or an unknown or repeated
+  parameter.
+- 401 without token; 403 for non-editors.
+
 ### GET /api/v1/editorial/articles/{id}/provenance
 
 The five-minute audit, served from `article_provenance` (I-5).

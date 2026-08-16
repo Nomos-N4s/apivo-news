@@ -245,7 +245,11 @@ func TestTheDocumentSurvivesTheReaderCatchAll(t *testing.T) {
 
 // TestEditorialPatternsAreReachable proves the editorial list is not
 // bookkeeping either: every pattern is answered by a real handler, and every
-// one of them sits under the prefix the composition root mounts.
+// one of them sits under the prefix the composition root mounts. The module
+// answers anything under its prefix it did not route in problem+json - so,
+// like the reader probe above, a pattern that lost its registration has to
+// be caught by the catch-all's detail rather than by a status code the
+// catch-all would dress up as an ordinary answer.
 func TestEditorialPatternsAreReachable(t *testing.T) {
 	t.Parallel()
 	h := editorial.NewHandler(discardLogger(), unreachableStore{}, alwaysEditor{})
@@ -264,10 +268,18 @@ func TestEditorialPatternsAreReachable(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer probe")
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)
-			// The empty body is rejected by the handler itself; a pattern
-			// nobody registered would be answered by the mux with a 404.
-			if rec.Code == http.StatusNotFound {
-				t.Fatalf("%s is listed by Patterns() but the router does not serve it", pattern)
+			// The empty body or store failure is answered by the handler
+			// itself; a pattern nobody registered falls to the catch-all,
+			// whose two answers are named below.
+			var problem struct {
+				Detail string `json:"detail"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+				t.Fatalf("answer to %s %s is not problem+json: %v (body %q)", method, path, err, rec.Body.String())
+			}
+			if strings.Contains(problem.Detail, "no such endpoint") ||
+				strings.Contains(problem.Detail, "is not allowed on this endpoint") {
+				t.Fatalf("%s is listed by Patterns() but the catch-all answered it: %q", pattern, problem.Detail)
 			}
 		})
 	}
@@ -287,6 +299,14 @@ type unreachableStore struct{}
 
 func (unreachableStore) CreateSource(context.Context, editorial.NewSource) (editorial.Source, error) {
 	return editorial.Source{}, errors.New("the route probe must not reach the store")
+}
+
+func (unreachableStore) ListSources(context.Context, editorial.SourcesQuery) (editorial.SourcesPage, error) {
+	return editorial.SourcesPage{}, errors.New("the route probe must not reach the store")
+}
+
+func (unreachableStore) LastPollCycle(context.Context) (editorial.PollCycle, error) {
+	return editorial.PollCycle{}, errors.New("the route probe must not reach the store")
 }
 
 func (unreachableStore) ReviewQueue(context.Context, editorial.QueueQuery) (editorial.QueuePage, error) {

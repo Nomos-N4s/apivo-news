@@ -49,6 +49,14 @@ type approvalStore struct {
 	gotEditorID  uuid.UUID
 }
 
+func (s *approvalStore) ListSources(context.Context, editorial.SourcesQuery) (editorial.SourcesPage, error) {
+	return editorial.SourcesPage{}, errUnexpectedCall
+}
+
+func (s *approvalStore) LastPollCycle(context.Context) (editorial.PollCycle, error) {
+	return editorial.PollCycle{}, errUnexpectedCall
+}
+
 func (s *approvalStore) CreateSource(context.Context, editorial.NewSource) (editorial.Source, error) {
 	return editorial.Source{}, errUnexpectedCall
 }

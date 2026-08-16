@@ -41,6 +41,14 @@ type queueStore struct {
 	got  editorial.QueueQuery
 }
 
+func (s *queueStore) ListSources(context.Context, editorial.SourcesQuery) (editorial.SourcesPage, error) {
+	return editorial.SourcesPage{}, errUnexpectedCall
+}
+
+func (s *queueStore) LastPollCycle(context.Context) (editorial.PollCycle, error) {
+	return editorial.PollCycle{}, errUnexpectedCall
+}
+
 func (s *queueStore) CreateSource(context.Context, editorial.NewSource) (editorial.Source, error) {
 	return editorial.Source{}, errUnexpectedCall
 }

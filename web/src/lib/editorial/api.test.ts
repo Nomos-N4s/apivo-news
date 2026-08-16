@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  allSources,
   approvalRecordLine,
   createEditorialApi,
   EditorialApiError,
@@ -29,6 +30,27 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+/**
+ * Answers each call with the next response; the last repeats. Factories,
+ * not Response instances: a body can only be read once, and the repeating
+ * last answer must be fresh every time.
+ */
+function respondingInTurn(responses: readonly (() => Response)[]): {
+  calls: { url: URL; init: RequestInit | undefined }[];
+  fetchImpl: typeof fetch;
+} {
+  const calls: { url: URL; init: RequestInit | undefined }[] = [];
+  const fetchImpl: typeof fetch = (input, init) => {
+    const respond = responses[Math.min(calls.length, responses.length - 1)];
+    calls.push({ url: new URL(input instanceof URL ? input.href : String(input)), init });
+    if (respond === undefined) {
+      throw new Error('respondingInTurn needs at least one response');
+    }
+    return Promise.resolve(respond());
+  };
+  return { calls, fetchImpl };
 }
 
 describe('the fixture client (no API_BASE_URL)', () => {
@@ -188,11 +210,11 @@ describe('editorial endpoints not deployed yet', () => {
   });
 
   it('falls back to fixtures when the source list 404s', async () => {
-    // POST /editorial/sources exists on the API; the list does not, so a
-    // 404 there must not take the screen down.
+    // A deployment can serve the reader while the editorial prefix is
+    // unmounted, so a 404 there must not take the screen down.
     const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
     const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources();
-    expect(page.sources.length).toBeGreaterThan(0);
+    expect(page.items.length).toBeGreaterThan(0);
   });
 
   it('still surfaces 401 on the source list — that is a real answer', async () => {
@@ -420,7 +442,7 @@ describe('the source list payload', () => {
   const validSource = {
     id: 's1',
     name: 'X',
-    feed_path: '/rss',
+    url: 'https://x.example/rss',
     language: 'de',
     jurisdiction: 'DE',
     usage_rule: 'extract_and_link',
@@ -429,16 +451,33 @@ describe('the source list payload', () => {
     last_polled_at: '2026-08-14T06:12:00Z',
   };
 
-  it('accepts a well-formed list', async () => {
+  it('accepts the endpoint page shape, url column included', async () => {
     const { fetchImpl } = respondingWith(
-      jsonResponse({ sources: [validSource], cycle: validCycle }),
+      jsonResponse({ items: [validSource], next_cursor: null, cycle: validCycle }),
     );
     const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources();
-    expect(page.sources).toHaveLength(1);
+    expect(page.items).toHaveLength(1);
+    // One column, one name, across both source endpoints (#86).
+    expect(page.items.at(0)?.url).toBe('https://x.example/rss');
+    // The cycle is the API's reading of the poll state, carried whole.
+    expect(page.cycle).toEqual(validCycle);
+    expect(page.fixture).toBeUndefined();
   });
 
   it('rejects a body whose poll cycle is missing — the screen dereferences it', async () => {
-    const { fetchImpl } = respondingWith(jsonResponse({ sources: [validSource] }));
+    const { fetchImpl } = respondingWith(jsonResponse({ items: [validSource] }));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources(),
+    ).rejects.toBeInstanceOf(EditorialApiError);
+  });
+
+  it('rejects a row without the url column', async () => {
+    // The pre-#86 wire name; a server still sending feed_path is
+    // malformed under this client, not silently linkless.
+    const { url, ...renamed } = validSource;
+    const { fetchImpl } = respondingWith(
+      jsonResponse({ items: [{ ...renamed, feed_path: url }], next_cursor: null, cycle: validCycle }),
+    );
     await expect(
       createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources(),
     ).rejects.toBeInstanceOf(EditorialApiError);
@@ -449,7 +488,8 @@ describe('the source list payload', () => {
     // mid-render; rejecting here becomes the page's calm 503 instead.
     const { fetchImpl } = respondingWith(
       jsonResponse({
-        sources: [{ ...validSource, last_polled_at: 'not a date' }],
+        items: [{ ...validSource, last_polled_at: 'not a date' }],
+        next_cursor: null,
         cycle: validCycle,
       }),
     );
@@ -461,7 +501,8 @@ describe('the source list payload', () => {
   it('accepts a never-polled source, whose timestamp is null', async () => {
     const { fetchImpl } = respondingWith(
       jsonResponse({
-        sources: [{ ...validSource, last_polled_at: null }],
+        items: [{ ...validSource, last_polled_at: null }],
+        next_cursor: null,
         cycle: validCycle,
       }),
     );
@@ -471,17 +512,72 @@ describe('the source list payload', () => {
   });
 });
 
+describe('allSources', () => {
+  const cycle = { retrieved: 3, duplicates_skipped: 1, failures: [] };
+  const row = (name: string) => ({
+    id: name,
+    name,
+    url: `https://x.example/${name}`,
+    language: 'de',
+    jurisdiction: 'DE',
+    licence_terms: 'terms',
+    usage_rule: 'extract_and_link',
+    permission_evidence: null,
+    active: true,
+    last_polled_at: null,
+    created_at: '2026-08-01T09:00:00Z',
+  });
+
+  it('follows next_cursor to exhaustion — the 21st source renders (#86)', async () => {
+    const { calls, fetchImpl } = respondingInTurn([
+      () => jsonResponse({ items: [row('a'), row('b')], next_cursor: 'c1', cycle }),
+      () => jsonResponse({ items: [row('c')], next_cursor: null, cycle }),
+    ]);
+    const list = await allSources(createEditorialApi('http://api:8080', 'jwt', fetchImpl));
+
+    expect(list.items.map((s) => s.name)).toEqual(['a', 'b', 'c']);
+    expect(list.truncated).toBe(false);
+    expect(list.cycle).toEqual(cycle);
+    // Two round trips: the first without a cursor, the second echoing the
+    // first page's next_cursor, both at the contract's maximum limit.
+    expect(calls).toHaveLength(2);
+    expect(calls.at(0)?.url.searchParams.get('cursor')).toBeNull();
+    expect(calls.at(0)?.url.searchParams.get('limit')).toBe('100');
+    expect(calls.at(1)?.url.searchParams.get('cursor')).toBe('c1');
+  });
+
+  it('declares truncation when the page bound is hit with a cursor on offer', async () => {
+    // A cursor chain that never exhausts: the walk must stop at its
+    // bound and say the list is incomplete, never loop or stay silent.
+    const { calls, fetchImpl } = respondingInTurn([
+      () => jsonResponse({ items: [row('endless')], next_cursor: 'again', cycle }),
+    ]);
+    const list = await allSources(createEditorialApi('http://api:8080', 'jwt', fetchImpl), 3);
+
+    expect(calls).toHaveLength(3);
+    expect(list.items).toHaveLength(3);
+    expect(list.truncated).toBe(true);
+  });
+
+  it('carries the fixture flag through, and fixtures are never truncated', async () => {
+    const list = await allSources(createEditorialApi(undefined));
+    expect(list.fixture).toBe(true);
+    expect(list.truncated).toBe(false);
+    expect(list.items.length).toBeGreaterThan(0);
+  });
+});
+
 describe('sources', () => {
   it('lists configured feeds and the deduplicating poll cycle (FR-014)', async () => {
     const page = await createEditorialApi(undefined).sources();
-    expect(page.sources.length).toBeGreaterThan(0);
+    expect(page.items.length).toBeGreaterThan(0);
     expect(page.cycle.duplicates_skipped).toBeGreaterThan(0);
     expect(page.cycle.failures.length).toBeGreaterThan(0);
   });
 
   it('shows no source with a full_text rule — unreachable without evidence (FR-004)', async () => {
     const page = await createEditorialApi(undefined).sources();
-    for (const source of page.sources) {
+    for (const source of page.items) {
       expect(source.usage_rule).toBe('extract_and_link');
       expect(source.permission_evidence).toBeNull();
     }
