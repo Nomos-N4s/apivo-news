@@ -3,6 +3,8 @@
 -- recreated; a view holds no data, so nothing is lost. The underlying
 -- evidence - articles, items, snapshots, places, costs - is untouched.
 
+drop index domain_event_article_id_idx;
+
 drop view article_provenance;
 
 create view article_provenance as

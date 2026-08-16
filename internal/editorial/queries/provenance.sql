@@ -58,7 +58,20 @@ select
                     'occurred_at', e.occurred_at,
                     'payload', e.payload
                 )
-                order by e.occurred_at, e.id
+                -- The tie-break is semantic, not random: approve-and-publish
+                -- writes both events in one transaction, so occurred_at -
+                -- the transaction timestamp - is identical for the pair, and
+                -- breaking the tie on a random uuid would show publication
+                -- before approval on half of all audited articles. Lifecycle
+                -- order is the truth the timeline exists to state.
+                order by e.occurred_at,
+                    case e.type
+                        when 'article.approved' then 0
+                        when 'article.published' then 1
+                        when 'article.withdrawn' then 2
+                        else 3
+                    end,
+                    e.id
             )
             from domain_event e
             where e.payload->>'article_id' = v.article_id::text

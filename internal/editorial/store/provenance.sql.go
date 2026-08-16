@@ -49,7 +49,14 @@ select
                     'occurred_at', e.occurred_at,
                     'payload', e.payload
                 )
-                order by e.occurred_at, e.id
+                order by e.occurred_at,
+                    case e.type
+                        when 'article.approved' then 0
+                        when 'article.published' then 1
+                        when 'article.withdrawn' then 2
+                        else 3
+                    end,
+                    e.id
             )
             from domain_event e
             where e.payload->>'article_id' = v.article_id::text

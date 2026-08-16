@@ -317,4 +317,19 @@ func assertChainComplete(t *testing.T, got provenanceBody, want drillArticle, su
 	if !slices.IsSortedFunc(occurred, time.Time.Compare) {
 		t.Errorf("events are not in occurrence order: %v", types)
 	}
+	// The timestamp sort is non-strict, and approve-and-publish writes both
+	// events with one transaction timestamp - so the lifecycle order has to
+	// be asserted by position, or a random tie-break would pass this test on
+	// half of all runs. The timeline's whole claim is that approval precedes
+	// publication precedes withdrawal.
+	lifecycle := []string{"article.approved", "article.published", "article.withdrawn"}
+	positions := make([]int, 0, len(lifecycle))
+	for _, step := range lifecycle {
+		if at := slices.Index(types, step); at >= 0 {
+			positions = append(positions, at)
+		}
+	}
+	if !slices.IsSorted(positions) {
+		t.Errorf("events %v do not follow the lifecycle order", types)
+	}
 }

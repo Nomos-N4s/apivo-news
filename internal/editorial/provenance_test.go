@@ -153,6 +153,14 @@ func fullChain() editorial.Provenance {
 				OccurredAt: time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC),
 				Payload:    json.RawMessage(`{"article_id":"8f1b6c1e-1f5a-4a2f-9e1a-2b3c4d5e6f70","reason":"the source retracted the story"}`),
 			},
+			// A payload that is not an object: the fallback answers the
+			// recorded bytes verbatim, because the record is the detail even
+			// when it has an unexpected shape.
+			{
+				Type:       "source.note",
+				OccurredAt: time.Date(2026, 8, 15, 9, 30, 0, 0, time.UTC),
+				Payload:    json.RawMessage(`"free text"`),
+			},
 		},
 	}
 }
@@ -264,8 +272,8 @@ func TestProvenanceResponseShape(t *testing.T) {
 	if got.Withdrawal.WithdrawnBy != "00000000-0000-4000-8000-000000000001" {
 		t.Errorf("withdrawn_by = %q", got.Withdrawal.WithdrawnBy)
 	}
-	if len(got.Events) != 2 {
-		t.Fatalf("events = %d rows, want 2", len(got.Events))
+	if len(got.Events) != 3 {
+		t.Fatalf("events = %d rows, want 3", len(got.Events))
 	}
 	if got.Events[0].Type != "article.approved" || got.Events[1].Type != "article.withdrawn" {
 		t.Errorf("event types = %q, %q", got.Events[0].Type, got.Events[1].Type)
@@ -277,6 +285,11 @@ func TestProvenanceResponseShape(t *testing.T) {
 	}
 	if want := `{"reason":"the source retracted the story"}`; got.Events[1].Detail != want {
 		t.Errorf("events[1].detail = %q, want %q", got.Events[1].Detail, want)
+	}
+	// A non-object payload passes through verbatim - the raw record, quotes
+	// included, never a paraphrase and never a 500.
+	if want := `"free text"`; got.Events[2].Detail != want {
+		t.Errorf("events[2].detail = %q, want %q", got.Events[2].Detail, want)
 	}
 
 	// The full field set, so an accidentally added or dropped top-level key

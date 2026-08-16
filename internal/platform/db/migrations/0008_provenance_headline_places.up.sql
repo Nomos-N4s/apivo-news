@@ -60,7 +60,12 @@ select
     -- untranslated one the feed's original title. Approval refuses an
     -- untitled untranslated origin, so for every article this can name
     -- the coalesce is non-null.
-    coalesce(t.headline, si.original_title) as headline,
+    -- The final '' keeps the audit readable for a row nothing in the schema
+    -- forbids: an untranslated article over an untitled item. The Go approval
+    -- flow refuses to create one, but the database accepts it, and an audit
+    -- endpoint that answers 500 for exactly the anomalous record an auditor
+    -- needs to inspect would be worse than showing the absence.
+    coalesce(t.headline, si.original_title, '') as headline,
     -- Where the article published to. Slugs, not ids: the audit's answer
     -- is "visible on /el/munich". Sorted so the same article always
     -- reports the same list, and empty (never null) for the pre-0006
@@ -84,3 +89,11 @@ join source s on s.id = si.source_id;
 
 comment on view article_provenance is
     'I-5: for any article - source, licence snapshot at retrieval, model, prompt version, cost, named approver, places and any withdrawal - in a single query.';
+
+-- The audit endpoint lists an article's domain events by payload->>'article_id'.
+-- Without this the read is a sequential scan of the whole append-only stream,
+-- degrading with total volume across all articles rather than with the one
+-- article's chain - the wrong scaling for a five-minute promise.
+create index domain_event_article_id_idx
+    on domain_event ((payload->>'article_id'))
+    where payload ? 'article_id';
