@@ -195,7 +195,13 @@ export const SOURCE_FIXTURES: readonly SourceRow[] = [
 export const POLL_CYCLE_FIXTURE: PollCycle = {
   retrieved: 14,
   duplicates_skipped: 9,
-  failures: ['Αιγαίο Νέα unreachable at 06:20 — nothing partial stored'],
+  // Names, not prose: the API builds this as `array_agg(name) filter
+  // (where last_poll_error is not null)` over the ACTIVE sources, so a
+  // sentence here would model a payload it never sends, and a paused or
+  // never-polled feed could not appear in it at all. Bayerischer
+  // Rundblick is active and has been polled, so it is the one source in
+  // this registry that could have failed its last cycle.
+  failures: ['Bayerischer Rundblick'],
 };
 
 /**

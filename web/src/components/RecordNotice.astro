@@ -13,12 +13,17 @@ import type { RecordNoticeModel } from '../lib/editorial/notices';
 // server-rendered documents — a POST re-renders the whole page — so the
 // notice is in the HTML before the region exists, and a live region only
 // speaks for changes made after it was parsed. The roles still classify
-// the content correctly for anyone reading the page, and they would
-// announce if a notice were ever inserted into a live document; what
-// carries the message today is position, at the top of the pane the
-// editor just acted in. Moving focus to it after a POST would need
-// client JavaScript these screens deliberately do without — recorded as
-// issue #129 rather than smuggled in here.
+// the content correctly, and they would announce if a notice were ever
+// inserted into a live document.
+//
+// So an outcome takes focus instead (#129). This is the one place
+// `autofocus` is right rather than rude: the POST re-rendered the whole
+// document and the browser has ALREADY thrown focus to the top of it, so
+// nothing is being stolen — the editor is simply put at the sentence
+// describing what just happened to the record, instead of having to go
+// looking for it. It is scoped to outcomes for exactly that reason: the
+// context tone renders on ordinary navigation, where taking focus would
+// be the usual autofocus mistake, and it never gets the attribute.
 interface Props {
   notice: RecordNoticeModel;
   /**
@@ -31,12 +36,15 @@ interface Props {
 const { notice, action } = Astro.props;
 const role =
   notice.tone === 'refused' ? 'alert' : notice.tone === 'recorded' ? 'status' : 'note';
+// Recorded and refused both answer an action the editor just took; the
+// context tone describes what they are about to review.
+const isOutcome = notice.tone !== 'context';
 ---
 
 {/* The role wraps the words only. An alert should not contain interactive
     content, so the adjacent action sits outside it, in the same row. */}
 <div class:list={['record-notice', `tone-${notice.tone}`]}>
-  <span class="announced" role={role}>
+  <span class="announced" role={role} tabindex={isOutcome ? -1 : undefined} autofocus={isOutcome}>
     <span class="label">{notice.label}</span>
     <span class="body">{notice.body}</span>
     {
@@ -69,6 +77,15 @@ const role =
   /* A real box, not `display: contents`: the element carries the live
      region's role, and a contents box can drop out of the accessibility
      tree in some browser and screen-reader pairings. */
+  /* Focused programmatically, never by tabbing: the ring would otherwise
+     appear around a paragraph the editor did not navigate to. */
+  .announced:focus {
+    outline: none;
+  }
+  .announced:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
   .announced {
     display: flex;
     align-items: baseline;

@@ -9,10 +9,7 @@ import {
   formatItemCost,
   formatSpend,
   runBulkAction,
-  sourceView,
   spendPercent,
-  viewSources,
-  type SourceRow,
   type SourceRowOutcome,
 } from './api';
 import { PROVENANCE_FIXTURES, QUEUE_FIXTURES } from './fixtures';
@@ -659,40 +656,6 @@ describe('source management (#118)', () => {
     ];
     expect(bulkCounts(outcomes)).toEqual({ recorded: 2, refused: 1 });
     expect(bulkCounts([])).toEqual({ recorded: 0, refused: 0 });
-  });
-});
-
-describe('the sources view toggle', () => {
-  const row = (id: string, active: boolean): SourceRow => ({
-    id,
-    name: id,
-    url: `https://x.example/${id}`,
-    language: 'de',
-    jurisdiction: 'DE',
-    licence_terms: 'terms',
-    usage_rule: 'extract_and_link',
-    permission_evidence: null,
-    active,
-    last_polled_at: null,
-  });
-
-  it('parses the query parameter and defaults anything else to all', () => {
-    expect(sourceView('active')).toBe('active');
-    expect(sourceView('inactive')).toBe('inactive');
-    expect(sourceView('all')).toBe('all');
-    expect(sourceView(null)).toBe('all');
-    expect(sourceView('bogus')).toBe('all');
-  });
-
-  it('puts active sources first, keeping the list order within groups', () => {
-    const shown = viewSources([row('a', false), row('b', true), row('c', false), row('d', true)], 'all');
-    expect(shown.map((s) => s.id)).toEqual(['b', 'd', 'a', 'c']);
-  });
-
-  it('filters to one state when the toggle says so', () => {
-    const items = [row('a', false), row('b', true)];
-    expect(viewSources(items, 'active').map((s) => s.id)).toEqual(['b']);
-    expect(viewSources(items, 'inactive').map((s) => s.id)).toEqual(['a']);
   });
 });
 

@@ -248,10 +248,46 @@ export interface EditorialStrings {
    */
   readonly deactivationKeepsRecord: string;
   /** The all/active/inactive toggle over the table. */
-  readonly viewLabel: string;
   readonly viewAll: string;
   readonly viewActive: string;
   readonly viewInactive: string;
+  /**
+   * Filters over the walked registry (#120). Every count beside an option
+   * is computed with the other filters still applied, so the numbers
+   * describe the list the editor would get by choosing it.
+   */
+  readonly filtersHeading: string;
+  readonly filterState: string;
+  readonly filterLanguage: string;
+  readonly filterJurisdiction: string;
+  readonly filterHealth: string;
+  readonly filterSearch: string;
+  readonly filterSearchHint: string;
+  readonly filterApply: string;
+  readonly filterAny: string;
+  /** Poll health, worded as the payload permits — see `healthFailingNote`. */
+  readonly healthHealthy: string;
+  readonly healthFailing: string;
+  readonly healthNever: string;
+  /**
+   * A paused feed: the cycle covers active sources only, so its absence
+   * from the failure list is no reading rather than a clean one (#120).
+   */
+  readonly healthUnpolled: string;
+  /**
+   * The API reports failures as the names of feeds whose LAST CYCLE
+   * failed, with no per-source error text (issue #122). The filter says
+   * that plainly rather than implying a standing diagnosis.
+   */
+  readonly healthFailingNote: string;
+  /** The label on an option, with how many rows it would show. */
+  readonly filterOptionCount: (label: string, count: number) => string;
+  /** A chip naming one active filter, and the way to drop it. */
+  readonly filterChipLabel: (dimension: string, value: string) => string;
+  readonly filterRemove: (dimension: string, value: string) => string;
+  readonly filtersClear: string;
+  /** No row matched: name what did the narrowing, offer the way out. */
+  readonly filteredEmpty: string;
 }
 
 const EL: EditorialStrings = {
@@ -419,10 +455,29 @@ const EL: EditorialStrings = {
   deactivateInstead: 'Απενεργοποίηση αντ’ αυτού',
   deactivationKeepsRecord:
     'Η λήψη σταμάτησε. Τα ανακτημένα τεκμήρια και τα δημοσιευμένα άρθρα παραμένουν στην εγγραφή.',
-  viewLabel: 'Προβολή',
   viewAll: 'Όλες',
   viewActive: 'Ενεργές',
   viewInactive: 'Ανενεργές',
+  filtersHeading: 'Φίλτρα',
+  filterState: 'Κατάσταση',
+  filterLanguage: 'Γλώσσα',
+  filterJurisdiction: 'Δικαιοδοσία',
+  filterHealth: 'Κατάσταση λήψης',
+  filterSearch: 'Αναζήτηση',
+  filterSearchHint: 'όνομα ή διεύθυνση ροής',
+  filterApply: 'Εφαρμογή',
+  filterAny: 'Όλες',
+  healthHealthy: 'Χωρίς αστοχία',
+  healthFailing: 'Απέτυχε στον τελευταίο κύκλο',
+  healthNever: 'Δεν έχει γίνει ποτέ λήψη',
+  healthUnpolled: 'Σε παύση — εκτός του τελευταίου κύκλου',
+  healthFailingNote:
+    'Το API αναφέρει μόνο ποιες ενεργές ροές απέτυχαν στον τελευταίο κύκλο, με το όνομά τους — όχι το κείμενο του σφάλματος ούτε πόσο καιρό κρατά (ζητήθηκε στο #122).',
+  filterOptionCount: (label, count) => `${label} (${count})`,
+  filterChipLabel: (dimension, value) => `${dimension}: ${value}`,
+  filterRemove: (dimension, value) => `Αφαίρεση φίλτρου ${dimension}: ${value}`,
+  filtersClear: 'Καθαρισμός φίλτρων',
+  filteredEmpty: 'Καμία πηγή δεν ταιριάζει με αυτά τα φίλτρα:',
 };
 
 const DE: EditorialStrings = {
@@ -590,10 +645,29 @@ const DE: EditorialStrings = {
   deactivateInstead: 'Stattdessen deaktivieren',
   deactivationKeepsRecord:
     'Der Abruf ist gestoppt. Die abgerufenen Nachweise und die veröffentlichten Artikel bleiben im Register.',
-  viewLabel: 'Ansicht',
   viewAll: 'Alle',
   viewActive: 'Aktive',
   viewInactive: 'Inaktive',
+  filtersHeading: 'Filter',
+  filterState: 'Zustand',
+  filterLanguage: 'Sprache',
+  filterJurisdiction: 'Rechtsraum',
+  filterHealth: 'Abrufstand',
+  filterSearch: 'Suche',
+  filterSearchHint: 'Name oder Feed-Adresse',
+  filterApply: 'Anwenden',
+  filterAny: 'Alle',
+  healthHealthy: 'Ohne Fehlschlag',
+  healthFailing: 'Im letzten Zyklus fehlgeschlagen',
+  healthNever: 'Noch nie abgerufen',
+  healthUnpolled: 'Pausiert — nicht im letzten Zyklus',
+  healthFailingNote:
+    'Das API meldet nur, welche aktiven Feeds im letzten Zyklus fehlgeschlagen sind, mit Namen — nicht den Fehlertext und nicht, seit wann (angefragt in #122).',
+  filterOptionCount: (label, count) => `${label} (${count})`,
+  filterChipLabel: (dimension, value) => `${dimension}: ${value}`,
+  filterRemove: (dimension, value) => `Filter entfernen — ${dimension}: ${value}`,
+  filtersClear: 'Filter zurücksetzen',
+  filteredEmpty: 'Keine Quelle passt zu diesen Filtern:',
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, EditorialStrings>> = { el: EL, de: DE };
