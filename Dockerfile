@@ -10,7 +10,15 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/apivo ./cmd/apivo
+# Version stamping (issue #119): the release workflow writes the annotated
+# tag into a VERSION file at the context root (git-ignored, never committed)
+# because `wrangler deploy` builds this image itself and offers no build-arg
+# passthrough — a file in the context is the one channel every builder
+# (wrangler, compose, CI, a bare docker build) shares. No file means "dev":
+# the honest name for any image the release pipeline did not cut.
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X main.version=$(cat VERSION 2>/dev/null || echo dev)" \
+    -o /out/apivo ./cmd/apivo
 
 # Final stage: distroless static, non-root. No shell, no package manager;
 # the schema migrations are embedded in the binary itself.
