@@ -1,0 +1,194 @@
+# The release pipeline (issue #119). Releases are cut ONLY from annotated
+# semver tags: pushing v0.1.0 is the release act; nothing else deploys
+# production. main stays always-green and always-deployable, but merging
+# never deploys anything.
+#
+#   guard -> verify (the full CI matrix, reused) -> stamp + build proof
+#         -> wrangler deploy -> GitHub Release -> health probe
+#
+# Rehearsal: "Run workflow" (workflow_dispatch) from a tag ref with dry_run
+# checked runs everything except the deploy, the GitHub Release and the
+# probe. Dispatching with dry_run UNCHECKED performs a real release of that
+# tag - which is also the rollback mechanism: re-run the previous tag.
+#
+# Operator setup (one-time) and the semver discipline: docs/RELEASING.md.
+name: release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: verify, stamp and build everything; deploy and publish nothing."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# One release at a time, never cancelled: interrupting a deploy half-way is
+# strictly worse than letting it finish and releasing again.
+concurrency:
+  group: release
+
+jobs:
+  # Gate first: an unmerged or lightweight or misnamed tag is refused before
+  # a single test runs. The guard's own test suite runs first - a gate is
+  # only trustworthy while its proof is green.
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      dry_run: ${{ steps.mode.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history, all branches and tags: the guard needs origin/main
+          # and the tag object itself.
+          fetch-depth: 0
+      - name: Prove the guard itself
+        run: sh scripts/release_guard_test.sh
+      - name: Require a tag ref
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          echo "::error::the release workflow runs only from a tag ref; pick the tag under 'Use workflow from' when dispatching (got ${{ github.ref }})"
+          exit 1
+      - name: Guard the tag (annotated semver, merged to main)
+        run: sh scripts/release_guard.sh "${GITHUB_REF_NAME}" origin/main
+      - name: Record the version
+        id: tag
+        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+      - name: Record the mode
+        id: mode
+        run: echo "dry_run=${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+
+  # The full CI matrix on the tagged commit, by calling ci.yml rather than
+  # copying its jobs: what "verified" means is defined in exactly one place.
+  verify:
+    needs: guard
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: [guard, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      # gh release create writes to the repository; everything else reads.
+      contents: write
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+      DRY_RUN: ${{ needs.guard.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history and tags: the release notes walk back to the
+          # previous semver tag.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # The stamp channel is a VERSION file in the build context (git-ignored;
+      # wrangler builds the image itself and passes no build args), read by
+      # the Dockerfile into -ldflags "-X main.version=...".
+      - name: Stamp the version into the build context
+        run: printf '%s' "$VERSION" > VERSION
+
+      # Build the api image exactly as wrangler will and make the binary say
+      # its own version: a release whose artefact cannot name its tag fails
+      # here, before anything deploys.
+      - name: Prove the stamp lands in the artefact
+        run: |
+          docker build -t apivo:release-proof .
+          got=$(docker run --rm apivo:release-proof version)
+          if [ "$got" != "apivo version $VERSION" ]; then
+            echo "::error::the built binary reports '$got', expected 'apivo version $VERSION' - the version stamp did not land"
+            exit 1
+          fi
+          echo "stamp proof: $got"
+
+      - name: Generate the release notes
+        run: |
+          sh scripts/release_notes.sh "$VERSION" > release-notes.md
+          {
+            echo "## Release notes ($VERSION)"
+            echo
+            cat release-notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Everything below is the release act itself, skipped on a dry run.
+      - name: 'Dry run: stop before deploying'
+        if: env.DRY_RUN == 'true'
+        run: |
+          # Rehearse wrangler's full config parse and Worker bundle without
+          # credentials, then say loudly that nothing shipped.
+          npx --yes wrangler@4 deploy --dry-run --containers-rollout none --var PUBLIC_APP_VERSION:"$VERSION"
+          {
+            echo "## DRY RUN - nothing was deployed"
+            echo
+            echo "Guard, CI matrix, version stamp and wrangler validation all passed for $VERSION."
+            echo "No deploy, no GitHub Release, no probe."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require the Cloudflare credentials
+        if: env.DRY_RUN != 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          missing=""
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="CLOUDFLARE_API_TOKEN"
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::cannot deploy $VERSION: repository secret(s) not set: $missing - the one-time setup lives in docs/RELEASING.md (Settings > Secrets and variables > Actions). Nothing was deployed."
+            exit 1
+          fi
+
+      - name: Deploy to Cloudflare
+        if: env.DRY_RUN != 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # --var carries the version to the web container at request time
+        # (deploy/cloudflare/worker.js forwards it; the footer renders it).
+        run: npx --yes wrangler@4 deploy --var PUBLIC_APP_VERSION:"$VERSION"
+
+      - name: Create the GitHub Release
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file release-notes.md
+
+  # A release that did not come up is a failed release, reported honestly.
+  probe:
+    needs: [guard, release]
+    if: needs.guard.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+      RELEASE_HEALTH_URL: ${{ vars.RELEASE_HEALTH_URL }}
+    steps:
+      - name: Probe /healthz and /readyz
+        run: |
+          if [ -z "$RELEASE_HEALTH_URL" ]; then
+            echo "::warning::RELEASE_HEALTH_URL repository variable is not set: $VERSION was deployed but NOT probed. Nothing verified that the release actually serves. Set the variable (docs/RELEASING.md) so the next release proves itself."
+            {
+              echo "## WARNING: release $VERSION was NOT probed"
+              echo
+              echo "The RELEASE_HEALTH_URL repository variable is not set, so nothing"
+              echo "verified that the deployed release actually serves traffic."
+              echo "Set it to the deployment's base URL (docs/RELEASING.md)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          base="${RELEASE_HEALTH_URL%/}"
+          for path in /healthz /readyz; do
+            echo "probing $base$path"
+            # Retries cover the containers' cold start; after that, a refusal
+            # is a refusal: the release did not come up, so the release failed.
+            if ! curl --fail --silent --show-error --retry 10 --retry-delay 15 --retry-all-errors --max-time 20 "$base$path"; then
+              echo "::error::release $VERSION deployed but $base$path does not answer 200: the release did not come up. Roll back by re-running this workflow from the previous tag with dry_run unchecked (docs/RELEASING.md)."
+              exit 1
+            fi
+          done
+          echo "release $VERSION serves: /healthz and /readyz answered 200" >> "$GITHUB_STEP_SUMMARY"
