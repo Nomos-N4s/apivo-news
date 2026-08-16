@@ -329,9 +329,15 @@ export type Database = {
         Row: {
           active: boolean
           created_at: string
+          etag: string
           id: string
           jurisdiction: string
           language_code: string
+          last_modified: string
+          last_poll_duplicates: number
+          last_poll_error: string | null
+          last_poll_retrieved: number
+          last_polled_at: string | null
           licence_terms: string
           name: string
           permission_evidence: string | null
@@ -341,9 +347,15 @@ export type Database = {
         Insert: {
           active?: boolean
           created_at?: string
+          etag?: string
           id?: string
           jurisdiction: string
           language_code: string
+          last_modified?: string
+          last_poll_duplicates?: number
+          last_poll_error?: string | null
+          last_poll_retrieved?: number
+          last_polled_at?: string | null
           licence_terms: string
           name: string
           permission_evidence?: string | null
@@ -353,9 +365,15 @@ export type Database = {
         Update: {
           active?: boolean
           created_at?: string
+          etag?: string
           id?: string
           jurisdiction?: string
           language_code?: string
+          last_modified?: string
+          last_poll_duplicates?: number
+          last_poll_error?: string | null
+          last_poll_retrieved?: number
+          last_polled_at?: string | null
           licence_terms?: string
           name?: string
           permission_evidence?: string | null

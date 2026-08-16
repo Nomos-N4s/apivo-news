@@ -128,6 +128,18 @@ type Source struct {
 	CreatedAt          pgtype.Timestamptz
 	// Whether the crawler currently polls this feed. Pausing flips this to false; the source row, its licence terms and every retrieved item stay untouched.
 	Active bool
+	// The source's own ETag from its last answer, sent back as If-None-Match on the next conditional GET. Empty when the source has never stated one.
+	Etag string
+	// The source's own Last-Modified from its last answer, carried verbatim as an opaque token and sent back as If-Modified-Since on the next conditional GET. Empty when the source has never stated one.
+	LastModified string
+	// When the poll loop last completed an attempt on this source, success or failure alike. Null until the first poll.
+	LastPolledAt pgtype.Timestamptz
+	// Why the last poll of this source failed, URLs already redacted by the fetcher; null when it succeeded. Overwritten each cycle.
+	LastPollError pgtype.Text
+	// How many new items the last poll stored, overwritten each cycle. The last poll's outcome only - history lives in domain_event/source_item, not here.
+	LastPollRetrieved int32
+	// How many items the last poll recognised as already on record, overwritten each cycle. The last poll's outcome only - history lives in domain_event/source_item, not here.
+	LastPollDuplicates int32
 }
 
 // IMMUTABLE (I-3). Exactly what was retrieved, when, and under which licence terms (I-2, I-4). Legal evidence; never updated, never deleted.
