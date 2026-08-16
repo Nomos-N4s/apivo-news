@@ -21,11 +21,14 @@ fi
 TAG="$1"
 MAIN_REF="${2:-origin/main}"
 
+. "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/release_semver.sh"
+
 # Semver shape first: vMAJOR.MINOR.PATCH with optional pre-release/build
-# metadata (v1.2.3, v1.2.3-rc.1, v1.2.3+exp). The push trigger pattern is
-# looser than real semver, so the guard re-checks it strictly.
-if ! printf '%s' "$TAG" | grep -q -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
-    echo "::error::'$TAG' is not a semver tag (vMAJOR.MINOR.PATCH, optional -pre/+build); releases are cut only from semver tags" >&2
+# metadata (v1.2.3, v1.2.3-rc.1, v1.2.3+exp), by SemVer 2.0.0's own grammar
+# (release_semver.sh). The push trigger pattern is looser than real semver,
+# so the guard re-checks it strictly.
+if ! release_semver_ok "$TAG"; then
+    echo "::error::'$TAG' is not a semver tag (vMAJOR.MINOR.PATCH, optional -pre/+build, no leading zeroes, no empty identifiers); releases are cut only from semver tags" >&2
     exit 1
 fi
 

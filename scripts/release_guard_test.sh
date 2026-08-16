@@ -76,4 +76,14 @@ expect_fail "semver without v"       "not a semver tag"           0.1.0 main
 expect_fail "nonexistent tag"        "does not exist"             v9.9.9 main
 expect_fail "trailing garbage"       "not a semver tag"           v0.1.0.. main
 
+# SemVer 2.0.0 forbids leading zeroes in numeric identifiers and empty
+# dot-separated identifiers. They are refused for the shape alone, before
+# the tag is looked up - none of these exist in the fixture.
+expect_fail "leading zero in major"  "not a semver tag"           v01.2.3 main
+expect_fail "leading zero in patch"  "not a semver tag"           v1.2.03 main
+expect_fail "leading zero in pre"    "not a semver tag"           v1.2.3-01 main
+expect_fail "empty pre identifier"   "not a semver tag"           v1.2.3-alpha..1 main
+expect_fail "empty build identifier" "not a semver tag"           v1.2.3+build..7 main
+expect_fail "pre-release only dash"  "not a semver tag"           v1.2.3- main
+
 exit "$FAILS"
