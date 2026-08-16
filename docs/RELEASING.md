@@ -90,6 +90,18 @@ approximate** — the platform documents its rate-limiting binding that way.
 Read it as a bound on invalid-token load, roughly 60 a minute per caller
 per location, not as a quota anyone is owed.
 
+**On a custom domain, set `API_BASE_URL` as well.** The web container
+reaches the api through the deployment's own public origin, and the Worker
+derives that origin from the request that started the container — it
+cannot be known when `wrangler.jsonc` is written, and a committed guess
+would be an invented value. With two hostnames in front of one deployment
+(the `workers.dev` one and a custom domain), whichever request happens to
+wake the container pins that choice for its lifetime. Both hostnames reach
+the same Worker, so the calls still land on the right api; what pinning
+costs is a hop out and back through the wrong name, and a dependency on a
+hostname the operator may later retire. Naming it in `vars` removes the
+question.
+
 **The deployment is https-only, and says so twice.** The Worker states
 `Strict-Transport-Security: max-age=31536000; includeSubDomains` on every
 https response — `preload` deliberately not among them, since submitting a
