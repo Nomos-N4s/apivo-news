@@ -3,12 +3,18 @@ import { describe, expect, it } from 'vitest';
 import {
   allSources,
   approvalRecordLine,
+  bulkCounts,
   createEditorialApi,
   EditorialApiError,
   formatItemCost,
   formatSpend,
+  runBulkAction,
+  sourceView,
   spendPercent,
+  viewSources,
   withdrawalBanner,
+  type SourceRow,
+  type SourceRowOutcome,
 } from './api';
 import { PROVENANCE_FIXTURES, QUEUE_FIXTURES } from './fixtures';
 import { editorialStrings } from './strings';
@@ -445,6 +451,7 @@ describe('the source list payload', () => {
     url: 'https://x.example/rss',
     language: 'de',
     jurisdiction: 'DE',
+    licence_terms: 'Auszug und Verlinkung gestattet.',
     usage_rule: 'extract_and_link',
     permission_evidence: null,
     active: true,
@@ -509,6 +516,185 @@ describe('the source list payload', () => {
     await expect(
       createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources(),
     ).resolves.toBeTruthy();
+  });
+
+  it('rejects a row without the licence terms the edit form loads', async () => {
+    const { licence_terms, ...bare } = validSource;
+    void licence_terms;
+    const { fetchImpl } = respondingWith(
+      jsonResponse({ items: [bare], next_cursor: null, cycle: validCycle }),
+    );
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources(),
+    ).rejects.toBeInstanceOf(EditorialApiError);
+  });
+});
+
+describe('source management (#118)', () => {
+  const problemResponse = (status: number, detail: string): Response =>
+    new Response(JSON.stringify({ type: 'about:blank', status, detail }), {
+      status,
+      headers: { 'Content-Type': 'application/problem+json' },
+    });
+
+  it('never fakes an edit or a delete from fixtures — nothing was written', async () => {
+    const api = createEditorialApi(undefined);
+    const edit = await api.updateSource('s1', { active: false });
+    expect(edit.recorded).toBe(false);
+    expect(edit.reason).toContain('not changed');
+    const gone = await api.deleteSource('s1');
+    expect(gone.recorded).toBe(false);
+    expect(gone.reason).toContain('not deleted');
+  });
+
+  it('PATCHes the contract path with the subset supplied', async () => {
+    const { calls, fetchImpl } = respondingWith(jsonResponse({ id: 's1' }));
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).updateSource(
+      's1',
+      { licence_terms: 'New terms' },
+    );
+    expect(outcome).toEqual({ recorded: true });
+    expect(calls.at(0)?.url.pathname).toBe('/api/v1/editorial/sources/s1');
+    expect(calls.at(0)?.init?.method).toBe('PATCH');
+    expect(calls.at(0)?.init?.body).toBe(JSON.stringify({ licence_terms: 'New terms' }));
+  });
+
+  it('DELETEs the contract path and reports recorded on 204', async () => {
+    const { calls, fetchImpl } = respondingWith(new Response(null, { status: 204 }));
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).deleteSource('s1');
+    expect(outcome).toEqual({ recorded: true });
+    expect(calls.at(0)?.init?.method).toBe('DELETE');
+  });
+
+  it("carries a refused delete's own words — the 409 naming the evidence count", async () => {
+    const detail =
+      'this source cannot be deleted: 12 retrieved item(s) reference it as evidence; deactivate it instead';
+    const { fetchImpl } = respondingWith(problemResponse(409, detail));
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).deleteSource('s1');
+    // Reported, never converted: recorded stays false, the words travel,
+    // and no deactivation happened anywhere in this client.
+    expect(outcome.recorded).toBe(false);
+    expect(outcome.status).toBe(409);
+    expect(outcome.reason).toBe(detail);
+  });
+
+  it('reports a validation refusal on PATCH the same way', async () => {
+    const { fetchImpl } = respondingWith(
+      problemResponse(400, 'licence_terms is required and must not be blank'),
+    );
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).updateSource(
+      's1',
+      { licence_terms: ' ' },
+    );
+    expect(outcome).toEqual({
+      recorded: false,
+      reason: 'licence_terms is required and must not be blank',
+      status: 400,
+    });
+  });
+
+  it("distinguishes the API's 404 (unknown id) from an undeployed prefix", async () => {
+    const problem404 = respondingWith(problemResponse(404, 'no source with this id'));
+    const refused = await createEditorialApi(
+      'http://api:8080',
+      'jwt',
+      problem404.fetchImpl,
+    ).updateSource('gone', { active: false });
+    expect(refused).toEqual({ recorded: false, reason: 'no source with this id', status: 404 });
+
+    // A bare 404 is the mux answering for routes nobody mounted: the
+    // fixture outcome speaks, and it claims no write either.
+    const bare404 = respondingWith(new Response('not found', { status: 404 }));
+    const notDeployed = await createEditorialApi(
+      'http://api:8080',
+      'jwt',
+      bare404.fetchImpl,
+    ).deleteSource('s1');
+    expect(notDeployed.recorded).toBe(false);
+    expect(notDeployed.reason).toContain('not deleted');
+  });
+
+  it('runs a bulk action as a per-row loop and keeps every outcome', async () => {
+    const answers = [
+      () => new Response(null, { status: 204 }),
+      () =>
+        problemResponse(409, 'this source cannot be deleted: 2 retrieved item(s) reference it'),
+      () => new Response(null, { status: 204 }),
+    ];
+    const { calls, fetchImpl } = respondingInTurn(answers);
+    const api = createEditorialApi('http://api:8080', 'jwt', fetchImpl);
+
+    const outcomes = await runBulkAction(api, 'delete', ['a', 'b', 'c']);
+    expect(outcomes.map((row) => row.id)).toEqual(['a', 'b', 'c']);
+    expect(outcomes.map((row) => row.outcome.recorded)).toEqual([true, false, true]);
+    // The refused row keeps the API's words for its inline detail.
+    expect(outcomes.at(1)?.outcome.reason).toContain('2 retrieved item(s)');
+    // Three per-row calls: there is no bulk endpoint to hide behind.
+    expect(calls).toHaveLength(3);
+    expect(calls.every((call) => call.init?.method === 'DELETE')).toBe(true);
+  });
+
+  it('maps activate and deactivate onto the PATCH body', async () => {
+    const { calls, fetchImpl } = respondingWith(jsonResponse({ id: 's1' }));
+    const api = createEditorialApi('http://api:8080', 'jwt', fetchImpl);
+    await runBulkAction(api, 'deactivate', ['a']);
+    await runBulkAction(api, 'activate', ['b']);
+    expect(calls.at(0)?.init?.body).toBe(JSON.stringify({ active: false }));
+    expect(calls.at(1)?.init?.body).toBe(JSON.stringify({ active: true }));
+  });
+
+  it('captures a thrown row as its own outcome instead of aborting the loop', async () => {
+    const api = createEditorialApi('http://api:8080', 'jwt', () =>
+      Promise.reject(new Error('network down')),
+    );
+    const outcomes = await runBulkAction(api, 'delete', ['a', 'b']);
+    expect(outcomes).toHaveLength(2);
+    expect(outcomes.every((row) => !row.outcome.recorded)).toBe(true);
+    expect(outcomes.at(0)?.outcome.reason).toContain('network down');
+  });
+
+  it('adds a bulk run up exactly — no third bucket, no partial-success lie', () => {
+    const outcomes: readonly SourceRowOutcome[] = [
+      { id: 'a', outcome: { recorded: true } },
+      { id: 'b', outcome: { recorded: false, reason: 'held', status: 409 } },
+      { id: 'c', outcome: { recorded: true } },
+    ];
+    expect(bulkCounts(outcomes)).toEqual({ recorded: 2, refused: 1 });
+    expect(bulkCounts([])).toEqual({ recorded: 0, refused: 0 });
+  });
+});
+
+describe('the sources view toggle', () => {
+  const row = (id: string, active: boolean): SourceRow => ({
+    id,
+    name: id,
+    url: `https://x.example/${id}`,
+    language: 'de',
+    jurisdiction: 'DE',
+    licence_terms: 'terms',
+    usage_rule: 'extract_and_link',
+    permission_evidence: null,
+    active,
+    last_polled_at: null,
+  });
+
+  it('parses the query parameter and defaults anything else to all', () => {
+    expect(sourceView('active')).toBe('active');
+    expect(sourceView('inactive')).toBe('inactive');
+    expect(sourceView('all')).toBe('all');
+    expect(sourceView(null)).toBe('all');
+    expect(sourceView('bogus')).toBe('all');
+  });
+
+  it('puts active sources first, keeping the list order within groups', () => {
+    const shown = viewSources([row('a', false), row('b', true), row('c', false), row('d', true)], 'all');
+    expect(shown.map((s) => s.id)).toEqual(['b', 'd', 'a', 'c']);
+  });
+
+  it('filters to one state when the toggle says so', () => {
+    const items = [row('a', false), row('b', true)];
+    expect(viewSources(items, 'active').map((s) => s.id)).toEqual(['b']);
+    expect(viewSources(items, 'inactive').map((s) => s.id)).toEqual(['a']);
   });
 });
 
