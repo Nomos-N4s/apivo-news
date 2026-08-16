@@ -145,6 +145,15 @@ export function pollHealth(row: SourceRow, failures: readonly unknown[]): Exclud
   return namedInFailures(row.name, failures) ? 'failing' : 'healthy';
 }
 
+/** The rows a filter set admits, in the registry's own order. */
+function matching(
+  items: readonly SourceRow[],
+  filters: SourceFilters,
+  failures: readonly unknown[],
+): SourceRow[] {
+  return items.filter((row) => matches(row, filters, failures));
+}
+
 function matches(row: SourceRow, filters: SourceFilters, failures: readonly unknown[]): boolean {
   if (filters.view !== 'all' && row.active !== (filters.view === 'active')) {
     return false;
@@ -183,13 +192,17 @@ export function filterSources(
   filters: SourceFilters,
   failures: readonly unknown[] = [],
 ): SourceRow[] {
+  // Ranked through pollHealth, not through the failures list directly, so
+  // the order can never disagree with the label: a never-polled feed the
+  // cycle also named reads as 'never' in the health column, and must not
+  // be sorted as though it had failed.
   const rank = (row: SourceRow): number => {
     if (!row.active) {
       return 2;
     }
-    return namedInFailures(row.name, failures) ? 0 : 1;
+    return pollHealth(row, failures) === 'failing' ? 0 : 1;
   };
-  return items.filter((row) => matches(row, filters, failures)).sort((a, b) => rank(a) - rank(b));
+  return matching(items, filters, failures).sort((a, b) => rank(a) - rank(b));
 }
 
 /** One filter option: what it is worth choosing, and how many it would show. */
@@ -212,9 +225,12 @@ export function filterOptions(
   dimension: keyof SourceFilters,
   values: readonly string[],
 ): FilterOption[] {
+  // Counting needs the matching rows, not their order — sorting each
+  // candidate list would be wasted work repeated once per option, on
+  // every render of every dimension.
   return values.map((value) => ({
     value,
-    count: filterSources(items, { ...filters, [dimension]: value }, failures).length,
+    count: matching(items, { ...filters, [dimension]: value }, failures).length,
   }));
 }
 

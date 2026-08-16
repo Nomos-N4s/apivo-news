@@ -139,6 +139,19 @@ describe('filterSources', () => {
     expect(shown.at(-1)?.name).toBe('Isar Kurier');
   });
 
+  it('orders by the same health the column shows, never by the raw list', () => {
+    // A payload naming a feed that has never polled: the row's own field
+    // is the stronger fact, so it reads 'never' — and must not be sorted
+    // to the top as though the last cycle had failed on it.
+    const never = row({ id: 'n', name: 'Ghost Feed', last_polled_at: null });
+    const healthy = row({ id: 'h', name: 'Working Feed' });
+    // Healthy first in the input: ranking off the raw failures list would
+    // promote the never-polled row above it.
+    const shown = filterSources([healthy, never], NO_FILTERS, ['Ghost Feed']);
+    expect(pollHealth(never, ['Ghost Feed'])).toBe('never');
+    expect(shown.map((source) => source.id)).toEqual(['h', 'n']);
+  });
+
   it('composes state, language, jurisdiction, health and search', () => {
     expect(
       filterSources(REGISTRY, filters({ language: 'el' }), FAILURES).map((s) => s.id),
@@ -194,6 +207,15 @@ describe('filterOptions', () => {
       { value: 'active', count: 2 },
       { value: 'inactive', count: 0 },
     ]);
+  });
+
+  it('counts exactly what choosing the option would show', () => {
+    // The count skips the ordering work the table needs; it must still
+    // agree with the list the editor gets by choosing that option.
+    for (const value of ['all', 'active', 'inactive'] as const) {
+      const [option] = filterOptions(REGISTRY, NO_FILTERS, FAILURES, 'view', [value]);
+      expect(option?.count).toBe(filterSources(REGISTRY, filters({ view: value }), FAILURES).length);
+    }
   });
 
   it('offers an option that would show nothing rather than hiding it', () => {
