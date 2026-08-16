@@ -105,13 +105,20 @@ func (g journeyGate) AuthenticateEditor(context.Context, string) (editorial.Edit
 // another suite's committed backlog; answering ErrInvalidRequest makes the
 // pipeline step over it without spending anything, so the ledger delta the
 // journey asserts stays exactly its own items' costs.
+//
+// The title alone is not identity enough: the work list is database-wide,
+// and a committed item that happens to share a fixture title would be
+// translated and billed, breaking the exact delta on a healthy system. So
+// each answer also demands a fragment of its own item's body in the
+// request text - a look-alike falls into the same step-over path.
 type journeyTranslator struct {
 	results map[string]translation.Result
+	texts   map[string]string
 }
 
 func (j journeyTranslator) Translate(_ context.Context, req translation.Request) (translation.Result, error) {
 	res, ok := j.results[req.SourceTitle]
-	if !ok {
+	if !ok || !strings.Contains(req.SourceText, j.texts[req.SourceTitle]) {
 		return translation.Result{}, fmt.Errorf("%w: the journey translates only its own items, not %q", translation.ErrInvalidRequest, req.SourceTitle)
 	}
 	res.PromptVersion = req.PromptVersion
@@ -407,6 +414,21 @@ func TestAlphaDefinitionOfDoneJourney(t *testing.T) {
 			t.Errorf("%q retrieved_at is zero", title)
 		}
 		contentHashes[title] = gotHash
+
+		// The item.retrieved event is the render frozen into the append-only
+		// stream, and it is scoped by source_item_id rather than article_id -
+		// the provenance assertions below never read it. It gets the same
+		// Z discipline as every article payload: what the record froze must
+		// not depend on where the server stood.
+		var eventRetrievedAt string
+		if err := tx.QueryRow(ctx,
+			`select payload->>'retrieved_at' from domain_event
+			  where type = 'item.retrieved' and payload->>'source_item_id' = $1`,
+			itemID.String(),
+		).Scan(&eventRetrievedAt); err != nil {
+			t.Fatalf("reading the item.retrieved payload for %q: %v", title, err)
+		}
+		journeyUTCStamp(t, "item.retrieved payload retrieved_at", eventRetrievedAt)
 		switch title {
 		case journeyTramTitle:
 			if gotURL != journeyTramLink {
@@ -510,6 +532,12 @@ func TestAlphaDefinitionOfDoneJourney(t *testing.T) {
 			Model:    "journey-model-1",
 			Spend:    translation.Spend{CostMicroUSD: costs[journeyFestivalTitle]},
 		},
+	}, texts: map[string]string{
+		// One distinctive fragment of each item's own body, so a foreign
+		// item sharing a fixture title is stepped over, never billed.
+		journeyTramTitle:     "λιγότερο από είκοσι λεπτά",
+		journeyWaterTitle:    "δεκατέσσερις δήμους",
+		journeyFestivalTitle: "χιλιάδες επισκέπτες",
 	}}
 	pipeline, err := translation.NewPipeline(discardLogger(), tx, fake, translation.PipelineConfig{
 		Interval:      time.Hour,
