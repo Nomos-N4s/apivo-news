@@ -167,6 +167,29 @@ describe('containerRequest', () => {
 		assert.equal(proxied.headers.get('origin'), new URL(proxied.url).origin);
 	});
 
+	it('states the real public scheme, which the rewrite above erased', () => {
+		// The container is reached over plain HTTP and cannot see the TLS
+		// hop in front of it. Without this header the web container writes
+		// its session cookie without `Secure` on an https-only site.
+		const proxied = containerRequest(new Request(`https://${SITE_HOST}/el/editor`));
+		assert.equal(new URL(proxied.url).protocol, 'http:');
+		assert.equal(proxied.headers.get('x-forwarded-proto'), 'https');
+	});
+
+	it("overwrites a client's own X-Forwarded-Proto rather than trusting it", () => {
+		const proxied = containerRequest(
+			new Request(`https://${SITE_HOST}/el/editor`, {
+				headers: { 'x-forwarded-proto': 'http' },
+			}),
+		);
+		assert.equal(proxied.headers.get('x-forwarded-proto'), 'https');
+	});
+
+	it('states http when the public hop really is http, as on wrangler dev', () => {
+		const proxied = containerRequest(new Request(`http://localhost:8787/el/editor`));
+		assert.equal(proxied.headers.get('x-forwarded-proto'), 'http');
+	});
+
 	it('never makes a cross-site post look same-site', () => {
 		const proxied = containerRequest(
 			new Request(`https://${SITE_HOST}/el/editor`, {

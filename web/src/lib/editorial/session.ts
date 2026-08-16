@@ -161,9 +161,13 @@ export interface AstroCookieWriteOptions {
  * thing an injected script can steal. The SDK's own default is false,
  * for apps that do need it.
  *
- * `secure` follows the request rather than being hard-coded, so the
- * cookie is https-only wherever the site is https and still works on the
- * plain-http development stack.
+ * `secure` is passed in rather than hard-coded, and the one authority on
+ * it is `isSecureRequest` (lib/secure-request.ts): `APP_ENV=prod` means
+ * the deployment is https-only and the answer is true, whatever the
+ * proxied request URL says. It is NOT read from the request's own
+ * protocol — the Worker proxies to this container over plain HTTP, so
+ * that reading was false on every deployed shape and this cookie, which
+ * carries a refresh token, shipped without `Secure`.
  */
 export function astroCookieOptions(
   options: SdkCookieOptions,

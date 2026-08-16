@@ -164,10 +164,13 @@ export function rewriteSameSiteOriginHeaders(headers, siteHost) {
 	return headers;
 }
 
+/** The header the public scheme is stated in, for the container. */
+export const FORWARDED_PROTO_HEADER = 'X-Forwarded-Proto';
+
 /**
  * The request as the container must see it: same method, body and headers,
- * but over `http://` and with the site's own `Origin`/`Referer` translated
- * to match.
+ * but over `http://`, with the site's own `Origin`/`Referer` translated to
+ * match and the real public scheme stated in `X-Forwarded-Proto`.
  *
  * `new Request(url, request)` is the platform idiom for "this request, at
  * another URL" — it carries method, headers and the body stream across
@@ -176,11 +179,22 @@ export function rewriteSameSiteOriginHeaders(headers, siteHost) {
 export function containerRequest(request) {
 	const url = new URL(request.url);
 	const siteHost = url.host;
+	const publicProtocol = url.protocol;
 	// The containers listen on plain HTTP inside the Durable Object; the
 	// public hop is what carries TLS. Proxying the browser's https:// URL
 	// unchanged asks the container to speak a protocol it does not.
 	url.protocol = 'http:';
 	const proxied = new Request(url, request);
+	// …and having rewritten it, say what it was. The container cannot
+	// otherwise know: @astrojs/node builds `Astro.url` from the socket and
+	// the Host header and ignores this header, so a cookie whose `Secure`
+	// followed the request URL lost it on every https deployment
+	// (web/src/lib/secure-request.ts).
+	//
+	// SET, never appended: whatever a client sent under this name is
+	// overwritten here, which is the only reason the container may trust
+	// it. This Worker is the sole route to the container.
+	proxied.headers.set(FORWARDED_PROTO_HEADER, publicProtocol.replace(':', ''));
 	rewriteSameSiteOriginHeaders(proxied.headers, siteHost);
 	return proxied;
 }
