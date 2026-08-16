@@ -665,7 +665,7 @@ func (h *Handler) reviewQueue(w http.ResponseWriter, r *http.Request) {
 		body.Items = append(body.Items, queueItem(item))
 	}
 	if page.NextCursor != nil {
-		next := encodeCursor(page.NextCursor.RetrievedAt, page.NextCursor.RowID)
+		next := encodeCursor(queueCursors, page.NextCursor.RetrievedAt, page.NextCursor.RowID)
 		body.NextCursor = &next
 	}
 	h.writeJSON(w, r, http.StatusOK, body)
@@ -744,7 +744,7 @@ func parseQueueQuery(values url.Values) (query QueueQuery, detail string, ok boo
 	}
 
 	if values.Has("cursor") {
-		at, rowID, err := decodeCursor(values.Get("cursor"))
+		at, rowID, err := decodeCursor(queueCursors, values.Get("cursor"))
 		if err != nil {
 			return QueueQuery{}, "cursor is not one this endpoint issued; pass back the next_cursor from the previous page", false
 		}
@@ -901,7 +901,7 @@ func (h *Handler) listSources(w http.ResponseWriter, r *http.Request) {
 		body.Items = append(body.Items, listedSource(item))
 	}
 	if page.NextCursor != nil {
-		next := encodeCursor(page.NextCursor.CreatedAt, page.NextCursor.ID)
+		next := encodeCursor(sourcesCursors, page.NextCursor.CreatedAt, page.NextCursor.ID)
 		body.NextCursor = &next
 	}
 	h.writeJSON(w, r, http.StatusOK, body)
@@ -969,7 +969,7 @@ func parseSourcesQuery(values url.Values) (query SourcesQuery, detail string, ok
 	}
 
 	if values.Has("cursor") {
-		at, rowID, err := decodeCursor(values.Get("cursor"))
+		at, rowID, err := decodeCursor(sourcesCursors, values.Get("cursor"))
 		if err != nil {
 			return SourcesQuery{}, "cursor is not one this endpoint issued; pass back the next_cursor from the previous page", false
 		}
