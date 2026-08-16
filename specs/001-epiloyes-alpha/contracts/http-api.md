@@ -152,15 +152,28 @@ Withdrawal ends publication and preserves every record (FR-016).
 
 The five-minute audit, served from `article_provenance` (I-5).
 
-- 200: `{ article_id, source: { name, feed_url, jurisdiction },
+- 200: `{ article_id, headline, places: [slug, …],
+  source: { name, feed_url, jurisdiction },
   source_item: { source_url, original_title|null, retrieved_at, content_hash,
   licence_snapshot, usage_rule_snapshot, permission_evidence_snapshot|null,
   original_author|null }, translation: { model, prompt_version, target_locale,
-  generated_at }|null, approval: { approver_name, approver_email, approved_at },
-  published_at|null, withdrawal: { withdrawn_at, withdrawn_by, reason }|null }`.
+  generated_at, cost_microusd }|null, approval: { approver_name,
+  approver_email, approved_at }, published_at|null,
+  withdrawal: { withdrawn_at, withdrawn_by, reason }|null,
+  events: [{ type, occurred_at, detail }] }`.
   The `source` object is identity only; the legal basis (usage rule,
   licence, permission evidence) always comes from the retrieval-time
   snapshots on `source_item`, matching the `article_provenance` view.
+  Column backing: `headline` = `translation.headline`, else
+  `source_item.original_title` (the resolution the reader sees); `places`
+  is the article's place slugs, sorted, `[]` never null;
+  `cost_microusd` = `translation.cost_microusd` (FR-006). `events` is the
+  article's rows of the append-only `domain_event` stream (FR-012),
+  oldest first, `detail` carrying each recorded payload verbatim (minus
+  the `article_id` the response is scoped to); they arrive in the same
+  statement as the chain — the view read stays I-5's one query.
+- 400: the `{id}` path segment is not a uuid; 404: unknown id.
+- 401 without token; 403 for non-editors.
 - Works for withdrawn articles — audit sees full history.
 
 ## Operational endpoints (existing)
