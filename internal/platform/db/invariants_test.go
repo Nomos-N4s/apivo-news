@@ -1139,10 +1139,18 @@ func TestEditorDemotionRaceIsSerialized(t *testing.T) {
 		}
 		defer func() { _ = txA.Rollback(ctx) }()
 		// The insert trigger takes FOR SHARE on the editor's account row.
-		if _, err := txA.Exec(ctx,
+		var articleID string
+		if err := txA.QueryRow(ctx,
 			`insert into article (source_item_id, approved_by, attribution_block)
-			 values ($1, $2, 'Quelle: Race Feed')`, sourceItemID, editorID); err != nil {
+			 values ($1, $2, 'Quelle: Race Feed') returning id`, sourceItemID, editorID).Scan(&articleID); err != nil {
 			t.Fatalf("approval insert: %v", err)
+		}
+		// This transaction commits for real, so the 0006 rule applies: the
+		// article must carry a place row by COMMIT or the commit raises.
+		if _, err := txA.Exec(ctx,
+			`insert into article_place (article_id, place_id)
+			 select $1, id from place where slug = 'munich'`, articleID); err != nil {
+			t.Fatalf("tagging the approval's place: %v", err)
 		}
 
 		done := make(chan error, 1)
@@ -1185,12 +1193,36 @@ func TestEditorDemotionRaceIsSerialized(t *testing.T) {
 			t.Fatalf("demotion update: %v", err)
 		}
 
+		// The approval mirrors the first subtest: an explicit transaction
+		// that attaches a place row. An autocommit placeless insert would
+		// leave two possible raises sharing SQLSTATE P0001 — the role
+		// guard's and, since 0006, article_requires_place's at the
+		// implicit commit — and wantPgCode checks the code alone, so a
+		// regressed role guard could hide behind the place trigger. With
+		// the place attached, the only possible P0001 is the guard's.
 		done := make(chan error, 1)
 		go func() {
-			_, err := connA.Exec(ctx,
-				`insert into article (source_item_id, approved_by, attribution_block)
-				 values ($1, $2, 'Quelle: Race Feed')`, sourceItemID, editorID)
-			done <- err
+			done <- func() error {
+				txA, err := connA.Begin(ctx)
+				if err != nil {
+					return fmt.Errorf("begin approval tx: %w", err)
+				}
+				defer func() { _ = txA.Rollback(ctx) }()
+				// The FOR SHARE read blocks here, on the demotion's
+				// uncommitted row lock.
+				var articleID string
+				if err := txA.QueryRow(ctx,
+					`insert into article (source_item_id, approved_by, attribution_block)
+					 values ($1, $2, 'Quelle: Race Feed') returning id`, sourceItemID, editorID).Scan(&articleID); err != nil {
+					return err
+				}
+				if _, err := txA.Exec(ctx,
+					`insert into article_place (article_id, place_id)
+					 select $1, id from place where slug = 'munich'`, articleID); err != nil {
+					return fmt.Errorf("tagging the approval's place: %w", err)
+				}
+				return txA.Commit(ctx)
+			}()
 		}()
 		select {
 		case err := <-done:
@@ -1209,6 +1241,149 @@ func TestEditorDemotionRaceIsSerialized(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("approval still blocked after the demotion committed")
 		}
+	})
+}
+
+// TestAnArticleWithNoPlaceIsRejectedAtCommit asserts the 0006 rule: the
+// front page is scoped by place, so an article with no article_place row
+// can appear on none of them - and the database refuses to let such an
+// article exist. The trigger is DEFERRED, so the raise happens at COMMIT,
+// not at the insert: the assertion is on tx.Commit, and the savepoint
+// pattern the other guard tests use does not apply - releasing a savepoint
+// runs no deferred checks. A failed commit leaves nothing behind.
+func TestAnArticleWithNoPlaceIsRejectedAtCommit(t *testing.T) {
+	t.Parallel()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set DATABASE_URL to exercise schema invariants")
+	}
+	ctx := context.Background()
+
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	f := seed(t, tx)
+
+	// The insert itself succeeds: the trigger's whole point is to let the
+	// article and its place rows arrive in either order within the
+	// transaction, so nothing can be judged until COMMIT.
+	if _, err := tx.Exec(ctx,
+		`insert into article (translation_id, approved_by, published_at, attribution_block)
+		 values ($1, $2, now(), 'Quelle: Test Feed')`, f.translationID, f.accountID); err != nil {
+		t.Fatalf("placeless insert must succeed until commit: %v", err)
+	}
+	wantPgCode(t, tx.Commit(ctx), codeRaiseException)
+}
+
+// TestDeletingAnArticlesLastPlaceIsRejectedAtCommit asserts the delete
+// side of the 0006 rule: article_requires_place guards the article's
+// birth, article_keeps_place guards every day after. A transaction may
+// rearrange an article's places, but one that would leave a placeless
+// article behind raises at COMMIT. The fixtures must genuinely commit -
+// a deferred trigger fires only at a real COMMIT, so the rollback
+// pattern cannot carry these assertions - and the random suffix keeps
+// reruns independent.
+func TestDeletingAnArticlesLastPlaceIsRejectedAtCommit(t *testing.T) {
+	t.Parallel()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set DATABASE_URL to exercise schema invariants")
+	}
+	ctx := context.Background()
+
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	// Committed fixture: an editor, an origin, and an article naming two
+	// places - Munich and Greece, both 0002 reference seeds.
+	suffix := randomSuffix(t)
+	var editorID string
+	if err := conn.QueryRow(ctx,
+		`insert into account (email, display_name, role) values ($1, 'Place Keeper', 'editor') returning id`,
+		"keeps-place-"+suffix+"@example.test").Scan(&editorID); err != nil {
+		t.Fatalf("seed editor: %v", err)
+	}
+	var sourceID string
+	if err := conn.QueryRow(ctx,
+		`insert into source (name, url, language_code, jurisdiction, licence_terms)
+		 values ($1, $2, 'el', 'GR', 'terms') returning id`,
+		"Keeps Place Feed "+suffix, "https://example.test/keeps-place/"+suffix).Scan(&sourceID); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+	var sourceItemID string
+	if err := conn.QueryRow(ctx,
+		`insert into source_item (source_id, source_url, raw_body)
+		 values ($1, $2, $3) returning id`,
+		sourceID, "https://example.test/keeps-place/"+suffix+"/a", "keeps-place body "+suffix).Scan(&sourceItemID); err != nil {
+		t.Fatalf("seed source_item: %v", err)
+	}
+	txSeed, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin seed tx: %v", err)
+	}
+	defer func() { _ = txSeed.Rollback(ctx) }()
+	var articleID string
+	if err := txSeed.QueryRow(ctx,
+		`insert into article (source_item_id, approved_by, attribution_block)
+		 values ($1, $2, 'Quelle: Keeps Place Feed') returning id`, sourceItemID, editorID).Scan(&articleID); err != nil {
+		t.Fatalf("seed article: %v", err)
+	}
+	if _, err := txSeed.Exec(ctx,
+		`insert into article_place (article_id, place_id)
+		 select $1, id from place where slug in ('munich', 'greece')`, articleID); err != nil {
+		t.Fatalf("seed article places: %v", err)
+	}
+	if err := txSeed.Commit(ctx); err != nil {
+		t.Fatalf("commit seeded two-place article: %v", err)
+	}
+
+	// The subtests run in order: the first leaves the article with one
+	// remaining place, which is exactly the state the second needs.
+	t.Run("one of two place rows may go", func(t *testing.T) {
+		tx, err := conn.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		tag, err := tx.Exec(ctx,
+			`delete from article_place
+			 where article_id = $1 and place_id = (select id from place where slug = 'munich')`, articleID)
+		if err != nil {
+			t.Fatalf("delete one of two place rows: %v", err)
+		}
+		if tag.RowsAffected() != 1 {
+			t.Fatalf("deleted %d place rows, want 1", tag.RowsAffected())
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatalf("a place removal that leaves another place must commit: %v", err)
+		}
+	})
+
+	t.Run("the last place row is refused at COMMIT", func(t *testing.T) {
+		tx, err := conn.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		// The delete itself succeeds - the trigger is DEFERRED, so a
+		// transaction may pass through zero places on its way to a
+		// legal end state. Only COMMIT judges, and it refuses.
+		if _, err := tx.Exec(ctx,
+			`delete from article_place where article_id = $1`, articleID); err != nil {
+			t.Fatalf("deleting the last place row must succeed until commit: %v", err)
+		}
+		wantPgCode(t, tx.Commit(ctx), codeRaiseException)
 	})
 }
 

@@ -10,6 +10,7 @@ import {
   type ApprovalOutcome,
   type QueuePage,
 } from '../../../lib/editorial/api';
+import { APPROVAL_PLACES, parseApprovalForm } from '../../../lib/editorial/approvalForm';
 import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings, languageName } from '../../../lib/editorial/strings';
@@ -59,6 +60,7 @@ let outcome: ApprovalOutcome | null = null;
 let signedOutPost = false;
 let staleItemId: string | null = null;
 let staleAttribution: string | null = null;
+let stalePlaces: readonly string[] | null = null;
 if (Astro.request.method === 'POST') {
   // Approval is a privileged, named act. A cross-site form must never be
   // able to drive it with a logged-in editor's browser — the check is in
@@ -68,29 +70,52 @@ if (Astro.request.method === 'POST') {
     return new Response('Forbidden', { status: 403 });
   }
   const form = await Astro.request.formData();
-  const sourceItemId = String(form.get('source_item_id') ?? '');
-  const rawTranslationId = form.get('translation_id');
-  const translationId =
-    typeof rawTranslationId === 'string' && rawTranslationId !== '' ? rawTranslationId : null;
-  // The contract requires a non-blank attribution: it becomes the
-  // article's attribution block, which FR-008 renders on every item.
-  const attribution = String(form.get('attribution') ?? '').trim();
+  // The contract requires a non-blank attribution (it becomes the
+  // article's attribution block, which FR-008 renders on every item) and
+  // at least one place — the parse names which requirement a POST missed.
+  const parsed = parseApprovalForm(form);
+  // A POST the screen refuses — signed out, or short of a requirement —
+  // must not also cost the editor their work: the attribution is the one
+  // thing on this form that was typed rather than selected, and the
+  // checked boxes are their judgement. The re-render puts both back.
+  if (signedOut || !parsed.ok) {
+    const typed = parsed.ok
+      ? {
+          sourceItemId: parsed.submission.sourceItemId,
+          attribution: parsed.submission.attribution,
+          places: parsed.submission.places,
+        }
+      : parsed.stale;
+    staleItemId = typed.sourceItemId;
+    staleAttribution = typed.attribution;
+    stalePlaces = typed.places;
+  }
   if (signedOut) {
-    // No token, so nothing can be recorded — but the attribution is this
-    // editor's wording, and losing it to a redirect would cost the one
-    // thing on this form that was typed rather than selected.
+    // No token, so nothing can be recorded — the banner says so and the
+    // preserved fields above survive the sign-in round trip's cost.
     signedOutPost = true;
-    staleItemId = sourceItemId === '' ? null : sourceItemId;
-    staleAttribution = attribution === '' ? null : attribution;
-  } else if (sourceItemId !== '' && attribution !== '') {
+  } else if (parsed.ok) {
     try {
-      outcome = await api.approve(sourceItemId, translationId, attribution);
+      const { submission } = parsed;
+      outcome = await api.approve(
+        submission.sourceItemId,
+        submission.translationId,
+        submission.attribution,
+        submission.places,
+      );
     } catch (error) {
       outcome = {
         recorded: false,
         reason: error instanceof Error ? error.message : String(error),
       };
     }
+  } else if (parsed.refusal === 'no-place') {
+    // Checkboxes cannot express "at least one of these" in plain HTML, so
+    // the refusal happens here, before the API client is called: an
+    // article tagged to no place can never appear on any front page, and
+    // the API would answer 400 for the same reason. No record, and the
+    // banner says so.
+    outcome = { recorded: false, reason: t.atLeastOnePlace };
   }
 }
 
@@ -118,8 +143,8 @@ try {
 }
 
 const items = queue?.items ?? [];
-// A signed-out POST re-selects the item it was about, so the re-render
-// puts the preserved attribution back into its own form.
+// A signed-out or refused POST re-selects the item it was about, so the
+// re-render puts the preserved attribution and places back into its form.
 const selectedId = Astro.url.searchParams.get('item') ?? staleItemId;
 const selected = items.find((item) => item.source_item_id === selectedId) ?? items.at(0);
 
@@ -384,6 +409,43 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
                         required
                       />
                     </div>
+                    {/* Where the article publishes to (FR-009). The API
+                        requires at least one slug and the database refuses
+                        a placeless article at commit; the server-side POST
+                        handling above answers the empty selection with the
+                        not-recorded banner, since plain HTML cannot express
+                        "at least one of these" and this screen carries no
+                        client JavaScript. Only reader-selectable places are
+                        offered (APPROVAL_PLACES): a hierarchy-only tag like
+                        Bavaria would satisfy the database yet leave the
+                        article unreachable through the follow flow.
+                        Pre-checked from the queue row's own places, when it
+                        names any. */}
+                    <fieldset class="field places-field">
+                      <legend>{t.publishTo}</legend>
+                      <div class="place-options">
+                        {
+                          APPROVAL_PLACES.map((place) => (
+                            <label class="place-option">
+                              <input
+                                type="checkbox"
+                                name="place"
+                                value={place.slug}
+                                checked={
+                                  selected.source_item_id === staleItemId && stalePlaces !== null
+                                    ? stalePlaces.includes(place.slug)
+                                    : selected.places?.includes(place.slug)
+                                }
+                              />
+                              <span class="box" aria-hidden="true" />
+                              <span lang={place.endonymLang !== lang ? place.endonymLang : undefined}>
+                                {place.endonym}
+                              </span>
+                            </label>
+                          ))
+                        }
+                      </div>
+                    </fieldset>
                     <label class="ack">
                       <input type="checkbox" name="acknowledged" required />
                       <span class="box" aria-hidden="true" />
@@ -666,6 +728,45 @@ const defaultAttribution = (item: (typeof items)[number]): string => {
   }
   .attribution-field {
     margin-bottom: var(--space-3);
+  }
+  .places-field {
+    margin: 0 0 var(--space-3);
+    padding: 0;
+    border: 0;
+  }
+  .places-field legend {
+    /* Matches .field > label, which only styles a direct-child <label>. */
+    font-size: 12px;
+    margin-bottom: 5px;
+    color: var(--ink-muted);
+  }
+  .place-options {
+    display: flex;
+    gap: var(--space-3) var(--space-4);
+    flex-wrap: wrap;
+  }
+  .place-option {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    cursor: pointer;
+    font-size: 12.5px;
+  }
+  .place-option input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .place-option .box {
+    margin-top: 0;
+  }
+  .place-option:has(input:checked) .box {
+    background: var(--color-accent);
+  }
+  .place-option:has(input:focus-visible) .box {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
   }
   .ack {
     display: flex;

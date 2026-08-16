@@ -40,7 +40,7 @@ describe('the fixture client (no API_BASE_URL)', () => {
   });
 
   it('never fakes an approval — nothing is recorded and it says why', async () => {
-    const outcome = await api.approve('any-source-item', 'any-translation', 'attr');
+    const outcome = await api.approve('any-source-item', 'any-translation', 'attr', ['munich']);
     expect(outcome.recorded).toBe(false);
     expect(outcome.article_id).toBeUndefined();
     expect(outcome.reason).toContain('not implemented');
@@ -107,6 +107,7 @@ describe('the HTTP client (API_BASE_URL set)', () => {
       'src-1',
       'tr-1',
       'Originally published by X.',
+      ['munich', 'greece'],
     );
 
     expect(outcome.recorded).toBe(true);
@@ -117,12 +118,15 @@ describe('the HTTP client (API_BASE_URL set)', () => {
     expect(body['publish']).toBe(true);
     // The contract requires a non-blank attribution (FR-008).
     expect(body['attribution']).toBe('Originally published by X.');
+    // And at least one place slug — the article publishes to these, and
+    // an approval naming none is a 400 (FR-009).
+    expect(body['places']).toEqual(['munich', 'greece']);
     expect(calls.at(0)?.init?.method).toBe('POST');
   });
 
   it('approves an untranslated origin with source_item_id only', async () => {
     const { calls, fetchImpl } = respondingWith(jsonResponse({ article_id: 'a2' }, 201));
-    await createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve('src-2', null, 'attr');
+    await createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve('src-2', null, 'attr', ['munich']);
 
     const body = JSON.parse(String(calls.at(0)?.init?.body)) as Record<string, unknown>;
     expect(body['source_item_id']).toBe('src-2');
@@ -132,14 +136,14 @@ describe('the HTTP client (API_BASE_URL set)', () => {
   it('surfaces a 409 (origin already approved) rather than claiming success', async () => {
     const { fetchImpl } = respondingWith(jsonResponse({ title: 'conflict' }, 409));
     await expect(
-      createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve('src', null, 'attr'),
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve('src', null, 'attr', ['munich']),
     ).rejects.toMatchObject({ status: 409 });
   });
 
   it('rejects an approval body without an article id', async () => {
     const { fetchImpl } = respondingWith(jsonResponse({ ok: true }, 201));
     await expect(
-      createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve('src', null, 'attr'),
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).approve('src', null, 'attr', ['munich']),
     ).rejects.toBeInstanceOf(EditorialApiError);
   });
 });
@@ -169,6 +173,7 @@ describe('editorial endpoints not deployed yet', () => {
       'src',
       null,
       'attr',
+      ['munich'],
     );
     expect(outcome.recorded).toBe(false);
   });

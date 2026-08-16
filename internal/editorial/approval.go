@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -50,6 +51,18 @@ var ErrUntitledOrigin = errors.New("editorial: untranslated origin has no title"
 // Handlers map it to 404.
 var ErrArticleNotFound = errors.New("editorial: no such article")
 
+// UnknownPlaceError reports an approval naming a place slug the place table
+// does not know. Handlers map it to 400, naming the slug the same way the
+// reader's front page does - the two endpoints share one place vocabulary.
+type UnknownPlaceError struct {
+	// Slug is the place slug that names nothing.
+	Slug string
+}
+
+func (e UnknownPlaceError) Error() string {
+	return fmt.Sprintf("editorial: unknown place %q", e.Slug)
+}
+
 // ErrAlreadyPublished reports a publication request for an article that is
 // already published - the transition is one-way and happens once. Handlers
 // map it to 409.
@@ -70,6 +83,12 @@ type NewApproval struct {
 	Attribution string
 	// Publish requests immediate publication in the same transaction.
 	Publish bool
+	// Places names where the article publishes to, as place slugs; never
+	// empty. The front page is scoped by place, so an article tagged to no
+	// place is one no reader can ever reach - the 0006 constraint trigger
+	// makes that state unrepresentable, and this field is how the approval
+	// satisfies it.
+	Places []string
 	// ApprovedBy is the authenticated editor. The database checks the role
 	// again on insert (I-1).
 	ApprovedBy uuid.UUID
@@ -139,6 +158,22 @@ func (s *PGStore) Approve(ctx context.Context, a NewApproval) (Article, error) {
 	})
 	if err != nil {
 		return Article{}, approvalError(err)
+	}
+
+	// The article and its places are one atomic fact: the 0006 constraint
+	// trigger raises at COMMIT unless at least one article_place row exists,
+	// so tagging happens here, inside the approving transaction, not after
+	// it. The row count is the database's verdict on the slugs - a shortfall
+	// means one of them names no place, and the whole approval rolls back.
+	tagged, err := q.TagArticlePlaces(ctx, store.TagArticlePlacesParams{
+		ArticleID: row.ID,
+		Slugs:     a.Places,
+	})
+	if err != nil {
+		return Article{}, fmt.Errorf("editorial: tagging article places: %w", err)
+	}
+	if tagged < int64(len(a.Places)) {
+		return Article{}, unknownPlace(ctx, tx, a.Places)
 	}
 
 	article := Article{
@@ -261,6 +296,32 @@ func lockEditorRole(ctx context.Context, q *store.Queries, editorID uuid.UUID) e
 		return fmt.Errorf("%w: account %s holds the %s role", ErrNotEditor, editorID, role)
 	}
 	return nil
+}
+
+// unknownPlace names the slug that made TagArticlePlaces fall short. The
+// diagnostic read runs in the same transaction, so it sees exactly the
+// place table the insert saw; the error is a 400's worth of precision, not
+// a second verdict. Slugs are read fresh rather than derived from the
+// insert because :execrows reports only a count.
+func unknownPlace(ctx context.Context, tx pgx.Tx, slugs []string) error {
+	rows, err := tx.Query(ctx,
+		`select slug from place where slug = any ($1::text[])`, slugs)
+	if err != nil {
+		return fmt.Errorf("editorial: resolving place slugs: %w", err)
+	}
+	known, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return fmt.Errorf("editorial: reading place slugs: %w", err)
+	}
+	for _, slug := range slugs {
+		if !slices.Contains(known, slug) {
+			return UnknownPlaceError{Slug: slug}
+		}
+	}
+	// Fewer rows than slugs, yet every slug resolves: only a duplicate in
+	// the list could do that, and the handler rejects duplicates before any
+	// write. Whatever happened is not a caller mistake this code can name.
+	return errors.New("editorial: tagged fewer places than the approval named")
 }
 
 // requireTitle refuses an untranslated origin the reader could not be shown:

@@ -84,11 +84,17 @@ Approval creates the article — the database enforces the named-editor
 rule; this endpoint merely carries the intent.
 
 - Body: `{ "translation_id": uuid }` XOR `{ "source_item_id": uuid }`,
-  plus `{ "attribution": string, "publish": bool }`.
+  plus `{ "attribution": string, "publish": bool,
+  "places": [slug, …] }`. `places` is required with at least one place
+  slug: the front page is scoped by place (FR-009), so an article tagged
+  to no place can never appear on any of them — the article and its
+  `article_place` rows commit together, and the database refuses an
+  article with none at commit.
 - 201: `{ article_id, approved_by, approved_at, published_at|null }`.
 - 400: both or neither origin supplied; an origin id that is not a uuid or
   names nothing; blank attribution; untranslated origin whose feed provided
-  no title.
+  no title; no places, a blank or repeated place slug, or a slug that
+  names no place (`unknown place "x"`, the front page's vocabulary).
 - 403: token subject is not an editor (mirrors the DB trigger).
 - 409: origin already has a **non-withdrawn** article. An origin whose
   only articles are withdrawn may be approved again — that is the

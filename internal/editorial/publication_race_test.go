@@ -81,13 +81,28 @@ func seedRaceWorld(ctx context.Context, t *testing.T, conn *pgx.Conn) raceWorld 
 		t.Fatalf("seed source_item: %v", err)
 	}
 	// Approved, never published: exactly the state the publication endpoint
-	// acts on.
+	// acts on. The article and its place row are one transaction: this
+	// seed commits for real, and the 0006 constraint trigger checks at
+	// COMMIT that the article names at least one place.
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin article seed: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var articleID string
-	if err := conn.QueryRow(ctx,
+	if err := tx.QueryRow(ctx,
 		`insert into article (source_item_id, approved_by, attribution_block)
 		 values ($1, $2, $3) returning id`,
 		itemID, approverID, "Πηγή: Publication Race Feed "+suffix).Scan(&articleID); err != nil {
 		t.Fatalf("seed article: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`insert into article_place (article_id, place_id)
+		 select $1, id from place where slug = 'munich'`, articleID); err != nil {
+		t.Fatalf("seed article place: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit article seed: %v", err)
 	}
 	return raceWorld{
 		publisherID: uuid.MustParse(publisherID),

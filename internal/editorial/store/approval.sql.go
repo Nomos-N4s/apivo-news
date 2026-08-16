@@ -210,3 +210,29 @@ func (q *Queries) SourceItemTitle(ctx context.Context, sourceItemID pgtype.UUID)
 	err := row.Scan(&original_title)
 	return original_title, err
 }
+
+const tagArticlePlaces = `-- name: TagArticlePlaces :execrows
+insert into article_place (article_id, place_id)
+select $1::uuid, p.id
+from place p
+where p.slug = any ($2::text[])
+`
+
+type TagArticlePlacesParams struct {
+	ArticleID pgtype.UUID
+	Slugs     []string
+}
+
+// The places the approval names, resolved to article_place rows inside the
+// approving transaction - the 0006 constraint trigger checks at COMMIT that
+// at least one exists, so the article and its reachability are one atomic
+// fact. The row count is the verdict on the slugs: fewer rows than slugs
+// supplied means one of them names no place, and the caller answers 400
+// with the same vocabulary the reader's front page uses.
+func (q *Queries) TagArticlePlaces(ctx context.Context, arg TagArticlePlacesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, tagArticlePlaces, arg.ArticleID, arg.Slugs)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
