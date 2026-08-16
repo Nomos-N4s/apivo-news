@@ -66,6 +66,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"POST /api/v1/editorial/articles/{id}/withdrawal":  h.withdrawArticle,
 		"GET /api/v1/editorial/articles/{id}/provenance":   h.articleProvenance,
 		"POST /api/v1/editorial/sources":                   h.createSource,
+		"GET /api/v1/editorial/sources":                    h.listSources,
 	}
 }
 
@@ -716,6 +717,158 @@ func (h *Handler) createSource(w http.ResponseWriter, r *http.Request) {
 		UsageRule:    created.UsageRule,
 		CreatedAt:    created.CreatedAt.Format(timeFormat),
 	})
+}
+
+// listedSourceResponse is one registered source on the wire. The licensing
+// fields are the CURRENT row and the payload says so in the contract: the
+// legal basis of anything already retrieved is the snapshot on source_item
+// (I-4), served by the provenance endpoint, never by this list.
+//
+// permission_evidence is served deliberately: the screen exists to make the
+// licensing basis visible, this whole route sits behind the editor gate,
+// and the field is what separates a lawful full_text source from an
+// impossible one (#70 named it as part of the read). A founder call,
+// reversible in one line.
+type listedSourceResponse struct {
+	ID                 string  `json:"id"`
+	Name               string  `json:"name"`
+	URL                string  `json:"url"`
+	Language           string  `json:"language"`
+	Jurisdiction       string  `json:"jurisdiction"`
+	LicenceTerms       string  `json:"licence_terms"`
+	UsageRule          string  `json:"usage_rule"`
+	PermissionEvidence *string `json:"permission_evidence"`
+	Active             bool    `json:"active"`
+	// LastPolledAt is null for a feed the poll loop has never attempted.
+	LastPolledAt *string `json:"last_polled_at"`
+	CreatedAt    string  `json:"created_at"`
+}
+
+// pollCycleResponse is the last poll cycle: sums of the active sources'
+// last-poll counters, and the failed feeds by name. duplicates_skipped is
+// the FR-014 fingerprint at work.
+type pollCycleResponse struct {
+	Retrieved         int64    `json:"retrieved"`
+	DuplicatesSkipped int64    `json:"duplicates_skipped"`
+	Failures          []string `json:"failures"`
+}
+
+// sourcesListResponse is one page of the source list, plus the cycle the
+// screen renders beside it.
+type sourcesListResponse struct {
+	Items []listedSourceResponse `json:"items"`
+	// NextCursor is null on the last page, like every list here.
+	NextCursor *string           `json:"next_cursor"`
+	Cycle      pollCycleResponse `json:"cycle"`
+}
+
+// listSources implements GET /api/v1/editorial/sources.
+func (h *Handler) listSources(w http.ResponseWriter, r *http.Request) {
+	query, detail, ok := parseSourcesQuery(r.URL.Query())
+	if !ok {
+		platformhttp.Problem(w, http.StatusBadRequest, detail)
+		return
+	}
+
+	page, err := h.store.ListSources(r.Context(), query)
+	if err != nil {
+		h.internalError(w, r, "listing sources", err)
+		return
+	}
+	cycle, err := h.store.LastPollCycle(r.Context())
+	if err != nil {
+		h.internalError(w, r, "reading last poll cycle", err)
+		return
+	}
+
+	body := sourcesListResponse{
+		Items: make([]listedSourceResponse, 0, len(page.Items)),
+		Cycle: pollCycleResponse{
+			Retrieved:         cycle.Retrieved,
+			DuplicatesSkipped: cycle.Duplicates,
+			// Empty renders as [], never null: "no failures" is a reading.
+			Failures: cycle.Failures,
+		},
+	}
+	for _, item := range page.Items {
+		body.Items = append(body.Items, listedSource(item))
+	}
+	if page.NextCursor != nil {
+		next := encodeCursor(page.NextCursor.CreatedAt, page.NextCursor.ID)
+		body.NextCursor = &next
+	}
+	h.writeJSON(w, r, http.StatusOK, body)
+}
+
+// listedSource renders one source row for the wire.
+func listedSource(item ListedSource) listedSourceResponse {
+	out := listedSourceResponse{
+		ID:                 item.ID.String(),
+		Name:               item.Name,
+		URL:                item.URL,
+		Language:           item.Language,
+		Jurisdiction:       item.Jurisdiction,
+		LicenceTerms:       item.LicenceTerms,
+		UsageRule:          item.UsageRule,
+		PermissionEvidence: item.PermissionEvidence,
+		Active:             item.Active,
+		CreatedAt:          item.CreatedAt.Format(timeFormat),
+	}
+	if item.LastPolledAt != nil {
+		polled := item.LastPolledAt.Format(timeFormat)
+		out.LastPolledAt = &polled
+	}
+	return out
+}
+
+// parseSourcesQuery validates the query string and builds the store query,
+// reporting the 400 detail when it cannot. Unknown and repeated parameters
+// are rejected for parseQueueQuery's reasons: a misspelled or contradictory
+// filter silently half-honoured would read as acceptance.
+func parseSourcesQuery(values url.Values) (query SourcesQuery, detail string, ok bool) {
+	for name, supplied := range values {
+		switch name {
+		case "active", "limit", "cursor":
+			if len(supplied) > 1 {
+				return SourcesQuery{}, "query parameter " + strconv.Quote(name) + " was supplied " + strconv.Itoa(len(supplied)) + " times; supply it at most once", false
+			}
+		default:
+			return SourcesQuery{}, "unknown query parameter " + strconv.Quote(name) + "; this endpoint accepts active, limit and cursor", false
+		}
+	}
+
+	query.Limit = defaultQueueLimit
+	if values.Has("limit") {
+		limit, err := strconv.ParseInt(values.Get("limit"), 10, 32)
+		if err != nil || limit < 1 || limit > maxQueueLimit {
+			return SourcesQuery{}, "limit must be a whole number between 1 and " + strconv.Itoa(maxQueueLimit), false
+		}
+		query.Limit = int32(limit)
+	}
+
+	// Exactly the JSON booleans, not ParseBool's zoo of aliases: `active=1`
+	// accepted here would be a second spelling the contract never made.
+	if values.Has("active") {
+		switch values.Get("active") {
+		case "true":
+			active := true
+			query.Active = &active
+		case "false":
+			active := false
+			query.Active = &active
+		default:
+			return SourcesQuery{}, "active must be true or false", false
+		}
+	}
+
+	if values.Has("cursor") {
+		at, rowID, err := decodeCursor(values.Get("cursor"))
+		if err != nil {
+			return SourcesQuery{}, "cursor is not one this endpoint issued; pass back the next_cursor from the previous page", false
+		}
+		query.Cursor = &SourceCursor{CreatedAt: at, ID: rowID}
+	}
+	return query, "", true
 }
 
 // validateNewSource checks a registration for blank fields and a usable
