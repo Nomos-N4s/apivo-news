@@ -6,7 +6,6 @@ import {
   filterOptions,
   filterQuery,
   filterSources,
-  isNarrowed,
   namedInFailures,
   NO_FILTERS,
   parseSourceFilters,
@@ -74,13 +73,11 @@ describe('parseSourceFilters', () => {
 describe('filterQuery', () => {
   it('leaves the unnarrowed values out, so a bare list has a bare URL', () => {
     expect(filterQuery(NO_FILTERS)).toEqual({});
-    expect(isNarrowed(NO_FILTERS)).toBe(false);
   });
 
   it('carries exactly what was chosen', () => {
     const chosen = filters({ view: 'active', health: 'never', search: 'isar' });
     expect(filterQuery(chosen)).toEqual({ view: 'active', health: 'never', q: 'isar' });
-    expect(isNarrowed(chosen)).toBe(true);
   });
 
   it('round-trips through the query string', () => {

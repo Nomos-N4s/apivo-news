@@ -248,7 +248,6 @@ export interface EditorialStrings {
    */
   readonly deactivationKeepsRecord: string;
   /** The all/active/inactive toggle over the table. */
-  readonly viewLabel: string;
   readonly viewAll: string;
   readonly viewActive: string;
   readonly viewInactive: string;
@@ -456,7 +455,6 @@ const EL: EditorialStrings = {
   deactivateInstead: 'Απενεργοποίηση αντ’ αυτού',
   deactivationKeepsRecord:
     'Η λήψη σταμάτησε. Τα ανακτημένα τεκμήρια και τα δημοσιευμένα άρθρα παραμένουν στην εγγραφή.',
-  viewLabel: 'Προβολή',
   viewAll: 'Όλες',
   viewActive: 'Ενεργές',
   viewInactive: 'Ανενεργές',
@@ -647,7 +645,6 @@ const DE: EditorialStrings = {
   deactivateInstead: 'Stattdessen deaktivieren',
   deactivationKeepsRecord:
     'Der Abruf ist gestoppt. Die abgerufenen Nachweise und die veröffentlichten Artikel bleiben im Register.',
-  viewLabel: 'Ansicht',
   viewAll: 'Alle',
   viewActive: 'Aktive',
   viewInactive: 'Inaktive',

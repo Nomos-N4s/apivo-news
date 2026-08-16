@@ -437,8 +437,14 @@ const chips = activeFilters(filters).map((chip) => ({
             client JavaScript, so nothing filters as you type. */}
         {
           sources.length > 0 && (
-            <form class="filters" method="get" action={`/${lang}/editor/sources`}>
-              <h6>{t.filtersHeading}</h6>
+            <form
+              class="filters"
+              method="get"
+              action={`/${lang}/editor/sources`}
+              role="search"
+              aria-labelledby="filters-heading"
+            >
+              <h6 id="filters-heading">{t.filtersHeading}</h6>
               <div class="filter-row">
                 <label class="filter">
                   <span>{t.filterState}</span>
@@ -914,6 +920,13 @@ const chips = activeFilters(filters).map((chip) => ({
   .filter .input {
     font-size: 12.5px;
     color: var(--color-text);
+  }
+  /* Browsers dim the placeholder by default, well under the 4.5:1 floor
+     the rest of the chrome holds to (#89). --ink-soft is the quietest
+     ink allowed on this background. */
+  .filter .input::placeholder {
+    color: var(--ink-soft);
+    opacity: 1;
   }
   .filter-search {
     flex: 1 1 200px;

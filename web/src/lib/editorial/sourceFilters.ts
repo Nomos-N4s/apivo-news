@@ -121,11 +121,6 @@ export function filterQuery(filters: SourceFilters): Record<string, string> {
   return query;
 }
 
-/** Whether any dimension is narrowed at all. */
-export function isNarrowed(filters: SourceFilters): boolean {
-  return Object.keys(filterQuery(filters)).length > 0;
-}
-
 /**
  * Whether the last cycle named this source among its failures.
  *
