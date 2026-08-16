@@ -57,6 +57,10 @@ func (s *queueStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) (ed
 	return editorial.Withdrawal{}, errUnexpectedCall
 }
 
+func (s *queueStore) Provenance(context.Context, uuid.UUID) (editorial.Provenance, error) {
+	return editorial.Provenance{}, errUnexpectedCall
+}
+
 func (s *queueStore) ReviewQueue(_ context.Context, q editorial.QueueQuery) (editorial.QueuePage, error) {
 	s.got = q
 	return s.page, nil

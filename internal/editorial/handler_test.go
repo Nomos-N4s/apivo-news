@@ -96,6 +96,10 @@ func (s errStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) (edito
 	return editorial.Withdrawal{}, s.err
 }
 
+func (s errStore) Provenance(context.Context, uuid.UUID) (editorial.Provenance, error) {
+	return editorial.Provenance{}, s.err
+}
+
 // okStore returns a canned created source.
 type okStore struct{ src editorial.Source }
 
@@ -117,6 +121,10 @@ func (s okStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editorial.Artic
 
 func (s okStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) (editorial.Withdrawal, error) {
 	return editorial.Withdrawal{}, errUnexpectedCall
+}
+
+func (s okStore) Provenance(context.Context, uuid.UUID) (editorial.Provenance, error) {
+	return editorial.Provenance{}, errUnexpectedCall
 }
 
 // recordingStore captures what the handler actually asked to persist.
@@ -141,6 +149,10 @@ func (s *recordingStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editori
 
 func (s *recordingStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) (editorial.Withdrawal, error) {
 	return editorial.Withdrawal{}, errUnexpectedCall
+}
+
+func (s *recordingStore) Provenance(context.Context, uuid.UUID) (editorial.Provenance, error) {
+	return editorial.Provenance{}, errUnexpectedCall
 }
 
 func discardLogger() *slog.Logger {

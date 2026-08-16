@@ -71,6 +71,10 @@ func (s *approvalStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) 
 	return editorial.Withdrawal{}, errUnexpectedCall
 }
 
+func (s *approvalStore) Provenance(context.Context, uuid.UUID) (editorial.Provenance, error) {
+	return editorial.Provenance{}, errUnexpectedCall
+}
+
 // approvalBody is the decoded 201 payload, kept close to the contract's
 // wire shape so a renamed field fails the test.
 type approvalBody struct {

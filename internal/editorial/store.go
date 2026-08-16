@@ -69,6 +69,7 @@ type Store interface {
 	Approve(ctx context.Context, a NewApproval) (Article, error)
 	Publish(ctx context.Context, articleID, editorID uuid.UUID) (Article, error)
 	Withdraw(ctx context.Context, articleID, editorID uuid.UUID, reason string) (Withdrawal, error)
+	Provenance(ctx context.Context, articleID uuid.UUID) (Provenance, error)
 }
 
 // PGStore is the Postgres-backed Store.

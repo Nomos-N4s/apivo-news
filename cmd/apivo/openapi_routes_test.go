@@ -304,3 +304,7 @@ func (unreachableStore) Publish(context.Context, uuid.UUID, uuid.UUID) (editoria
 func (unreachableStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) (editorial.Withdrawal, error) {
 	return editorial.Withdrawal{}, errors.New("the route probe must not reach the store")
 }
+
+func (unreachableStore) Provenance(context.Context, uuid.UUID) (editorial.Provenance, error) {
+	return editorial.Provenance{}, errors.New("the route probe must not reach the store")
+}
