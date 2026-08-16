@@ -22,6 +22,7 @@ import {
 	isEditorialPath,
 	matchesCrawlerSignature,
 	rewriteSameSiteOriginHeaders,
+	varyOnUserAgent,
 	withEdgeHeaders,
 } from './routing.js';
 
@@ -303,5 +304,41 @@ describe('withEdgeHeaders', () => {
 		const stamped = withEdgeHeaders(new Response('body'), false);
 		assert.equal(stamped.headers.get('strict-transport-security'), null);
 		assert.equal(stamped.headers.get('x-robots-tag'), X_ROBOTS_TAG_VALUE);
+	});
+
+	// The crawler fence answers 403 to some callers and passes the rest
+	// through, so EVERY response varies on User-Agent - not only the
+	// refusal. A shared cache that stored the allowed response could
+	// otherwise hand it to a denied crawler, or hand a reader the denial.
+	it('declares the User-Agent variance on an allowed response too', () => {
+		assert.equal(withEdgeHeaders(new Response('body'), true).headers.get('vary'), 'User-Agent');
+	});
+});
+
+describe('varyOnUserAgent', () => {
+	it('adds the field to a response that declares no variance', () => {
+		const headers = new Headers();
+		varyOnUserAgent(headers);
+		assert.equal(headers.get('vary'), 'User-Agent');
+	});
+
+	it("appends without displacing the origin's own fields", () => {
+		const headers = new Headers({ vary: 'Accept-Encoding' });
+		varyOnUserAgent(headers);
+		assert.equal(headers.get('vary'), 'Accept-Encoding, User-Agent');
+	});
+
+	it('says it once, however the origin spelled it', () => {
+		for (const vary of ['User-Agent', 'user-agent', 'Accept-Encoding, user-agent']) {
+			const headers = new Headers({ vary });
+			varyOnUserAgent(headers);
+			assert.equal(headers.get('vary'), vary, vary);
+		}
+	});
+
+	it('leaves `*` alone: appending to it could only make it less true', () => {
+		const headers = new Headers({ vary: '*' });
+		varyOnUserAgent(headers);
+		assert.equal(headers.get('vary'), '*');
 	});
 });

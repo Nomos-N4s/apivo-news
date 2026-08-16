@@ -200,6 +200,37 @@ export function containerRequest(request) {
 }
 
 /**
+ * Adds `User-Agent` to a response's `Vary`, in place, without displacing
+ * what is already there.
+ *
+ * Every response this Worker emits depends on the User-Agent, because the
+ * crawler fence answers 403 to some callers and passes the rest through.
+ * Declaring that only on the refusal was half the statement: a shared
+ * cache that stored the allowed response could hand it to a denied
+ * crawler, or hand a reader the denial.
+ *
+ * `Vary: *` is left alone — it already says "vary on everything", and
+ * appending to it would only make it less true.
+ *
+ * @param {Headers} headers Mutated in place.
+ */
+export function varyOnUserAgent(headers) {
+	const existing = headers.get('vary');
+	if (existing === null || existing.trim() === '') {
+		headers.set('Vary', 'User-Agent');
+		return headers;
+	}
+	if (existing.trim() === '*') {
+		return headers;
+	}
+	const fields = existing.split(',').map((field) => field.trim().toLowerCase());
+	if (!fields.includes('user-agent')) {
+		headers.set('Vary', `${existing}, User-Agent`);
+	}
+	return headers;
+}
+
+/**
  * The HSTS policy: a year, subdomains included, `preload` deliberately
  * absent.
  *
@@ -214,7 +245,8 @@ export const HSTS_VALUE = 'max-age=31536000; includeSubDomains';
 
 /**
  * Stamps the headers the edge owes every response: the indexing advisory,
- * and — on an https request — the HSTS policy.
+ * the User-Agent cache variance, and — on an https request — the HSTS
+ * policy.
  *
  * `X-Robots-Tag`: the crawler fences live in the web container's
  * middleware (FR-013, research D6), which never runs for the static assets
@@ -232,9 +264,12 @@ export const HSTS_VALUE = 'max-age=31536000; includeSubDomains';
  * it) and stating a policy on a hop that proves nothing is not a claim
  * worth making.
  *
- * Both only fill a gap: a response that already states its own value keeps
- * it, so the origin stays the authority and this is a floor beneath it,
- * not an override of it.
+ * `Vary`: see varyOnUserAgent — the crawler decision applies to every
+ * response, so every response must declare that it does.
+ *
+ * The other two only fill a gap: a response that already states its own
+ * value keeps it, so the origin stays the authority and this is a floor
+ * beneath it, not an override of it.
  *
  * @param response The container's (or a refusal's) response.
  * @param secure Whether the PUBLIC hop was https - not the proxy hop.
@@ -246,6 +281,7 @@ export function withEdgeHeaders(response, secure) {
 		return response;
 	}
 	const stamped = new Response(response.body, response);
+	varyOnUserAgent(stamped.headers);
 	if (!stamped.headers.has('x-robots-tag')) {
 		stamped.headers.set('X-Robots-Tag', X_ROBOTS_TAG_VALUE);
 	}
