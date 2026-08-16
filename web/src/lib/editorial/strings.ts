@@ -178,7 +178,14 @@ export interface EditorialStrings {
    */
   readonly sourcesTruncated: string;
   /** Success confirmation; a 201 carries an id, not prose. */
-  readonly sourceAdded: (id: string) => string;
+  /**
+   * The recorded-source body. It states registration and nothing else:
+   * the 201 carries the source's identity, not its poll state, so the
+   * notice must not announce that retrieval has begun. The id, when the
+   * response names one, rides in the notice's record line instead of
+   * being interpolated here (#121).
+   */
+  readonly sourceRecordedBody: string;
 }
 
 const EL: EditorialStrings = {
@@ -311,7 +318,8 @@ const EL: EditorialStrings = {
   sourcesEmpty: 'Δεν έχει ρυθμιστεί καμία πηγή ακόμη.',
   sourcesTruncated:
     'Υπάρχουν κι άλλες πηγές που δεν εμφανίζονται εδώ· ο πίνακας και τα σύνολα καλύπτουν όσες φορτώθηκαν.',
-  sourceAdded: (id) => `Η πηγή ρυθμίστηκε (${id}) και η λήψη ξεκίνησε.`,
+  sourceRecordedBody:
+    'Η πηγή καταχωρίστηκε στο μητρώο με κανόνα χρήσης «απόσπασμα και σύνδεσμος». Θα εμφανιστεί στη λίστα πηγών· ο επόμενος κύκλος λήψης δείχνει τι ανακτήθηκε.',
 };
 
 const DE: EditorialStrings = {
@@ -444,7 +452,8 @@ const DE: EditorialStrings = {
   sourcesEmpty: 'Noch keine Quelle eingerichtet.',
   sourcesTruncated:
     'Es gibt weitere Quellen, die hier nicht angezeigt werden; Tabelle und Summen decken nur die geladenen ab.',
-  sourceAdded: (id) => `Quelle eingerichtet (${id}); der Abruf läuft.`,
+  sourceRecordedBody:
+    'Die Quelle ist im Register verzeichnet, mit der Nutzungsregel „Auszug und Link“. Sie erscheint in der Quellenliste; was abgerufen wurde, zeigt der nächste Abrufzyklus.',
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, EditorialStrings>> = { el: EL, de: DE };

@@ -119,11 +119,13 @@ export function noticeForWithdrawal(
 
 /**
  * The banner after registering a source. A 201 carries an id, not prose,
- * so success states itself; a refusal repeats the API's own words.
+ * so success states itself and the id rides in the record line — omitted
+ * entirely when the response withheld it, rather than interpolated as an
+ * empty pair of parentheses. A refusal repeats the API's own words.
  */
 export function noticeForSource(
   outcome: SourceOutcome,
-  t: Pick<EditorialStrings, 'addSource' | 'notRecordedTitle' | 'sourceAdded'>,
+  t: Pick<EditorialStrings, 'addSource' | 'notRecordedTitle' | 'sourceRecordedBody'>,
 ): RecordNoticeModel {
   if (!outcome.recorded) {
     return {
@@ -136,8 +138,11 @@ export function noticeForSource(
   return {
     tone: 'recorded',
     label: t.addSource,
-    body: t.sourceAdded(outcome.source_id ?? ''),
-    record: [],
+    body: t.sourceRecordedBody,
+    record:
+      outcome.source_id === undefined || outcome.source_id === ''
+        ? []
+        : [`source ${outcome.source_id}`],
   };
 }
 

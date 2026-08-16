@@ -119,11 +119,25 @@ describe('noticeForWithdrawal', () => {
 });
 
 describe('noticeForSource', () => {
-  it('success states the id the API answered', () => {
+  it('success states registration and echoes the id the API answered', () => {
     const notice = noticeForSource({ recorded: true, source_id: 'src-3' }, t);
     expect(notice.tone).toBe('recorded');
     expect(notice.label).toBe(t.addSource);
-    expect(notice.body).toBe(t.sourceAdded('src-3'));
+    expect(notice.body).toBe(t.sourceRecordedBody);
+    expect(notice.record).toEqual(['source src-3']);
+  });
+
+  it('omits the id the response withheld instead of printing an empty one', () => {
+    const notice = noticeForSource({ recorded: true }, t);
+    expect(notice.tone).toBe('recorded');
+    expect(notice.record).toEqual([]);
+    expect(notice.body).toBe(t.sourceRecordedBody);
+  });
+
+  it('never announces that polling began — the 201 carries no poll state', () => {
+    for (const strings of [t, de]) {
+      expect(strings.sourceRecordedBody).not.toMatch(/ξεκίνησε|läuft/);
+    }
   });
 
   it('a refusal repeats the API’s own words under the not-recorded label', () => {
