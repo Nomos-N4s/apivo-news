@@ -37,6 +37,26 @@ var ErrDuplicateSourceURL = errors.New("editorial: a source with this feed URL a
 // is not in the language reference table. Handlers map it to 400.
 var ErrUnknownLanguage = errors.New("editorial: unknown language code")
 
+// ErrSourceNotFound reports a source id with no source behind it. Handlers
+// map it to 404.
+var ErrSourceNotFound = errors.New("editorial: no such source")
+
+// SourceEvidenceError reports a deletion the database refused because
+// retrieved items still reference the source: deleting it would destroy
+// the provenance chain those items anchor (I-3, I-4). It comes from the
+// source_item FK's 23503 - the database's verdict, never an application
+// pre-check, because only the database can settle the race between a
+// delete and a concurrent retrieval. Handlers map it to 409 naming the
+// count.
+type SourceEvidenceError struct {
+	// Items is how many source_item rows reference the source.
+	Items int64
+}
+
+func (e SourceEvidenceError) Error() string {
+	return fmt.Sprintf("editorial: source holds %d retrieved items as evidence and cannot be deleted", e.Items)
+}
+
 // NewSource is a source registration: the fields an editor supplies. The
 // usage rule is deliberately absent - new sources are always
 // extract_and_link; upgrades are a founder-gated flow outside this module.
@@ -66,6 +86,8 @@ type Source struct {
 type Store interface {
 	CreateSource(ctx context.Context, src NewSource) (Source, error)
 	ListSources(ctx context.Context, q SourcesQuery) (SourcesPage, error)
+	UpdateSource(ctx context.Context, id, editorID uuid.UUID, patch SourcePatch) (ListedSource, error)
+	DeleteSource(ctx context.Context, id uuid.UUID) error
 	LastPollCycle(ctx context.Context) (PollCycle, error)
 	ReviewQueue(ctx context.Context, q QueueQuery) (QueuePage, error)
 	Approve(ctx context.Context, a NewApproval) (Article, error)

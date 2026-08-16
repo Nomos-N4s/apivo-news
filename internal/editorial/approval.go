@@ -24,6 +24,7 @@ import (
 const (
 	eventArticleApproved  = "article.approved"
 	eventArticlePublished = "article.published"
+	eventSourceUpdated    = "source.updated"
 )
 
 // roleEditor is the account.role value that carries editorial authority. It

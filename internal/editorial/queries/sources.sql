@@ -51,6 +51,54 @@ where (
 order by created_at desc, id desc
 limit sqlc.arg(row_limit);
 
+-- name: UpdateSource :one
+-- One PATCH as one statement (#118). Each narg is "not supplied": coalesce
+-- keeps the current value, so any subset of name, url, active and
+-- licence_terms updates without a per-combination query. The self-join on
+-- `old` reads the pre-update row in the same snapshot, which is what lets
+-- the source.updated event carry old and new values without a second read
+-- racing the write.
+--
+-- No row answers pgx.ErrNoRows, which the store maps to ErrSourceNotFound;
+-- a url colliding with another registration raises source_url_key, mapped
+-- to ErrDuplicateSourceURL like the registration path.
+update source
+   set name = coalesce(sqlc.narg(name)::text, source.name),
+       url = coalesce(sqlc.narg(url)::text, source.url),
+       active = coalesce(sqlc.narg(active)::boolean, source.active),
+       licence_terms = coalesce(sqlc.narg(licence_terms)::text, source.licence_terms)
+  from source old
+ where source.id = sqlc.arg(id)::uuid
+   and old.id = source.id
+returning
+    source.id,
+    source.name,
+    source.url,
+    source.language_code,
+    source.jurisdiction,
+    source.licence_terms,
+    source.usage_rule,
+    source.permission_evidence,
+    source.active,
+    source.last_polled_at,
+    source.created_at,
+    old.name as old_name,
+    old.url as old_url,
+    old.active as old_active,
+    old.licence_terms as old_licence_terms;
+
+-- name: DeleteSource :execrows
+-- Deletion is refused by the database wherever evidence exists: the
+-- source_item FK carries no ON DELETE clause, so a source with retrieved
+-- items raises 23503 and the store turns that verdict into the 409 naming
+-- the evidence count. Zero rows deleted means no such source.
+delete from source where id = sqlc.arg(id)::uuid;
+
+-- name: CountSourceEvidence :one
+-- How many retrieved items hold this source in the provenance chain - the
+-- honest figure the delete refusal names.
+select count(*) from source_item where source_id = sqlc.arg(source_id)::uuid;
+
 -- name: LastPollCycle :one
 -- The last poll cycle as the poll state records it (0007): how much the
 -- last poll of each ACTIVE source retrieved, how much the content

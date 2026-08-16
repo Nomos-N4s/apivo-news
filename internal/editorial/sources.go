@@ -2,10 +2,14 @@ package editorial
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Nomos-N4s/apivo-news/internal/editorial/store"
@@ -148,6 +152,185 @@ func (s *PGStore) ListSources(ctx context.Context, q SourcesQuery) (SourcesPage,
 		page.Items = append(page.Items, item)
 	}
 	return page, nil
+}
+
+// SourcePatch is one PATCH of a registered source: the fields an editor
+// may change, each nil when the request did not supply it - "unchanged"
+// and "set to the same value" are different requests, and only the
+// supplied ones belong in the audit record. The usage rule is deliberately
+// absent, exactly as on NewSource: upgrades are a founder-gated flow
+// outside this module.
+type SourcePatch struct {
+	Name         *string
+	URL          *string
+	Active       *bool
+	LicenceTerms *string
+}
+
+// Empty reports a patch that supplies nothing - the handler refuses it
+// before any write, because accepting it would confirm an edit that never
+// was.
+func (p SourcePatch) Empty() bool {
+	return p.Name == nil && p.URL == nil && p.Active == nil && p.LicenceTerms == nil
+}
+
+// sourceFieldChange is one edited field in a source.updated payload: what
+// the row said before, and what it says now. Old and new travel together
+// because "what did we believe the terms were, when" is the question the
+// audit stream exists to answer (I-4's question, asked of the mutable row).
+type sourceFieldChange struct {
+	Old any `json:"old"`
+	New any `json:"new"`
+}
+
+// sourceUpdatedPayload is the source.updated event: who edited which
+// source, and each field that actually changed, old and new. Fields whose
+// supplied value equalled the row are absent - the stream records edits,
+// not re-statements.
+type sourceUpdatedPayload struct {
+	SourceID     string             `json:"source_id"`
+	UpdatedBy    string             `json:"updated_by"`
+	Name         *sourceFieldChange `json:"name,omitempty"`
+	URL          *sourceFieldChange `json:"url,omitempty"`
+	Active       *sourceFieldChange `json:"active,omitempty"`
+	LicenceTerms *sourceFieldChange `json:"licence_terms,omitempty"`
+}
+
+// UpdateSource applies a patch to a registered source and, when anything
+// actually changed, appends the source.updated domain event in the same
+// transaction - an edit to licence terms is a licensing event, and a
+// record of it that could commit without its audit line would be a record
+// with a hole in it.
+//
+// An unknown id reports ErrSourceNotFound; a url already registered to
+// another source reports ErrDuplicateSourceURL, exactly as on creation.
+func (s *PGStore) UpdateSource(ctx context.Context, id, editorID uuid.UUID, patch SourcePatch) (ListedSource, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return ListedSource{}, fmt.Errorf("editorial: beginning source update: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+
+	params := store.UpdateSourceParams{ID: pgtype.UUID{Bytes: id, Valid: true}}
+	if patch.Name != nil {
+		params.Name = pgtype.Text{String: *patch.Name, Valid: true}
+	}
+	if patch.URL != nil {
+		params.Url = pgtype.Text{String: *patch.URL, Valid: true}
+	}
+	if patch.Active != nil {
+		params.Active = pgtype.Bool{Bool: *patch.Active, Valid: true}
+	}
+	if patch.LicenceTerms != nil {
+		params.LicenceTerms = pgtype.Text{String: *patch.LicenceTerms, Valid: true}
+	}
+
+	row, err := q.UpdateSource(ctx, params)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return ListedSource{}, fmt.Errorf("%w: %s", ErrSourceNotFound, id)
+	case err != nil:
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) &&
+			pgErr.Code == pgerrcode.UniqueViolation && pgErr.ConstraintName == "source_url_key" {
+			return ListedSource{}, fmt.Errorf("%w: %s", ErrDuplicateSourceURL, *patch.URL)
+		}
+		return ListedSource{}, fmt.Errorf("editorial: updating source: %w", err)
+	}
+
+	if payload, changed := sourceUpdate(id, editorID, patch, row); changed {
+		if err := recordEvent(ctx, q, eventSourceUpdated, payload); err != nil {
+			return ListedSource{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ListedSource{}, fmt.Errorf("editorial: committing source update: %w", err)
+	}
+
+	item := ListedSource{
+		ID:                 uuid.UUID(row.ID.Bytes),
+		Name:               row.Name,
+		URL:                row.Url,
+		Language:           row.LanguageCode,
+		Jurisdiction:       row.Jurisdiction,
+		LicenceTerms:       row.LicenceTerms,
+		UsageRule:          row.UsageRule,
+		PermissionEvidence: textPtr(row.PermissionEvidence),
+		Active:             row.Active,
+		CreatedAt:          row.CreatedAt.Time,
+	}
+	if row.LastPolledAt.Valid {
+		at := row.LastPolledAt.Time
+		item.LastPolledAt = &at
+	}
+	return item, nil
+}
+
+// sourceUpdate builds the source.updated payload from the statement's own
+// before-and-after reading, reporting whether anything changed at all. A
+// patch that restated the current values changes nothing, and appending an
+// event over it would put a non-edit into the audit stream.
+func sourceUpdate(id, editorID uuid.UUID, patch SourcePatch, row store.UpdateSourceRow) (sourceUpdatedPayload, bool) {
+	payload := sourceUpdatedPayload{SourceID: id.String(), UpdatedBy: editorID.String()}
+	changed := false
+	if patch.Name != nil && row.OldName != row.Name {
+		payload.Name = &sourceFieldChange{Old: row.OldName, New: row.Name}
+		changed = true
+	}
+	if patch.URL != nil && row.OldUrl != row.Url {
+		payload.URL = &sourceFieldChange{Old: row.OldUrl, New: row.Url}
+		changed = true
+	}
+	if patch.Active != nil && row.OldActive != row.Active {
+		payload.Active = &sourceFieldChange{Old: row.OldActive, New: row.Active}
+		changed = true
+	}
+	if patch.LicenceTerms != nil && row.OldLicenceTerms != row.LicenceTerms {
+		payload.LicenceTerms = &sourceFieldChange{Old: row.OldLicenceTerms, New: row.LicenceTerms}
+		changed = true
+	}
+	return payload, changed
+}
+
+// DeleteSource removes a source that no evidence references. The database
+// decides: the source_item FK carries no ON DELETE clause, so a source
+// with retrieved items raises 23503 and the refusal comes back as
+// SourceEvidenceError naming the count. Deactivation, not deletion, is the
+// everyday "remove" - this succeeds only for a source that never yielded
+// anything.
+func (s *PGStore) DeleteSource(ctx context.Context, id uuid.UUID) error {
+	// The delete runs in its own transaction (a savepoint when the caller
+	// is already inside one), so the FK's refusal aborts the delete alone:
+	// the evidence count that names the refusal still has a live
+	// connection state to be read on.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("editorial: beginning source delete: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := s.q.WithTx(tx).DeleteSource(ctx, pgtype.UUID{Bytes: id, Valid: true})
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) &&
+			pgErr.Code == pgerrcode.ForeignKeyViolation && pgErr.ConstraintName == "source_item_source_id_fkey" {
+			items, countErr := s.q.CountSourceEvidence(ctx, pgtype.UUID{Bytes: id, Valid: true})
+			if countErr != nil {
+				return fmt.Errorf("editorial: counting the evidence that refused a source delete: %w", countErr)
+			}
+			return SourceEvidenceError{Items: items}
+		}
+		return fmt.Errorf("editorial: deleting source: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: %s", ErrSourceNotFound, id)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("editorial: committing source delete: %w", err)
+	}
+	return nil
 }
 
 // LastPollCycle reads the last poll cycle from the poll state on the
