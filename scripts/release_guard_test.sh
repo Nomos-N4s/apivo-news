@@ -37,7 +37,26 @@ git commit -q -am "feat: unmerged"
 git tag -a v0.9.0 -m "tagged off main"
 git checkout -q main
 
+V010_COMMIT=$(git rev-parse "refs/tags/v0.1.0^{commit}")
+UNMERGED_COMMIT=$(git rev-parse "refs/tags/v0.9.0^{commit}")
+
 FAILS=0
+
+# expect_pass_saying <description> <required-message-fragment> <guard args...>
+expect_pass_saying() {
+    desc="$1"
+    fragment="$2"
+    shift 2
+    if ! out=$(sh "$GUARD" "$@" 2>&1); then
+        echo "FAIL: $desc - guard refused: $out"
+        FAILS=1
+    elif ! printf '%s' "$out" | grep -q -F -e "$fragment"; then
+        echo "FAIL: $desc - passed with the wrong message: $out"
+        FAILS=1
+    else
+        echo "ok: $desc"
+    fi
+}
 
 # expect_pass <description> <guard args...>
 expect_pass() {
@@ -85,5 +104,15 @@ expect_fail "leading zero in pre"    "not a semver tag"           v1.2.3-01 main
 expect_fail "empty pre identifier"   "not a semver tag"           v1.2.3-alpha..1 main
 expect_fail "empty build identifier" "not a semver tag"           v1.2.3+build..7 main
 expect_fail "pre-release only dash"  "not a semver tag"           v1.2.3- main
+
+# The already-published Release, as the workflow reports it: no Release
+# ("", the two-argument calls above), the commit it was cut from, or
+# "unknown" when a Release exists that records no commit at all.
+expect_pass_saying "re-release of the same commit" "re-releasing the commit" \
+    v0.1.0 main "$V010_COMMIT"
+expect_fail "tag moved under a published Release" "the tag has moved" \
+    v0.1.0 main "$UNMERGED_COMMIT"
+expect_fail "published Release records no commit" "records no commit" \
+    v0.1.0 main unknown
 
 exit "$FAILS"

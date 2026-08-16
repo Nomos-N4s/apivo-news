@@ -103,6 +103,15 @@ expect_contains "commits under a non-semver tag kept"    v0.2.0 "feat: three"
 expect_contains "same-commit predecessor is found"       v0.3.1 "Changes since v0.3.0."
 expect_absent   "nothing re-listed across it"            v0.3.1 "feat: four"
 
+# The commit line is a contract, not decoration: release.yml reads it back
+# off the published Release and the guard refuses a tag that has moved away
+# from it. Its exact shape is asserted here, on both the first release and a
+# later one, because a silent reformat would disarm that refusal.
+expect_contains "first release records its commit" v0.1.0 \
+    "Released from commit \`$(git rev-parse 'refs/tags/v0.1.0^{commit}')\`."
+expect_contains "later release records its commit" v0.2.0 \
+    "Released from commit \`$(git rev-parse 'refs/tags/v0.2.0^{commit}')\`."
+
 expect_fail     "missing tag is refused"                 v9.9.9 "does not exist"
 
 exit "$FAILS"

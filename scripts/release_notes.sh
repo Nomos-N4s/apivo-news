@@ -82,6 +82,12 @@ if [ -n "$PREV" ]; then
 else
     echo "First release: the notes cover the full history."
 fi
+echo
+# The commit this version was cut from, on the published Release itself.
+# It is the record the guard reads on any later run of the same tag: a tag
+# that has moved since it was released points somewhere else than this line
+# says, and the guard refuses to deploy it (scripts/release_guard.sh).
+echo "Released from commit \`$TAG_COMMIT\`."
 
 # section <heading> <type-pattern>: emits a heading and the matching
 # subjects, most recent first, or nothing at all when the group is empty.
