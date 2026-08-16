@@ -201,11 +201,16 @@ type withdrawalRequest struct {
 	Reason string `json:"reason"`
 }
 
-// withdrawalResult is the recorded withdrawal.
+// withdrawalResult is the recorded withdrawal. Reason is the value the
+// database froze into article.withdrawal_reason - not an echo of the
+// request - because the confirmation screen renders this response as the
+// record of what happened, and a record that omits its own justification
+// reads as blank (the audit banner's only text is the reason).
 type withdrawalResult struct {
 	ArticleID   string `json:"article_id"`
 	WithdrawnAt string `json:"withdrawn_at"`
 	WithdrawnBy string `json:"withdrawn_by"`
+	Reason      string `json:"reason"`
 }
 
 // withdrawArticle implements POST /api/v1/editorial/articles/{id}/withdrawal.
@@ -254,6 +259,7 @@ func (h *Handler) withdrawArticle(w http.ResponseWriter, r *http.Request) {
 		ArticleID:   withdrawal.ArticleID.String(),
 		WithdrawnAt: withdrawal.WithdrawnAt.Format(timeFormat),
 		WithdrawnBy: withdrawal.WithdrawnBy.String(),
+		Reason:      withdrawal.Reason,
 	})
 }
 
