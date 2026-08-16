@@ -26,6 +26,7 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
 	"github.com/Nomos-N4s/apivo-news/internal/identity"
+	"github.com/Nomos-N4s/apivo-news/internal/ingestion"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 	platformdb "github.com/Nomos-N4s/apivo-news/internal/platform/db"
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
@@ -113,6 +114,30 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		}
 		defer closeVerifier()
 		routes = append(routes, editorialRoute)
+	}
+
+	// The feed poll loop runs beside the HTTP server, on the same pool and
+	// under the same lifetime: it stops with ctx like srv.Run does, and the
+	// deferred wait below holds serve open until the loop has actually
+	// returned - so the pool it polls with is never closed under it (the
+	// deferred pool.Close above runs after this defer, LIFO). Interval zero
+	// (POLL_INTERVAL=0, the one disable switch) means the loop is never
+	// started; unset means the documented 15m default.
+	if cfg.PollInterval > 0 {
+		poller := ingestion.NewPoller(log, pool, ingestion.PollConfig{Interval: cfg.PollInterval})
+		pollCtx, stopPoller := context.WithCancel(ctx)
+		pollDone := make(chan struct{})
+		go func() {
+			defer close(pollDone)
+			poller.Run(pollCtx)
+		}()
+		defer func() {
+			stopPoller()
+			<-pollDone
+		}()
+		log.InfoContext(ctx, "feed poll loop started", "interval", cfg.PollInterval)
+	} else {
+		log.InfoContext(ctx, "POLL_INTERVAL is 0: the feed poll loop is disabled and no source will be polled")
 	}
 
 	srv := platformhttp.New(log, cfg.HTTPAddr, readiness(pool), routes...)

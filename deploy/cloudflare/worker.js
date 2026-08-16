@@ -96,6 +96,14 @@ export class ApiContainer extends ContainerHost {
 		if (this.env.JWT_AUDIENCE) {
 			containerEnv.JWT_AUDIENCE = this.env.JWT_AUDIENCE;
 		}
+		// Feed poll loop cadence. Forwarded explicitly like everything
+		// above — a var declared in wrangler.jsonc that this method does
+		// not copy never reaches the container. Unset means the binary's
+		// documented 15m default, and "0" (a truthy string, so it does get
+		// forwarded) disables the loop — the only disable switch.
+		if (this.env.POLL_INTERVAL) {
+			containerEnv.POLL_INTERVAL = this.env.POLL_INTERVAL;
+		}
 		return containerEnv;
 	}
 }

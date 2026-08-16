@@ -223,6 +223,11 @@ func TestRunServesAndShutsDown(t *testing.T) {
 	env := map[string]string{
 		"DATABASE_URL": dbURL,
 		"HTTP_ADDR":    "127.0.0.1:0",
+		// Polling stays off: this test shares its database with every
+		// other suite in the run, and a poller here would fetch their
+		// seeded sources and contend for the fleet-wide poll lock the
+		// ingestion tests assert on.
+		"POLL_INTERVAL": "0",
 	}
 
 	out := &syncBuffer{}

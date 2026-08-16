@@ -36,6 +36,10 @@
 //                  aud claim (Supabase access tokens carry "authenticated").
 //                  Only meaningful alongside a non-empty JWKS_URL — setting
 //                  it alone fails startup, by design.
+//   POLL_INTERVAL  Feed poll loop cadence, a Go duration (e.g. "15m").
+//                  Empty means the binary's documented 15m default; "0"
+//                  disables the loop — the only disable switch. Forwarded
+//                  to the API container only when set.
 //
 // Handed to the WEB container by the same file:
 //
@@ -65,6 +69,7 @@
 	"vars": {
 		"JWKS_URL": "",
 		"JWT_AUDIENCE": "",
+		"POLL_INTERVAL": "",
 		"API_BASE_URL": "",
 		"PUBLIC_SUPABASE_URL": "",
 		"PUBLIC_SUPABASE_ANON_KEY": ""
