@@ -444,6 +444,37 @@ const NOT_WIRED_WITHDRAWAL =
  */
 const NOT_DEPLOYED = 404;
 
+/**
+ * True when the response declares the RFC 9457 problem+json content type —
+ * the shape every deployed editorial endpoint answers its errors in. A 404
+ * without it is the mux's bare not-found, i.e. the route itself is absent.
+ */
+function isProblemJson(response: Response): boolean {
+  return (response.headers.get('Content-Type') ?? '').includes('application/problem+json');
+}
+
+/** The problem body's own words, with a generic line when it has none. */
+async function problemDetail(response: Response, subject: string): Promise<string> {
+  try {
+    const body: unknown = await response.json();
+    if (typeof body === 'object' && body !== null) {
+      const problem = body as Record<string, unknown>;
+      const detail = problem['detail'];
+      if (typeof detail === 'string' && detail !== '') {
+        return detail;
+      }
+      const title = problem['title'];
+      if (typeof title === 'string' && title !== '') {
+        return title;
+      }
+    }
+  } catch {
+    // An unreadable problem body still identified itself as a refusal;
+    // fall through to the generic line.
+  }
+  return `editorial API answered ${response.status} for ${subject}`;
+}
+
 function fixtureApi(): EditorialApi {
   return {
     queue(): Promise<QueuePage> {
@@ -587,11 +618,20 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason }),
       });
-      // The one editorial method that lacked this branch: with the reader
-      // deployed but editorial unmounted, its siblings fall back to the
-      // fixtures' honest not-recorded answer while withdraw() threw. A 404
-      // here means "not deployed", and publication did not end.
+      // A 404 carries two meanings on this route. The endpoint itself
+      // answers 404 as a domain outcome — no article with this id, or an
+      // approved article that never published — and those arrive as RFC
+      // 9457 problem+json with the refusal in `detail`. An unmounted
+      // editorial prefix (reader deployed, editorial not — the state the
+      // fixtures describe) answers the mux's bare 404 instead. Only the
+      // bare 404 takes the fixtures' fallback — the same branch queue(),
+      // approve() and sources() take, while provenance() maps its 404 to
+      // null and addSource() throws. A problem 404 is the deployed API
+      // refusing, and its own words are the honest not-recorded reason.
       if (response.status === NOT_DEPLOYED) {
+        if (isProblemJson(response)) {
+          return { recorded: false, reason: await problemDetail(response, 'the withdrawal') };
+        }
         return fixtures.withdraw(articleId, reason);
       }
       if (!response.ok) {

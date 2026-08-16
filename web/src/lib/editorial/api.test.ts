@@ -327,11 +327,17 @@ describe('the audit trace', () => {
     });
   });
 
-  it('reports not-recorded rather than throwing when withdrawal 404s', async () => {
-    // The same not-deployed branch as its four sibling methods: with the
-    // reader live and editorial unmounted, a 404 means the route is
-    // absent, and the honest answer is that publication did not end.
-    const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
+  it('reports not-recorded rather than throwing when the route is absent', async () => {
+    // The same not-deployed branch queue(), approve() and sources() take:
+    // with the reader live and editorial unmounted, the mux answers a
+    // bare 404 — no problem+json — and the honest answer is that
+    // publication did not end.
+    const { fetchImpl } = respondingWith(
+      new Response('404 page not found', {
+        status: 404,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      }),
+    );
     const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw(
       'a1',
       'because',
@@ -339,6 +345,31 @@ describe('the audit trace', () => {
     expect(outcome.recorded).toBe(false);
     expect(outcome).not.toHaveProperty('withdrawn_at');
     expect(outcome.reason).toContain('publication did not end');
+  });
+
+  it("reports the API's own 404 refusal, not the not-deployed fixture text", async () => {
+    // The deployed endpoint answers 404 as a domain outcome — unknown
+    // article, or approved but never published — in problem+json. That is
+    // the API refusing, not the API missing: the banner must carry the
+    // refusal's words, never claim the API is not implemented.
+    const { fetchImpl } = respondingWith(
+      new Response(
+        JSON.stringify({
+          type: 'about:blank',
+          title: 'Not Found',
+          status: 404,
+          detail: 'no published article with this id',
+        }),
+        { status: 404, headers: { 'Content-Type': 'application/problem+json' } },
+      ),
+    );
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw(
+      'a1',
+      'because',
+    );
+    expect(outcome.recorded).toBe(false);
+    expect(outcome.reason).toBe('no published article with this id');
+    expect(outcome.reason).not.toContain('not implemented');
   });
 
   it('refuses a 2xx that lacks the recorded reason — no blank success box', async () => {
