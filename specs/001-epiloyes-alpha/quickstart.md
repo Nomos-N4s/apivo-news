@@ -90,6 +90,27 @@ is a second path to the authority the database is the sole gate for.
 7. **Withdraw**: `POST .../withdrawal` with a reason; the item leaves the
    site, every record remains, the audit shows who and why.
 
+## The definition of done, executable
+
+Section 10's walkthrough - feed to retrieval to translation to approval
+to the reader's front page to withdrawal, with the I-5 provenance drill
+timed at the end - exists as one test in the composition root:
+`cmd/apivo/journey_integration_test.go` (T033). It composes the real
+modules the way `serve()` composes them, runs in one rolled-back
+transaction against the real database, and logs the per-chain and total
+drill timings against the five-minute audit budget (SC-002).
+
+```sh
+DATABASE_URL=... go test -run TestAlphaDefinitionOfDoneJourney -v ./cmd/apivo/
+
+# and once more with the clock somewhere else, to hold the wire and the
+# audit record to UTC wherever the server stands:
+TZ=Europe/Athens DATABASE_URL=... go test -run TestAlphaDefinitionOfDoneJourney -count=1 -v ./cmd/apivo/
+```
+
+If this test is green, the alpha's definition of done holds on that
+database. If it is red, something in section 10 does not - stop shipping.
+
 ## Verifying the invariants by hand
 
 ```sh
