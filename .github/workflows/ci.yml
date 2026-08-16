@@ -29,14 +29,28 @@ jobs:
           fetch-depth: 0
       - name: Determine commit range
         id: range
+        env:
+          # Event data through the environment, never interpolated into the
+          # script itself.
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "range=${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
-          elif printf '%s' "${{ github.event.before }}" | grep -q -E '^0+$'; then
-            # First push to a new ref: no meaningful "before", check the head commit.
-            echo "range=${{ github.sha }} -1" >> "$GITHUB_OUTPUT"
+          # A range is used only when there is a real commit to measure from.
+          # Anything else - the first push to a new ref (before is all
+          # zeroes), or an event carrying no "before" at all, which is what
+          # release.yml's workflow_call on a dispatched tag looks like - falls
+          # back to the head commit. It must NOT fall back to "..$SHA": git
+          # reads that as HEAD..$SHA, which is empty in a fresh checkout, so
+          # the job would check nothing and report green.
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "range=$BASE_SHA..$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          elif printf '%s' "$BEFORE" | grep -q -E '^[0-9a-f]{7,}$' && ! printf '%s' "$BEFORE" | grep -q -E '^0+$'; then
+            echo "range=$BEFORE..$SHA" >> "$GITHUB_OUTPUT"
           else
-            echo "range=${{ github.event.before }}..${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "range=$SHA -1" >> "$GITHUB_OUTPUT"
           fi
       - name: Reject AI attribution trailers
         run: |
