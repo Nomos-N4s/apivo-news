@@ -188,6 +188,19 @@ export interface EditorialStrings {
   readonly saveChanges: string;
   readonly cancel: string;
   readonly sourceUpdated: string;
+  /**
+   * Every field came back exactly as the form showed it, so nothing was
+   * sent. Not a failure and not a save - a finding, said plainly, because
+   * confirming it as an edit would claim a record that was never written.
+   */
+  readonly sourceUnchanged: string;
+  /**
+   * The edit arrived without the values it was rendered with, so what the
+   * editor changed cannot be told from what they did not. Sending all
+   * four would revert whatever another editor altered meanwhile, so
+   * nothing is sent and the form is offered again.
+   */
+  readonly editFormIncomplete: string;
   /** The all/active/inactive toggle over the table. */
   readonly viewLabel: string;
   readonly viewAll: string;
@@ -338,6 +351,10 @@ const EL: EditorialStrings = {
   saveChanges: 'Αποθήκευση αλλαγών',
   cancel: 'Άκυρο',
   sourceUpdated: 'Οι αλλαγές καταγράφηκαν.',
+  sourceUnchanged:
+    'Κανένα πεδίο δεν άλλαξε σε σχέση με αυτό που εμφάνιζε η φόρμα, οπότε δεν στάλθηκε τίποτα και δεν καταγράφηκε καμία αλλαγή.',
+  editFormIncomplete:
+    'Η φόρμα δεν έφερε τις τιμές με τις οποίες εμφανίστηκε, οπότε δεν ήταν δυνατό να ξεχωριστεί τι άλλαξε. Δεν στάλθηκε τίποτα — δοκιμάστε ξανά από τη λίστα.',
   viewLabel: 'Προβολή',
   viewAll: 'Όλες',
   viewActive: 'Ενεργές',
@@ -487,6 +504,10 @@ const DE: EditorialStrings = {
   saveChanges: 'Änderungen speichern',
   cancel: 'Abbrechen',
   sourceUpdated: 'Die Änderungen wurden verzeichnet.',
+  sourceUnchanged:
+    'Kein Feld weicht von dem ab, was das Formular anzeigte; es wurde nichts gesendet und nichts verzeichnet.',
+  editFormIncomplete:
+    'Das Formular trug die Werte nicht mit, mit denen es angezeigt wurde, also ließ sich nicht unterscheiden, was geändert wurde. Es wurde nichts gesendet — bitte erneut aus der Liste heraus bearbeiten.',
   viewLabel: 'Ansicht',
   viewAll: 'Alle',
   viewActive: 'Aktive',

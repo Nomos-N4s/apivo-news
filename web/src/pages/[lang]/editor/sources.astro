@@ -16,6 +16,12 @@ import {
   type SourceRowOutcome,
   type SourceView,
 } from '../../../lib/editorial/api';
+import {
+  BASELINE_FIELD,
+  parseSourceEditForm,
+  renderedBaseline,
+  type SourceEditFields,
+} from '../../../lib/editorial/sourceForm';
 import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings } from '../../../lib/editorial/strings';
@@ -96,6 +102,10 @@ let submitted: {
   jurisdiction: string;
   licence_terms: string;
 } | null = null;
+// What an edit had on screen, kept whenever nothing was recorded so the
+// re-render puts it back instead of charging the editor for retyping
+// licensing details over a refusal they did not cause.
+let editTyped: SourceEditFields | null = null;
 if (Astro.request.method === 'POST') {
   // Every intent on this screen is a licensing record under the editor's
   // own credentials — the same privileged shape as approval, so it takes
@@ -117,6 +127,8 @@ if (Astro.request.method === 'POST') {
         jurisdiction: String(form.get('jurisdiction') ?? ''),
         licence_terms: String(form.get('licence_terms') ?? ''),
       };
+    } else if (intent === 'update') {
+      editTyped = parseSourceEditForm(form).typed;
     }
   } else if (intent === 'add') {
     const input = {
@@ -137,24 +149,31 @@ if (Astro.request.method === 'POST') {
       }
     }
   } else if (intent === 'update') {
-    // The row edit sends every editable field; the API records only what
-    // actually changed, so an untouched field re-submitted is not an
-    // "edit" anywhere — not in the row, not in the audit stream.
-    const id = String(form.get('id') ?? '');
-    if (id !== '') {
+    // The row edit sends only the fields whose value differs from the one
+    // the form was rendered with. Absent means unchanged — the API diffs
+    // supplied values against the CURRENT row, so re-sending an untouched
+    // field would revert whatever another editor altered in between and
+    // put that revert into the audit stream under this editor's name.
+    const edit = parseSourceEditForm(form);
+    editTyped = edit.typed;
+    if (edit.ok) {
       try {
-        editOutcome = await api.updateSource(id, {
-          name: String(form.get('name') ?? ''),
-          url: String(form.get('url') ?? ''),
-          licence_terms: String(form.get('licence_terms') ?? ''),
-          active: form.get('active') === 'on',
-        });
+        editOutcome = await api.updateSource(edit.id, edit.patch);
       } catch (error) {
         editOutcome = {
           recorded: false,
           reason: error instanceof Error ? error.message : String(error),
         };
       }
+    } else if (edit.refusal === 'no-change') {
+      editOutcome = { recorded: false, reason: t.sourceUnchanged };
+    } else if (edit.refusal === 'no-baseline') {
+      editOutcome = { recorded: false, reason: t.editFormIncomplete };
+    }
+    if (editOutcome?.recorded === true) {
+      // The save landed, so the form's next baseline is the row the list
+      // is about to be re-read as — not what was typed at it.
+      editTyped = null;
     }
   } else if (intent === 'bulk') {
     // The bulk actions are a client-side loop over the per-row endpoints
@@ -440,24 +459,56 @@ const views: readonly { key: SourceView; label: string }[] = [
 
       {
         editing !== null ? (
-          <form class="add" method="post" action={here}>
+          /* The action keeps `edit` in the URL, so a refusal — a held
+             url, an expired session — re-renders THIS form with the
+             licensing details still in it, rather than the add form with
+             them gone. */
+          <form class="add" method="post" action={pageURL({ edit: editing.id })}>
             <input type="hidden" name="intent" value="update" />
             <input type="hidden" name="id" value={editing.id} />
+            {/* What this form is showing, carried back with the
+                submission: the patch is built from the fields that
+                actually differ from it, so a field another editor changed
+                meanwhile is not silently reverted by an editor who never
+                touched it. */}
+            <input
+              type="hidden"
+              name={BASELINE_FIELD}
+              value={renderedBaseline({
+                name: editing.name,
+                url: editing.url,
+                licence_terms: editing.licence_terms,
+                active: editing.active,
+              })}
+            />
             <h6>{t.editingSource(editing.name)}</h6>
             <div class="field">
               <label for="e-name">{t.publisherName}</label>
-              <input class="input" id="e-name" name="name" value={editing.name} required />
+              <input
+                class="input"
+                id="e-name"
+                name="name"
+                value={editTyped?.name ?? editing.name}
+                required
+              />
             </div>
             <div class="field">
               <label for="e-url">{t.feedUrl}</label>
-              <input class="input" id="e-url" name="url" type="url" value={editing.url} required />
+              <input
+                class="input"
+                id="e-url"
+                name="url"
+                type="url"
+                value={editTyped?.url ?? editing.url}
+                required
+              />
             </div>
             <div class="field">
               <label for="e-terms">{t.licenceTerms}</label>
-              <textarea class="input" id="e-terms" name="licence_terms" required>{editing.licence_terms}</textarea>
+              <textarea class="input" id="e-terms" name="licence_terms" required>{editTyped?.licence_terms ?? editing.licence_terms}</textarea>
             </div>
             <label class="active-toggle">
-              <input type="checkbox" name="active" checked={editing.active} />
+              <input type="checkbox" name="active" checked={editTyped?.active ?? editing.active} />
               {t.activeField}
             </label>
             {/* Edits are licensing events: the audit stream records old and
