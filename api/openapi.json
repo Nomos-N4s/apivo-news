@@ -472,7 +472,10 @@
                   "value": {
                     "translation_id": "3f2a9c40-6d1e-4a7b-9f31-0c5d8e2b4a16",
                     "attribution": "Example Weekly - extract and link",
-                    "publish": true
+                    "publish": true,
+                    "places": [
+                      "munich"
+                    ]
                   }
                 },
                 "untranslated": {
@@ -480,7 +483,11 @@
                   "value": {
                     "source_item_id": "8f1b6c1e-1f5a-4a2f-9e1a-2b3c4d5e6f70",
                     "attribution": "Example Weekly - extract and link",
-                    "publish": false
+                    "publish": false,
+                    "places": [
+                      "munich",
+                      "greece"
+                    ]
                   }
                 }
               }
@@ -1390,11 +1397,12 @@
           "places": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "minItems": 1,
             "uniqueItems": true,
-            "description": "Place slugs the article publishes to - the front page is scoped by place, so an article tagged to no place can never appear on any of them, and the database refuses such an article at commit. An unknown or repeated slug is a 400 naming it."
+            "description": "Place slugs the article publishes to - the front page is scoped by place, so an article tagged to no place can never appear on any of them, and the database refuses such an article at commit. An unknown or repeated slug is a 400 naming it, and so is a blank slug - empty or whitespace-only; minLength catches only the former, the server refuses both."
           }
         }
       },
