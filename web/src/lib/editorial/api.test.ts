@@ -257,7 +257,7 @@ describe('the audit trace', () => {
   it('never fakes a withdrawal — publication cannot end unrecorded (FR-016)', async () => {
     const outcome = await createEditorialApi(undefined).withdraw('any', 'publisher request');
     expect(outcome.recorded).toBe(false);
-    expect(outcome.withdrawn_at).toBeUndefined();
+    expect(outcome).not.toHaveProperty('withdrawn_at');
     // The reason must describe withdrawal, not approval.
     expect(outcome.reason).toContain('publication did not end');
   });
@@ -320,9 +320,11 @@ describe('the audit trace', () => {
       'a1',
       'the source retracted the story',
     );
-    expect(outcome.recorded).toBe(true);
-    expect(outcome.article_id).toBe('a1');
-    expect(outcome.reason).toBe('the source retracted the story');
+    expect(outcome).toMatchObject({
+      recorded: true,
+      article_id: 'a1',
+      reason: 'the source retracted the story',
+    });
   });
 
   it('reports not-recorded rather than throwing when withdrawal 404s', async () => {
@@ -335,8 +337,29 @@ describe('the audit trace', () => {
       'because',
     );
     expect(outcome.recorded).toBe(false);
-    expect(outcome.withdrawn_at).toBeUndefined();
+    expect(outcome).not.toHaveProperty('withdrawn_at');
     expect(outcome.reason).toContain('publication did not end');
+  });
+
+  it('refuses a 2xx that lacks the recorded reason — no blank success box', async () => {
+    // The exact deploy skew the fallbacks exist for: an API one release
+    // behind still answers the old {article_id, withdrawn_at,
+    // withdrawn_by} shape. Spreading it into recorded: true rendered the
+    // success label over an empty body (#85); the honest path is the
+    // thrown refusal, which the audit screen shows as not recorded.
+    const { fetchImpl } = respondingWith(
+      jsonResponse({ article_id: 'a1', withdrawn_at: '2026-08-15T14:15:00Z', withdrawn_by: 'e1' }),
+    );
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw('a1', 'because'),
+    ).rejects.toBeInstanceOf(EditorialApiError);
+  });
+
+  it('refuses a 2xx whose reason is blank, not only one that is absent', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ article_id: 'a1', reason: '   ' }));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw('a1', 'because'),
+    ).rejects.toBeInstanceOf(EditorialApiError);
   });
 
   it('still surfaces a 409 (already withdrawn) as an error', async () => {
@@ -351,7 +374,9 @@ describe('the audit trace', () => {
     await createEditorialApi('http://api:8080', 'jwt', trace.fetchImpl).provenance('x');
     expect(trace.calls.at(0)?.url.pathname).toBe('/api/v1/editorial/articles/x/provenance');
 
-    const wd = respondingWith(jsonResponse({ article_id: 'x', withdrawn_at: 'now' }));
+    const wd = respondingWith(
+      jsonResponse({ article_id: 'x', withdrawn_at: 'now', reason: 'because' }),
+    );
     await createEditorialApi('http://api:8080', 'jwt', wd.fetchImpl).withdraw('x', 'because');
     expect(wd.calls.at(0)?.url.pathname).toBe('/api/v1/editorial/articles/x/withdrawal');
     expect(wd.calls.at(0)?.init?.method).toBe('POST');
@@ -501,7 +526,9 @@ describe('withdrawalBanner', () => {
   it('holds in both chrome languages', () => {
     const de = editorialStrings('de');
     expect(withdrawalBanner({ recorded: false }, de).label).toBe(de.notRecordedTitle);
-    expect(withdrawalBanner({ recorded: true, reason: 'r' }, de).label).toBe(de.withdraw);
+    expect(withdrawalBanner({ recorded: true, article_id: 'a1', reason: 'r' }, de).label).toBe(
+      de.withdraw,
+    );
   });
 });
 
