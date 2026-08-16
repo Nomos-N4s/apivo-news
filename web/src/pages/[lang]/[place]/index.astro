@@ -6,7 +6,13 @@ import FixtureNotice from '../../../components/FixtureNotice.astro';
 import Masthead from '../../../components/Masthead.astro';
 import ProvenanceDisclosure from '../../../components/ProvenanceDisclosure.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
-import { createReaderApi, probeEmptyPlaces, type FrontItem } from '../../../lib/reader/api';
+import {
+  createReaderApi,
+  ReaderConfigurationError,
+  type FrontItem,
+  type ReaderApi,
+  probeEmptyPlaces,
+} from '../../../lib/reader/api';
 import {
   articlePath,
   frontPagePath,
@@ -35,17 +41,28 @@ const { lang, places } = axes;
 const slugs = places.map((place) => place.slug);
 
 const t = uiStrings(lang);
-const api = createReaderApi(API_BASE_URL, { appEnv: APP_ENV });
 
 // An API hiccup must degrade into the calm 503 band below, never into an
 // unhandled SSR exception: the page still renders its chrome and axes.
+// Building the client is inside the try for the same reason — it refuses
+// a deployment it would have to answer from fixtures, and that refusal is
+// a configuration failure, not a reason for a stack trace where a page
+// should be.
+let api: ReaderApi | null = null;
 let items: readonly FrontItem[] = [];
 let emptyPlaces: readonly Place[] = [];
 let apiUnavailable = false;
 try {
+  api = createReaderApi(API_BASE_URL, { appEnv: APP_ENV });
   items = (await api.front({ lang, places: slugs })).items;
   emptyPlaces = await probeEmptyPlaces(api, lang, places, items);
-} catch {
+} catch (error) {
+  // A misconfigured deployment is silent otherwise: every page answers
+  // 503 and nothing says why. The operator is the only one who can fix
+  // it, and the log is the only place they will look.
+  if (error instanceof ReaderConfigurationError) {
+    console.error(`reader: ${error.message}`);
+  }
   apiUnavailable = true;
   Astro.response.status = 503;
   Astro.response.headers.set('Retry-After', '60');
@@ -98,7 +115,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
         published record or invented sample data, and a reader must never
         have to guess which. */}
     {
-      api.source === 'fixture' && (
+      api?.source === 'fixture' && (
         <FixtureNotice title={t.fixtureNoticeTitle} body={t.fixtureNoticeBody} />
       )
     }
