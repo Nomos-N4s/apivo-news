@@ -84,6 +84,14 @@ func (s errStore) ListSources(context.Context, editorial.SourcesQuery) (editoria
 	return editorial.SourcesPage{}, s.err
 }
 
+func (s errStore) UpdateSource(context.Context, uuid.UUID, uuid.UUID, editorial.SourcePatch) (editorial.ListedSource, error) {
+	return editorial.ListedSource{}, s.err
+}
+
+func (s errStore) DeleteSource(context.Context, uuid.UUID) error {
+	return s.err
+}
+
 func (s errStore) LastPollCycle(context.Context) (editorial.PollCycle, error) {
 	return editorial.PollCycle{}, s.err
 }
@@ -117,6 +125,14 @@ func (s okStore) CreateSource(context.Context, editorial.NewSource) (editorial.S
 
 func (s okStore) ListSources(context.Context, editorial.SourcesQuery) (editorial.SourcesPage, error) {
 	return editorial.SourcesPage{}, errUnexpectedCall
+}
+
+func (s okStore) UpdateSource(context.Context, uuid.UUID, uuid.UUID, editorial.SourcePatch) (editorial.ListedSource, error) {
+	return editorial.ListedSource{}, errUnexpectedCall
+}
+
+func (s okStore) DeleteSource(context.Context, uuid.UUID) error {
+	return errUnexpectedCall
 }
 
 func (s okStore) LastPollCycle(context.Context) (editorial.PollCycle, error) {
@@ -153,6 +169,14 @@ func (s *recordingStore) CreateSource(_ context.Context, src editorial.NewSource
 
 func (s *recordingStore) ListSources(context.Context, editorial.SourcesQuery) (editorial.SourcesPage, error) {
 	return editorial.SourcesPage{}, errUnexpectedCall
+}
+
+func (s *recordingStore) UpdateSource(context.Context, uuid.UUID, uuid.UUID, editorial.SourcePatch) (editorial.ListedSource, error) {
+	return editorial.ListedSource{}, errUnexpectedCall
+}
+
+func (s *recordingStore) DeleteSource(context.Context, uuid.UUID) error {
+	return errUnexpectedCall
 }
 
 func (s *recordingStore) LastPollCycle(context.Context) (editorial.PollCycle, error) {
@@ -604,7 +628,8 @@ func TestAWrongMethodUnderTheEditorialPrefixIsProblemJSON(t *testing.T) {
 	}{
 		{name: "DELETE on the queue", method: http.MethodDelete, path: "/api/v1/editorial/queue", allow: "GET, HEAD"},
 		{name: "GET on approvals", method: http.MethodGet, path: "/api/v1/editorial/approvals", allow: "POST"},
-		{name: "DELETE on sources", method: http.MethodDelete, path: "/api/v1/editorial/sources", allow: "GET, HEAD, POST"},
+		{name: "DELETE on the sources collection", method: http.MethodDelete, path: "/api/v1/editorial/sources", allow: "GET, HEAD, POST"},
+		{name: "GET on one source", method: http.MethodGet, path: "/api/v1/editorial/sources/11111111-1111-4111-8111-111111111111", allow: "DELETE, PATCH"},
 		{name: "GET on a publication", method: http.MethodGet, path: "/api/v1/editorial/articles/11111111-1111-4111-8111-111111111111/publication", allow: "POST"},
 		{name: "GET on a withdrawal", method: http.MethodGet, path: "/api/v1/editorial/articles/11111111-1111-4111-8111-111111111111/withdrawal", allow: "POST"},
 		{name: "POST on a provenance trace", method: http.MethodPost, path: "/api/v1/editorial/articles/11111111-1111-4111-8111-111111111111/provenance", allow: "GET, HEAD"},
@@ -637,11 +662,12 @@ func TestEveryRegisteredRouteAnswers405ForAWrongMethod(t *testing.T) {
 			t.Fatalf("pattern %q is not METHOD /path", pattern)
 		}
 		concrete := strings.ReplaceAll(path, "{id}", "11111111-1111-4111-8111-111111111111")
-		t.Run("DELETE on "+concrete, func(t *testing.T) {
+		t.Run("PUT on "+concrete, func(t *testing.T) {
 			t.Parallel()
-			// No editorial route serves DELETE, so on every registered
-			// path it is a wrong method rather than a wrong address.
-			rec := doJSON(t, h, http.MethodDelete, concrete, editorToken, "")
+			// No editorial route serves PUT (replacement wholesale is not an
+			// editorial operation), so on every registered path it is a
+			// wrong method rather than a wrong address.
+			rec := doJSON(t, h, http.MethodPut, concrete, editorToken, "")
 			if rec.Code != http.StatusMethodNotAllowed {
 				t.Fatalf("status = %d, want 405 (body %q)", rec.Code, rec.Body.String())
 			}

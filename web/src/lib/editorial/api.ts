@@ -272,6 +272,12 @@ export interface SourceRow {
   readonly url: string;
   readonly language: string;
   readonly jurisdiction: string;
+  /**
+   * The terms currently on record — the mutable row, which the edit form
+   * loads and a PATCH rewrites. The legal basis of anything already
+   * retrieved is the snapshot on `source_item` (I-4), never this field.
+   */
+  readonly licence_terms: string;
   /** `extract_and_link` unless written permission is on record (FR-004). */
   readonly usage_rule: 'extract_and_link' | 'full_text';
   readonly permission_evidence: string | null;
@@ -341,6 +347,7 @@ function isSourcesPage(body: unknown): body is SourcesPage {
       typeof source['name'] === 'string' &&
       typeof source['url'] === 'string' &&
       typeof source['language'] === 'string' &&
+      typeof source['licence_terms'] === 'string' &&
       typeof source['usage_rule'] === 'string' &&
       typeof source['active'] === 'boolean' &&
       // Either never polled, or a timestamp the screen can format.
@@ -354,6 +361,32 @@ export interface SourceOutcome {
   readonly recorded: boolean;
   readonly source_id?: string;
   readonly reason?: string;
+}
+
+/**
+ * The outcome of one management action on one source — an edit, a
+ * deactivation, a delete. `recorded: false` is the same honest claim as
+ * everywhere else: the intent was carried, nothing was written. `reason`
+ * carries the API's own words (a delete refused for evidence names the
+ * count here), and `status` the HTTP verdict behind a refusal, so a screen
+ * can tell a 409 held by evidence from a plain failure.
+ */
+export interface SourceActionOutcome {
+  readonly recorded: boolean;
+  readonly reason?: string;
+  readonly status?: number;
+}
+
+/**
+ * One PATCH of a source: any subset of the editable fields. `usage_rule`
+ * is deliberately absent — it stays a founder-gated flow, and the API
+ * answers 400 to anyone who sends it.
+ */
+export interface SourcePatch {
+  readonly name?: string;
+  readonly url?: string;
+  readonly active?: boolean;
+  readonly licence_terms?: string;
 }
 
 /**
@@ -463,6 +496,21 @@ export interface EditorialApi {
    */
   sources(cursor?: string): Promise<SourcesPage>;
   addSource(input: NewSource): Promise<SourceOutcome>;
+  /**
+   * PATCH one source: any subset of name, url, active and licence_terms.
+   * A refusal (blank field, held url, unknown id) comes back as
+   * `recorded: false` with the API's own words, never as a throw — the
+   * bulk loop renders each row's outcome, and a thrown 409 would collapse
+   * per-row honesty into one generic failure.
+   */
+  updateSource(id: string, patch: SourcePatch): Promise<SourceActionOutcome>;
+  /**
+   * DELETE one source. The database refuses wherever evidence exists
+   * (the FK's 23503 as a 409 naming the count), and that refusal arrives
+   * as `recorded: false` carrying the API's words — it is REPORTED, never
+   * converted into a deactivation the editor did not choose.
+   */
+  deleteSource(id: string): Promise<SourceActionOutcome>;
 }
 
 const NOT_WIRED_APPROVAL =
@@ -473,6 +521,12 @@ const NOT_WIRED_SOURCE =
 
 const NOT_WIRED_WITHDRAWAL =
   'The editorial API is not implemented yet (T021), so publication did not end and nothing was written to the audit stream.';
+
+const NOT_WIRED_SOURCE_EDIT =
+  'The editorial API is not reachable here, so the source was not changed and nothing was recorded.';
+
+const NOT_WIRED_SOURCE_DELETE =
+  'The editorial API is not reachable here, so the source was not deleted and nothing was recorded.';
 
 /**
  * `API_BASE_URL` is one address for the whole Go API, but the reader and
@@ -555,6 +609,15 @@ function fixtureApi(): EditorialApi {
     },
     addSource(): Promise<SourceOutcome> {
       return Promise.resolve({ recorded: false, reason: NOT_WIRED_SOURCE });
+    },
+    updateSource(): Promise<SourceActionOutcome> {
+      // Deliberately not a fake success, exactly like approval: an edit is
+      // a licensing event, and pretending one was recorded would put a
+      // success state over a write that did not happen.
+      return Promise.resolve({ recorded: false, reason: NOT_WIRED_SOURCE_EDIT });
+    },
+    deleteSource(): Promise<SourceActionOutcome> {
+      return Promise.resolve({ recorded: false, reason: NOT_WIRED_SOURCE_DELETE });
     },
   };
 }
@@ -744,6 +807,46 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
         ? { recorded: true, source_id: id }
         : { recorded: true };
     },
+    async updateSource(id: string, patch: SourcePatch): Promise<SourceActionOutcome> {
+      const url = new URL(`${base}/api/v1/editorial/sources/${encodeURIComponent(id)}`);
+      const response = await fetchImpl(url, {
+        method: 'PATCH',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      // The same two-faced 404 as withdrawal: a problem 404 is the
+      // deployed API saying "no source with this id", a bare 404 is the
+      // editorial prefix not being deployed at all.
+      if (response.status === NOT_DEPLOYED && !isProblemJson(response)) {
+        return fixtures.updateSource(id, patch);
+      }
+      if (!response.ok) {
+        return {
+          recorded: false,
+          reason: await problemDetail(response, 'the source update'),
+          status: response.status,
+        };
+      }
+      return { recorded: true };
+    },
+    async deleteSource(id: string): Promise<SourceActionOutcome> {
+      const url = new URL(`${base}/api/v1/editorial/sources/${encodeURIComponent(id)}`);
+      const response = await fetchImpl(url, { method: 'DELETE', headers });
+      if (response.status === NOT_DEPLOYED && !isProblemJson(response)) {
+        return fixtures.deleteSource(id);
+      }
+      if (!response.ok) {
+        // A 409 lands here carrying the API's own refusal — the evidence
+        // count and the pointer at deactivation. The words travel to the
+        // row; nothing converts the refusal into an action.
+        return {
+          recorded: false,
+          reason: await problemDetail(response, 'the source delete'),
+          status: response.status,
+        };
+      }
+      return { recorded: true };
+    },
   };
 }
 
@@ -857,4 +960,85 @@ export function spendPercent(spend: SpendLedger): number {
     return 0;
   }
   return Math.min(100, Math.max(0, (spend.spent_microusd / spend.cap_microusd) * 100));
+}
+
+/** A bulk action over the selected rows: three verbs, no other. */
+export type BulkAction = 'activate' | 'deactivate' | 'delete';
+
+/** One row's outcome inside a bulk run, keyed to the source it acted on. */
+export interface SourceRowOutcome {
+  readonly id: string;
+  readonly outcome: SourceActionOutcome;
+}
+
+/**
+ * Runs one bulk action as the client-side loop it is: one call per
+ * selected row against the per-row endpoint, every outcome kept. There is
+ * no bulk endpoint and no transaction across rows — which is exactly why
+ * the screen must render each row's own verdict instead of one summary
+ * pretending the batch was atomic. A row that throws (network, 500) is
+ * captured as its own not-recorded outcome so one failure cannot silently
+ * swallow the report of the rows after it.
+ */
+export async function runBulkAction(
+  api: EditorialApi,
+  action: BulkAction,
+  ids: readonly string[],
+): Promise<SourceRowOutcome[]> {
+  const results: SourceRowOutcome[] = [];
+  for (const id of ids) {
+    let outcome: SourceActionOutcome;
+    try {
+      outcome =
+        action === 'delete'
+          ? await api.deleteSource(id)
+          : await api.updateSource(id, { active: action === 'activate' });
+    } catch (error) {
+      outcome = {
+        recorded: false,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+    results.push({ id, outcome });
+  }
+  return results;
+}
+
+/**
+ * The exact arithmetic of a bulk run: how many were recorded, how many
+ * refused. No third bucket exists — an outcome is one or the other — so
+ * the summary line can never claim more or less than what happened.
+ */
+export function bulkCounts(outcomes: readonly SourceRowOutcome[]): {
+  recorded: number;
+  refused: number;
+} {
+  let recorded = 0;
+  for (const row of outcomes) {
+    if (row.outcome.recorded) {
+      recorded += 1;
+    }
+  }
+  return { recorded, refused: outcomes.length - recorded };
+}
+
+/** The three ways the sources table can be viewed. */
+export type SourceView = 'all' | 'active' | 'inactive';
+
+/** Reads a view from a query parameter; anything unrecognised is `all`. */
+export function sourceView(raw: string | null): SourceView {
+  return raw === 'active' || raw === 'inactive' ? raw : 'all';
+}
+
+/**
+ * Applies the view and the default ordering: active sources first, the
+ * list's own newest-first order preserved within each group (sort is
+ * stable). Deactivation is the everyday "remove", so a paused feed drops
+ * below the working set instead of vanishing — hiding it entirely is the
+ * `active` view's job, chosen explicitly.
+ */
+export function viewSources(items: readonly SourceRow[], view: SourceView): SourceRow[] {
+  const shown =
+    view === 'all' ? [...items] : items.filter((row) => row.active === (view === 'active'));
+  return shown.sort((a, b) => Number(b.active) - Number(a.active));
 }

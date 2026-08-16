@@ -31,6 +31,14 @@ func (s *provenanceStore) ListSources(context.Context, editorial.SourcesQuery) (
 	return editorial.SourcesPage{}, errUnexpectedCall
 }
 
+func (s *provenanceStore) UpdateSource(context.Context, uuid.UUID, uuid.UUID, editorial.SourcePatch) (editorial.ListedSource, error) {
+	return editorial.ListedSource{}, errUnexpectedCall
+}
+
+func (s *provenanceStore) DeleteSource(context.Context, uuid.UUID) error {
+	return errUnexpectedCall
+}
+
 func (s *provenanceStore) LastPollCycle(context.Context) (editorial.PollCycle, error) {
 	return editorial.PollCycle{}, errUnexpectedCall
 }

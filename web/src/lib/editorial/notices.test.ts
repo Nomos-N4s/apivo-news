@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   noticeForApproval,
+  noticeForBulk,
   noticeForCorrection,
+  noticeForNothingSelected,
   noticeForSignedOut,
   noticeForSource,
+  noticeForSourceEdit,
   noticeForWithdrawal,
 } from './notices';
 import { editorialStrings } from './strings';
@@ -196,6 +199,45 @@ describe('noticeForSource', () => {
     expect(notice.tone).toBe('refused');
     expect(notice.label).toBe(t.notRecordedTitle);
     expect(notice.body).toBe('duplicate feed URL');
+  });
+});
+
+describe('noticeForSourceEdit', () => {
+  it('confirms a recorded edit and repeats a refusal in its own words', () => {
+    const saved = noticeForSourceEdit({ recorded: true }, t);
+    expect(saved.tone).toBe('recorded');
+    expect(saved.label).toBe(t.editSource);
+    expect(saved.body).toBe(t.sourceUpdated);
+
+    // "Nothing changed" and "the API refused" are both not-recorded, and
+    // each already has its own wording — the notice carries it through.
+    const unchanged = noticeForSourceEdit({ recorded: false, reason: t.sourceUnchanged }, t);
+    expect(unchanged.tone).toBe('refused');
+    expect(unchanged.body).toBe(t.sourceUnchanged);
+    expect(noticeForSourceEdit({ recorded: false }, t).body).toBe('');
+  });
+});
+
+describe('noticeForBulk', () => {
+  it('takes the attention tone as soon as one row refused', () => {
+    expect(noticeForBulk('Διαγραφή', 'summary', 0).tone).toBe('recorded');
+    expect(noticeForBulk('Διαγραφή', 'summary', 1).tone).toBe('refused');
+    // A mixed result is still a refusal tone: something asked for did not
+    // happen, and the summary states both counts either way.
+    expect(noticeForBulk('Διαγραφή', '3 · 2', 2)).toMatchObject({
+      label: 'Διαγραφή',
+      body: '3 · 2',
+      record: [],
+    });
+  });
+});
+
+describe('noticeForNothingSelected', () => {
+  it('says nothing was done rather than reporting an empty success', () => {
+    const notice = noticeForNothingSelected(t);
+    expect(notice.tone).toBe('refused');
+    expect(notice.label).toBe(t.notRecordedTitle);
+    expect(notice.body).toBe(t.noneSelected);
   });
 });
 

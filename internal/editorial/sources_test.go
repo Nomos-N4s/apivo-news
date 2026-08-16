@@ -46,6 +46,14 @@ func (s *sourcesStore) ListSources(_ context.Context, q editorial.SourcesQuery) 
 	return s.page, s.err
 }
 
+func (s *sourcesStore) UpdateSource(context.Context, uuid.UUID, uuid.UUID, editorial.SourcePatch) (editorial.ListedSource, error) {
+	return editorial.ListedSource{}, errUnexpectedCall
+}
+
+func (s *sourcesStore) DeleteSource(context.Context, uuid.UUID) error {
+	return errUnexpectedCall
+}
+
 func (s *sourcesStore) LastPollCycle(context.Context) (editorial.PollCycle, error) {
 	return s.cycle, s.err
 }

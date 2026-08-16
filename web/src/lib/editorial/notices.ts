@@ -1,6 +1,7 @@
 import type {
   ApprovalOutcome,
   QueueWithdrawal,
+  SourceActionOutcome,
   SourceOutcome,
   WithdrawalOutcome,
 } from './api';
@@ -156,6 +157,51 @@ export function noticeForSource(
         ? []
         : [`source ${outcome.source_id}`],
   };
+}
+
+/**
+ * The banner after editing a source (#118). An edit that changed nothing
+ * and an edit the API refused are both "nothing was recorded", and the
+ * screen already words each of them; the notice carries those words
+ * rather than flattening them into one failure.
+ */
+export function noticeForSourceEdit(
+  outcome: SourceActionOutcome,
+  t: Pick<EditorialStrings, 'editSource' | 'notRecordedTitle' | 'sourceUpdated'>,
+): RecordNoticeModel {
+  return outcome.recorded
+    ? { tone: 'recorded', label: t.editSource, body: t.sourceUpdated, record: [] }
+    : { tone: 'refused', label: t.notRecordedTitle, body: outcome.reason ?? '', record: [] };
+}
+
+/**
+ * The summary after a bulk action (#118). Bulk work is a loop over
+ * per-row endpoints, so a mixed result is the normal case and both counts
+ * are always stated: any refusal at all takes the attention-seeking tone,
+ * because something the editor asked for did not happen — the rows
+ * themselves carry each refusal's own words.
+ */
+export function noticeForBulk(
+  label: string,
+  summary: string,
+  refused: number,
+): RecordNoticeModel {
+  return {
+    tone: refused > 0 ? 'refused' : 'recorded',
+    label,
+    body: summary,
+    record: [],
+  };
+}
+
+/**
+ * A bulk POST arrived with nothing selected. Nothing was done, and the
+ * screen says so rather than reporting an empty success.
+ */
+export function noticeForNothingSelected(
+  t: Pick<EditorialStrings, 'notRecordedTitle' | 'noneSelected'>,
+): RecordNoticeModel {
+  return { tone: 'refused', label: t.notRecordedTitle, body: t.noneSelected, record: [] };
 }
 
 /**
