@@ -29,6 +29,7 @@ export default getViteConfig({
         'src/lib/reader/api.ts',
         'src/lib/reader/axes.ts',
         'src/lib/reader/format.ts',
+        'src/lib/reader/preference.ts',
         'src/lib/reader/strings.ts',
         'src/lib/account/consent.ts',
         'src/lib/csrf.ts',
