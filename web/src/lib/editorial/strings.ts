@@ -228,6 +228,19 @@ export interface EditorialStrings {
    * nothing is sent and the form is offered again.
    */
   readonly editFormIncomplete: string;
+  /**
+   * A delete the database refused because evidence exists (409). The API
+   * names the count; this says what that means and points at the action
+   * that does work — offered as a way in, never performed for the editor
+   * (#121, invariants I-3/I-4).
+   */
+  readonly deleteRefusedBody: string;
+  readonly deactivateInstead: string;
+  /**
+   * After a recorded deactivation: what it did, and what it deliberately
+   * did not do. Polling is the only thing that stops (#121).
+   */
+  readonly deactivationKeepsRecord: string;
   /** The all/active/inactive toggle over the table. */
   readonly viewLabel: string;
   readonly viewAll: string;
@@ -393,6 +406,11 @@ const EL: EditorialStrings = {
     'Κανένα πεδίο δεν άλλαξε σε σχέση με αυτό που εμφάνιζε η φόρμα, οπότε δεν στάλθηκε τίποτα και δεν καταγράφηκε καμία αλλαγή.',
   editFormIncomplete:
     'Η φόρμα δεν έφερε τις τιμές με τις οποίες εμφανίστηκε, οπότε δεν ήταν δυνατό να ξεχωριστεί τι άλλαξε. Δεν στάλθηκε τίποτα — δοκιμάστε ξανά από τη λίστα.',
+  deleteRefusedBody:
+    'Τα ανακτημένα τεκμήρια αυτής της πηγής είναι μέρος της μόνιμης εγγραφής και δεν καταστρέφονται: η αλυσίδα προέλευσης κάθε δημοσιευμένου άρθρου ξεκινά από αυτά. Η απενεργοποίηση σταματά τη λήψη και τα κρατά.',
+  deactivateInstead: 'Απενεργοποίηση αντ’ αυτού',
+  deactivationKeepsRecord:
+    'Η λήψη σταμάτησε. Τα ανακτημένα τεκμήρια και τα δημοσιευμένα άρθρα παραμένουν στην εγγραφή.',
   viewLabel: 'Προβολή',
   viewAll: 'Όλες',
   viewActive: 'Ενεργές',
@@ -557,6 +575,11 @@ const DE: EditorialStrings = {
     'Kein Feld weicht von dem ab, was das Formular anzeigte; es wurde nichts gesendet und nichts verzeichnet.',
   editFormIncomplete:
     'Das Formular trug die Werte nicht mit, mit denen es angezeigt wurde, also ließ sich nicht unterscheiden, was geändert wurde. Es wurde nichts gesendet — bitte erneut aus der Liste heraus bearbeiten.',
+  deleteRefusedBody:
+    'Die abgerufenen Nachweise dieser Quelle sind Teil des dauerhaften Registers und werden nicht zerstört: die Herkunftskette jedes veröffentlichten Artikels beginnt bei ihnen. Deaktivieren stoppt den Abruf und behält sie.',
+  deactivateInstead: 'Stattdessen deaktivieren',
+  deactivationKeepsRecord:
+    'Der Abruf ist gestoppt. Die abgerufenen Nachweise und die veröffentlichten Artikel bleiben im Register.',
   viewLabel: 'Ansicht',
   viewAll: 'Alle',
   viewActive: 'Aktive',

@@ -5,6 +5,7 @@ import {
   noticeForBulk,
   noticeForCorrection,
   noticeForNothingSelected,
+  noticeForRowRefusal,
   noticeForSignedOut,
   noticeForSource,
   noticeForSourceEdit,
@@ -219,6 +220,19 @@ describe('noticeForSourceEdit', () => {
 });
 
 describe('noticeForBulk', () => {
+  it('states what a deactivation kept, when one was actually recorded', () => {
+    const withConsequence = noticeForBulk(
+      t.bulkDeactivate,
+      'summary',
+      0,
+      t.deactivationKeepsRecord,
+    );
+    expect(withConsequence.body).toBe(`summary — ${t.deactivationKeepsRecord}`);
+    // Nothing recorded, nothing to describe.
+    expect(noticeForBulk(t.bulkDeactivate, 'summary', 2).body).toBe('summary');
+    expect(noticeForBulk(t.bulkDeactivate, 'summary', 0, '').body).toBe('summary');
+  });
+
   it('takes the attention tone as soon as one row refused', () => {
     expect(noticeForBulk('Διαγραφή', 'summary', 0).tone).toBe('recorded');
     expect(noticeForBulk('Διαγραφή', 'summary', 1).tone).toBe('refused');
@@ -229,6 +243,33 @@ describe('noticeForBulk', () => {
       body: '3 · 2',
       record: [],
     });
+  });
+});
+
+describe('noticeForRowRefusal', () => {
+  it('explains what a delete held by evidence means, after the API says it', () => {
+    const notice = noticeForRowRefusal(
+      {
+        recorded: false,
+        status: 409,
+        reason: 'this source has 14 retrieved items on record',
+      },
+      t,
+    );
+    expect(notice.tone).toBe('refused');
+    expect(notice.label).toBe(t.notRecordedTitle);
+    // The count the server named comes first; the meaning follows it.
+    expect(notice.body).toBe(`this source has 14 retrieved items on record ${t.deleteRefusedBody}`);
+  });
+
+  it('adds no evidence explanation to a refusal that is not one', () => {
+    const notice = noticeForRowRefusal({ recorded: false, status: 500, reason: 'upstream' }, t);
+    expect(notice.body).toBe('upstream');
+    expect(notice.body).not.toContain(t.deleteRefusedBody);
+  });
+
+  it('says only the explanation when a 409 arrived without words', () => {
+    expect(noticeForRowRefusal({ recorded: false, status: 409 }, t).body).toBe(t.deleteRefusedBody);
   });
 });
 

@@ -175,6 +175,31 @@ export function noticeForSourceEdit(
 }
 
 /**
+ * One row's refusal inside a bulk result (#118, #121). A delete the
+ * database held back for evidence (409) gets the explanation the status
+ * code alone does not carry: those retrieved items are the start of every
+ * published article's provenance chain, and deactivation is the action
+ * that does work. The API's own words come first — it names the count —
+ * and the explanation follows them; nothing is converted into an action
+ * the editor did not choose.
+ */
+export function noticeForRowRefusal(
+  outcome: SourceActionOutcome,
+  t: Pick<EditorialStrings, 'notRecordedTitle' | 'deleteRefusedBody'>,
+): RecordNoticeModel {
+  const words = outcome.reason ?? '';
+  const heldByEvidence = outcome.status === 409;
+  return {
+    tone: 'refused',
+    label: t.notRecordedTitle,
+    body: heldByEvidence
+      ? [words, t.deleteRefusedBody].filter((part) => part !== '').join(' ')
+      : words,
+    record: [],
+  };
+}
+
+/**
  * The summary after a bulk action (#118). Bulk work is a loop over
  * per-row endpoints, so a mixed result is the normal case and both counts
  * are always stated: any refusal at all takes the attention-seeking tone,
@@ -185,11 +210,21 @@ export function noticeForBulk(
   label: string,
   summary: string,
   refused: number,
+  /**
+   * What the action did and did not do, when that is worth saying — a
+   * deactivation stops polling and keeps everything else. Appended only
+   * when something was actually recorded, since an action that changed
+   * nothing has no consequences to describe.
+   */
+  consequence?: string,
 ): RecordNoticeModel {
   return {
     tone: refused > 0 ? 'refused' : 'recorded',
     label,
-    body: summary,
+    body:
+      consequence === undefined || consequence === ''
+        ? summary
+        : `${summary} — ${consequence}`,
     record: [],
   };
 }
