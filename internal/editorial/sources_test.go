@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -414,6 +416,112 @@ func TestSourcesKeysetPageBoundary(t *testing.T) {
 		if n != 1 {
 			t.Errorf("row %s appeared %d times; the keyset must neither skip nor repeat", id, n)
 		}
+	}
+}
+
+// TestSourcesKeysetTieBreakOnIdenticalCreatedAt seeds two sources with the
+// SAME created_at and walks the boundary between them one row at a time.
+// The `, id desc` tie-break is the exact clause keyset pagination exists
+// for: without it the order within the tie is unspecified, and a cursor
+// cut between the twins can skip one forever - which the hour-spaced
+// fixture above could never catch.
+func TestSourcesKeysetTieBreakOnIdenticalCreatedAt(t *testing.T) {
+	t.Parallel()
+	ctx, tx := sourcesTx(t)
+	suffix := randomSuffix(t)
+
+	// now() is the transaction timestamp, identical across both inserts;
+	// +5 hours outruns every other suite's now()-stamped registrations, so
+	// the twins are the snapshot's newest rows and page one starts on them.
+	twins := make([]string, 0, 2)
+	for _, name := range []string{"twin-a", "twin-b"} {
+		var id string
+		if err := tx.QueryRow(ctx,
+			`insert into source (name, url, language_code, jurisdiction, licence_terms, active, created_at)
+			 values ($1, $2, 'el', 'GR', 'Extract and link permitted (tie-break test)', true, now() + interval '5 hours')
+			 returning id`,
+			"Sources Tie "+name+" "+suffix, "https://example.test/ties/"+suffix+"/"+name).Scan(&id); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+		twins = append(twins, id)
+	}
+	h := newHandler(t, editorial.NewPGStore(tx))
+
+	seen := make(map[string]int)
+	var order []string
+	cursor := ""
+	for page := 0; ; page++ {
+		if page > 500 {
+			t.Fatal("the walk did not terminate; next_cursor never went null")
+		}
+		query := "?limit=1"
+		if cursor != "" {
+			query += "&cursor=" + cursor
+		}
+		rec, body := getSources(t, h, query)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("page %d: status = %d (body %q)", page, rec.Code, rec.Body.String())
+		}
+		for _, item := range body.Items {
+			seen[item.ID]++
+			order = append(order, item.ID)
+		}
+		if body.NextCursor == nil {
+			break
+		}
+		cursor = *body.NextCursor
+	}
+
+	for _, id := range twins {
+		if seen[id] != 1 {
+			t.Errorf("twin %s appeared %d times across the walk, want exactly once - the id tie-break is what keeps a cursor cut inside the tie from skipping its sibling", id, seen[id])
+		}
+	}
+	// The declared order inside the tie: id descending, so the twins must
+	// arrive larger id first, back to back at the head of the walk.
+	bigger, smaller := twins[0], twins[1]
+	if smaller > bigger {
+		bigger, smaller = smaller, bigger
+	}
+	if len(order) < 2 || order[0] != bigger || order[1] != smaller {
+		t.Errorf("walk began %v, want the twins back to back as (%s, %s) - identical created_at ordered by id descending", order[:min(len(order), 2)], bigger, smaller)
+	}
+}
+
+// TestSourcesFailuresAreOrderedByName seeds two failing feeds in reverse
+// alphabetical order and asserts the cycle reports them sorted: the
+// ordering is documented in the schema comment, the contract and the query
+// itself, and membership-only assertions would let the `order by name`
+// clause vanish without a test noticing.
+func TestSourcesFailuresAreOrderedByName(t *testing.T) {
+	t.Parallel()
+	ctx, tx := sourcesTx(t)
+	suffix := randomSuffix(t)
+
+	// Seeded reverse-alphabetically, so an array_agg without its order-by
+	// would surface them in insertion order and fail the sort assertion.
+	names := []string{"Sources Zeta Failing " + suffix, "Sources Alpha Failing " + suffix}
+	for i, name := range names {
+		if _, err := tx.Exec(ctx,
+			`insert into source (name, url, language_code, jurisdiction, licence_terms, active, last_poll_error, last_polled_at)
+			 values ($1, $2, 'el', 'GR', 'Extract and link permitted (failures test)', true, 'connection refused', now())`,
+			name, "https://example.test/failures/"+suffix+"/"+strconv.Itoa(i)); err != nil {
+			t.Fatalf("seed failing source %q: %v", name, err)
+		}
+	}
+	h := newHandler(t, editorial.NewPGStore(tx))
+
+	rec, body := getSources(t, h, "?limit=1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	for _, name := range names {
+		if !slices.Contains(body.Cycle.Failures, name) {
+			t.Errorf("failures = %v, missing the seeded failing feed %q", body.Cycle.Failures, name)
+		}
+	}
+	if !slices.IsSorted(body.Cycle.Failures) {
+		t.Errorf("failures = %v, want them sorted by name so the same broken feeds read the same way on every refresh", body.Cycle.Failures)
 	}
 }
 

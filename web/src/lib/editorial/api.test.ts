@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  allSources,
   approvalRecordLine,
   createEditorialApi,
   EditorialApiError,
@@ -29,6 +30,27 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+/**
+ * Answers each call with the next response; the last repeats. Factories,
+ * not Response instances: a body can only be read once, and the repeating
+ * last answer must be fresh every time.
+ */
+function respondingInTurn(responses: readonly (() => Response)[]): {
+  calls: { url: URL; init: RequestInit | undefined }[];
+  fetchImpl: typeof fetch;
+} {
+  const calls: { url: URL; init: RequestInit | undefined }[] = [];
+  const fetchImpl: typeof fetch = (input, init) => {
+    const respond = responses[Math.min(calls.length, responses.length - 1)];
+    calls.push({ url: new URL(input instanceof URL ? input.href : String(input)), init });
+    if (respond === undefined) {
+      throw new Error('respondingInTurn needs at least one response');
+    }
+    return Promise.resolve(respond());
+  };
+  return { calls, fetchImpl };
 }
 
 describe('the fixture client (no API_BASE_URL)', () => {
@@ -257,7 +279,7 @@ describe('the audit trace', () => {
   it('never fakes a withdrawal — publication cannot end unrecorded (FR-016)', async () => {
     const outcome = await createEditorialApi(undefined).withdraw('any', 'publisher request');
     expect(outcome.recorded).toBe(false);
-    expect(outcome.withdrawn_at).toBeUndefined();
+    expect(outcome).not.toHaveProperty('withdrawn_at');
     // The reason must describe withdrawal, not approval.
     expect(outcome.reason).toContain('publication did not end');
   });
@@ -320,23 +342,77 @@ describe('the audit trace', () => {
       'a1',
       'the source retracted the story',
     );
-    expect(outcome.recorded).toBe(true);
-    expect(outcome.article_id).toBe('a1');
-    expect(outcome.reason).toBe('the source retracted the story');
+    expect(outcome).toMatchObject({
+      recorded: true,
+      article_id: 'a1',
+      reason: 'the source retracted the story',
+    });
   });
 
-  it('reports not-recorded rather than throwing when withdrawal 404s', async () => {
-    // The same not-deployed branch as its four sibling methods: with the
-    // reader live and editorial unmounted, a 404 means the route is
-    // absent, and the honest answer is that publication did not end.
-    const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
+  it('reports not-recorded rather than throwing when the route is absent', async () => {
+    // The same not-deployed branch queue(), approve() and sources() take:
+    // with the reader live and editorial unmounted, the mux answers a
+    // bare 404 — no problem+json — and the honest answer is that
+    // publication did not end.
+    const { fetchImpl } = respondingWith(
+      new Response('404 page not found', {
+        status: 404,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      }),
+    );
     const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw(
       'a1',
       'because',
     );
     expect(outcome.recorded).toBe(false);
-    expect(outcome.withdrawn_at).toBeUndefined();
+    expect(outcome).not.toHaveProperty('withdrawn_at');
     expect(outcome.reason).toContain('publication did not end');
+  });
+
+  it("reports the API's own 404 refusal, not the not-deployed fixture text", async () => {
+    // The deployed endpoint answers 404 as a domain outcome — unknown
+    // article, or approved but never published — in problem+json. That is
+    // the API refusing, not the API missing: the banner must carry the
+    // refusal's words, never claim the API is not implemented.
+    const { fetchImpl } = respondingWith(
+      new Response(
+        JSON.stringify({
+          type: 'about:blank',
+          title: 'Not Found',
+          status: 404,
+          detail: 'no published article with this id',
+        }),
+        { status: 404, headers: { 'Content-Type': 'application/problem+json' } },
+      ),
+    );
+    const outcome = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw(
+      'a1',
+      'because',
+    );
+    expect(outcome.recorded).toBe(false);
+    expect(outcome.reason).toBe('no published article with this id');
+    expect(outcome.reason).not.toContain('not implemented');
+  });
+
+  it('refuses a 2xx that lacks the recorded reason — no blank success box', async () => {
+    // The exact deploy skew the fallbacks exist for: an API one release
+    // behind still answers the old {article_id, withdrawn_at,
+    // withdrawn_by} shape. Spreading it into recorded: true rendered the
+    // success label over an empty body (#85); the honest path is the
+    // thrown refusal, which the audit screen shows as not recorded.
+    const { fetchImpl } = respondingWith(
+      jsonResponse({ article_id: 'a1', withdrawn_at: '2026-08-15T14:15:00Z', withdrawn_by: 'e1' }),
+    );
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw('a1', 'because'),
+    ).rejects.toBeInstanceOf(EditorialApiError);
+  });
+
+  it('refuses a 2xx whose reason is blank, not only one that is absent', async () => {
+    const { fetchImpl } = respondingWith(jsonResponse({ article_id: 'a1', reason: '   ' }));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).withdraw('a1', 'because'),
+    ).rejects.toBeInstanceOf(EditorialApiError);
   });
 
   it('still surfaces a 409 (already withdrawn) as an error', async () => {
@@ -351,7 +427,9 @@ describe('the audit trace', () => {
     await createEditorialApi('http://api:8080', 'jwt', trace.fetchImpl).provenance('x');
     expect(trace.calls.at(0)?.url.pathname).toBe('/api/v1/editorial/articles/x/provenance');
 
-    const wd = respondingWith(jsonResponse({ article_id: 'x', withdrawn_at: 'now' }));
+    const wd = respondingWith(
+      jsonResponse({ article_id: 'x', withdrawn_at: 'now', reason: 'because' }),
+    );
     await createEditorialApi('http://api:8080', 'jwt', wd.fetchImpl).withdraw('x', 'because');
     expect(wd.calls.at(0)?.url.pathname).toBe('/api/v1/editorial/articles/x/withdrawal');
     expect(wd.calls.at(0)?.init?.method).toBe('POST');
@@ -431,6 +509,61 @@ describe('the source list payload', () => {
     await expect(
       createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources(),
     ).resolves.toBeTruthy();
+  });
+});
+
+describe('allSources', () => {
+  const cycle = { retrieved: 3, duplicates_skipped: 1, failures: [] };
+  const row = (name: string) => ({
+    id: name,
+    name,
+    url: `https://x.example/${name}`,
+    language: 'de',
+    jurisdiction: 'DE',
+    licence_terms: 'terms',
+    usage_rule: 'extract_and_link',
+    permission_evidence: null,
+    active: true,
+    last_polled_at: null,
+    created_at: '2026-08-01T09:00:00Z',
+  });
+
+  it('follows next_cursor to exhaustion — the 21st source renders (#86)', async () => {
+    const { calls, fetchImpl } = respondingInTurn([
+      () => jsonResponse({ items: [row('a'), row('b')], next_cursor: 'c1', cycle }),
+      () => jsonResponse({ items: [row('c')], next_cursor: null, cycle }),
+    ]);
+    const list = await allSources(createEditorialApi('http://api:8080', 'jwt', fetchImpl));
+
+    expect(list.items.map((s) => s.name)).toEqual(['a', 'b', 'c']);
+    expect(list.truncated).toBe(false);
+    expect(list.cycle).toEqual(cycle);
+    // Two round trips: the first without a cursor, the second echoing the
+    // first page's next_cursor, both at the contract's maximum limit.
+    expect(calls).toHaveLength(2);
+    expect(calls.at(0)?.url.searchParams.get('cursor')).toBeNull();
+    expect(calls.at(0)?.url.searchParams.get('limit')).toBe('100');
+    expect(calls.at(1)?.url.searchParams.get('cursor')).toBe('c1');
+  });
+
+  it('declares truncation when the page bound is hit with a cursor on offer', async () => {
+    // A cursor chain that never exhausts: the walk must stop at its
+    // bound and say the list is incomplete, never loop or stay silent.
+    const { calls, fetchImpl } = respondingInTurn([
+      () => jsonResponse({ items: [row('endless')], next_cursor: 'again', cycle }),
+    ]);
+    const list = await allSources(createEditorialApi('http://api:8080', 'jwt', fetchImpl), 3);
+
+    expect(calls).toHaveLength(3);
+    expect(list.items).toHaveLength(3);
+    expect(list.truncated).toBe(true);
+  });
+
+  it('carries the fixture flag through, and fixtures are never truncated', async () => {
+    const list = await allSources(createEditorialApi(undefined));
+    expect(list.fixture).toBe(true);
+    expect(list.truncated).toBe(false);
+    expect(list.items.length).toBeGreaterThan(0);
   });
 });
 
@@ -520,7 +653,9 @@ describe('withdrawalBanner', () => {
   it('holds in both chrome languages', () => {
     const de = editorialStrings('de');
     expect(withdrawalBanner({ recorded: false }, de).label).toBe(de.notRecordedTitle);
-    expect(withdrawalBanner({ recorded: true, reason: 'r' }, de).label).toBe(de.withdraw);
+    expect(withdrawalBanner({ recorded: true, article_id: 'a1', reason: 'r' }, de).label).toBe(
+      de.withdraw,
+    );
   });
 });
 

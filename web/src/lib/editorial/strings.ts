@@ -140,6 +140,12 @@ export interface EditorialStrings {
   readonly usageRuleNotAnInput: string;
   readonly addSourceAndPoll: string;
   readonly sourcesEmpty: string;
+  /**
+   * The page bound was reached with more pages on offer: the table and
+   * the summary count cover what was fetched, not the whole registry,
+   * and the screen must say so rather than truncate silently.
+   */
+  readonly sourcesTruncated: string;
   /** Success confirmation; a 201 carries an id, not prose. */
   readonly sourceAdded: (id: string) => string;
 }
@@ -257,6 +263,8 @@ const EL: EditorialStrings = {
     'Ο κανόνας δεν είναι πεδίο της φόρμας: κάθε νέα πηγή είναι extract_and_link και η αναβάθμιση είναι ξεχωριστή διαδικασία με έγκριση ιδρυτή.',
   addSourceAndPoll: 'Προσθήκη πηγής και έναρξη λήψης',
   sourcesEmpty: 'Δεν έχει ρυθμιστεί καμία πηγή ακόμη.',
+  sourcesTruncated:
+    'Υπάρχουν κι άλλες πηγές που δεν εμφανίζονται εδώ· ο πίνακας και τα σύνολα καλύπτουν όσες φορτώθηκαν.',
   sourceAdded: (id) => `Η πηγή ρυθμίστηκε (${id}) και η λήψη ξεκίνησε.`,
 };
 
@@ -373,6 +381,8 @@ const DE: EditorialStrings = {
     'Die Regel ist kein Formularfeld: jede neue Quelle ist extract_and_link, und eine Heraufstufung ist ein eigener, von der Gründung freigegebener Vorgang.',
   addSourceAndPoll: 'Quelle hinzufügen und Abruf starten',
   sourcesEmpty: 'Noch keine Quelle eingerichtet.',
+  sourcesTruncated:
+    'Es gibt weitere Quellen, die hier nicht angezeigt werden; Tabelle und Summen decken nur die geladenen ab.',
   sourceAdded: (id) => `Quelle eingerichtet (${id}); der Abruf läuft.`,
 };
 

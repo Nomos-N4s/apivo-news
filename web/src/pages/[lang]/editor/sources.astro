@@ -3,9 +3,10 @@ import { API_BASE_URL } from 'astro:env/server';
 import EditorChrome from '../../../components/EditorChrome.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
 import {
+  allSources,
   createEditorialApi,
+  type SourceList,
   type SourceOutcome,
-  type SourcesPage,
 } from '../../../lib/editorial/api';
 import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
@@ -89,10 +90,15 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-let page: SourcesPage | null = null;
+// The whole registry, not page one: the endpoint paginates, and a screen
+// whose purpose is licensing visibility must not silently lose the 21st
+// source or count only what one page held. allSources follows next_cursor
+// to exhaustion (bounded); if the bound is ever hit, `truncated` renders
+// the explicit notice below instead of pretending the list is complete.
+let page: SourceList | null = null;
 let failed = false;
 try {
-  page = await api.sources();
+  page = await allSources(api);
 } catch {
   failed = true;
   Astro.response.status = 503;
@@ -188,6 +194,11 @@ const activeCount = sources.filter((source) => source.active).length;
             </div>
           )
         }
+
+        {/* The page bound was hit with more pages on offer: say so. A
+            silently-partial table is the one option this screen's purpose
+            rules out. */}
+        {page?.truncated === true && <p class="notice">{t.sourcesTruncated}</p>}
 
         {
           page !== null && (
