@@ -451,6 +451,43 @@ func TestFromEnvProdRequiresEncryptedDatabase(t *testing.T) {
 	}
 }
 
+// TestFromEnvUnparseableDatabaseURLKeepsThePasswordOut pins the one thing
+// a startup refusal must never do: print the credential it was refusing.
+//
+// net/url returns a *url.Error whose Error() embeds the whole string it was
+// given, so wrapping it put the production database password into the error
+// that main.go prints to stderr - a container log Cloudflare keeps, readable
+// by anyone with log access. A typo in the DSN would have leaked it.
+func TestFromEnvUnparseableDatabaseURLKeepsThePasswordOut(t *testing.T) {
+	t.Parallel()
+
+	const password = "sup3rs3cr3t"
+	// A control character: url.Parse refuses it, and refuses it late
+	// enough to have the whole string in hand.
+	databaseURL := "postgres://apivo:" + password + "@db.example:5432/apivo?sslmode=verify-full\x7f"
+
+	got, err := config.FromEnv(envFrom(map[string]string{
+		"DATABASE_URL": databaseURL,
+		"APP_ENV":      config.EnvProd,
+	}))
+	if err == nil {
+		t.Fatalf("FromEnv() = %+v, want a refusal for an unparseable DATABASE_URL", got)
+	}
+	if strings.Contains(err.Error(), password) {
+		t.Fatalf("FromEnv() error contains the database password: %q", err)
+	}
+	if strings.Contains(err.Error(), databaseURL) {
+		t.Fatalf("FromEnv() error repeats the connection string: %q", err)
+	}
+	// Still a usable report: it names what is wrong, just not with what.
+	if !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("FromEnv() error = %q, want it to name the variable", err)
+	}
+	if !strings.Contains(err.Error(), "invalid control character") {
+		t.Fatalf("FromEnv() error = %q, want it to name the parse failure", err)
+	}
+}
+
 // TestFromEnvDevAcceptsPlaintextDatabase pins the other half: the check is
 // about production. Development runs against the compose Postgres over a
 // loopback address with sslmode=disable, and demanding TLS there would

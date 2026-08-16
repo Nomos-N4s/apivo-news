@@ -4,6 +4,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -264,14 +265,32 @@ func requireEncryptedDatabase(databaseURL string) error {
 // (host=… sslmode=…). An unparseable string is an error here rather than
 // at the first query, because a startup check that silently passes on
 // input it did not understand is not a check.
+//
+// NOTHING returned from here may carry the connection string. It holds the
+// production database password, the error travels up to main.go and is
+// printed to stderr, and stderr on this deployment is a container log
+// Cloudflare keeps - so a DSN with one typo in it would put the password
+// where anyone with log access reads it. That is the same hazard as a
+// credential in a feed URL, and it gets the same treatment the fetcher
+// gives one (#83): report the cause, never the value.
 func sslMode(databaseURL string) (string, error) {
 	if strings.Contains(databaseURL, "://") {
 		parsed, err := url.Parse(databaseURL)
 		if err != nil {
-			return "", fmt.Errorf("config: DATABASE_URL is not a valid connection URL: %w", err)
+			// net/url returns a *url.Error whose Error() embeds the WHOLE
+			// string it was given. Wrapping that with %w prints the DSN,
+			// password and all. Only the inner cause is reportable.
+			var parseErr *url.Error
+			if errors.As(err, &parseErr) {
+				err = parseErr.Err
+			}
+			return "", fmt.Errorf("config: DATABASE_URL is not a valid connection URL (the value is not repeated here: it carries the database password): %w", err)
 		}
 		query, err := url.ParseQuery(parsed.RawQuery)
 		if err != nil {
+			// Safe to wrap: ParseQuery names only the offending escape
+			// sequence ("invalid URL escape \"%zz\""), never the query it
+			// was reading.
 			return "", fmt.Errorf("config: DATABASE_URL has an unparseable query string: %w", err)
 		}
 		return strings.ToLower(query.Get("sslmode")), nil
