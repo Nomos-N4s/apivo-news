@@ -124,7 +124,15 @@ select
     si.original_author,
     si.published_at    as original_published_at,
     si.content_hash,
-    si.raw_body,
+    -- Bounded at the hop: ingestion admits bodies to 8 MiB, the page limit
+    -- reaches 100, and the editor screen re-fetches the queue on every
+    -- render - all to derive a 300-rune extract (D9) per row. 64 KiB is
+    -- generous for prose; the one consequence is that a body whose first
+    -- 64 KiB is pure markup yields a shorter extract than its full text
+    -- would have, which the D9 derivation already tolerates (markup
+    -- stripping can consume any prefix). The Go-side derivation is
+    -- unchanged and still bounds the wire to 300 runes.
+    left(si.raw_body, 65536) as raw_body,
     t.headline         as translation_headline,
     t.extract          as translation_extract,
     t.target_locale    as target_lang,
@@ -206,7 +214,8 @@ type ListReviewQueueRow struct {
 // declared publication date, the content fingerprint, and the translation
 // lineage with its cost (I-1, FR-005, FR-006). raw_body crosses the
 // database hop so the store can derive the bounded original extract in Go;
-// it never crosses the HTTP wire.
+// it never crosses the HTTP wire, and it crosses the hop bounded (see the
+// left() below).
 // One page of the queue: newest retrieval first, keyset-paginated on
 // (retrieved_at, row_id) descending. Offset pagination is deliberately not
 // used - the crawler keeps adding rows while an editor pages through them,
