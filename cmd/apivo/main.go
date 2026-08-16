@@ -2,10 +2,11 @@
 // module of the modular monolith. It is also the composition root - the one
 // place where modules are wired together.
 //
-// With no arguments the binary serves HTTP. The single subcommand,
-// "apivo healthcheck", probes the serving process once over HTTP and exits
+// With no arguments the binary serves HTTP. Two subcommands exist:
+// "apivo healthcheck" probes the serving process once over HTTP and exits
 // zero on success - it backs the container HEALTHCHECK, where the distroless
-// image offers no shell or curl.
+// image offers no shell or curl; "apivo version" prints the stamped release
+// version and exits.
 package main
 
 import (
@@ -36,6 +37,15 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/translation/providers/openaicompat"
 )
 
+// version is the release version stamped into the binary at build time via
+//
+//	go build -ldflags "-X main.version=v0.1.0"
+//
+// (the release pipeline derives the value from the annotated tag, issue
+// #119). "dev" is not a fallback pretending to be a release: it is the
+// honest name for any binary that was not cut by the release pipeline.
+var version = "dev"
+
 // healthcheckTimeout bounds the whole healthcheck probe. It stays below the
 // HEALTHCHECK --timeout in the Dockerfile so the probe fails with a precise
 // error before Docker gives up on it.
@@ -62,8 +72,9 @@ func main() {
 
 // run parses the arguments and dispatches: no arguments serves until ctx is
 // cancelled or a termination signal arrives; "healthcheck" probes the serving
-// process once and reports the verdict as its error. It is separated from
-// main so the wiring is testable; main only handles the exit code.
+// process once and reports the verdict as its error; "version" prints the
+// stamped release version. It is separated from main so the wiring is
+// testable; main only handles the exit code.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -71,10 +82,13 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	switch {
 	case len(args) == 0:
 		return serve(ctx, getenv, stdout)
-	case args[0] != "healthcheck":
+	case args[0] != "healthcheck" && args[0] != "version":
 		return fmt.Errorf("unknown command %q", args[0])
 	case len(args) > 1:
-		return fmt.Errorf("healthcheck takes no arguments, got %q", args[1:])
+		return fmt.Errorf("%s takes no arguments, got %q", args[0], args[1:])
+	case args[0] == "version":
+		_, err := fmt.Fprintf(stdout, "apivo version %s\n", version)
+		return err
 	default:
 		return healthcheck(ctx, getenv)
 	}
@@ -208,7 +222,7 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 	// unconditionally - a missing JWKS_URL costs the editorial routes, never
 	// the public site.
 	srv.Mount(readerPrefix, content.NewHandler(log, pool))
-	log.InfoContext(ctx, "starting", "addr", cfg.HTTPAddr, "env", cfg.Env)
+	log.InfoContext(ctx, "starting", "addr", cfg.HTTPAddr, "env", cfg.Env, "version", version)
 	return srv.Run(ctx)
 }
 

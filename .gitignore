@@ -1,6 +1,10 @@
 # Go
 /bin/
 *.exe
+
+# Release stamping: written by the release workflow (and by local release
+# rehearsals) for the Docker build to read; never a committed fact.
+/VERSION
 coverage.out
 coverage.out.filtered
 coverage.html
