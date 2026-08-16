@@ -98,7 +98,7 @@ try {
   Astro.response.status = 503;
 }
 
-const sources = page?.sources ?? [];
+const sources = page?.items ?? [];
 const activeCount = sources.filter((source) => source.active).length;
 ---
 
@@ -164,7 +164,7 @@ const activeCount = sources.filter((source) => source.active).length;
                 {sources.map((source) => (
                   <tr>
                     <td class="strong">{source.name}</td>
-                    <td class="mono">{source.feed_path}</td>
+                    <td class="mono">{source.url}</td>
                     <td>{source.language}</td>
                     <td>
                       <span class="tag tag-accent">{source.usage_rule}</span>

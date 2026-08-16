@@ -229,17 +229,17 @@ export interface DomainEvent {
 
 /**
  * A configured feed (mockup 1i) — a `source` row from migration 0001 plus
- * `active` from 0002.
- *
- * No endpoint lists sources: the contract specifies only
- * `POST /api/v1/editorial/sources`. The screen cannot exist without the
- * list, so a read endpoint is a proposed addition (issue #70).
+ * `active` from 0002 and the poll state from 0007, as
+ * `GET /api/v1/editorial/sources` serves it (#86).
  */
 export interface SourceRow {
   readonly id: string;
   readonly name: string;
-  /** The feed path shown in the table; the origin is the publisher's host. */
-  readonly feed_path: string;
+  /**
+   * The feed URL the crawler polls — the same column the registration
+   * wrote, under one name across both source endpoints.
+   */
+  readonly url: string;
   readonly language: string;
   readonly jurisdiction: string;
   /** `extract_and_link` unless written permission is on record (FR-004). */
@@ -247,7 +247,7 @@ export interface SourceRow {
   readonly permission_evidence: string | null;
   /** `source.active` (0002): pausing a feed without deleting anything. */
   readonly active: boolean;
-  /** ISO 8601; null when the feed has never been polled successfully. */
+  /** ISO 8601; null when the feed has never been polled. */
   readonly last_polled_at: string | null;
 }
 
@@ -263,10 +263,15 @@ export interface PollCycle {
   readonly failures: readonly string[];
 }
 
-/** What the sources screen reads. */
+/** What the sources screen reads: the endpoint's own page shape. */
 export interface SourcesPage {
-  readonly sources: readonly SourceRow[];
+  readonly items: readonly SourceRow[];
   readonly cycle: PollCycle;
+  /**
+   * Pass back as `cursor` for the next page; null on the last. Optional
+   * because the fixture page has no further pages to offer.
+   */
+  readonly next_cursor?: string | null;
   /** True when this page is fixture data; see `QueuePage.fixture`. */
   readonly fixture?: boolean;
 }
@@ -292,11 +297,11 @@ function isSourcesPage(body: unknown): body is SourcesPage {
   ) {
     return false;
   }
-  const sources = record['sources'];
-  if (!Array.isArray(sources)) {
+  const items = record['items'];
+  if (!Array.isArray(items)) {
     return false;
   }
-  return sources.every((row: unknown) => {
+  return items.every((row: unknown) => {
     if (typeof row !== 'object' || row === null) {
       return false;
     }
@@ -304,7 +309,7 @@ function isSourcesPage(body: unknown): body is SourcesPage {
     const polled = source['last_polled_at'];
     return (
       typeof source['name'] === 'string' &&
-      typeof source['feed_path'] === 'string' &&
+      typeof source['url'] === 'string' &&
       typeof source['language'] === 'string' &&
       typeof source['usage_rule'] === 'string' &&
       typeof source['active'] === 'boolean' &&
@@ -443,7 +448,7 @@ function fixtureApi(): EditorialApi {
       return Promise.resolve({ recorded: false, reason: NOT_WIRED_WITHDRAWAL });
     },
     sources(): Promise<SourcesPage> {
-      return Promise.resolve({ sources: SOURCE_FIXTURES, cycle: POLL_CYCLE_FIXTURE, fixture: true });
+      return Promise.resolve({ items: SOURCE_FIXTURES, cycle: POLL_CYCLE_FIXTURE, fixture: true });
     },
     addSource(): Promise<SourceOutcome> {
       return Promise.resolve({ recorded: false, reason: NOT_WIRED_SOURCE });
@@ -568,9 +573,9 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
     },
     async sources(): Promise<SourcesPage> {
       const response = await fetchImpl(new URL(`${base}/api/v1/editorial/sources`), { headers });
-      // Only the POST exists on the API today; the list is a proposed
-      // addition, so a 404 here means the read is not deployed rather
-      // than that the screen is broken.
+      // A deployment can still serve the reader while the editorial
+      // prefix is unmounted, so a 404 here means the read is not deployed
+      // rather than that the screen is broken.
       if (response.status === NOT_DEPLOYED) {
         return fixtures.sources();
       }

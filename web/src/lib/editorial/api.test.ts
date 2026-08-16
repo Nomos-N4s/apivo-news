@@ -188,11 +188,11 @@ describe('editorial endpoints not deployed yet', () => {
   });
 
   it('falls back to fixtures when the source list 404s', async () => {
-    // POST /editorial/sources exists on the API; the list does not, so a
-    // 404 there must not take the screen down.
+    // A deployment can serve the reader while the editorial prefix is
+    // unmounted, so a 404 there must not take the screen down.
     const { fetchImpl } = respondingWith(jsonResponse({ title: 'not found' }, 404));
     const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources();
-    expect(page.sources.length).toBeGreaterThan(0);
+    expect(page.items.length).toBeGreaterThan(0);
   });
 
   it('still surfaces 401 on the source list — that is a real answer', async () => {
@@ -364,7 +364,7 @@ describe('the source list payload', () => {
   const validSource = {
     id: 's1',
     name: 'X',
-    feed_path: '/rss',
+    url: 'https://x.example/rss',
     language: 'de',
     jurisdiction: 'DE',
     usage_rule: 'extract_and_link',
@@ -373,16 +373,33 @@ describe('the source list payload', () => {
     last_polled_at: '2026-08-14T06:12:00Z',
   };
 
-  it('accepts a well-formed list', async () => {
+  it('accepts the endpoint page shape, url column included', async () => {
     const { fetchImpl } = respondingWith(
-      jsonResponse({ sources: [validSource], cycle: validCycle }),
+      jsonResponse({ items: [validSource], next_cursor: null, cycle: validCycle }),
     );
     const page = await createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources();
-    expect(page.sources).toHaveLength(1);
+    expect(page.items).toHaveLength(1);
+    // One column, one name, across both source endpoints (#86).
+    expect(page.items.at(0)?.url).toBe('https://x.example/rss');
+    // The cycle is the API's reading of the poll state, carried whole.
+    expect(page.cycle).toEqual(validCycle);
+    expect(page.fixture).toBeUndefined();
   });
 
   it('rejects a body whose poll cycle is missing — the screen dereferences it', async () => {
-    const { fetchImpl } = respondingWith(jsonResponse({ sources: [validSource] }));
+    const { fetchImpl } = respondingWith(jsonResponse({ items: [validSource] }));
+    await expect(
+      createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources(),
+    ).rejects.toBeInstanceOf(EditorialApiError);
+  });
+
+  it('rejects a row without the url column', async () => {
+    // The pre-#86 wire name; a server still sending feed_path is
+    // malformed under this client, not silently linkless.
+    const { url, ...renamed } = validSource;
+    const { fetchImpl } = respondingWith(
+      jsonResponse({ items: [{ ...renamed, feed_path: url }], next_cursor: null, cycle: validCycle }),
+    );
     await expect(
       createEditorialApi('http://api:8080', 'jwt', fetchImpl).sources(),
     ).rejects.toBeInstanceOf(EditorialApiError);
@@ -393,7 +410,8 @@ describe('the source list payload', () => {
     // mid-render; rejecting here becomes the page's calm 503 instead.
     const { fetchImpl } = respondingWith(
       jsonResponse({
-        sources: [{ ...validSource, last_polled_at: 'not a date' }],
+        items: [{ ...validSource, last_polled_at: 'not a date' }],
+        next_cursor: null,
         cycle: validCycle,
       }),
     );
@@ -405,7 +423,8 @@ describe('the source list payload', () => {
   it('accepts a never-polled source, whose timestamp is null', async () => {
     const { fetchImpl } = respondingWith(
       jsonResponse({
-        sources: [{ ...validSource, last_polled_at: null }],
+        items: [{ ...validSource, last_polled_at: null }],
+        next_cursor: null,
         cycle: validCycle,
       }),
     );
@@ -418,14 +437,14 @@ describe('the source list payload', () => {
 describe('sources', () => {
   it('lists configured feeds and the deduplicating poll cycle (FR-014)', async () => {
     const page = await createEditorialApi(undefined).sources();
-    expect(page.sources.length).toBeGreaterThan(0);
+    expect(page.items.length).toBeGreaterThan(0);
     expect(page.cycle.duplicates_skipped).toBeGreaterThan(0);
     expect(page.cycle.failures.length).toBeGreaterThan(0);
   });
 
   it('shows no source with a full_text rule — unreachable without evidence (FR-004)', async () => {
     const page = await createEditorialApi(undefined).sources();
-    for (const source of page.sources) {
+    for (const source of page.items) {
       expect(source.usage_rule).toBe('extract_and_link');
       expect(source.permission_evidence).toBeNull();
     }
