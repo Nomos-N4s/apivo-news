@@ -540,8 +540,14 @@ func TestAlphaDefinitionOfDoneJourney(t *testing.T) {
 		journeyFestivalTitle: "χιλιάδες επισκέπτες",
 	}}
 	pipeline, err := translation.NewPipeline(discardLogger(), tx, fake, translation.PipelineConfig{
-		Interval:      time.Hour,
-		Limit:         100,
+		Interval: time.Hour,
+		// Far above any realistic backlog: the work list is database-wide
+		// and the bound counts provider calls, so foreign eligible items -
+		// each stepped over unbilled by the fake - must never exhaust the
+		// cycle before the journey's own three are reached. Other suites
+		// seed future-dated rows, which sort ahead of these in the
+		// newest-first list, so "newest wins" is not a defence here.
+		Limit:         10_000,
 		ReaderLocales: translation.AlphaReaderLocales,
 		Caps: translation.Caps{
 			PerArticleMicroUSD: 20_000,
