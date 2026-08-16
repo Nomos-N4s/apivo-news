@@ -567,6 +567,12 @@ type queueResponse struct {
 
 // queueItemResponse is one origin awaiting a decision. translation_id and
 // the translated columns are null together, for an untranslated origin.
+//
+// The second block is the evidence the approval rests on (#87): the
+// approval is permanent and article_guard freezes the attribution at the
+// click, so the original text, its author and declared publication date,
+// the content fingerprint and the translation lineage with its cost have
+// to be on the screen before the click, not discoverable after it.
 type queueItemResponse struct {
 	SourceItemID       string  `json:"source_item_id"`
 	TranslationID      *string `json:"translation_id"`
@@ -576,6 +582,31 @@ type queueItemResponse struct {
 	ExtractTranslated  *string `json:"extract_translated"`
 	RetrievedAt        string  `json:"retrieved_at"`
 	LicenceSnapshot    string  `json:"licence_snapshot"`
+	// SourceURL is the original article at the publisher.
+	SourceURL string `json:"source_url"`
+	// OriginalAuthor is null when the feed named none - absent stays
+	// absent, never invented (FR-002).
+	OriginalAuthor *string `json:"original_author"`
+	// OriginalPublishedAt is the publication date the feed declared, null
+	// when it declared none. The attribution default MUST come from this
+	// field: falling back to retrieved_at would freeze the retrieval date
+	// into the attribution as the publication date, permanently.
+	OriginalPublishedAt *string `json:"original_published_at"`
+	// ContentHash is the database-computed fingerprint of the evidence.
+	ContentHash string `json:"content_hash"`
+	// ExtractOriginal is the retrieved original reduced to bounded prose
+	// (D9, at most 300 runes): evidence beside the translation, never the
+	// unbounded raw body.
+	ExtractOriginal string `json:"extract_original"`
+	// SourceLang and TargetLang are the two ends of the translation;
+	// target_lang is null for an untranslated origin.
+	SourceLang string  `json:"source_lang"`
+	TargetLang *string `json:"target_lang"`
+	// Model, PromptVersion and CostMicroUSD are the lineage (FR-005) and
+	// recorded cost (FR-006), null together for an untranslated origin.
+	Model         *string `json:"model"`
+	PromptVersion *string `json:"prompt_version"`
+	CostMicroUSD  *int64  `json:"cost_microusd"`
 	// CorrectionCandidate marks an origin whose only articles were
 	// withdrawn: it is back in the queue on purpose, and the editor is
 	// looking at a correction rather than a first approval.
@@ -628,12 +659,25 @@ func queueItem(item QueueItem) queueItemResponse {
 		ExtractTranslated:   item.ExtractTranslated,
 		RetrievedAt:         item.RetrievedAt.Format(timeFormat),
 		LicenceSnapshot:     item.LicenceSnapshot,
+		SourceURL:           item.SourceURL,
+		OriginalAuthor:      item.OriginalAuthor,
+		ContentHash:         item.ContentHash,
+		ExtractOriginal:     item.ExtractOriginal,
+		SourceLang:          item.SourceLang,
+		TargetLang:          item.TargetLang,
+		Model:               item.Model,
+		PromptVersion:       item.PromptVersion,
+		CostMicroUSD:        item.CostMicroUSD,
 		CorrectionCandidate: item.CorrectionCandidate(),
 		Withdrawals:         make([]withdrawalResponse, 0, len(item.Withdrawals)),
 	}
 	if item.TranslationID != nil {
 		id := item.TranslationID.String()
 		out.TranslationID = &id
+	}
+	if item.OriginalPublishedAt != nil {
+		published := item.OriginalPublishedAt.Format(timeFormat)
+		out.OriginalPublishedAt = &published
 	}
 	for _, wd := range item.Withdrawals {
 		out.Withdrawals = append(out.Withdrawals, withdrawalResponse{

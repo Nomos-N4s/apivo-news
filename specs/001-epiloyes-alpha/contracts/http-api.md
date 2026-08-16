@@ -66,11 +66,26 @@ history.
 - Query: `lang` (optional filter), `limit`, `cursor`.
 - 200: `{ items: [{ source_item_id, translation_id|null, source_name,
   headline_original|null, headline_translated|null, extract_translated|null,
-  retrieved_at, licence_snapshot, correction_candidate,
+  retrieved_at, licence_snapshot, source_url, original_author|null,
+  original_published_at|null, content_hash, extract_original, source_lang,
+  target_lang|null, model|null, prompt_version|null, cost_microusd|null,
+  correction_candidate,
   withdrawals: [{ article_id, withdrawn_at, withdrawn_by, reason }] }],
   next_cursor: string|null }`. Column backing:
   `headline_original` = `source_item.original_title`,
   `headline_translated`/`extract_translated` = `translation.headline`/`.extract`.
+  The evidence block (#87) carries what the permanent approval rests on,
+  before the click: `source_url`, `original_author` and
+  `original_published_at` from the immutable `source_item`;
+  `content_hash`, the database-computed fingerprint; `extract_original`,
+  derived in Go from `raw_body` by the shared D9 reducer and bounded to
+  300 runes — the raw body crosses the database hop, never the wire;
+  `source_lang` = `source.language_code`; `target_lang`, `model`,
+  `prompt_version`, `cost_microusd` from the translation (FR-005,
+  FR-006), null together for an untranslated origin.
+  `original_published_at` is null when the feed declared no publication
+  date — never substituted, because the attribution the client composes
+  from it is frozen permanently at approval.
   `correction_candidate` is true exactly when `withdrawals` is non-empty —
   the origin is back in the queue because its only articles were withdrawn.
   `withdrawals` is newest first, and `[]` (never null) for a fresh origin.

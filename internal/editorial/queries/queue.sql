@@ -19,6 +19,14 @@
 -- `source_item.original_title`, `headline_translated`/`extract_translated` =
 -- `translation.headline`/`.extract`, plus `source.name`,
 -- `source_item.licence_snapshot` and `source_item.retrieved_at`.
+--
+-- The evidence half (#87): the approval is permanent and article_guard
+-- freezes the attribution at the click, so what the approval rests on has
+-- to be on the wire BEFORE the click - the original text, its author and
+-- declared publication date, the content fingerprint, and the translation
+-- lineage with its cost (I-1, FR-005, FR-006). raw_body crosses the
+-- database hop so the store can derive the bounded original extract in Go;
+-- it never crosses the HTTP wire.
 
 -- name: ListReviewQueue :many
 -- One page of the queue: newest retrieval first, keyset-paginated on
@@ -77,10 +85,20 @@ select
     c.row_id,
     c.retrieved_at,
     s.name             as source_name,
+    s.language_code    as source_lang,
     si.original_title,
     si.licence_snapshot,
+    si.source_url,
+    si.original_author,
+    si.published_at    as original_published_at,
+    si.content_hash,
+    si.raw_body,
     t.headline         as translation_headline,
-    t.extract          as translation_extract
+    t.extract          as translation_extract,
+    t.target_locale    as target_lang,
+    t.model,
+    t.prompt_version,
+    t.cost_microusd
 from candidate c
 join source_item si on si.id = c.source_item_id
 join source s on s.id = si.source_id

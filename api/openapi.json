@@ -1556,7 +1556,7 @@
       "QueueItem": {
         "type": "object",
         "title": "QueueItem",
-        "description": "One origin awaiting an editorial decision: a retrieved item, with its translation when one exists. translation_id and the translated fields are null together, for an untranslated origin.",
+        "description": "One origin awaiting an editorial decision: a retrieved item, with its translation when one exists. translation_id and the translated fields are null together, for an untranslated origin.\n\nThe evidence block - original text, author, declared publication date, content fingerprint, translation lineage and cost - is carried BEFORE the decision, because the approval is permanent and `article_guard` freezes the attribution at the click (I-1, I-4).",
         "required": [
           "source_item_id",
           "translation_id",
@@ -1566,6 +1566,16 @@
           "extract_translated",
           "retrieved_at",
           "licence_snapshot",
+          "source_url",
+          "original_author",
+          "original_published_at",
+          "content_hash",
+          "extract_original",
+          "source_lang",
+          "target_lang",
+          "model",
+          "prompt_version",
+          "cost_microusd",
           "correction_candidate",
           "withdrawals"
         ],
@@ -1612,6 +1622,70 @@
           "licence_snapshot": {
             "type": "string",
             "description": "The licence terms in force when this item was retrieved (I-4), not the source row today."
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The original article at the publisher - the link the editor opens to check the evidence."
+          },
+          "original_author": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The author as the feed named them; null when it named none - absent stays absent, never invented (FR-002)."
+          },
+          "original_published_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The publication date the feed declared, null when it declared none. The attribution default MUST come from this field: the attribution is frozen at approval, and a client that substitutes retrieved_at freezes the retrieval date in as the publication date."
+          },
+          "content_hash": {
+            "type": "string",
+            "description": "SHA-256 hex digest of the retrieved body, computed by the database (I-3) - the evidence's own fingerprint."
+          },
+          "extract_original": {
+            "type": "string",
+            "description": "The retrieved original reduced to bounded prose by the shared D9 rule: markup dropped, at most 300 runes, cut at a sentence boundary. Evidence beside the translation - never the unbounded raw body."
+          },
+          "source_lang": {
+            "type": "string",
+            "description": "The source's language code.",
+            "examples": [
+              "de"
+            ]
+          },
+          "target_lang": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "translation.target_locale; null for an untranslated origin."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The translation lineage's model (FR-005); null for an untranslated origin."
+          },
+          "prompt_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The lineage's prompt version (FR-005); null for an untranslated origin."
+          },
+          "cost_microusd": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The provider-reported cost recorded at insert (FR-006), in micro-USD; null for an untranslated origin."
           },
           "correction_candidate": {
             "type": "boolean",

@@ -117,10 +117,20 @@ select
     c.row_id,
     c.retrieved_at,
     s.name             as source_name,
+    s.language_code    as source_lang,
     si.original_title,
     si.licence_snapshot,
+    si.source_url,
+    si.original_author,
+    si.published_at    as original_published_at,
+    si.content_hash,
+    si.raw_body,
     t.headline         as translation_headline,
-    t.extract          as translation_extract
+    t.extract          as translation_extract,
+    t.target_locale    as target_lang,
+    t.model,
+    t.prompt_version,
+    t.cost_microusd
 from candidate c
 join source_item si on si.id = c.source_item_id
 join source s on s.id = si.source_id
@@ -152,10 +162,20 @@ type ListReviewQueueRow struct {
 	RowID               pgtype.UUID
 	RetrievedAt         pgtype.Timestamptz
 	SourceName          string
+	SourceLang          string
 	OriginalTitle       pgtype.Text
 	LicenceSnapshot     string
+	SourceUrl           string
+	OriginalAuthor      pgtype.Text
+	OriginalPublishedAt pgtype.Timestamptz
+	ContentHash         string
+	RawBody             string
 	TranslationHeadline pgtype.Text
 	TranslationExtract  pgtype.Text
+	TargetLang          pgtype.Text
+	Model               pgtype.Text
+	PromptVersion       pgtype.Text
+	CostMicrousd        pgtype.Int8
 }
 
 // Review-queue queries (T019).
@@ -179,6 +199,14 @@ type ListReviewQueueRow struct {
 // `source_item.original_title`, `headline_translated`/`extract_translated` =
 // `translation.headline`/`.extract`, plus `source.name`,
 // `source_item.licence_snapshot` and `source_item.retrieved_at`.
+//
+// The evidence half (#87): the approval is permanent and article_guard
+// freezes the attribution at the click, so what the approval rests on has
+// to be on the wire BEFORE the click - the original text, its author and
+// declared publication date, the content fingerprint, and the translation
+// lineage with its cost (I-1, FR-005, FR-006). raw_body crosses the
+// database hop so the store can derive the bounded original extract in Go;
+// it never crosses the HTTP wire.
 // One page of the queue: newest retrieval first, keyset-paginated on
 // (retrieved_at, row_id) descending. Offset pagination is deliberately not
 // used - the crawler keeps adding rows while an editor pages through them,
@@ -218,10 +246,20 @@ func (q *Queries) ListReviewQueue(ctx context.Context, arg ListReviewQueueParams
 			&i.RowID,
 			&i.RetrievedAt,
 			&i.SourceName,
+			&i.SourceLang,
 			&i.OriginalTitle,
 			&i.LicenceSnapshot,
+			&i.SourceUrl,
+			&i.OriginalAuthor,
+			&i.OriginalPublishedAt,
+			&i.ContentHash,
+			&i.RawBody,
 			&i.TranslationHeadline,
 			&i.TranslationExtract,
+			&i.TargetLang,
+			&i.Model,
+			&i.PromptVersion,
+			&i.CostMicrousd,
 		); err != nil {
 			return nil, err
 		}

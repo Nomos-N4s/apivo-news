@@ -76,25 +76,37 @@ func (s *queueStore) ReviewQueue(_ context.Context, q editorial.QueueQuery) (edi
 
 // queueBody is the decoded queue payload, kept deliberately close to the
 // contract's wire shape so a renamed field fails the test.
+type queueItemBody struct {
+	SourceItemID        string  `json:"source_item_id"`
+	TranslationID       *string `json:"translation_id"`
+	SourceName          string  `json:"source_name"`
+	HeadlineOriginal    *string `json:"headline_original"`
+	HeadlineTranslated  *string `json:"headline_translated"`
+	ExtractTranslated   *string `json:"extract_translated"`
+	RetrievedAt         string  `json:"retrieved_at"`
+	LicenceSnapshot     string  `json:"licence_snapshot"`
+	SourceURL           string  `json:"source_url"`
+	OriginalAuthor      *string `json:"original_author"`
+	OriginalPublishedAt *string `json:"original_published_at"`
+	ContentHash         string  `json:"content_hash"`
+	ExtractOriginal     string  `json:"extract_original"`
+	SourceLang          string  `json:"source_lang"`
+	TargetLang          *string `json:"target_lang"`
+	Model               *string `json:"model"`
+	PromptVersion       *string `json:"prompt_version"`
+	CostMicroUSD        *int64  `json:"cost_microusd"`
+	CorrectionCandidate bool    `json:"correction_candidate"`
+	Withdrawals         []struct {
+		ArticleID   string `json:"article_id"`
+		WithdrawnAt string `json:"withdrawn_at"`
+		WithdrawnBy string `json:"withdrawn_by"`
+		Reason      string `json:"reason"`
+	} `json:"withdrawals"`
+}
+
 type queueBody struct {
-	Items []struct {
-		SourceItemID        string  `json:"source_item_id"`
-		TranslationID       *string `json:"translation_id"`
-		SourceName          string  `json:"source_name"`
-		HeadlineOriginal    *string `json:"headline_original"`
-		HeadlineTranslated  *string `json:"headline_translated"`
-		ExtractTranslated   *string `json:"extract_translated"`
-		RetrievedAt         string  `json:"retrieved_at"`
-		LicenceSnapshot     string  `json:"licence_snapshot"`
-		CorrectionCandidate bool    `json:"correction_candidate"`
-		Withdrawals         []struct {
-			ArticleID   string `json:"article_id"`
-			WithdrawnAt string `json:"withdrawn_at"`
-			WithdrawnBy string `json:"withdrawn_by"`
-			Reason      string `json:"reason"`
-		} `json:"withdrawals"`
-	} `json:"items"`
-	NextCursor *string `json:"next_cursor"`
+	Items      []queueItemBody `json:"items"`
+	NextCursor *string         `json:"next_cursor"`
 }
 
 // getQueue issues a queue request with the editor token unless another is
