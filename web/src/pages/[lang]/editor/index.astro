@@ -10,7 +10,11 @@ import {
   type ApprovalOutcome,
   type QueuePage,
 } from '../../../lib/editorial/api';
-import { APPROVAL_PLACES, parseApprovalForm } from '../../../lib/editorial/approvalForm';
+import {
+  APPROVAL_PLACES,
+  attributionDefault,
+  parseApprovalForm,
+} from '../../../lib/editorial/approvalForm';
 import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
 import { editorialStrings, languageName } from '../../../lib/editorial/strings';
@@ -158,14 +162,19 @@ const placeName = (slugs: readonly string[] | undefined): string => {
 
 // The attribution the article will carry (FR-008), composed from what the
 // queue row states and left editable — the editor is the one who stands
-// behind the wording, so it is a field, not a hidden value.
-const defaultAttribution = (item: (typeof items)[number]): string => {
-  const published = item.original_published_at ?? item.retrieved_at;
-  return `${reader.originallyPublishedBy} ${item.source_name}, ${formatItemDate(
-    lang,
-    new Date(published),
-  )}.`;
-};
+// behind the wording, so it is a field, not a hidden value. The date is
+// the one the feed DECLARED; when it declared none, the gap is said out
+// loud rather than papered over with the retrieval date, which
+// article_guard would freeze into the attribution permanently (#87).
+const defaultAttribution = (item: (typeof items)[number]): string =>
+  attributionDefault(
+    item,
+    {
+      originallyPublishedBy: reader.originallyPublishedBy,
+      publicationDateNotSupplied: t.publicationDateNotSupplied,
+    },
+    (iso) => formatItemDate(lang, new Date(iso)),
+  );
 ---
 
 <ReaderLayout lang={lang} title={`epiloYES — ${t.editorial}`} description={reader.tagline}>

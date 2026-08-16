@@ -11,6 +11,7 @@
  */
 
 import { PLACE_CATALOG, type Place } from '../reader/axes';
+import type { QueueItem } from './api';
 
 /**
  * The places the approval form offers: the reader vocabulary, exactly.
@@ -25,6 +26,37 @@ import { PLACE_CATALOG, type Place } from '../reader/axes';
 export const APPROVAL_PLACES: readonly Place[] = PLACE_CATALOG.filter(
   (place) => place.selectable,
 );
+
+/** The two strings the attribution default composes from. */
+export interface AttributionStrings {
+  readonly originallyPublishedBy: string;
+  readonly publicationDateNotSupplied: string;
+}
+
+/**
+ * The attribution the form pre-fills (FR-008): source name and the
+ * publication date the feed DECLARED — `original_published_at`, never
+ * `retrieved_at`. The two are different claims, and `article_guard`
+ * freezes whatever the editor approves, permanently; a silently
+ * substituted retrieval date would be frozen in as the publication date.
+ *
+ * When the feed declared no date, the absence is said out loud —
+ * "publication date not supplied by the feed", in the chrome's language —
+ * so the editor decides what to write over a visible gap rather than
+ * approving an invented fact. The formatter is only ever called with the
+ * declared date; a fallback date does not exist to format.
+ */
+export function attributionDefault(
+  item: Pick<QueueItem, 'source_name' | 'original_published_at'>,
+  strings: AttributionStrings,
+  formatDate: (iso: string) => string,
+): string {
+  const published = item.original_published_at;
+  if (published === null || published === undefined) {
+    return `${strings.originallyPublishedBy} ${item.source_name} (${strings.publicationDateNotSupplied}).`;
+  }
+  return `${strings.originallyPublishedBy} ${item.source_name}, ${formatDate(published)}.`;
+}
 
 /** A submission the API client can carry as-is. */
 export interface ApprovalSubmission {

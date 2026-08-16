@@ -18,16 +18,27 @@ import {
  * (T019 #22, T020 #23), so today every deployment takes the fixture path.
  */
 
+/** One ended publication in an origin's history. */
+export interface QueueWithdrawal {
+  readonly article_id: string;
+  /** ISO 8601. */
+  readonly withdrawn_at: string;
+  readonly withdrawn_by: string;
+  readonly reason: string;
+}
+
 /**
  * One row of `GET /api/v1/editorial/queue`.
  *
- * The first block is the contract's payload, verbatim. The second is what
- * the 1g review pane needs in order to be a responsible review surface —
- * an editor cannot approve on a translated headline alone; they must see
- * the original text, the lineage that produced the translation, and what
- * it cost. Those fields are marked optional and the pane degrades without
- * them, so this type already matches the endpoint as specified while
- * recording the gap (issue #61).
+ * The first block is the contract's original payload. The second is the
+ * evidence the approval rests on — the original text, its author and
+ * declared publication date, the fingerprint, the lineage that produced
+ * the translation and what it cost — served since #87, because the
+ * approval is permanent and the evidence has to be on the screen before
+ * the click. The fields stay optional so the pane degrades against an
+ * older API instead of crashing; `original_published_at` is the
+ * load-bearing one, and its absence must surface VISIBLY, never as a
+ * silently substituted retrieval date.
  */
 export interface QueueItem {
   // — the contract's queue payload —
@@ -40,15 +51,28 @@ export interface QueueItem {
   /** ISO 8601. */
   readonly retrieved_at: string;
   readonly licence_snapshot: string;
+  /**
+   * True when the origin's only articles were withdrawn: the editor is
+   * looking at a correction, not a first approval.
+   */
+  readonly correction_candidate?: boolean;
+  /** The origin's withdrawal history, newest first; [] when fresh. */
+  readonly withdrawals?: readonly QueueWithdrawal[];
 
-  // — proposed additions, needed by the review pane (issue #61) —
-  /** Place slugs the item would publish to; drives the queue kicker. */
+  // — the evidence block (#87) —
+  /** Place slugs the item would publish to; still a gap (issue #61). */
   readonly places?: readonly string[];
   /** The original article at the publisher, for "Open source ↗". */
   readonly source_url?: string;
-  /** The retrieved original, as evidence beside the translation. */
+  /** The retrieved original as bounded prose, beside the translation. */
   readonly extract_original?: string | null;
   readonly original_author?: string | null;
+  /**
+   * The publication date the feed declared, null when it declared none.
+   * The attribution default composes from THIS date — article_guard
+   * freezes the attribution at approval, so a substituted retrieval date
+   * here would be frozen in as the publication date forever.
+   */
   readonly original_published_at?: string | null;
   /** The DB-computed fingerprint of the retrieved body. */
   readonly content_hash?: string;

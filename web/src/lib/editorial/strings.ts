@@ -60,6 +60,13 @@ export interface EditorialStrings {
   readonly extractOnlyNote: string;
   readonly licenceAtRetrieval: string;
   /**
+   * The visible stand-in when the feed declared no publication date. The
+   * attribution is frozen at approval, so an absent date must be SAID
+   * rather than papered over with the retrieval date — a different claim,
+   * and one that would be frozen in permanently (#87).
+   */
+  readonly publicationDateNotSupplied: string;
+  /**
    * The place checkbox group's heading. The front page is scoped by place
    * (FR-009), so where an article publishes to is part of the approval —
    * an article tagged to no place could never appear anywhere.
@@ -179,6 +186,7 @@ const EL: EditorialStrings = {
   extractOnlyNote:
     'Μόνο τίτλος και απόσπασμα — πλήρης μετάφραση δεν επιτρέπεται για αυτή την πηγή.',
   licenceAtRetrieval: 'Άδεια κατά την ανάκτηση',
+  publicationDateNotSupplied: 'η ροή δεν δήλωσε ημερομηνία δημοσίευσης',
   publishTo: 'Δημοσίευση σε',
   atLeastOnePlace:
     'Επιλέξτε τουλάχιστον έναν τόπο: η πρώτη σελίδα φιλτράρεται ανά τόπο, οπότε ένα άρθρο χωρίς τόπο δεν θα εμφανιζόταν πουθενά. Τίποτα δεν καταγράφηκε.',
@@ -294,6 +302,7 @@ const DE: EditorialStrings = {
   extractOnlyNote:
     'Nur Überschrift und Auszug — eine Volltextübersetzung ist für diese Quelle nicht zulässig.',
   licenceAtRetrieval: 'Lizenz beim Abruf',
+  publicationDateNotSupplied: 'der Feed hat kein Veröffentlichungsdatum angegeben',
   publishTo: 'Veröffentlichen in',
   atLeastOnePlace:
     'Wählen Sie mindestens einen Ort: die Titelseite ist nach Ort gefiltert, ein Artikel ohne Ort erschiene also nirgends. Es wurde nichts verzeichnet.',

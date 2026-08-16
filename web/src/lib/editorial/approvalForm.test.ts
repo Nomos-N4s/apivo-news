@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { PLACE_CATALOG } from '../reader/axes';
-import { APPROVAL_PLACES, parseApprovalForm } from './approvalForm';
+import { APPROVAL_PLACES, attributionDefault, parseApprovalForm } from './approvalForm';
+import { editorialStrings } from './strings';
 
 function approvalForm(entries: readonly (readonly [string, string])[]): FormData {
   const form = new FormData();
@@ -19,6 +20,69 @@ describe('APPROVAL_PLACES', () => {
     // unreachability FR-009 exists to end.
     expect(APPROVAL_PLACES).toEqual(PLACE_CATALOG.filter((place) => place.selectable));
     expect(APPROVAL_PLACES.map((place) => place.slug)).toEqual(['munich', 'greece']);
+  });
+});
+
+describe('attributionDefault', () => {
+  const strings = {
+    originallyPublishedBy: 'Originally published by',
+    publicationDateNotSupplied: 'publication date not supplied by the feed',
+  };
+  // A queue row carrying both dates: the default must use the declared
+  // publication date, and the retrieval date must never appear.
+  const item = {
+    source_name: 'Münchner Tagblatt',
+    retrieved_at: '2026-08-14T06:12:04Z',
+    original_published_at: '2026-08-13T05:58:00Z',
+  };
+  const formatDate = (iso: string): string => iso.slice(0, 10);
+
+  it('composes from the publication date the feed declared', () => {
+    expect(attributionDefault(item, strings, formatDate)).toBe(
+      'Originally published by Münchner Tagblatt, 2026-08-13.',
+    );
+  });
+
+  it('never silently substitutes the retrieval date', () => {
+    // The attribution is frozen at approval (article_guard), so a
+    // substituted retrieval date would become the publication date
+    // permanently. The formatter must not even be called: a fallback
+    // date does not exist to format.
+    const format = vi.fn(formatDate);
+    const line = attributionDefault(
+      { ...item, original_published_at: null },
+      strings,
+      format,
+    );
+    expect(line).toBe(
+      'Originally published by Münchner Tagblatt (publication date not supplied by the feed).',
+    );
+    expect(line).not.toContain('2026-08-14');
+    expect(format).not.toHaveBeenCalled();
+  });
+
+  it('treats an absent field like a null one — older APIs omit it', () => {
+    const { original_published_at, ...withoutDate } = item;
+    void original_published_at;
+    const line = attributionDefault(withoutDate, strings, formatDate);
+    expect(line).toContain(strings.publicationDateNotSupplied);
+    expect(line).not.toContain('2026-08-14');
+  });
+
+  it('says the gap in both chrome languages', () => {
+    for (const lang of ['el', 'de'] as const) {
+      const t = editorialStrings(lang);
+      expect(t.publicationDateNotSupplied).not.toBe('');
+      const line = attributionDefault(
+        { ...item, original_published_at: null },
+        {
+          originallyPublishedBy: 'Πηγή:',
+          publicationDateNotSupplied: t.publicationDateNotSupplied,
+        },
+        formatDate,
+      );
+      expect(line).toContain(t.publicationDateNotSupplied);
+    }
   });
 });
 
