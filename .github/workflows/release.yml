@@ -44,6 +44,11 @@ jobs:
   # only trustworthy while its proof is green.
   guard:
     runs-on: ubuntu-latest
+    # Every job is bounded: the concurrency group above serialises releases
+    # and never cancels, so a job that hangs holds up the next release - and
+    # the next release is also the rollback. (The verify job below cannot
+    # carry a timeout: a job that only says `uses:` takes no other keys.)
+    timeout-minutes: 15
     outputs:
       version: ${{ steps.tag.outputs.version }}
       dry_run: ${{ steps.mode.outputs.dry_run }}
@@ -108,6 +113,8 @@ jobs:
   release:
     needs: [guard, verify]
     runs-on: ubuntu-latest
+    # Two container image builds, the deploy and the rollout live here.
+    timeout-minutes: 45
     permissions:
       # Publishing the Release writes to the repository; everything else reads.
       contents: write
@@ -239,6 +246,8 @@ jobs:
     needs: [guard, release]
     if: always() && needs.release.outputs.deployed == 'true'
     runs-on: ubuntu-latest
+    # Both paths retried for up to ~2.5 minutes each of cold start, plus room.
+    timeout-minutes: 20
     env:
       VERSION: ${{ needs.guard.outputs.version }}
       RELEASE_HEALTH_URL: ${{ vars.RELEASE_HEALTH_URL }}
