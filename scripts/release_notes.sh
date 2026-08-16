@@ -19,20 +19,58 @@ if ! git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null; then
     echo "::error::release notes: tag '$TAG' does not exist in this checkout" >&2
     exit 1
 fi
+TAG_COMMIT=$(git rev-parse "refs/tags/$TAG^{commit}")
 
-# The previous release is the nearest semver tag reachable from the commit
-# BEFORE this tag ("$TAG^" walks past a tag placed on the same commit twice).
-# No previous tag means this is the first release: the notes cover the whole
+. "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/release_semver.sh"
+
+LOG=$(mktemp)
+CANDIDATES=$(mktemp)
+trap 'rm -f "$LOG" "$CANDIDATES"' EXIT
+
+# The previous RELEASE, not merely the previous tag: only annotated tags
+# (the guard refuses lightweight ones, so a lightweight tag could never have
+# been released) whose names pass the same strict semver check the guard
+# applies. A stray v1junk or a lightweight v0.1.1 left lying around must not
+# become the lower bound and silently drop commits from the notes.
+git tag --list 'v*' --sort=-v:refname --format='%(objecttype) %(refname:short)' |
+    while read -r objtype name; do
+        [ "$objtype" = "tag" ] || continue
+        release_semver_ok "$name" || continue
+        printf '%s\n' "$name"
+    done > "$CANDIDATES"
+
+# Walk that descending list: everything after this tag is a lower version,
+# and the first one whose commit is an ancestor of this tag's commit is the
+# release this one succeeds. --is-ancestor is reflexive, so a predecessor
+# sitting on the SAME commit is found rather than walked past (the old
+# "$TAG^" lookup skipped it and measured from one release too far back).
+# No candidate means this is the first release: the notes cover the whole
 # history, honestly labelled as such.
-PREV=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$TAG^" 2>/dev/null || true)
+PREV=""
+if grep -q -x -F -e "$TAG" "$CANDIDATES"; then
+    past_tag=0
+else
+    # This tag is not itself a release tag (the guard would refuse it);
+    # nothing to skip, so consider every candidate.
+    past_tag=1
+fi
+while read -r name; do
+    if [ "$name" = "$TAG" ]; then
+        past_tag=1
+        continue
+    fi
+    [ "$past_tag" -eq 1 ] || continue
+    if git merge-base --is-ancestor "refs/tags/$name^{commit}" "$TAG_COMMIT"; then
+        PREV="$name"
+        break
+    fi
+done < "$CANDIDATES"
+
 if [ -n "$PREV" ]; then
     RANGE="$PREV..$TAG"
 else
     RANGE="$TAG"
 fi
-
-LOG=$(mktemp)
-trap 'rm -f "$LOG"' EXIT
 # %h then the subject; --no-merges because a merge subject describes the
 # act of merging, and its content arrives as the merged commits themselves.
 git log --no-merges --format='%h %s' "$RANGE" > "$LOG"
