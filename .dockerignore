@@ -1,24 +1,25 @@
-# Keep the build context to what the Go build needs: go.mod/go.sum, cmd/,
-# internal/ (migrations are embedded from there) and nothing else.
-.git
-.githooks
-.github
-.claude
-.specify
-specs
-web
-scripts
-bin
-*.exe
-coverage.out*
-coverage.html
-docker-compose.yml
-Dockerfile
-Makefile
-README.md
-sqlc.yaml
-.golangci.yml
-.gitattributes
-.gitignore
-.env
-.env.*
+# The Go image's build context, stated as an allowlist rather than as a list
+# of things to leave out.
+#
+# A denylist has to anticipate everything that might ever sit beside the
+# repository - an agent worktree, another project checked out alongside it, a
+# cache directory the daemon is not even allowed to read - and it only has to
+# miss one to ship a build that is slow, or surprising, or fails outright
+# while transferring a directory nobody meant to send. The build needs five
+# things; whatever else shares the disk is not the build's business.
+*
+!go.mod
+!go.sum
+!cmd
+!internal
+!api
+# Written by the release pipeline, and by a manual release, so the binary can
+# report the tag it was built from. Absent in an ordinary build, where the
+# Dockerfile falls back to "dev".
+!VERSION
+
+# Nothing under the allowlist may drag in a nested dependency tree, a git
+# directory or a build artefact.
+**/node_modules
+**/.git
+**/*.exe
