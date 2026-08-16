@@ -251,6 +251,22 @@ const bulkSummary =
         ? t.bulkDeactivateSummary(counts.recorded, counts.refused)
         : t.bulkDeleteSummary(counts.recorded, counts.refused);
 
+// A refusal whose row is not on screen would otherwise be counted in the
+// summary and explained nowhere: the list re-read can fail after the bulk
+// loop has already run, and the view filter can hide a row the action
+// just changed. Those refusals are named here instead, so the count in
+// the summary always has its evidence somewhere on the page.
+const shownIds = new Set(shown.map((source) => source.id));
+const orphanedRefusals = [...refusedById.entries()]
+  .filter(([id]) => !shownIds.has(id))
+  .map(([id, refusal]) => ({
+    id,
+    // The row may be gone from the list entirely; its name is whatever the
+    // pre-action list knew, and the id when even that is unavailable.
+    name: sources.find((source) => source.id === id)?.name ?? id,
+    refusal,
+  }));
+
 const views: readonly { key: SourceView; label: string }[] = [
   { key: 'all', label: t.viewAll },
   { key: 'active', label: t.viewActive },
@@ -300,6 +316,24 @@ const views: readonly { key: SourceView; label: string }[] = [
           )}
         />
       )
+    }
+    {/* Refusals with no row left to sit beside — the list re-read failed
+        after the action, or the view filter hides the row it changed.
+        The summary counts them, so their words have to be somewhere. */}
+    {
+      orphanedRefusals.map((entry) => (
+        <RecordNotice
+          notice={{
+            ...noticeForRowRefusal(entry.refusal, t),
+            label: entry.name,
+          }}
+          action={
+            entry.refusal.status === 409
+              ? { href: pageURL({ edit: entry.id }, 'all'), label: t.deactivateInstead }
+              : undefined
+          }
+        />
+      ))
     }
 
     <div class="split">
