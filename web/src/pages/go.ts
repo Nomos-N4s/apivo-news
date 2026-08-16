@@ -1,13 +1,14 @@
 import type { APIRoute } from 'astro';
+import { APP_ENV } from 'astro:env/server';
 
 import { composeFrontPageTarget, isReadingLanguage } from '../lib/reader/axes';
 import {
   FIRST_RUN_SETUP_PATH,
-  isSecureRequest,
   PREFERENCE_COOKIE,
   rememberPreference,
   setupPath,
 } from '../lib/reader/preference';
+import { isSecureRequest } from '../lib/secure-request';
 
 /**
  * The setup form's destination: `GET /go?lang=el&place=munich&place=greece`
@@ -23,13 +24,16 @@ import {
  * language the first run is asked in. Neither case guesses a front page:
  * an unanswerable submission goes back to the question.
  */
-export const GET: APIRoute = ({ cookies, url, redirect }) => {
+export const GET: APIRoute = ({ cookies, request, url, redirect }) => {
   const langParam = url.searchParams.get('lang');
   const target = composeFrontPageTarget(langParam, url.searchParams.getAll('place'));
   if (target !== null) {
     rememberPreference(cookies, target, {
       current: cookies.get(PREFERENCE_COOKIE)?.value,
-      secure: isSecureRequest(url),
+      // The request and APP_ENV, never `url`: this container is reached
+      // over plain HTTP behind the Worker, so `url` says http:// on an
+      // https-only deployment (lib/secure-request.ts).
+      secure: isSecureRequest(request, APP_ENV),
     });
     return redirect(target, 302);
   }

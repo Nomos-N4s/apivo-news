@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
+import { isSecureRequest } from '../secure-request';
 import { frontPagePath, PLACE_CATALOG, READING_LANGUAGES } from './axes';
 import {
   FIRST_RUN_SETUP_PATH,
   forgetPreference,
-  isSecureRequest,
   preferenceCookieOptions,
   preferenceFrontPage,
   PREFERENCE_COOKIE,
@@ -178,10 +178,31 @@ describe('forgetPreference', () => {
   });
 });
 
-describe('isSecureRequest', () => {
-  it('follows the scheme the request arrived on', () => {
-    expect(isSecureRequest(new URL('https://epiloyes.example/'))).toBe(true);
-    expect(isSecureRequest(new URL('http://localhost:4321/'))).toBe(false);
+describe('the secure attribute', () => {
+  // The signal is imported from lib/secure-request.ts rather than
+  // restated here, so the preference cookie and the editorial session
+  // cookie cannot disagree about what "the browser reached us over TLS"
+  // means. This is the composition, stated end to end.
+  it('is written from the deployment, not from a proxied request URL', () => {
+    // What the container actually sees behind the Worker: plain http.
+    const proxied = new Request('http://news.example/el/munich');
+    expect(new URL(proxied.url).protocol).toBe('http:');
+
+    const store = makeStore();
+    rememberPreference(store, '/el/munich', {
+      current: undefined,
+      secure: isSecureRequest(proxied, 'prod'),
+    });
+    expect(store.writes.at(0)?.options.secure).toBe(true);
+  });
+
+  it('still leaves the plain-http development stack working', () => {
+    const store = makeStore();
+    rememberPreference(store, '/el/munich', {
+      current: undefined,
+      secure: isSecureRequest(new Request('http://localhost:4321/el/munich'), 'dev'),
+    });
+    expect(store.writes.at(0)?.options.secure).toBe(false);
   });
 });
 

@@ -7,6 +7,7 @@ import { GET } from './go';
 interface CookieWrite {
   readonly key: string;
   readonly value: string;
+  readonly secure: boolean;
 }
 
 /**
@@ -20,13 +21,18 @@ function makeContext(
   storedPreference?: string,
 ): { context: APIContext; writes: CookieWrite[] } {
   const writes: CookieWrite[] = [];
+  const url = new URL(`/go${query}`, 'http://localhost:4321');
   const context = {
-    url: new URL(`/go${query}`, 'http://localhost:4321'),
+    url,
+    // The endpoint reads the request, not the URL, to decide whether the
+    // browser reached us over TLS — behind the Worker the two disagree
+    // (src/lib/secure-request.ts).
+    request: new Request(url),
     cookies: {
       get: (): { value: string } | undefined =>
         storedPreference === undefined ? undefined : { value: storedPreference },
-      set: (key: string, value: string): void => {
-        writes.push({ key, value });
+      set: (key: string, value: string, options: { secure: boolean }): void => {
+        writes.push({ key, value, secure: options.secure });
       },
     },
     redirect: (path: string, status?: number): Response =>
@@ -53,7 +59,13 @@ describe('GET /go', () => {
 
   it('remembers that front page, and stores nothing else', async () => {
     const { writes } = await submit('?lang=de&place=munich&place=greece');
-    expect(writes).toEqual([{ key: PREFERENCE_COOKIE, value: '/de/munich+greece' }]);
+    // secure is false here because the test context is the development
+    // shape: plain http, no forwarded scheme, APP_ENV unset. The
+    // deployed answer is asserted in lib/secure-request.test.ts and in
+    // the preference cookie's own suite.
+    expect(writes).toEqual([
+      { key: PREFERENCE_COOKIE, value: '/de/munich+greece', secure: false },
+    ]);
   });
 
   it('leaves an unchanged preference alone', async () => {

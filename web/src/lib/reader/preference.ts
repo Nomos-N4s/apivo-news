@@ -66,9 +66,17 @@ export interface PreferenceCookieOptions {
  * has any reason to see it. `sameSite: 'lax'` so a link from elsewhere
  * still opens the reader's own paper — the preference has no
  * state-changing power to protect, only a destination to remember.
- * `secure` follows the request rather than being hard-coded, so the cookie
- * is https-only wherever the site is https and still works on the plain-http
- * development stack — the same rule the editorial session uses.
+ *
+ * `secure` is passed in, and the one authority on it is `isSecureRequest`
+ * (lib/secure-request.ts): `APP_ENV=prod` means the deployment is
+ * https-only and the answer is true, `X-Forwarded-Proto` — which the
+ * Cloudflare Worker stamps — answers elsewhere, and the request's own URL
+ * answers last. It is NOT read from `Astro.url`: the Worker proxies to
+ * this container over plain HTTP and @astrojs/node builds `Astro.url`
+ * from the socket, so that reading was false on every deployed shape and
+ * this cookie shipped without `Secure` while the comment here promised
+ * otherwise. The editorial session cookie is written from the same
+ * signal, so the two cannot drift apart.
  */
 export function preferenceCookieOptions(secure: boolean): PreferenceCookieOptions {
   return {
@@ -78,11 +86,6 @@ export function preferenceCookieOptions(secure: boolean): PreferenceCookieOption
     httpOnly: true,
     secure,
   };
-}
-
-/** Whether the request arrived over https, for the `secure` attribute. */
-export function isSecureRequest(url: URL): boolean {
-  return url.protocol === 'https:';
 }
 
 /**
@@ -118,7 +121,7 @@ export interface PreferenceCookieStore {
 export interface PreferenceWrite {
   /** The value this request already carries, so an unchanged preference is not rewritten. */
   readonly current: string | undefined;
-  /** Whether the request arrived over https. */
+  /** Whether the browser reached us over TLS — from `isSecureRequest`. */
   readonly secure: boolean;
 }
 
