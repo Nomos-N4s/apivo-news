@@ -1193,12 +1193,36 @@ func TestEditorDemotionRaceIsSerialized(t *testing.T) {
 			t.Fatalf("demotion update: %v", err)
 		}
 
+		// The approval mirrors the first subtest: an explicit transaction
+		// that attaches a place row. An autocommit placeless insert would
+		// leave two possible raises sharing SQLSTATE P0001 — the role
+		// guard's and, since 0006, article_requires_place's at the
+		// implicit commit — and wantPgCode checks the code alone, so a
+		// regressed role guard could hide behind the place trigger. With
+		// the place attached, the only possible P0001 is the guard's.
 		done := make(chan error, 1)
 		go func() {
-			_, err := connA.Exec(ctx,
-				`insert into article (source_item_id, approved_by, attribution_block)
-				 values ($1, $2, 'Quelle: Race Feed')`, sourceItemID, editorID)
-			done <- err
+			done <- func() error {
+				txA, err := connA.Begin(ctx)
+				if err != nil {
+					return fmt.Errorf("begin approval tx: %w", err)
+				}
+				defer func() { _ = txA.Rollback(ctx) }()
+				// The FOR SHARE read blocks here, on the demotion's
+				// uncommitted row lock.
+				var articleID string
+				if err := txA.QueryRow(ctx,
+					`insert into article (source_item_id, approved_by, attribution_block)
+					 values ($1, $2, 'Quelle: Race Feed') returning id`, sourceItemID, editorID).Scan(&articleID); err != nil {
+					return err
+				}
+				if _, err := txA.Exec(ctx,
+					`insert into article_place (article_id, place_id)
+					 select $1, id from place where slug = 'munich'`, articleID); err != nil {
+					return fmt.Errorf("tagging the approval's place: %w", err)
+				}
+				return txA.Commit(ctx)
+			}()
 		}()
 		select {
 		case err := <-done:
