@@ -303,9 +303,21 @@ const healthOptions = [
   { value: 'healthy', label: t.healthHealthy },
   { value: 'failing', label: t.healthFailing },
   { value: 'never', label: t.healthNever },
+  { value: 'unpolled', label: t.healthUnpolled },
 ] as const;
-const languageValues = ['', ...presentValues(sources, 'language')];
-const jurisdictionValues = ['', ...presentValues(sources, 'jurisdiction')];
+// The options come from what was loaded, but the filter can hold a value
+// those rows do not contain — a stale link, or a value that lives beyond
+// the truncation bound. Without its own option the browser would show the
+// FIRST one as selected, so the control would read "all languages" while
+// the table stood narrowed, and pressing Apply would silently drop the
+// filter. The applied value is therefore always offered.
+const withApplied = (values: readonly string[], applied: string): string[] =>
+  applied === '' || values.includes(applied) ? [...values] : [...values, applied];
+const languageValues = withApplied(['', ...presentValues(sources, 'language')], filters.language);
+const jurisdictionValues = withApplied(
+  ['', ...presentValues(sources, 'jurisdiction')],
+  filters.jurisdiction,
+);
 
 const countFor = (dimension: keyof SourceFilters, values: readonly string[]) =>
   new Map(
@@ -328,17 +340,27 @@ const dimensionLabels: Record<keyof SourceFilters, string> = {
   health: t.filterHealth,
   search: t.filterSearch,
 };
-const valueLabels: Record<string, string> = {
-  active: t.viewActive,
-  inactive: t.viewInactive,
-  healthy: t.healthHealthy,
-  failing: t.healthFailing,
-  never: t.healthNever,
-};
+// Only the two enum dimensions have vocabularies to translate, and each
+// is looked up under its OWN dimension: a shared value-keyed map would
+// let a search for "never" wear the never-polled filter's label, in the
+// chip, in its remove action and in the sentence whose whole job is
+// naming what emptied the table. A Map also keeps the lookup off
+// Object.prototype, where a search for "toString" would have found a
+// function and rendered its source.
+const enumLabels = new Map<string, string>([
+  ['view:active', t.viewActive],
+  ['view:inactive', t.viewInactive],
+  ['health:healthy', t.healthHealthy],
+  ['health:failing', t.healthFailing],
+  ['health:never', t.healthNever],
+  ['health:unpolled', t.healthUnpolled],
+]);
 const chips = activeFilters(filters).map((chip) => ({
   ...chip,
   dimension: dimensionLabels[chip.key],
-  shown: valueLabels[chip.value] ?? chip.value,
+  // A language code, a jurisdiction code or a typed search term is the
+  // editor's own text: it renders as itself.
+  shown: enumLabels.get(`${chip.key}:${chip.value}`) ?? chip.value,
 }));
 ---
 
