@@ -429,6 +429,175 @@
         }
       }
     },
+    "/api/v1/editorial/sources/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "The source id, as `GET /api/v1/editorial/sources` listed it. A segment that is not a uuid is a 400 naming the mistake, not a 404 suggesting the source merely does not exist.",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "patch": {
+        "tags": [
+          "editorial"
+        ],
+        "operationId": "updateSource",
+        "summary": "Edit a registered source",
+        "description": "Applies any subset of `name`, `url`, `active` and `licence_terms`. Edits are licensing events: every PATCH that changes anything appends a `source.updated` domain event whose payload records the changed fields with their old and new values - for `licence_terms` and `url` especially, because \"what did we believe the terms were, when\" is exactly the question the audit stream exists to answer (I-4). The CURRENT row changes; the retrieval-time snapshots on `source_item` are untouched, so the legal basis of anything already retrieved never moves.\n\n`active=false` is the everyday \"remove\": polling stops, default views hide the feed, and the history stays intact.\n\nEach supplied field passes the same validation as registration - blank values and unpollable URLs are refused with the registration's own words. `usage_rule` is not editable here (upgrades stay a founder-gated flow), so supplying it is the unknown-field 400 like any other field the contract does not name.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourcePatch"
+              },
+              "examples": {
+                "newTerms": {
+                  "summary": "Licence terms renegotiated",
+                  "value": {
+                    "licence_terms": "Extract and link permitted with attribution, per the 2026 agreement."
+                  }
+                },
+                "deactivate": {
+                  "summary": "The everyday remove",
+                  "value": {
+                    "active": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The source as the database now records it, in the list's row shape.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListedSource"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON, an unknown field (`usage_rule` included), an empty patch, a blank supplied field, a `url` that is not an absolute http(s) URL with a host, or an `{id}` segment that is not a uuid.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotEditor"
+          },
+          "404": {
+            "description": "No source with this id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The new feed URL is already registered to another source.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "editorial"
+        ],
+        "operationId": "deleteSource",
+        "summary": "Delete a source that no evidence references",
+        "description": "Deletion destroys evidence, so the database refuses it wherever evidence exists: `source_item.source_id` references the source with no ON DELETE clause, and a source with retrieved items answers 409 naming the evidence count - the FK's own verdict (23503) on the wire, never an application guess. The refusal points at deactivation, which is the everyday \"remove\"; converting a refused delete into a deactivation is a different decision that belongs to the editor, so the API never does it silently.\n\nA source that never yielded an item deletes with 204 and disappears from the list.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The source is deleted. Only ever answered for a source no `source_item` row references."
+          },
+          "400": {
+            "description": "The `{id}` path segment is not a uuid.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotEditor"
+          },
+          "404": {
+            "description": "No source with this id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Retrieved items reference this source as evidence, so the database refused the delete. The detail names the count and points at deactivation.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "holdsEvidence": {
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Conflict",
+                      "status": 409,
+                      "detail": "this source cannot be deleted: 12 retrieved item(s) reference it as evidence, and deleting the source would destroy their provenance chain; deactivate it instead (PATCH active=false) to stop polling while the history stays intact"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/editorial/queue": {
       "get": {
         "tags": [
@@ -1279,6 +1448,34 @@
               "null"
             ],
             "description": "Pass as `cursor` to fetch the next page. `null` on the last page."
+          }
+        }
+      },
+      "SourcePatch": {
+        "type": "object",
+        "title": "SourcePatch",
+        "description": "One edit to a registered source: any subset of the editable fields, at least one of them. Unknown fields - `usage_rule` included, which stays a founder-gated flow - are rejected with 400, so a misspelled key is named rather than silently ignored. Each supplied field passes the same validation as registration.",
+        "minProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The publication's name, as attribution will render it. Must not be blank."
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The feed URL the crawler polls - still the uniqueness key, so a URL registered to another source is a 409. Old and new land in the source.updated event."
+          },
+          "active": {
+            "type": "boolean",
+            "description": "The operator's pause switch: false stops polling and hides the feed from default views while every record stays intact - the everyday \"remove\"."
+          },
+          "licence_terms": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The terms currently on record. Changing them appends a source.updated event carrying old and new; retrieval-time snapshots never move (I-4)."
           }
         }
       },

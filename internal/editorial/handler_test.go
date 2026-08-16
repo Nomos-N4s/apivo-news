@@ -629,6 +629,7 @@ func TestAWrongMethodUnderTheEditorialPrefixIsProblemJSON(t *testing.T) {
 		{name: "DELETE on the queue", method: http.MethodDelete, path: "/api/v1/editorial/queue", allow: "GET, HEAD"},
 		{name: "GET on approvals", method: http.MethodGet, path: "/api/v1/editorial/approvals", allow: "POST"},
 		{name: "DELETE on the sources collection", method: http.MethodDelete, path: "/api/v1/editorial/sources", allow: "GET, HEAD, POST"},
+		{name: "GET on one source", method: http.MethodGet, path: "/api/v1/editorial/sources/11111111-1111-4111-8111-111111111111", allow: "DELETE, PATCH"},
 		{name: "GET on a publication", method: http.MethodGet, path: "/api/v1/editorial/articles/11111111-1111-4111-8111-111111111111/publication", allow: "POST"},
 		{name: "GET on a withdrawal", method: http.MethodGet, path: "/api/v1/editorial/articles/11111111-1111-4111-8111-111111111111/withdrawal", allow: "POST"},
 		{name: "POST on a provenance trace", method: http.MethodPost, path: "/api/v1/editorial/articles/11111111-1111-4111-8111-111111111111/provenance", allow: "GET, HEAD"},
