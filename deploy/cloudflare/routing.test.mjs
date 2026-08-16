@@ -14,6 +14,7 @@ import { describe, it } from 'node:test';
 import {
 	CRAWLER_SIGNATURES,
 	EDITORIAL_PREFIX,
+	HSTS_VALUE,
 	X_ROBOTS_TAG_VALUE,
 	containerRequest,
 	crawlerRefusal,
@@ -21,7 +22,7 @@ import {
 	isEditorialPath,
 	matchesCrawlerSignature,
 	rewriteSameSiteOriginHeaders,
-	withRobotsTag,
+	withEdgeHeaders,
 } from './routing.js';
 
 const SITE_HOST = 'news.example';
@@ -249,10 +250,11 @@ describe('the crawler fence', () => {
 	});
 });
 
-describe('withRobotsTag', () => {
+describe('withEdgeHeaders', () => {
 	it('stamps a response that carries no indexing advice of its own', async () => {
-		const stamped = withRobotsTag(
+		const stamped = withEdgeHeaders(
 			new Response('body', { status: 200, headers: { 'content-type': 'text/css' } }),
+			true,
 		);
 		assert.equal(stamped.headers.get('x-robots-tag'), X_ROBOTS_TAG_VALUE);
 		assert.equal(stamped.status, 200);
@@ -261,15 +263,45 @@ describe('withRobotsTag', () => {
 	});
 
 	it("keeps the origin's own value: the Worker is a floor, not an override", () => {
-		const stamped = withRobotsTag(
-			new Response('body', { headers: { 'x-robots-tag': 'noindex, noarchive' } }),
+		const stamped = withEdgeHeaders(
+			new Response('body', {
+				headers: {
+					'x-robots-tag': 'noindex, noarchive',
+					'strict-transport-security': 'max-age=60',
+				},
+			}),
+			true,
 		);
 		assert.equal(stamped.headers.get('x-robots-tag'), 'noindex, noarchive');
+		assert.equal(stamped.headers.get('strict-transport-security'), 'max-age=60');
 	});
 
 	it('handles a bodyless response', () => {
-		const stamped = withRobotsTag(new Response(null, { status: 304 }));
+		const stamped = withEdgeHeaders(new Response(null, { status: 304 }), true);
 		assert.equal(stamped.status, 304);
+		assert.equal(stamped.headers.get('x-robots-tag'), X_ROBOTS_TAG_VALUE);
+	});
+
+	// workers.dev sits under an HSTS-preloaded TLD; a custom domain, which
+	// RELEASING.md names as a supported target for this same deploy, has
+	// nothing supplying the policy. The Worker is the only place that
+	// knows the public scheme, so it is where the policy is stated.
+	it('states the HSTS policy on an https request', () => {
+		const stamped = withEdgeHeaders(new Response('body'), true);
+		assert.equal(stamped.headers.get('strict-transport-security'), HSTS_VALUE);
+		assert.equal(HSTS_VALUE, 'max-age=31536000; includeSubDomains');
+	});
+
+	// `preload` is a submission to a browser-vendor list and a commitment
+	// that outlives the domain. A header may not make it on the founder's
+	// behalf.
+	it('does not claim preload', () => {
+		assert.equal(HSTS_VALUE.includes('preload'), false);
+	});
+
+	it('states no policy over cleartext, where it would prove nothing', () => {
+		const stamped = withEdgeHeaders(new Response('body'), false);
+		assert.equal(stamped.headers.get('strict-transport-security'), null);
 		assert.equal(stamped.headers.get('x-robots-tag'), X_ROBOTS_TAG_VALUE);
 	});
 });

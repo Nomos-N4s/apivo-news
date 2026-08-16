@@ -200,28 +200,57 @@ export function containerRequest(request) {
 }
 
 /**
- * Stamps `X-Robots-Tag` on a response that does not already carry one.
+ * The HSTS policy: a year, subdomains included, `preload` deliberately
+ * absent.
  *
- * The crawler fences live in the web container's middleware (FR-013,
- * research D6), which never runs for the static assets the Astro node
- * adapter serves itself — so images, CSS and JS left the origin with no
- * advisory header at all. Stamping here closes that gap for every byte the
- * deployment emits, api container included.
- *
- * It only fills a gap: a response that already states its own indexing
- * rules keeps them, so the origin stays the authority and this is a floor
- * beneath it, not an override of it.
+ * A year is the value the preload list requires and what every guide
+ * recommends; `includeSubDomains` because this deployment is the whole of
+ * its hostname and nothing else lives under it. `preload` is NOT here: it
+ * is a submission to a browser-vendor list and a commitment that outlives
+ * the domain, and a header cannot make that claim on the founder's
+ * behalf.
  */
-export function withRobotsTag(response) {
+export const HSTS_VALUE = 'max-age=31536000; includeSubDomains';
+
+/**
+ * Stamps the headers the edge owes every response: the indexing advisory,
+ * and — on an https request — the HSTS policy.
+ *
+ * `X-Robots-Tag`: the crawler fences live in the web container's
+ * middleware (FR-013, research D6), which never runs for the static assets
+ * the Astro node adapter serves itself — so images, CSS and JS left the
+ * origin with no advisory header at all. Stamping here closes that gap for
+ * every byte the deployment emits, api container included.
+ *
+ * `Strict-Transport-Security`: `workers.dev` is under a HSTS-preloaded TLD,
+ * so a browser upgrades those requests before they leave. A CUSTOM DOMAIN,
+ * which docs/RELEASING.md names as a supported target for this same
+ * deploy, has nothing supplying that — the first visit is plain http and a
+ * cookie can ride it. The Worker is the only place that knows the public
+ * scheme, so it is where the policy is stated. Only on an https request:
+ * over cleartext the header is meaningless (RFC 6797 has the agent ignore
+ * it) and stating a policy on a hop that proves nothing is not a claim
+ * worth making.
+ *
+ * Both only fill a gap: a response that already states its own value keeps
+ * it, so the origin stays the authority and this is a floor beneath it,
+ * not an override of it.
+ *
+ * @param response The container's (or a refusal's) response.
+ * @param secure Whether the PUBLIC hop was https - not the proxy hop.
+ */
+export function withEdgeHeaders(response, secure) {
 	// A WebSocket upgrade has no reconstructable response; nothing about it
 	// is indexable either.
 	if (response.webSocket) {
 		return response;
 	}
-	if (response.headers.has('x-robots-tag')) {
-		return response;
-	}
 	const stamped = new Response(response.body, response);
-	stamped.headers.set('X-Robots-Tag', X_ROBOTS_TAG_VALUE);
+	if (!stamped.headers.has('x-robots-tag')) {
+		stamped.headers.set('X-Robots-Tag', X_ROBOTS_TAG_VALUE);
+	}
+	if (secure && !stamped.headers.has('strict-transport-security')) {
+		stamped.headers.set('Strict-Transport-Security', HSTS_VALUE);
+	}
 	return stamped;
 }

@@ -70,6 +70,18 @@ a second time, and the Worker rate-limits `/api/v1/editorial/*` at 60
 requests per minute per address because public reachability makes
 invalid-token load possible.
 
+**The deployment is https-only, and says so twice.** The Worker states
+`Strict-Transport-Security: max-age=31536000; includeSubDomains` on every
+https response — `preload` deliberately not among them, since submitting a
+domain to the browser-vendor list is a commitment that outlives it. That
+header matters on a **custom domain**: `workers.dev` sits under an
+HSTS-preloaded TLD and is upgraded before a request leaves the browser,
+while a custom domain has nothing supplying that and its first visit is
+plain http. The Worker also stamps `X-Forwarded-Proto` on the proxied
+request, because the containers are reached over plain HTTP and cannot see
+the TLS hop; together with `APP_ENV=prod` that is what makes every cookie
+this deployment writes `Secure` (`web/src/lib/secure-request.ts`).
+
 **Ingestion runs on a schedule, not only alongside traffic.** A container
 lives inside its Durable Object and the platform stops an idle one, which
 would stop the feed poll loop and the translation pipeline with it — a

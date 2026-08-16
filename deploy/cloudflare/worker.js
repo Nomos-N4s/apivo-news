@@ -22,7 +22,9 @@
 // routing.js: the proxy hop is plain HTTP, the site's own Origin/Referer
 // are translated to match so form posts are not all refused as cross-site,
 // the crawler fence is enforced at the edge as well as inside the web
-// container, and every response leaves with an X-Robots-Tag.
+// container, and every response leaves with an X-Robots-Tag and — where
+// the public hop was https — the HSTS policy no custom domain supplies on
+// its own.
 
 import { DurableObject } from "cloudflare:workers";
 
@@ -32,7 +34,7 @@ import {
 	isApiPath,
 	isEditorialPath,
 	matchesCrawlerSignature,
-	withRobotsTag,
+	withEdgeHeaders,
 } from "./routing.js";
 
 /**
@@ -292,7 +294,14 @@ export default {
 	 * answers everything else.
 	 */
 	async fetch(request, env) {
-		const { pathname } = new URL(request.url);
+		const url = new URL(request.url);
+		const { pathname } = url;
+		// The public hop's scheme, which only the Worker can see: the
+		// container is proxied over plain HTTP. Every response leaves
+		// through `stamp`, refusals included — a 403 to a crawler is as
+		// much a chance to state the HSTS policy as a 200 to a reader.
+		const secure = url.protocol === "https:";
+		const stamp = (response) => withEdgeHeaders(response, secure);
 		// The crawler fence, at the edge. It lives inside the web
 		// container too — that copy is the one Kubernetes relies on — but
 		// the api container has no middleware, and routing /api/… onto the
@@ -301,18 +310,18 @@ export default {
 		// pages are behind. Refusing here also spares the containers the
 		// wake-up.
 		if (matchesCrawlerSignature(request.headers.get("user-agent"))) {
-			return crawlerRefusal();
+			return stamp(crawlerRefusal());
 		}
 		if (isEditorialPath(pathname)) {
 			const refusal = await limitEditorial(request, env);
 			if (refusal !== null) {
-				return refusal;
+				return stamp(refusal);
 			}
 		}
 		const container = isApiPath(pathname)
 			? env.API.get(env.API.idFromName("api"))
 			: env.WEB.get(env.WEB.idFromName("web"));
-		return withRobotsTag(await container.fetch(request));
+		return stamp(await container.fetch(request));
 	},
 
 	/**
