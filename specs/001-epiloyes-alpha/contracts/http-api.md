@@ -196,6 +196,48 @@ visible, and `source.active`'s one read path.
   parameter.
 - 401 without token; 403 for non-editors.
 
+### PATCH /api/v1/editorial/sources/{id}
+
+Edits are licensing events (#118). The CURRENT row changes; the
+retrieval-time snapshots on `source_item` never move (I-4).
+
+- Body: any subset of `{ name, url, active, licence_terms }`, at least
+  one field. Unknown fields — `usage_rule` included, which stays a
+  founder-gated flow — are 400 per the `DisallowUnknownFields`
+  convention. Each supplied field passes the **same** validation as
+  registration (one shared function, not a copy): blank values and
+  unpollable URLs are refused with the registration's own words, and
+  `url` is trimmed before validation exactly as on create.
+- 200: the source as the database now records it, in the list's row
+  shape.
+- Side effect: every PATCH that changes anything appends a
+  `source.updated` domain event in the same transaction, its payload
+  carrying `source_id`, `updated_by` and each changed field with `old`
+  and `new` — for `licence_terms` and `url` especially, because "what
+  did we believe the terms were, when" is exactly the question the
+  audit stream exists to answer. A patch that restates the current
+  values changes nothing and appends nothing.
+- `active=false` is the everyday "remove": polling stops, the default
+  view hides the feed, history stays intact.
+- 400: empty patch, blank supplied field, unpollable `url`, unknown
+  field, or an `{id}` segment that is not a uuid. 404: unknown id.
+  409: the new `url` is already registered to another source.
+- 401 without token; 403 for non-editors.
+
+### DELETE /api/v1/editorial/sources/{id}
+
+Deletion destroys evidence, so the database refuses it where evidence
+exists: `source_item.source_id` references `source` with **no ON DELETE
+clause**, and the FK's 23503 is the verdict this endpoint reports.
+
+- 204: the source is deleted — only ever for a source no `source_item`
+  row references. It disappears from the list.
+- 409: retrieved items reference the source; the detail names the
+  evidence count and points at deactivation. The API never converts a
+  refused delete into a deactivation — that is the editor's decision.
+- 400: the `{id}` segment is not a uuid. 404: unknown id.
+- 401 without token; 403 for non-editors.
+
 ### GET /api/v1/editorial/articles/{id}/provenance
 
 The five-minute audit, served from `article_provenance` (I-5).

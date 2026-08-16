@@ -11,6 +11,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countSourceEvidence = `-- name: CountSourceEvidence :one
+select count(*) from source_item where source_id = $1::uuid
+`
+
+// How many retrieved items hold this source in the provenance chain - the
+// honest figure the delete refusal names.
+func (q *Queries) CountSourceEvidence(ctx context.Context, sourceID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSourceEvidence, sourceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteSource = `-- name: DeleteSource :execrows
+delete from source where id = $1::uuid
+`
+
+// Deletion is refused by the database wherever evidence exists: the
+// source_item FK carries no ON DELETE clause, so a source with retrieved
+// items raises 23503 and the store turns that verdict into the 409 naming
+// the evidence count. Zero rows deleted means no such source.
+func (q *Queries) DeleteSource(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSource, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const lastPollCycle = `-- name: LastPollCycle :one
 select
     coalesce(sum(last_poll_retrieved), 0)::bigint as retrieved,
@@ -155,4 +184,109 @@ func (q *Queries) ListSources(ctx context.Context, arg ListSourcesParams) ([]Lis
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateSource = `-- name: UpdateSource :one
+with old as (
+    select id, name, url, active, licence_terms
+      from source
+     where id = $5::uuid
+       for update
+)
+update source
+   set name = coalesce($1::text, source.name),
+       url = coalesce($2::text, source.url),
+       active = coalesce($3::boolean, source.active),
+       licence_terms = coalesce($4::text, source.licence_terms)
+  from old
+ where source.id = old.id
+returning
+    source.id,
+    source.name,
+    source.url,
+    source.language_code,
+    source.jurisdiction,
+    source.licence_terms,
+    source.usage_rule,
+    source.permission_evidence,
+    source.active,
+    source.last_polled_at,
+    source.created_at,
+    old.name as old_name,
+    old.url as old_url,
+    old.active as old_active,
+    old.licence_terms as old_licence_terms
+`
+
+type UpdateSourceParams struct {
+	Name         pgtype.Text
+	Url          pgtype.Text
+	Active       pgtype.Bool
+	LicenceTerms pgtype.Text
+	ID           pgtype.UUID
+}
+
+type UpdateSourceRow struct {
+	ID                 pgtype.UUID
+	Name               string
+	Url                string
+	LanguageCode       string
+	Jurisdiction       string
+	LicenceTerms       string
+	UsageRule          string
+	PermissionEvidence pgtype.Text
+	Active             bool
+	LastPolledAt       pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	OldName            string
+	OldUrl             string
+	OldActive          bool
+	OldLicenceTerms    string
+}
+
+// One PATCH as one statement (#118). Each narg is "not supplied": coalesce
+// keeps the current value, so any subset of name, url, active and
+// licence_terms updates without a per-combination query.
+//
+// The pre-image comes from a LOCKING read, and must. Under READ COMMITTED
+// an UPDATE that blocks on a concurrent committed update re-fetches its
+// target row when it resumes (EvalPlanQual), but an ordinary join scan of
+// the same table keeps answering from the statement's ORIGINAL snapshot -
+// precisely the snapshot the race made stale. A pre-image read that way
+// is the value from before the wait rather than the value the write
+// actually replaced: the intervening version disappears from an
+// append-only stream, and a patch restating what another editor just set
+// looks like an edit. `for update` waits for that writer and then reads
+// the latest committed row, so old and new are the true adjacent pair.
+//
+// No row answers pgx.ErrNoRows, which the store maps to ErrSourceNotFound;
+// a url colliding with another registration raises source_url_key, mapped
+// to ErrDuplicateSourceURL like the registration path.
+func (q *Queries) UpdateSource(ctx context.Context, arg UpdateSourceParams) (UpdateSourceRow, error) {
+	row := q.db.QueryRow(ctx, updateSource,
+		arg.Name,
+		arg.Url,
+		arg.Active,
+		arg.LicenceTerms,
+		arg.ID,
+	)
+	var i UpdateSourceRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Url,
+		&i.LanguageCode,
+		&i.Jurisdiction,
+		&i.LicenceTerms,
+		&i.UsageRule,
+		&i.PermissionEvidence,
+		&i.Active,
+		&i.LastPolledAt,
+		&i.CreatedAt,
+		&i.OldName,
+		&i.OldUrl,
+		&i.OldActive,
+		&i.OldLicenceTerms,
+	)
+	return i, err
 }

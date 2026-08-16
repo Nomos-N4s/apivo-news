@@ -7,7 +7,6 @@ import {
   type EditorSession,
 } from './lib/editorial/session';
 import { resolveEditorSession } from './lib/editorial/supabase';
-import { usageDay } from './lib/usage';
 import {
   CRAWLER_SIGNATURES,
   ROBOTS_TXT_BODY,
@@ -63,9 +62,12 @@ function makeNext(): { next: MiddlewareNext; wasCalled: () => boolean } {
 
 async function run(
   options: Parameters<typeof makeContext>[0],
+  // The usage-rollup test needs a middleware whose counter has not already
+  // been written to; every other test wants the module-level one.
+  handler: typeof onRequest = onRequest,
 ): Promise<{ response: Response; reachedRoute: boolean }> {
   const { next, wasCalled } = makeNext();
-  const result = await onRequest(makeContext(options), next);
+  const result = await handler(makeContext(options), next);
   if (!(result instanceof Response)) {
     throw new Error('middleware returned no Response');
   }
@@ -373,27 +375,26 @@ describe('the editor identity', () => {
 });
 
 describe('usage rollup logging', () => {
-  // The counter is a per-process singleton, so this suite works with
-  // whatever the earlier tests already recorded: it only asserts on the
-  // final rollup and on the buckets its own requests must have produced.
+  // The counter is a per-process singleton whose window opens on the first
+  // request recorded against it, at whatever the clock said then. Sharing
+  // the module-level one would make this test depend on the REAL time the
+  // earlier tests ran: any fixed fake instant lands BEFORE that window
+  // start once the suite runs later in the day, the elapsed interval comes
+  // out negative, and the rollup is never due. So the module is loaded
+  // afresh and its counter opens its window under the fake clock, which
+  // also means the buckets asserted on are only this test's own.
   it('emits a usage_rollup once the interval elapses, holding only aggregates', async () => {
-    // The window is anchored to the real clock, not to a written-down
-    // instant: the counter is a per-process singleton whose window opened
-    // during the suites above, at whatever time this file actually ran. A
-    // fixed instant in the past is never "due" once the real clock has
-    // passed it, so the assertion below would hold only until that time of
-    // day - and a test that expires is not a test.
-    const windowStart = new Date();
-    const windowEnd = new Date(windowStart.getTime() + 6 * 60_000);
+    vi.resetModules();
+    const { onRequest: freshMiddleware } = await import('./middleware');
     vi.useFakeTimers();
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     try {
-      vi.setSystemTime(windowStart);
-      await run({ path: '/el/munich+greece' });
-      await run({ path: '/el/munich+greece' });
+      vi.setSystemTime(new Date('2026-08-16T10:00:00Z'));
+      await run({ path: '/el/munich+greece' }, freshMiddleware);
+      await run({ path: '/el/munich+greece' }, freshMiddleware);
 
-      vi.setSystemTime(windowEnd);
-      await run({ path: '/el/munich+greece' });
+      vi.setSystemTime(new Date('2026-08-16T10:06:00Z'));
+      await run({ path: '/el/munich+greece' }, freshMiddleware);
 
       const lastLine = log.mock.calls.at(-1)?.[0] as string;
       expect(lastLine).toBeDefined();
@@ -403,16 +404,13 @@ describe('usage rollup logging', () => {
         counts: Record<string, unknown>[];
       };
       expect(rollup.event).toBe('usage_rollup');
-      expect(rollup.window_ended_at).toBe(windowEnd.toISOString());
+      expect(rollup.window_ended_at).toBe('2026-08-16T10:06:00.000Z');
 
       const mine = rollup.counts.find(
         (count) => count['route'] === 'front' && count['lang'] === 'el' && count['status'] === 200,
       );
       expect(mine).toBeDefined();
-      // The newsroom-clock day of the requests this test made. counts are
-      // sorted by key, so across a midnight boundary this is still the
-      // first bucket found - the day the window opened.
-      expect(mine?.['day']).toBe(usageDay(windowStart));
+      expect(mine?.['day']).toBe('2026-08-16');
       // The whole point: nothing beyond the five aggregate dimensions —
       // no IP, no User-Agent, no identifier of any kind.
       for (const count of rollup.counts) {

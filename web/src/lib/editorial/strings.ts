@@ -158,6 +158,54 @@ export interface EditorialStrings {
   readonly sourcesTruncated: string;
   /** Success confirmation; a 201 carries an id, not prose. */
   readonly sourceAdded: (id: string) => string;
+  /** Source management (#118): selection, bulk bar, edit flow, view toggle. */
+  readonly selectAll: string;
+  readonly selectRow: (name: string) => string;
+  readonly bulkActivate: string;
+  readonly bulkDeactivate: string;
+  readonly bulkDelete: string;
+  /**
+   * What the two removals mean: deactivation is the everyday one and
+   * keeps history; deletion is accepted only where no evidence exists,
+   * because the database refuses to destroy a provenance chain.
+   */
+  readonly bulkBarNote: string;
+  /** A bulk POST arrived with nothing selected: nothing was done, say so. */
+  readonly noneSelected: string;
+  /**
+   * The bulk summaries state exactly what happened - both counts, always,
+   * and the delete summary says refusals were NOT converted into
+   * deactivations. No partial-success lie.
+   */
+  readonly bulkActivateSummary: (recorded: number, refused: number) => string;
+  readonly bulkDeactivateSummary: (recorded: number, refused: number) => string;
+  readonly bulkDeleteSummary: (recorded: number, refused: number) => string;
+  readonly editSource: string;
+  readonly editingSource: (name: string) => string;
+  /** Edits are licensing events: the audit stream records old and new. */
+  readonly editAudited: string;
+  readonly activeField: string;
+  readonly saveChanges: string;
+  readonly cancel: string;
+  readonly sourceUpdated: string;
+  /**
+   * Every field came back exactly as the form showed it, so nothing was
+   * sent. Not a failure and not a save - a finding, said plainly, because
+   * confirming it as an edit would claim a record that was never written.
+   */
+  readonly sourceUnchanged: string;
+  /**
+   * The edit arrived without the values it was rendered with, so what the
+   * editor changed cannot be told from what they did not. Sending all
+   * four would revert whatever another editor altered meanwhile, so
+   * nothing is sent and the form is offered again.
+   */
+  readonly editFormIncomplete: string;
+  /** The all/active/inactive toggle over the table. */
+  readonly viewLabel: string;
+  readonly viewAll: string;
+  readonly viewActive: string;
+  readonly viewInactive: string;
 }
 
 const EL: EditorialStrings = {
@@ -281,6 +329,36 @@ const EL: EditorialStrings = {
   sourcesTruncated:
     'Υπάρχουν κι άλλες πηγές που δεν εμφανίζονται εδώ· ο πίνακας και τα σύνολα καλύπτουν όσες φορτώθηκαν.',
   sourceAdded: (id) => `Η πηγή ρυθμίστηκε (${id}) και η λήψη ξεκίνησε.`,
+  selectAll: 'Επιλογή όλων',
+  selectRow: (name) => `Επιλογή: ${name}`,
+  bulkActivate: 'Ενεργοποίηση',
+  bulkDeactivate: 'Απενεργοποίηση',
+  bulkDelete: 'Διαγραφή',
+  bulkBarNote:
+    'Η απενεργοποίηση είναι η καθημερινή «αφαίρεση»: σταματά τη λήψη και το ιστορικό μένει άθικτο. Η διαγραφή γίνεται δεκτή μόνο για πηγές χωρίς κανένα ανακτημένο τεκμήριο — διαφορετικά η βάση δεδομένων αρνείται.',
+  noneSelected: 'Δεν επιλέχθηκε καμία πηγή, οπότε τίποτα δεν έγινε.',
+  bulkActivateSummary: (recorded, refused) =>
+    `${recorded} ενεργοποιήθηκαν · ${refused} απορρίφθηκαν — για αυτές δεν καταγράφηκε καμία αλλαγή`,
+  bulkDeactivateSummary: (recorded, refused) =>
+    `${recorded} απενεργοποιήθηκαν · ${refused} απορρίφθηκαν — για αυτές δεν καταγράφηκε καμία αλλαγή`,
+  bulkDeleteSummary: (recorded, refused) =>
+    `${recorded} διαγράφηκαν · ${refused} απορρίφθηκαν — παραμένουν ως έχουν· καμία δεν μετατράπηκε σιωπηλά σε απενεργοποίηση`,
+  editSource: 'Επεξεργασία',
+  editingSource: (name) => `Επεξεργασία: ${name}`,
+  editAudited:
+    'Κάθε αλλαγή καταγράφεται στη ροή συμβάντων με την παλιά και τη νέα τιμή — οι όροι άδειας είναι μέρος του αρχείου. Τα στιγμιότυπα των ήδη ανακτημένων τεκμηρίων δεν αλλάζουν.',
+  activeField: 'Ενεργή — γίνεται λήψη',
+  saveChanges: 'Αποθήκευση αλλαγών',
+  cancel: 'Άκυρο',
+  sourceUpdated: 'Οι αλλαγές καταγράφηκαν.',
+  sourceUnchanged:
+    'Κανένα πεδίο δεν άλλαξε σε σχέση με αυτό που εμφάνιζε η φόρμα, οπότε δεν στάλθηκε τίποτα και δεν καταγράφηκε καμία αλλαγή.',
+  editFormIncomplete:
+    'Η φόρμα δεν έφερε τις τιμές με τις οποίες εμφανίστηκε, οπότε δεν ήταν δυνατό να ξεχωριστεί τι άλλαξε. Δεν στάλθηκε τίποτα — δοκιμάστε ξανά από τη λίστα.',
+  viewLabel: 'Προβολή',
+  viewAll: 'Όλες',
+  viewActive: 'Ενεργές',
+  viewInactive: 'Ανενεργές',
 };
 
 const DE: EditorialStrings = {
@@ -404,6 +482,36 @@ const DE: EditorialStrings = {
   sourcesTruncated:
     'Es gibt weitere Quellen, die hier nicht angezeigt werden; Tabelle und Summen decken nur die geladenen ab.',
   sourceAdded: (id) => `Quelle eingerichtet (${id}); der Abruf läuft.`,
+  selectAll: 'Alle auswählen',
+  selectRow: (name) => `Auswählen: ${name}`,
+  bulkActivate: 'Aktivieren',
+  bulkDeactivate: 'Deaktivieren',
+  bulkDelete: 'Löschen',
+  bulkBarNote:
+    'Deaktivieren ist das alltägliche „Entfernen“: der Abruf stoppt, die Historie bleibt unberührt. Löschen wird nur für Quellen ohne einen einzigen abgerufenen Nachweis angenommen — sonst weist die Datenbank es zurück.',
+  noneSelected: 'Keine Quelle ausgewählt; es ist nichts geschehen.',
+  bulkActivateSummary: (recorded, refused) =>
+    `${recorded} aktiviert · ${refused} zurückgewiesen — für diese wurde nichts verzeichnet`,
+  bulkDeactivateSummary: (recorded, refused) =>
+    `${recorded} deaktiviert · ${refused} zurückgewiesen — für diese wurde nichts verzeichnet`,
+  bulkDeleteSummary: (recorded, refused) =>
+    `${recorded} gelöscht · ${refused} zurückgewiesen — sie bleiben bestehen; keine wurde stillschweigend deaktiviert`,
+  editSource: 'Bearbeiten',
+  editingSource: (name) => `Bearbeiten: ${name}`,
+  editAudited:
+    'Jede Änderung wird im Ereignisstrom mit altem und neuem Wert verzeichnet — die Lizenzbedingungen sind Teil des Archivs. Die Schnappschüsse bereits abgerufener Nachweise ändern sich nicht.',
+  activeField: 'Aktiv — wird abgerufen',
+  saveChanges: 'Änderungen speichern',
+  cancel: 'Abbrechen',
+  sourceUpdated: 'Die Änderungen wurden verzeichnet.',
+  sourceUnchanged:
+    'Kein Feld weicht von dem ab, was das Formular anzeigte; es wurde nichts gesendet und nichts verzeichnet.',
+  editFormIncomplete:
+    'Das Formular trug die Werte nicht mit, mit denen es angezeigt wurde, also ließ sich nicht unterscheiden, was geändert wurde. Es wurde nichts gesendet — bitte erneut aus der Liste heraus bearbeiten.',
+  viewLabel: 'Ansicht',
+  viewAll: 'Alle',
+  viewActive: 'Aktive',
+  viewInactive: 'Inaktive',
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, EditorialStrings>> = { el: EL, de: DE };

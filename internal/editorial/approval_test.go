@@ -53,6 +53,14 @@ func (s *approvalStore) ListSources(context.Context, editorial.SourcesQuery) (ed
 	return editorial.SourcesPage{}, errUnexpectedCall
 }
 
+func (s *approvalStore) UpdateSource(context.Context, uuid.UUID, uuid.UUID, editorial.SourcePatch) (editorial.ListedSource, error) {
+	return editorial.ListedSource{}, errUnexpectedCall
+}
+
+func (s *approvalStore) DeleteSource(context.Context, uuid.UUID) error {
+	return errUnexpectedCall
+}
+
 func (s *approvalStore) LastPollCycle(context.Context) (editorial.PollCycle, error) {
 	return editorial.PollCycle{}, errUnexpectedCall
 }

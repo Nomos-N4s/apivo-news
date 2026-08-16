@@ -51,6 +51,67 @@ where (
 order by created_at desc, id desc
 limit sqlc.arg(row_limit);
 
+-- name: UpdateSource :one
+-- One PATCH as one statement (#118). Each narg is "not supplied": coalesce
+-- keeps the current value, so any subset of name, url, active and
+-- licence_terms updates without a per-combination query.
+--
+-- The pre-image comes from a LOCKING read, and must. Under READ COMMITTED
+-- an UPDATE that blocks on a concurrent committed update re-fetches its
+-- target row when it resumes (EvalPlanQual), but an ordinary join scan of
+-- the same table keeps answering from the statement's ORIGINAL snapshot -
+-- precisely the snapshot the race made stale. A pre-image read that way
+-- is the value from before the wait rather than the value the write
+-- actually replaced: the intervening version disappears from an
+-- append-only stream, and a patch restating what another editor just set
+-- looks like an edit. `for update` waits for that writer and then reads
+-- the latest committed row, so old and new are the true adjacent pair.
+--
+-- No row answers pgx.ErrNoRows, which the store maps to ErrSourceNotFound;
+-- a url colliding with another registration raises source_url_key, mapped
+-- to ErrDuplicateSourceURL like the registration path.
+with old as (
+    select id, name, url, active, licence_terms
+      from source
+     where id = sqlc.arg(id)::uuid
+       for update
+)
+update source
+   set name = coalesce(sqlc.narg(name)::text, source.name),
+       url = coalesce(sqlc.narg(url)::text, source.url),
+       active = coalesce(sqlc.narg(active)::boolean, source.active),
+       licence_terms = coalesce(sqlc.narg(licence_terms)::text, source.licence_terms)
+  from old
+ where source.id = old.id
+returning
+    source.id,
+    source.name,
+    source.url,
+    source.language_code,
+    source.jurisdiction,
+    source.licence_terms,
+    source.usage_rule,
+    source.permission_evidence,
+    source.active,
+    source.last_polled_at,
+    source.created_at,
+    old.name as old_name,
+    old.url as old_url,
+    old.active as old_active,
+    old.licence_terms as old_licence_terms;
+
+-- name: DeleteSource :execrows
+-- Deletion is refused by the database wherever evidence exists: the
+-- source_item FK carries no ON DELETE clause, so a source with retrieved
+-- items raises 23503 and the store turns that verdict into the 409 naming
+-- the evidence count. Zero rows deleted means no such source.
+delete from source where id = sqlc.arg(id)::uuid;
+
+-- name: CountSourceEvidence :one
+-- How many retrieved items hold this source in the provenance chain - the
+-- honest figure the delete refusal names.
+select count(*) from source_item where source_id = sqlc.arg(source_id)::uuid;
+
 -- name: LastPollCycle :one
 -- The last poll cycle as the poll state records it (0007): how much the
 -- last poll of each ACTIVE source retrieved, how much the content
