@@ -289,6 +289,14 @@ func (unreachableStore) CreateSource(context.Context, editorial.NewSource) (edit
 	return editorial.Source{}, errors.New("the route probe must not reach the store")
 }
 
+func (unreachableStore) ListSources(context.Context, editorial.SourcesQuery) (editorial.SourcesPage, error) {
+	return editorial.SourcesPage{}, errors.New("the route probe must not reach the store")
+}
+
+func (unreachableStore) LastPollCycle(context.Context) (editorial.PollCycle, error) {
+	return editorial.PollCycle{}, errors.New("the route probe must not reach the store")
+}
+
 func (unreachableStore) ReviewQueue(context.Context, editorial.QueueQuery) (editorial.QueuePage, error) {
 	return editorial.QueuePage{}, errors.New("the route probe must not reach the store")
 }

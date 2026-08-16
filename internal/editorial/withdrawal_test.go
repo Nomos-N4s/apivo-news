@@ -42,6 +42,14 @@ func (s *withdrawalStore) CreateSource(context.Context, editorial.NewSource) (ed
 	return editorial.Source{}, errUnexpectedCall
 }
 
+func (s *withdrawalStore) ListSources(context.Context, editorial.SourcesQuery) (editorial.SourcesPage, error) {
+	return editorial.SourcesPage{}, errUnexpectedCall
+}
+
+func (s *withdrawalStore) LastPollCycle(context.Context) (editorial.PollCycle, error) {
+	return editorial.PollCycle{}, errUnexpectedCall
+}
+
 func (s *withdrawalStore) ReviewQueue(context.Context, editorial.QueueQuery) (editorial.QueuePage, error) {
 	return editorial.QueuePage{}, errUnexpectedCall
 }
