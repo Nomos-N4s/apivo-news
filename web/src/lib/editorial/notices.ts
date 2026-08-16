@@ -272,8 +272,18 @@ export function noticeForCorrection(
     tone: 'context',
     label: t.correctionTag,
     body: t.correctionBody,
+    // Guarded like its siblings, and for a sharper reason: this is the one
+    // builder reading straight from the queue payload, which the client
+    // never runtime-validates. An unreadable date would throw inside the
+    // page render and cost the whole review queue rather than one line, and
+    // an absent reason would interpolate the word "undefined" as the
+    // recorded grounds for a withdrawal. The API's types make neither
+    // reachable today; the record still does not rest on that.
     record:
-      withdrawal === undefined
+      withdrawal === undefined ||
+      !isTimestamp(withdrawal.withdrawn_at) ||
+      typeof withdrawal.reason !== 'string' ||
+      withdrawal.reason === ''
         ? []
         : [`${formatDate(withdrawal.withdrawn_at)} · «${withdrawal.reason}»`],
   };

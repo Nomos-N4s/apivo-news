@@ -315,4 +315,23 @@ describe('noticeForCorrection', () => {
     expect(notice.body).toBe(t.correctionBody);
     expect(notice.record).toEqual([]);
   });
+
+  // This builder reads the queue payload, which nothing runtime-validates.
+  // An unusable field costs the record line; it never invents one, and it
+  // never lets the formatter throw inside the page render.
+  it.each([
+    ['a null date', { withdrawn_at: null as unknown as string, reason: 'stated' }],
+    ['an unreadable date', { withdrawn_at: 'last Tuesday', reason: 'stated' }],
+    ['a null reason', { withdrawn_at: '2026-08-15T08:00:00Z', reason: null as unknown as string }],
+    ['an absent reason', { withdrawn_at: '2026-08-15T08:00:00Z', reason: undefined as unknown as string }],
+    ['a blank reason', { withdrawn_at: '2026-08-15T08:00:00Z', reason: '' }],
+  ])('records nothing rather than inventing it: %s', (_name, partial) => {
+    const notice = noticeForCorrection(
+      { article_id: 'art-1', withdrawn_by: 'uid-1', ...partial },
+      t,
+      stampDate,
+    );
+    expect(notice.body).toBe(t.correctionBody);
+    expect(notice.record).toEqual([]);
+  });
 });
