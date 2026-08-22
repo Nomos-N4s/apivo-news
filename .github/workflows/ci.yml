@@ -1,12 +1,21 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
-  # The release pipeline (release.yml, issue #119) replays this exact matrix
-  # on the tagged commit by calling the workflow, rather than duplicating its
-  # jobs. An extra trigger changes nothing about what runs on PRs or pushes.
+  # Two pipelines replay this exact matrix by CALLING the workflow rather
+  # than duplicating its jobs, so what "verified" means is defined in one
+  # place:
+  #
+  #   publish.yml   on every push to main, before any image is published
+  #   release.yml   on the tagged commit, before any release is cut
+  #
+  # There is deliberately no `push: branches: [main]` trigger. publish.yml
+  # owns that path now: it runs on every merge, calls this workflow first,
+  # and publishes only if the matrix is green. Keeping the trigger as well
+  # would run the whole matrix twice per merge to learn the same thing about
+  # the same tree — and dropping it costs no coverage, including the
+  # commit-hygiene job's check of merge-time messages, which PR CI never
+  # sees but publish.yml's call does.
   workflow_call:
 
 permissions:
@@ -19,8 +28,9 @@ concurrency:
 jobs:
   # Server-side belt and braces for the .githooks/commit-msg hook: hooks are
   # per-clone opt-in, so the same rules are enforced here where they cannot
-  # be skipped. Runs on PRs and on pushes to main (merge-time messages such
-  # as squash commits never pass through PR CI).
+  # be skipped. Runs on PRs, and on every merge to main through publish.yml's
+  # call - merge-time messages such as squash commits never pass through PR
+  # CI, so that second path is the only thing that checks them.
   commit-hygiene:
     runs-on: ubuntu-latest
     steps:
@@ -164,6 +174,35 @@ jobs:
           ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
           -strict -summary -kubernetes-version 1.32.0 /manifests
 
+  # The VPS deployment, proved without a VPS.
+  #
+  # This is to the Hetzner deployment what the `wrangler` job below is to the
+  # Cloudflare one: everything about the configuration that can be known
+  # without credentials or a host, known on every PR instead of on the next
+  # deploy. The reconciler's own test suite runs here for the reason the
+  # release workflow proves its guard before trusting it — apivo-reconcile is
+  # the only thing standing between a bad image and every environment that
+  # tracks its channel.
+  hetzner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Prove the reconciler's decisions
+        run: sh deploy/hetzner/bin/apivo-reconcile_test.sh
+      - name: Lint every shell script that runs on a deployment host
+        # A syntax error in any of these is only discoverable on the box
+        # otherwise, and two of them run as root there.
+        run: |
+          shellcheck -s sh \
+            deploy/hetzner/bin/apivo-reconcile \
+            deploy/hetzner/bin/apivo-reconcile_test.sh \
+            deploy/hetzner/bin/apivoctl \
+            deploy/hetzner/provision.sh \
+            deploy/hetzner/validate.sh \
+            scripts/env_status.sh
+      - name: Validate the compose and Caddy configuration
+        run: sh deploy/hetzner/validate.sh
+
   ts-types-drift:
     runs-on: ubuntu-latest
     services:
@@ -225,6 +264,13 @@ jobs:
       - name: Validate the OpenAPI document
         run: npx --yes @redocly/cli@2.46.1 lint api/openapi.json
 
+  # RETIRED but still proved. Nothing deploys to Cloudflare Containers any
+  # more (docs/ENVIRONMENTS.md) - the application runs on a Hetzner VPS, and
+  # the `hetzner` job above is what validates that. This job stays because
+  # the Worker still carries the per-caller rate limit on the editorial
+  # endpoints, which Caddy does not, and a rule nobody proves is a rule
+  # nobody can safely port. It goes when the limit becomes Go middleware.
+  #
   # Validates the Cloudflare Containers configuration: full parse of
   # wrangler.jsonc plus Worker bundle and container/DO wiring checks.
   # --dry-run needs no Cloudflare credentials and uploads nothing;

@@ -1,0 +1,220 @@
+# Publishing the images, and moving a release channel.
+#
+# This is the only thing in the pipeline that writes to the registry, and the
+# registry is the only thing the deployment hosts read. Nothing in CI can
+# reach a VPS: there is no SSH key here, no deploy credential and no inbound
+# endpoint to call. A host decides for itself, every minute, whether what it
+# runs matches its channel (deploy/hetzner/bin/apivo-reconcile).
+#
+# Two entry points, one body:
+#
+#   push to main    version main-<sha>, channel `qa`. Every merge, unattended.
+#   workflow_call   release.yml passes the tag and the channel it earned.
+#
+# ---------------------------------------------------------------------------
+# The order of the last two steps is the safety property
+# ---------------------------------------------------------------------------
+#
+# Images are pushed under an immutable `sha-<commit>` tag FIRST, then the
+# artefact that is now in the registry is run and made to say its own version,
+# and only then does the channel tag move. A build whose stamp did not land
+# never becomes the thing an environment tracks — it sits in the registry
+# addressable by commit, which is exactly what you want when working out why
+# it was rejected.
+name: publish
+
+on:
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      version:
+        description: "The version to stamp into the images (a release tag)."
+        type: string
+        required: true
+      channel:
+        description: "The channel tag to move once the images are proven: staging or prod."
+        type: string
+        required: true
+    outputs:
+      api_digest:
+        description: "The digest the api image was published under."
+        value: ${{ jobs.publish.outputs.api_digest }}
+      web_digest:
+        description: "The digest the web image was published under."
+        value: ${{ jobs.publish.outputs.web_digest }}
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancelled. A cancelled publish can leave a channel tag pointing at
+  # an image whose proof step never ran, and every host tracking that channel
+  # would take it within the minute.
+  group: publish-${{ inputs.channel || 'qa' }}
+
+jobs:
+  # On main only: the full CI matrix before anything is published, by calling
+  # ci.yml rather than copying its jobs. ci.yml no longer triggers on pushes
+  # to main itself — this call replaced that trigger, so the matrix runs once
+  # per merge and an image can only exist for a commit that passed it.
+  #
+  # When release.yml calls this workflow the job is skipped: release.yml has
+  # already run the same matrix on the tagged commit, and running it twice
+  # would say nothing new about the same tree.
+  #
+  # The discriminator is `inputs.version`, NOT github.event_name: a reusable
+  # workflow sees the CALLER's event, and release.yml is itself triggered by
+  # a push (of a tag), so an event_name test would run the whole matrix a
+  # second time on every release.
+  verify:
+    if: inputs.version == ''
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: verify
+    # `always()` so the workflow_call path (where `verify` is skipped) still
+    # runs, while a genuinely failed matrix still stops it.
+    if: always() && (needs.verify.result == 'success' || needs.verify.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      api_digest: ${{ steps.api.outputs.digest }}
+      web_digest: ${{ steps.web.outputs.digest }}
+    env:
+      REGISTRY: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Decide the version and the channel
+        id: what
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+        run: |
+          # Through the environment rather than interpolated into the script:
+          # a caller's input is data, and this job holds a registry token.
+          if [ -n "$INPUT_VERSION" ]; then
+            version="$INPUT_VERSION"
+            channel="$INPUT_CHANNEL"
+          else
+            # An unreleased build says so in its own name. `dev` would be
+            # honest but useless — every QA build would be called the same
+            # thing, and "is QA running my merge yet?" would have no answer.
+            version="main-$(git rev-parse --short HEAD)"
+            channel="qa"
+          fi
+          case "$channel" in
+          qa | staging | prod) ;;
+          *)
+            echo "::error::'$channel' is not a channel; the channels are qa, staging and prod"
+            exit 1
+            ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "publishing $version to the '$channel' channel"
+
+      # The stamp channel the Dockerfile reads: a VERSION file at the context
+      # root (git-ignored, never committed), turned into
+      # -ldflags "-X main.version=…". It exists because the builder cannot be
+      # relied on to pass a build arg — it is the one channel every builder
+      # shares.
+      - name: Stamp the version into the build context
+        run: printf '%s' '${{ steps.what.outputs.version }}' > VERSION
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Both images carry the version as a standard OCI label. That label is
+      # not decoration: the reconciler on each host reads it off the image to
+      # learn what the artefact calls itself, and then requires the running
+      # api to serve exactly that. It is how a deploy proves it rolled
+      # forward instead of assuming it.
+      - name: Build and push the api image
+        id: api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/api:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.what.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          # Layer cache in the registry itself, so a merge that touches only
+          # Go source does not re-download the module graph.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push the web image
+        id: web
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          push: true
+          tags: ${{ env.REGISTRY }}/web:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.what.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The artefact that is now in the registry — not a local build that
+      # resembles it — is made to say its own version. A stamp that did not
+      # land fails here, with the channel tag still pointing wherever it
+      # pointed before, so no environment ever sees this build.
+      - name: Prove the published image names its own version
+        env:
+          VERSION: ${{ steps.what.outputs.version }}
+          DIGEST: ${{ steps.api.outputs.digest }}
+        run: |
+          got=$(docker run --rm "$REGISTRY/api@$DIGEST" version)
+          if [ "$got" != "apivo version $VERSION" ]; then
+            echo "::error::the published image reports '$got', expected 'apivo version $VERSION' — the version stamp did not land. The channel tag was NOT moved; nothing will deploy this build."
+            exit 1
+          fi
+          echo "stamp proof: $got"
+
+      # Moving the channel IS the deploy. Every host tracking it takes the new
+      # digest within a minute, with no further instruction from here.
+      #
+      # `imagetools create` re-points a tag at an existing manifest without
+      # pulling or rebuilding anything, so the digest a channel names is
+      # always a digest that was proven above.
+      - name: Move the ${{ steps.what.outputs.channel }} channel
+        env:
+          CHANNEL: ${{ steps.what.outputs.channel }}
+          API_DIGEST: ${{ steps.api.outputs.digest }}
+          WEB_DIGEST: ${{ steps.web.outputs.digest }}
+        run: |
+          docker buildx imagetools create --tag "$REGISTRY/api:$CHANNEL" "$REGISTRY/api@$API_DIGEST"
+          docker buildx imagetools create --tag "$REGISTRY/web:$CHANNEL" "$REGISTRY/web@$WEB_DIGEST"
+
+      - name: Summarise
+        env:
+          VERSION: ${{ steps.what.outputs.version }}
+          CHANNEL: ${{ steps.what.outputs.channel }}
+          API_DIGEST: ${{ steps.api.outputs.digest }}
+          WEB_DIGEST: ${{ steps.web.outputs.digest }}
+        run: |
+          {
+            echo "## Published $VERSION to the \`$CHANNEL\` channel"
+            echo
+            echo "| Image | Digest |"
+            echo "| --- | --- |"
+            echo "| api | \`$API_DIGEST\` |"
+            echo "| web | \`$WEB_DIGEST\` |"
+            echo
+            echo "Every host tracking \`$CHANNEL\` rolls to this within a minute."
+            echo "Ask what is actually serving with \`sh scripts/env_status.sh\`."
+          } >> "$GITHUB_STEP_SUMMARY"
