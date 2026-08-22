@@ -15,10 +15,16 @@ One pipeline, one guard, one set of release notes, two destinations — so the
 path to production is the path staging has already rehearsed, rather than one
 nobody has run before the day it matters.
 
-**There is no production environment yet.** A final semver tag is refused by
-the pipeline, before anything is published, until `APIVO_PROD_URL` is filled
-in. Release candidates work today and are the point of the pre-1.0 phase. See
-[ENVIRONMENTS.md](ENVIRONMENTS.md).
+**No environment can be released to until its URL is recorded.** The pipeline
+refuses, before anything is published, whenever the target channel's entry in
+[`deploy/hetzner/environments.env`](../deploy/hetzner/environments.env) is
+empty — for staging exactly as much as for production.
+
+Today **all three are empty**, so a release candidate is refused too. That is
+correct rather than a gap: nothing is provisioned yet, and a channel moved to
+an environment nobody can probe is a deploy nobody checked. Filling the URL in
+is the last step of provisioning a host, and it is what makes releases to it
+possible. See [ENVIRONMENTS.md](ENVIRONMENTS.md).
 
 ## The pipeline
 

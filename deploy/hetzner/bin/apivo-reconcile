@@ -44,12 +44,6 @@ DOCKER="${APIVO_DOCKER:-docker}"
 ETC="${APIVO_ETC:-/etc/apivo}"
 STATE="${APIVO_STATE:-/var/lib/apivo}"
 
-# How long to wait for every container to report healthy before calling the
-# rollout failed. The api migrates the schema on boot, so this is not just
-# process start-up; a long migration on a large table is the case that makes
-# a short timeout roll back a deploy that would have come up fine.
-WAIT_TIMEOUT="${APIVO_WAIT_TIMEOUT:-180}"
-
 # ---------------------------------------------------------------------------
 # Logging: one JSON object per line, on stdout, for journald to capture.
 #
@@ -116,6 +110,18 @@ set -a
 . "$STACK_ENV"
 set +a
 
+# How long to wait for every container to report healthy before calling the
+# rollout failed. The api migrates the schema on boot, so this is not just
+# process start-up; a long migration on a large table is the case that makes
+# a short timeout roll back a deploy that would have come up fine.
+#
+# Resolved AFTER stack.env is sourced, because stack.env is the only place
+# docs/RELEASING.md tells an operator to set it and this unit has no
+# EnvironmentFile. Read before the source, the value an operator wrote would
+# be silently ignored and a long migration would be rolled back at 180s for
+# reasons the journal never mentions.
+WAIT_TIMEOUT="${APIVO_WAIT_TIMEOUT:-180}"
+
 for _required in APIVO_ENV APIVO_CHANNEL APIVO_REGISTRY COMPOSE_FILE; do
     eval "_value=\${$_required:-}"
     [ -n "$_value" ] || die config "$STACK_ENV does not set $_required" 2
@@ -162,7 +168,23 @@ fi
 # "no".
 # ---------------------------------------------------------------------------
 resolve_digest() {
-    $DOCKER buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}' 2>/dev/null || true
+    # `{{println .Manifest.Digest}}`, NOT `{{.Manifest.Digest}}`.
+    #
+    # buildx ignores a --format that BEGINS with `{{.Manifest` and prints its
+    # human-readable block instead - verified against buildx v0.31.1, the
+    # version get.docker.com installs:
+    #
+    #   --format '{{.Manifest.Digest}}'         -> Name: ...\nMediaType: ...\nDigest: ...
+    #   --format 'X{{.Manifest.Digest}}Y'       -> Xsha256:afa5c8...Y
+    #   --format '{{println .Manifest.Digest}}' -> sha256:afa5c8...
+    #
+    # The trigger is purely the leading token, so the obvious form is the one
+    # that silently does not work. It returns a multi-line block with exit 0,
+    # which passes the emptiness check below, never matches a recorded digest,
+    # and ends as `docker pull repo@Name:  ...` - rejected as an invalid
+    # reference, reported as a registry failure, and no environment ever rolls
+    # forward on any host.
+    $DOCKER buildx imagetools inspect "$1" --format '{{println .Manifest.Digest}}' 2>/dev/null || true
 }
 
 read_state_field() {

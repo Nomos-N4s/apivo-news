@@ -122,11 +122,11 @@ commit the result (CI fails on drift here too).
 Three environments, two hosts, one mechanism —
 [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) is the full picture.
 
-| | Deploys on | Database | Exists |
+| | Deploys on | Database | Provisioned |
 |---|---|---|---|
-| **QA** | every push to `main` | Postgres container on the host | yes |
-| **Staging** | a `-rc` tag | its own Supabase EU project | yes |
-| **Production** | a final semver tag, behind one approval | its own Supabase EU project | **not yet** |
+| **QA** | every push to `main` | Postgres container on the host | not yet |
+| **Staging** | a `-rc` tag | its own Supabase EU project | not yet |
+| **Production** | a final semver tag, behind one approval | its own Supabase EU project | not yet |
 
 The application runs as containers on a Hetzner VPS (EU, so GDPR residency
 is a property of the host rather than a setting), behind Caddy, behind

@@ -30,6 +30,7 @@ import /etc/caddy/snippets.caddy
 https://{$APIVO_QA_HOST} {
 	import origin-tls
 	import hardening
+	import crawler-fence
 	import apivo-routes apivo-qa-api apivo-qa-web {$APIVO_QA_HOST}
 }
 
@@ -39,6 +40,7 @@ https://{$APIVO_QA_HOST} {
 https://{$APIVO_STAGING_HOST} {
 	import origin-tls
 	import hardening
+	import crawler-fence
 	import apivo-routes apivo-staging-api apivo-staging-web {$APIVO_STAGING_HOST}
 }
 
@@ -60,6 +62,7 @@ https://*.{$APIVO_PREVIEW_DOMAIN} {
 
 	@preview expression {labels.3}.matches('^pr-[0-9]+$')
 	handle @preview {
+		import crawler-fence
 		import apivo-preview-routes
 	}
 

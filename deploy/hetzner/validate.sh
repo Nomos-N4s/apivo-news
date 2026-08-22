@@ -328,6 +328,27 @@ case "$got" in
     ;;
 esac
 
+# ---------------------------------------------------------------------------
+# The crawler fence list, against the copy it was taken from.
+#
+# FR-013's deny list now lives in three places: deploy/cloudflare/routing.js,
+# web/src/middleware.ts, and the (crawler-fence) snippet. Three copies drift,
+# and the way this one would drift is silently — a signature added to the
+# application copies and not here means the JSON API serves that crawler the
+# corpus while the HTML pages refuse it, which no test would otherwise notice.
+# ---------------------------------------------------------------------------
+js_sigs=$(sed -n "/^export const CRAWLER_SIGNATURES/,/^];/p" \
+    "$HERE/../cloudflare/routing.js" | sed -n "s/^\t'\([^']*\)',$/\1/p" | sort)
+caddy_sigs=$(sed -n 's/.*@crawler header_regexp User-Agent (?i)(\(.*\))$/\1/p' \
+    "$CADDY_DIR/snippets.caddy" | tr '|' '\n' | sed 's/\\//g' | sort)
+if [ -z "$caddy_sigs" ]; then
+    fail "the (crawler-fence) snippet has no User-Agent list; FR-013 is not enforced at the edge"
+elif [ "$js_sigs" = "$caddy_sigs" ]; then
+    echo "ok: the crawler deny list matches deploy/cloudflare/routing.js ($(printf '%s\n' "$caddy_sigs" | wc -l | tr -d ' ') signatures)"
+else
+    fail "the crawler deny list has drifted from deploy/cloudflare/routing.js. Only in one of them: $(printf '%s\n' "$js_sigs" "$caddy_sigs" | sort | uniq -u | tr '\n' ' ')"
+fi
+
 # The snippets file is imported by both Caddyfiles, so its syntax is already
 # proved above — but it has no site addresses of its own and would never be
 # fmt-checked without this.

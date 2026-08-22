@@ -26,6 +26,38 @@
 }
 
 # ---------------------------------------------------------------------------
+# (crawler-fence) — FR-013, founder decision D6.
+#
+# The retired Worker refused declared crawlers at the edge, and it did so for
+# a specific reason that survives the move: `/api/…` is routed AROUND the web
+# container, and web/src/middleware.ts — the fence everything else relies on
+# — ships inside that container. The Go api has no inbound User-Agent check.
+# Without this block, `curl -H 'User-Agent: GPTBot' https://<host>/api/v1/front`
+# returns the article corpus as JSON on every environment and every preview,
+# where the Worker returned 403.
+#
+# Applied to the whole site, as the Worker did, so it covers the HTML pages
+# too. That is deliberate duplication: D6 says the fence is never the sole
+# enforcement, and the copy in the web container stays.
+#
+# `Vary: User-Agent` because the same URL answers differently by User-Agent
+# and a shared cache must never hand one audience the other's response.
+#
+# THE LIST IS DUPLICATED — a third copy, alongside deploy/cloudflare/routing.js
+# and web/src/middleware.ts. deploy/hetzner/validate.sh asserts this one and
+# routing.js's agree, so the copies cannot drift silently. The way to get back
+# to one copy is to move the fence into Go middleware on the api, next to the
+# rate limiter that belongs there for the same reason.
+# ---------------------------------------------------------------------------
+(crawler-fence) {
+	@crawler header_regexp User-Agent (?i)(GPTBot|ClaudeBot|CCBot|Google-Extended|Bytespider|PerplexityBot|Amazonbot|meta-externalagent|ia_archiver|archive\.org_bot|Googlebot|Bingbot|DuckDuckBot|Baiduspider|YandexBot|Applebot)
+	handle @crawler {
+		header Vary User-Agent
+		respond 403
+	}
+}
+
+# ---------------------------------------------------------------------------
 # (apivo-routes) — which container answers.
 #
 # Replaces the path routing that deploy/cloudflare/routing.js did, with the

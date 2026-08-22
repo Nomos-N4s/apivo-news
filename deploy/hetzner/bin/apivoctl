@@ -144,10 +144,18 @@ ps)
 
 psql)
     require_env "$@"
-    [ -n "${APIVO_PG_PASSWORD:-}" ] || {
+    # Gated on the compose file list, not on APIVO_PG_PASSWORD. Whether an
+    # environment HAS a Postgres is decided by whether the local-db overlay is
+    # layered on; a password variable is only evidence of what provision.sh
+    # happened to write, which is exactly how this guard came to be dead code
+    # on every provisioned host.
+    case "${COMPOSE_FILE:-}" in
+    *docker-compose.local-db.yml*) ;;
+    *)
         echo "apivoctl: '$ENV_NAME' has no Postgres of its own — it uses Supabase. Connect with the DATABASE_URL in $ETC/$ENV_NAME/api.env, from somewhere that is allowed to." >&2
         exit 2
-    }
+        ;;
+    esac
     $DOCKER compose exec postgres psql -U "${APIVO_PG_USER:-apivo}" -d "${APIVO_PG_DB:-apivo}"
     ;;
 
@@ -198,6 +206,20 @@ EOF
     . "$STATE/$ENV_NAME/images.env"
     set +a
     $DOCKER compose up -d --remove-orphans --wait --wait-timeout 180
+
+    # `current` is what every other reader treats as "what this host runs" -
+    # `apivoctl status`, and the reconciler's own comparison against the
+    # channel. Left naming the release just backed out, `status` reports the
+    # broken version on a host serving the good one, and a later `resume`
+    # finds the channel digest equal to that stale record, takes the quiet
+    # path, and leaves the environment pinned by hand indefinitely and
+    # silently.
+    cat > "$STATE/$ENV_NAME/current" <<EOF
+API_DIGEST=$_api
+WEB_DIGEST=$_web
+VERSION=$_ver
+AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
     echo "$ENV_NAME is pinned to $_ver and paused."
     ;;
 

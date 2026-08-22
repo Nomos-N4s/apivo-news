@@ -153,7 +153,22 @@ for env_name in $ENVS; do
     else
         # QA's Postgres password. Generated, never typed: this is the one
         # credential on the host that nobody needs to know.
-        pg_password=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+        # QA's Postgres block, and QA's only. Written unconditionally, it put
+        # a generated APIVO_PG_PASSWORD into staging's and production's
+        # stack.env too - which made apivoctl's "this environment uses
+        # Supabase" guard dead code on every provisioned host, so
+        # `apivoctl psql staging` reached for a postgres service those stacks
+        # do not define and failed with docker's error instead of the message
+        # written for exactly that case.
+        pg_block=""
+        if [ "$env_name" = qa ]; then
+            pg_password=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+            pg_block="APIVO_PG_PASSWORD=$pg_password
+APIVO_PG_DB=apivo
+APIVO_PG_USER=apivo
+APIVO_PG_CPUS=1.0
+APIVO_PG_MEMORY=768M"
+        fi
         cat > "$ETC/$env_name/stack.env" <<EOF
 # Written by provision.sh. Structural configuration only — no application
 # secrets (those live in api.env). Documented in
@@ -162,15 +177,18 @@ APIVO_ENV=$env_name
 APIVO_CHANNEL=$env_name
 APIVO_REGISTRY=$APIVO_REGISTRY
 COMPOSE_FILE=$compose_files
-APIVO_PG_PASSWORD=$pg_password
-APIVO_PG_DB=apivo
-APIVO_PG_USER=apivo
+$pg_block
+# How long a rollout may take before it is called failed. The api migrates the
+# schema on boot, so raise this before a release carrying a long migration.
+APIVO_WAIT_TIMEOUT=180
+# How long an unused image is kept. It must outlast any release you might want
+# to roll back to by hand: every image here is digest-pulled and untagged, so
+# anything older than this is prunable.
+APIVO_IMAGE_RETENTION=168h
 APIVO_API_CPUS=1.0
 APIVO_API_MEMORY=768M
 APIVO_WEB_CPUS=1.0
 APIVO_WEB_MEMORY=512M
-APIVO_PG_CPUS=1.0
-APIVO_PG_MEMORY=768M
 APIVO_LOG_MAX_SIZE=10m
 APIVO_LOG_MAX_FILE=3
 EOF

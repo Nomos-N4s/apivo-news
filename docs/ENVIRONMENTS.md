@@ -13,12 +13,18 @@ asking anyone.
 | **Data** | throwaway, resettable | production-shaped | real |
 | **`APP_ENV`** | `prod` | `prod` | `prod` |
 | **Channel** | `:qa` | `:staging` | `:prod` |
-| **Exists today** | yes | yes | **no** |
+| **Provisioned** | not yet | not yet | not yet |
 
-**There is no production environment.** No VPS, no Supabase project, no DNS
-record, and `APIVO_PROD_URL` in [environments.env](../deploy/hetzner/environments.env)
-is empty. A final semver tag is refused by the release pipeline for exactly
-that reason, before anything is published. Everything production needs is
+**Nothing is provisioned yet.** Every URL in
+[environments.env](../deploy/hetzner/environments.env) is empty, and the
+release pipeline refuses a release to any channel whose URL is — staging as
+much as production — before anything is published. QA and Staging need only
+the pre-production VPS configured; production needs a second VPS, its own
+Supabase project and a DNS record that do not exist.
+
+So the rows below describe what each environment IS, not what is running: a
+`-rc` tag is refused today, and will release to staging the moment
+`APIVO_STAGING_URL` is filled in. Everything production needs is
 written and rehearsed — the Caddy site, the compose stack, the systemd units,
 the approval gate — so provisioning it later is running one script, not
 designing a deployment on the day it is first needed.
@@ -126,8 +132,9 @@ trade, and for an alpha it is not close.
   One HTTPS request per environment, no credentials, no SSH, no registry
   token. It reports what each environment *serves*, which is the only account
   of a deployment that cannot be wrong.
-- Cut a release candidate (`git tag -a v0.2.0-rc.1`). That deploys to
-  staging.
+- Cut a release candidate (`git tag -a v0.2.0-rc.1`). That deploys to staging
+  **once `APIVO_STAGING_URL` is recorded**; until then the pipeline refuses
+  it, before publishing anything.
 
 **Never, and there is no mechanism to do it anyway:**
 

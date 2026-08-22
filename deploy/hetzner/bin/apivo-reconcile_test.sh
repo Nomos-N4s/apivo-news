@@ -38,10 +38,24 @@ echo "$*" >> "$STUB_DIR/calls"
 read_or() { [ -r "$STUB_DIR/$1" ] && cat "$STUB_DIR/$1" || printf '%s' "$2"; }
 case "$1" in
 buildx)
-    # buildx imagetools inspect <ref> --format '{{.Manifest.Digest}}'
-    case "$4" in
-    */api:*) read_or digest_api '' ;;
-    */web:*) read_or digest_web '' ;;
+    # buildx imagetools inspect <ref> --format <fmt>
+    #
+    # Faithful to buildx v0.31.1, including its trap: a --format BEGINNING
+    # with `{{.Manifest` is ignored and the human-readable block is printed
+    # instead. Modelling that is the whole point - the previous stub `cat`ed a
+    # bare digest whatever the format, so it proved the reconciler handles a
+    # digest correctly and never that it obtains one. The real script shipped
+    # unable to resolve a single digest, and this suite stayed green.
+    case "$6" in
+    '{{.Manifest'*)
+        printf 'Name:      %s\nMediaType: application/vnd.oci.image.index.v1+json\nDigest:    sha256:deadbeef\nManifests:\n' "$4"
+        ;;
+    *)
+        case "$4" in
+        */api:*) read_or digest_api '' ;;
+        */web:*) read_or digest_web '' ;;
+        esac
+        ;;
     esac
     ;;
 pull)
@@ -67,14 +81,26 @@ container)
     # Answers with whatever the reconciler most recently pinned, which is what
     # a real daemon would say after a successful rollout. A test that wants a
     # container stuck on the old image writes running_override.
-    if [ -e "$STUB_DIR/running_override" ]; then
-        cat "$STUB_DIR/running_override"
-    else
-        case "$5" in
-        *-api) sed -n 's/^APIVO_API_IMAGE=//p' "$STUB_IMAGES_ENV" ;;
-        *-web) sed -n 's/^APIVO_WEB_IMAGE=//p' "$STUB_IMAGES_ENV" ;;
-        esac
-    fi
+    # PER CONTAINER. A single override answered both, so no test could hold
+    # exactly one container stale - and with both stale, deleting either of
+    # the reconciler's two verify calls still left the suite green. Each check
+    # is only genuinely covered when the other one passes.
+    case "$5" in
+    *-api)
+        if [ -e "$STUB_DIR/running_override_api" ]; then
+            cat "$STUB_DIR/running_override_api"
+        else
+            sed -n 's/^APIVO_API_IMAGE=//p' "$STUB_IMAGES_ENV"
+        fi
+        ;;
+    *-web)
+        if [ -e "$STUB_DIR/running_override_web" ]; then
+            cat "$STUB_DIR/running_override_web"
+        else
+            sed -n 's/^APIVO_WEB_IMAGE=//p' "$STUB_IMAGES_ENV"
+        fi
+        ;;
+    esac
     ;;
 exec)
     # The frontend fetching the api's /healthz. A healthy stack serves the
@@ -364,13 +390,27 @@ check "a failed rollback is reported as down, not as a rollback" 1 '"event":"rol
 # roll-forward and assuming one.
 # ===========================================================================
 
+# Each container checked independently. With both stale, deleting either
+# verify call from the reconciler still left this suite green - so these hold
+# exactly ONE container back at a time.
 reset
 settle
 printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
-printf '%s' "$REGISTRY/api@$DIGEST_A" > "$STUB_DIR/running_override"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' "$REGISTRY/api@$DIGEST_A" > "$STUB_DIR/running_override_api"
 run qa
-check "a container still on the old image fails the rollout" 1 '"event":"digest_mismatch"'
+check "an API container still on the old image fails the rollout" 1 '"event":"digest_mismatch"'
+check_pinned "and the stack is put back on the digest that was serving" "$REGISTRY/api@$DIGEST_A"
 check_state "and the environment is left on the release that works" API_DIGEST "$DIGEST_A"
+
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' "$REGISTRY/web@$WEB_A" > "$STUB_DIR/running_override_web"
+run qa
+check "a WEB container still on the old image fails the rollout too" 1 '"event":"digest_mismatch"'
+check_state "and that environment is also left on the working release" API_DIGEST "$DIGEST_A"
 
 reset
 settle

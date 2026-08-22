@@ -27,6 +27,7 @@ import /etc/caddy/snippets.caddy
 https://{$APIVO_PROD_HOST} {
 	import origin-tls
 	import hardening
+	import crawler-fence
 	import apivo-routes apivo-prod-api apivo-prod-web {$APIVO_PROD_HOST}
 }
 
