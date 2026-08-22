@@ -1,21 +1,33 @@
 # The release pipeline (issue #119). Releases are cut ONLY from annotated
-# semver tags: pushing v0.1.0 is the release act; nothing else deploys
-# production. main stays always-green and always-deployable, but merging
-# never deploys anything.
+# semver tags: pushing v0.1.0 is the release act; nothing else releases.
+# main stays always-green and always-deployable, and merging to main deploys
+# to QA and to nowhere else.
 #
-#   guard -> verify (the full CI matrix, reused) -> stamp + build proof
-#         -> wrangler deploy -> GitHub Release -> health probe
+#   guard -> verify (the full CI matrix, reused) -> [approval, prod only]
+#         -> publish (build, prove the stamp, MOVE THE CHANNEL)
+#         -> GitHub Release -> health probe
+#
+# The tag decides which environment it is a release TO. A pre-release tag
+# (v0.2.0-rc.1) moves the `staging` channel; a final tag (v0.2.0) moves
+# `prod`. One pipeline, one guard, one set of notes, two destinations — so
+# the path to production is the path staging has already rehearsed, rather
+# than one nobody has run before the day it matters.
+#
+# Moving a channel tag is the whole deploy. This workflow cannot reach a
+# host, holds no SSH key and opens no connection to a VPS: each host asks the
+# registry, every minute, whether its channel has moved, and converges if it
+# has (deploy/hetzner/bin/apivo-reconcile).
 #
 # Rehearsal: "Run workflow" (workflow_dispatch) from a tag ref with dry_run
-# checked runs everything except the deploy, the GitHub Release and the
+# checked runs everything except the channel move, the GitHub Release and the
 # probe. Dispatching with dry_run UNCHECKED performs a real release of that
 # tag - which is also the rollback mechanism: re-run the previous tag.
 #
 # That rollback runs through a tag that has already been released, so the
 # whole path is built for it: the guard demands the tag still name the
 # commit its published Release was cut from, publishing the Release is
-# idempotent, and the probe runs on any deploy that happened - a rollback
-# that came up healthy reads green.
+# idempotent, and the probe runs on any channel move that happened - a
+# rollback that came up healthy reads green.
 #
 # Operator setup (one-time) and the semver discipline: docs/RELEASING.md.
 name: release
@@ -26,14 +38,14 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Dry run: verify, stamp and build everything; deploy and publish nothing."
+        description: "Dry run: verify and stamp everything; move no channel and publish nothing."
         type: boolean
         default: true
 
 permissions:
   contents: read
 
-# One release at a time, never cancelled: interrupting a deploy half-way is
+# One release at a time, never cancelled: interrupting a release half-way is
 # strictly worse than letting it finish and releasing again.
 concurrency:
   group: release
@@ -52,6 +64,8 @@ jobs:
     outputs:
       version: ${{ steps.tag.outputs.version }}
       dry_run: ${{ steps.mode.outputs.dry_run }}
+      channel: ${{ steps.mode.outputs.channel }}
+      health_url: ${{ steps.mode.outputs.health_url }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -100,9 +114,58 @@ jobs:
       - name: Record the version
         id: tag
         run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-      - name: Record the mode
+
+      # Which environment this tag is a release to, and where to prove it
+      # came up. The pre-release test is the same one that decides how the
+      # GitHub Release is published below - build metadata is stripped first,
+      # so the "-" that decides is the one before "+".
+      - name: Record the mode, the channel and the probe target
         id: mode
-        run: echo "dry_run=${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          echo "dry_run=${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+          # Where each environment answers is committed
+          # (deploy/hetzner/environments.env), not held in a settings screen:
+          # a value that lives only in a dashboard has no history, no review
+          # and no diff when it changes. Reading it from the tagged commit is
+          # safe for the same reason the rest of this pipeline is - a release
+          # only ever runs from a tag the guard has proved is merged to main.
+          . ./deploy/hetzner/environments.env
+          case "${VERSION%%+*}" in
+          *-*)
+            channel=staging
+            health="$APIVO_STAGING_URL"
+            ;;
+          *)
+            channel=prod
+            health="$APIVO_PROD_URL"
+            ;;
+          esac
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "health_url=$health" >> "$GITHUB_OUTPUT"
+          echo "$VERSION is a release to the '$channel' channel"
+
+      # THERE IS NO PRODUCTION ENVIRONMENT YET - no VPS, no Supabase project,
+      # no DNS record. A final semver tag would move the `prod` channel to an
+      # image no host tracks, publish a GitHub Release announcing it, and
+      # then fail at the probe having already told the world.
+      #
+      # So it is refused here instead, before anything is published, and the
+      # refusal names what is missing. The presence of APIVO_PROD_URL is the
+      # signal: filling it in is the last step of provisioning that host, and
+      # it is the thing the probe cannot work without.
+      #
+      # Release candidates (v0.2.0-rc.1) are unaffected and are the whole
+      # point of the pre-1.0 phase: they exercise this identical pipeline
+      # against staging, so that the first production release is the first
+      # time this workflow has run to a NEW HOST, not the first time it has
+      # run at all.
+      - name: Refuse a production release while production does not exist
+        if: steps.mode.outputs.channel == 'prod' && steps.mode.outputs.health_url == ''
+        run: |
+          echo "::error::${{ steps.tag.outputs.version }} is a FINAL release, which targets production - and there is no production environment yet (APIVO_PROD_URL is empty in deploy/hetzner/environments.env). Nothing was published. Cut a release candidate instead (git tag -a v0.2.0-rc.1) to release to staging, or provision the production host first: docs/ENVIRONMENTS.md."
+          exit 1
 
   # The full CI matrix on the tagged commit, by calling ci.yml rather than
   # copying its jobs: what "verified" means is defined in exactly one place.
@@ -110,50 +173,72 @@ jobs:
     needs: guard
     uses: ./.github/workflows/ci.yml
 
-  release:
+  # A human, once, before production changes.
+  #
+  # Everything else in this pipeline is automatic, and deliberately so: an
+  # agent can take a change from a PR to a running QA environment without
+  # anyone's hand on it, and a release candidate reaches staging the same
+  # way. This is the one gate, and it exists because production is the only
+  # environment where being wrong costs something that cannot be re-run.
+  #
+  # The reviewers are configured on the `production` GitHub Environment
+  # (Settings -> Environments), not here - so who may approve a release is
+  # not a thing this file can quietly change.
+  approve:
     needs: [guard, verify]
+    if: needs.guard.outputs.channel == 'prod' && needs.guard.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
-    # Two container image builds, the deploy and the rollout live here.
-    timeout-minutes: 45
+    timeout-minutes: 4320
+    environment: production
+    steps:
+      - name: Approved
+        run: echo "production release of ${{ needs.guard.outputs.version }} approved"
+
+  # Build both images, prove the published artefact names its own version,
+  # and move the channel. Moving the channel IS the deploy: every host
+  # tracking it converges within a minute, with no instruction from here.
+  publish:
+    needs: [guard, verify, approve]
+    if: |
+      always() && needs.verify.result == 'success' &&
+      needs.guard.outputs.dry_run != 'true' &&
+      (needs.approve.result == 'success' || needs.approve.result == 'skipped')
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish.yml
+    with:
+      version: ${{ needs.guard.outputs.version }}
+      channel: ${{ needs.guard.outputs.channel }}
+
+  release:
+    needs: [guard, verify, publish]
+    if: always() && needs.verify.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       # Publishing the Release writes to the repository; everything else reads.
       contents: write
     outputs:
-      # Set the moment wrangler returns, and read by the probe: what must be
-      # verified is a deployment that happened, whatever the steps after it
-      # did.
-      deployed: ${{ steps.deploy.outputs.deployed }}
+      # Set only when a channel actually moved, and read by the probe: what
+      # must be verified is a deployment that happened, whatever the steps
+      # after it did.
+      deployed: ${{ steps.deployed.outputs.deployed }}
     env:
       VERSION: ${{ needs.guard.outputs.version }}
       DRY_RUN: ${{ needs.guard.outputs.dry_run }}
+      CHANNEL: ${{ needs.guard.outputs.channel }}
     steps:
       - uses: actions/checkout@v7
         with:
           # Full history and tags: the release notes walk back to the
           # previous semver tag.
           fetch-depth: 0
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
 
-      # The stamp channel is a VERSION file in the build context (git-ignored;
-      # wrangler builds the image itself and passes no build args), read by
-      # the Dockerfile into -ldflags "-X main.version=...".
-      - name: Stamp the version into the build context
-        run: printf '%s' "$VERSION" > VERSION
-
-      # Build the api image exactly as wrangler will and make the binary say
-      # its own version: a release whose artefact cannot name its tag fails
-      # here, before anything deploys.
-      - name: Prove the stamp lands in the artefact
-        run: |
-          docker build -t apivo:release-proof .
-          got=$(docker run --rm apivo:release-proof version)
-          if [ "$got" != "apivo version $VERSION" ]; then
-            echo "::error::the built binary reports '$got', expected 'apivo version $VERSION' - the version stamp did not land"
-            exit 1
-          fi
-          echo "stamp proof: $got"
+      # The version stamp is no longer proved here. publish.yml proves it on
+      # the image that is actually in the registry - by running it and making
+      # it say its own version - before it moves any channel, which is a
+      # stronger claim than a local build that resembles the published one.
 
       - name: Generate the release notes
         run: |
@@ -164,47 +249,21 @@ jobs:
             cat release-notes.md
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Everything below is the release act itself, skipped on a dry run.
-      - name: 'Dry run: stop before deploying'
+      - name: 'Dry run: stop before releasing'
         if: env.DRY_RUN == 'true'
         run: |
-          # Rehearse wrangler's full config parse and Worker bundle without
-          # credentials, then say loudly that nothing shipped.
-          npx --yes wrangler@4 deploy --dry-run --containers-rollout none --var PUBLIC_APP_VERSION:"$VERSION"
           {
-            echo "## DRY RUN - nothing was deployed"
+            echo "## DRY RUN - nothing was released"
             echo
-            echo "Guard, CI matrix, version stamp and wrangler validation all passed for $VERSION."
-            echo "No deploy, no GitHub Release, no probe."
+            echo "Guard, CI matrix and note generation all passed for $VERSION,"
+            echo "which would have moved the \`$CHANNEL\` channel."
+            echo "No images published, no channel moved, no GitHub Release, no probe."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Require the Cloudflare credentials
+      - name: Record that the channel moved
+        id: deployed
         if: env.DRY_RUN != 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          missing=""
-          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="CLOUDFLARE_API_TOKEN"
-          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
-          if [ -n "$missing" ]; then
-            echo "::error::cannot deploy $VERSION: repository secret(s) not set: $missing - the one-time setup lives in docs/RELEASING.md (Settings > Secrets and variables > Actions). Nothing was deployed."
-            exit 1
-          fi
-
-      - name: Deploy to Cloudflare
-        id: deploy
-        if: env.DRY_RUN != 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        # --var carries the version to the web container at request time
-        # (deploy/cloudflare/worker.js forwards it; the footer renders it).
-        run: |
-          npx --yes wrangler@4 deploy --var PUBLIC_APP_VERSION:"$VERSION"
-          # Production has changed. Whatever happens below, the probe job
-          # must run and say whether what is now serving is $VERSION.
-          echo "deployed=true" >> "$GITHUB_OUTPUT"
+        run: echo "deployed=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish the GitHub Release
         if: env.DRY_RUN != 'true'
@@ -214,8 +273,8 @@ jobs:
         run: |
           # Idempotent, because re-releasing a tag is the documented
           # rollback: `gh release create` answers 422 when a Release for the
-          # tag exists, which failed the run AFTER production had already
-          # been rolled back - a red run for a deploy that happened, and a
+          # tag exists, which failed the run AFTER the channel had already
+          # been moved back - a red run for a rollback that happened, and a
           # skipped probe in the one situation where "did it come up?"
           # matters most.
           #
@@ -238,63 +297,62 @@ jobs:
   # A release that did not come up is a failed release, reported honestly -
   # and so is a release nobody asked. Both paths below exit non-zero.
   #
-  # The gate is the DEPLOY, not the release job's verdict: once production
-  # has changed it must be probed, even if publishing the Release afterwards
-  # failed. always() lets this job run over a failed `release`; `deployed` is
-  # set only by wrangler returning successfully, so a run that never reached
-  # the deploy (guard refused, CI red, dry run) still skips the probe.
+  # The gate is the CHANNEL MOVE, not the release job's verdict: once the
+  # channel has moved the environment will change, and it must be probed even
+  # if publishing the Release afterwards failed. always() lets this job run
+  # over a failed `release`; `deployed` is set only once the channel has
+  # actually moved, so a run that never got that far (guard refused, CI red,
+  # dry run, approval denied) still skips the probe.
   probe:
     needs: [guard, release]
     if: always() && needs.release.outputs.deployed == 'true'
     runs-on: ubuntu-latest
-    # Both paths retried for up to ~2.5 minutes each of cold start, plus room.
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       VERSION: ${{ needs.guard.outputs.version }}
-      RELEASE_HEALTH_URL: ${{ vars.RELEASE_HEALTH_URL }}
+      CHANNEL: ${{ needs.guard.outputs.channel }}
+      HEALTH_URL: ${{ needs.guard.outputs.health_url }}
     steps:
       - name: Probe /healthz and /readyz
         run: |
-          # An unprobed release is a failed release. This used to warn and
-          # pass, from a time when /healthz was not on the public surface
-          # and no satisfiable value for the variable existed - so every
-          # release certified itself unverified and read green. The Worker
-          # now routes /healthz and /readyz to the api container (#134),
-          # which makes the variable satisfiable, which makes leaving it
-          # unset a choice: a deploy nobody checked came up.
-          if [ -z "$RELEASE_HEALTH_URL" ]; then
-            echo "::error::release $VERSION was deployed but NOT probed: the RELEASE_HEALTH_URL repository variable is not set, so nothing verified that production came up. Set it to the deployment's public base URL (docs/RELEASING.md) and re-run. Production HAS changed - roll back by re-running this workflow from the previous tag with dry_run unchecked."
+          # An unprobed release is a failed release. The variable is
+          # satisfiable in every environment this pipeline can target - the
+          # Caddy edge routes /healthz and /readyz to the api container in
+          # all of them - so leaving it unset is a choice: a deploy nobody
+          # checked came up.
+          if [ -z "$HEALTH_URL" ]; then
+            echo "::error::release $VERSION moved the '$CHANNEL' channel but was NOT probed: APIVO_$(echo "$CHANNEL" | tr '[:lower:]' '[:upper:]')_URL is empty in deploy/hetzner/environments.env, so nothing verified that the environment came up. Set it to that environment's public base URL (docs/RELEASING.md) and re-run. The channel HAS moved - roll back by re-running this workflow from the previous tag with dry_run unchecked."
             {
-              echo "## FAILED: release $VERSION was deployed but NOT probed"
+              echo "## FAILED: release $VERSION was not probed"
               echo
-              echo "The RELEASE_HEALTH_URL repository variable is not set, so nothing"
-              echo "verified that the deployed release actually serves traffic."
-              echo "Production has changed regardless: set the variable to the"
-              echo "deployment's public base URL (docs/RELEASING.md), then either"
-              echo "re-run this tag or roll back to the previous one."
+              echo "The channel moved and the environment will change, but no"
+              echo "variable said where to check that it did."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          base="${RELEASE_HEALTH_URL%/}"
+          base="${HEALTH_URL%/}"
           for path in /healthz /readyz; do
             echo "probing $base$path"
-            # Retries cover the containers' cold start; after that, a refusal
-            # is a refusal: the release did not come up, so the release failed.
-            if ! curl --fail --silent --show-error --retry 10 --retry-delay 15 --retry-all-errors --max-time 20 "$base$path" > answer.json; then
-              echo "::error::release $VERSION deployed but $base$path does not answer 200: the release did not come up. Roll back by re-running this workflow from the previous tag with dry_run unchecked (docs/RELEASING.md)."
+            # The retries cover the whole pull-based path, which is longer
+            # than a push-based deploy's: up to a minute before the host's
+            # timer next fires, then the pull, the rollout and the api's
+            # schema migration on boot. ~5 minutes total, after which a
+            # refusal is a refusal.
+            if ! curl --fail --silent --show-error --retry 20 --retry-delay 15 --retry-all-errors --max-time 20 "$base$path" > answer.json; then
+              echo "::error::release $VERSION moved the '$CHANNEL' channel but $base$path does not answer 200: the release did not come up. Check the host's reconciler log (journalctl -u apivo-reconcile@$CHANNEL), or roll back by re-running this workflow from the previous tag with dry_run unchecked (docs/RELEASING.md)."
               exit 1
             fi
             # A 200 only says something is serving, and the previous
             # container answers 200 just as happily. What proves the release
             # is the version in the payload - stamped into the binary at
-            # build time, and proven to be there before anything deployed.
-            # Anything but $VERSION means this deployment did not roll
+            # build time, and proven to be there before the channel moved.
+            # Anything but $VERSION means this environment did not roll
             # forward, whatever the status code says.
             served=$(jq -r '.version // ""' answer.json 2>/dev/null || true)
             if [ "$served" != "$VERSION" ]; then
-              echo "::error::release $VERSION deployed but $base$path is answered by version '${served:-none}', not $VERSION: the deployment did not roll forward and something else is still serving. Roll back by re-running this workflow from the previous tag with dry_run unchecked (docs/RELEASING.md)."
+              echo "::error::release $VERSION moved the '$CHANNEL' channel but $base$path is answered by version '${served:-none}', not $VERSION: the environment did not roll forward and something else is still serving. The host may have rolled back on its own - check 'journalctl -u apivo-reconcile@$CHANNEL' for a rollout_failed line (docs/ENVIRONMENTS.md)."
               exit 1
             fi
             echo "$path answered 200 as version $served"
           done
-          echo "release $VERSION serves: /healthz and /readyz answered 200 as $VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "release $VERSION serves on $CHANNEL: /healthz and /readyz answered 200 as $VERSION" >> "$GITHUB_STEP_SUMMARY"
