@@ -232,7 +232,7 @@ curl -sS https://ra1ze.com/healthz
 
 ## 7. Back in the repository — one line
 
-Once `https://reapie.com` actually answers, open a pull request setting:
+Once the **edge** answers on `reapie.com`, open a pull request setting:
 
 ```
 APIVO_STAGING_URL=https://reapie.com
@@ -240,15 +240,50 @@ APIVO_STAGING_URL=https://reapie.com
 
 in [`deploy/hetzner/environments.env`](../deploy/hetzner/environments.env).
 
+**The edge answering is not the app answering, and here you want the first.**
+Check with:
+
+```sh
+curl -sS -o /dev/null -w '%{http_code}\n' https://reapie.com/healthz
+```
+
+A **502 is the expected, correct answer at this point** — it means DNS,
+Cloudflare, the origin certificate and Caddy all work, and Caddy has nothing
+to proxy to because staging has no images yet. Staging gets its first images
+from the first release candidate, and that is the *next* step, not this one.
+A timeout or a TLS error is the failure to chase; a 502 is the green light.
+
+Waiting for a 200 here would deadlock: `:staging` cannot move until this URL
+is set, and the URL is what this step sets.
+
 This is the second ordering constraint, and it runs the other way: that value
-is empty *on purpose* until the host serves. An empty URL is the guard in
+is empty *on purpose* until the host exists. An empty URL is the guard in
 `release.yml` that refuses to publish images and move the `:staging` tag
-toward an environment that is not there. Filling it in early does not make
-staging work sooner — it only deletes the guard, so an `-rc` tag would move
-the channel and then fail its probe with nothing to roll back to.
+toward an environment that is not there. Filling it in before the box is
+provisioned does not make staging work sooner — it only deletes the guard, so
+an `-rc` tag would move the channel and then fail its probe with nothing to
+roll back to.
 
 `APIVO_QA_URL` and `APIVO_PREVIEW_DOMAIN` are already set, because neither
 gates anything.
+
+### Then cut the first release candidate
+
+QA fills itself — every merge to `main` publishes `:qa` and the box converges
+within the minute. **Staging does not.** Nothing moves `:staging` except a
+release candidate, so until you cut one, `reapie.com` stays a 502 however
+healthy the box is:
+
+```sh
+git tag -a v0.1.0-rc.1 -m "first staging release candidate"
+git push origin v0.1.0-rc.1
+```
+
+That runs `release.yml`, which moves `:staging`, waits for the box to
+converge and probes `https://reapie.com/healthz` for up to five minutes —
+long enough for the timer to fire, the pull, the rollout and the schema
+migration. A green run means staging is serving that exact version, proven
+by the version stamped in the payload rather than by a 200 alone.
 
 ## 8. GitHub — three settings
 
