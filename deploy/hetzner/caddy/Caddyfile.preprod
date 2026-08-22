@@ -4,7 +4,6 @@
 # provision.sh writes them into /etc/apivo/edge/caddy.env. Caddy refuses to
 # start on an unset {$VAR} in a site address rather than serving something
 # nobody meant, which is the failure mode to want.
-
 {
 	# Every site below presents a certificate this file names explicitly (a
 	# Cloudflare Origin Certificate — see the (origin-tls) snippet), so Caddy

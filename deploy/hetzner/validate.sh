@@ -126,28 +126,69 @@ done
 # answers, needing no credentials and reaching no network. A typo here used
 # to be discoverable only by restarting the proxy in front of every
 # environment on the host.
+#
+# It PROVISIONS the modules rather than only adapting the Caddyfile to JSON,
+# which is what makes it worth running — a directive whose arguments are wrong
+# fails here, not at the first request. The cost is that it does everything
+# starting Caddy would do short of listening, including opening the
+# certificate the `tls` directive names. So a throwaway pair is generated
+# below and mounted where the real Cloudflare Origin Certificate lives on a
+# host. Validating against `caddy adapt` instead would dodge the certificate
+# and check materially less.
 # ---------------------------------------------------------------------------
+CERTS="$TMP/certs"
+mkdir -p "$CERTS"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+    -keyout "$CERTS/origin.key" -out "$CERTS/origin.pem" \
+    -subj "/CN=validate.invalid" >/dev/null 2>&1 ||
+    fail "could not generate a throwaway certificate for the Caddyfile checks"
+
 if ! docker image inspect "$CADDY_IMAGE" >/dev/null 2>&1; then
     docker pull -q "$CADDY_IMAGE" >/dev/null 2>&1 ||
         echo "note: could not pull $CADDY_IMAGE; the Caddyfile checks may fail for that reason alone"
 fi
 
+caddy_run() {
+    # caddy_run <caddyfile> <env assignments...> -- <caddy args...>
+    _file="$1"
+    shift
+    _envs=""
+    while [ "$1" != "--" ]; do
+        _envs="$_envs -e $1"
+        shift
+    done
+    shift
+    # shellcheck disable=SC2086 # deliberate word splitting: -e pairs and args
+    docker run --rm $_envs \
+        -v "$CADDY_DIR/$_file:/etc/caddy/Caddyfile:ro" \
+        -v "$CADDY_DIR/snippets.caddy:/etc/caddy/snippets.caddy:ro" \
+        -v "$CERTS:/etc/caddy/certs:ro" \
+        "$CADDY_IMAGE" "$@" 2>&1
+}
+
 check_caddyfile() {
     # check_caddyfile <file> <env assignments...>
     file="$1"
     shift
-    envs=""
-    for kv in "$@"; do
-        envs="$envs -e $kv"
-    done
-    # shellcheck disable=SC2086 # deliberate word splitting: -e pairs
-    if out=$(docker run --rm $envs \
-        -v "$CADDY_DIR/$file:/etc/caddy/Caddyfile:ro" \
-        -v "$CADDY_DIR/snippets.caddy:/etc/caddy/snippets.caddy:ro" \
-        "$CADDY_IMAGE" caddy validate --config /etc/caddy/Caddyfile 2>&1); then
+
+    if out=$(caddy_run "$file" "$@" -- caddy validate --config /etc/caddy/Caddyfile); then
         echo "ok: $file parses"
     else
         fail "$file does not parse: $out"
+    fi
+
+    # Formatting is checked separately because `caddy validate` only WARNS
+    # about it, on a line nobody reads in a passing run — and a warning that
+    # never fails anything is a warning that accumulates. `caddy fmt` without
+    # --overwrite exits non-zero on drift, which is the assertion.
+    if out=$(caddy_run "$file" "$@" -- caddy fmt /etc/caddy/Caddyfile); then
+        echo "ok: $file is formatted"
+    else
+        # The output is carried into the message rather than summarised away:
+        # this command exits non-zero both for real drift and for a docker
+        # daemon it could not reach, and a failure that names the wrong cause
+        # sends someone to reformat a file that was never the problem.
+        fail "$file failed the formatting check (run: caddy fmt --overwrite deploy/hetzner/caddy/$file): $out"
     fi
 }
 
@@ -157,6 +198,16 @@ check_caddyfile Caddyfile.preprod \
 check_caddyfile Caddyfile.prod \
     APIVO_PROD_HOST=validate.invalid \
     APIVO_PROD_ALT_HOST=www.validate.invalid
+
+# The snippets file is imported by both Caddyfiles, so its syntax is already
+# proved above — but it has no site addresses of its own and would never be
+# fmt-checked without this.
+if out=$(docker run --rm -v "$CADDY_DIR/snippets.caddy:/etc/caddy/snippets.caddy:ro" \
+    "$CADDY_IMAGE" caddy fmt /etc/caddy/snippets.caddy 2>&1); then
+    echo "ok: snippets.caddy is formatted"
+else
+    fail "snippets.caddy is not 'caddy fmt' clean: $out"
+fi
 
 if [ "$FAILS" -ne 0 ]; then
     echo "hetzner config: FAILURES"
