@@ -46,6 +46,16 @@ buildx)
     # bare digest whatever the format, so it proved the reconciler handles a
     # digest correctly and never that it obtains one. The real script shipped
     # unable to resolve a single digest, and this suite stayed green.
+    # buildx can also FAIL rather than print an empty digest, and the two are
+    # not the same event. The first host ever provisioned hit the failure: the
+    # systemd sandbox left $HOME read-only and buildx could not create its
+    # state directory. The reconciler discarded that message and reported its
+    # generic "cannot resolve", whose suggested causes were all wrong, while a
+    # `docker pull` by hand worked perfectly.
+    if [ -s "$STUB_DIR/buildx_error" ]; then
+        cat "$STUB_DIR/buildx_error" >&2
+        exit 1
+    fi
     case "$6" in
     '{{.Manifest'*)
         printf 'Name:      %s\nMediaType: application/vnd.oci.image.index.v1+json\nDigest:    sha256:deadbeef\nManifests:\n' "$4"
@@ -348,6 +358,20 @@ run qa
 check "an unresolvable channel refuses to act" 1 "cannot resolve"
 check "and says the environment was left alone" 1 "keeps serving whatever it already had"
 check_state "the running state is untouched" API_DIGEST "$DIGEST_A"
+
+# When buildx FAILS rather than returning nothing, its own words must reach
+# the operator. This is the regression guard for the first host ever
+# provisioned, where the message below was thrown away and the reconcile
+# reported three possible causes, none of them the real one.
+reset
+settle
+printf 'ERROR: mkdir /root/.docker/buildx: read-only file system\n' > "$STUB_DIR/buildx_error"
+run qa
+check "a failing buildx is reported with buildx's own error" 1 "read-only file system"
+check "and that failure still says the environment was left alone" 1 "keeps serving whatever it already had"
+check "and points at the sandbox, since docker pull by hand would work" 1 "systemd sandbox"
+check_state "a failing buildx touches the running state not at all" API_DIGEST "$DIGEST_A"
+: > "$STUB_DIR/buildx_error"
 
 # ===========================================================================
 # Rollouts that fail.

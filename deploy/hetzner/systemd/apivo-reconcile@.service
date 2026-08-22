@@ -38,10 +38,26 @@ ReadWritePaths=/var/lib/apivo /run/docker.sock
 # read-only, NOT yes. `docker login` stores the GHCR credential in
 # /root/.docker/config.json, and ProtectHome=yes makes /root an empty
 # directory to this unit — so the pull would fail as unauthorised on every
-# tick, on a host where `docker pull` by hand works perfectly. Nothing here
-# needs to WRITE under /root, so read-only keeps the hardening and the
-# credential both.
+# tick, on a host where `docker pull` by hand works perfectly.
 ProtectHome=read-only
+
+# ...and read-only is not enough on its own, which the first host ever
+# provisioned proved: `docker buildx` WANTS TO WRITE under $HOME. It creates
+# /root/.docker/buildx for its builder state before it will inspect
+# anything, so every reconcile died with
+#
+#   ERROR: mkdir /root/.docker/buildx: read-only file system
+#
+# while `docker pull` by hand succeeded, because pull does not use buildx.
+# The comment above had it half right: nothing needs to write the
+# CREDENTIAL, but buildx needs a state directory somewhere.
+#
+# Pointing BUILDX_CONFIG at the unit's own state directory is the fix that
+# does not widen what this unit may write: /root stays read-only, the
+# credential included. ReadWritePaths=/root/.docker would also have worked
+# and would have handed the unit write access to the credential file to buy
+# a scratch directory.
+Environment=BUILDX_CONFIG=/var/lib/apivo/buildx
 PrivateTmp=yes
 NoNewPrivileges=yes
 
