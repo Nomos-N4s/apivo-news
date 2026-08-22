@@ -12,7 +12,7 @@ where they occur.
 | Domain | Environment | Exists |
 |---|---|---|
 | `ra1ze.com` | QA, and every per-pull-request preview at `pr-<n>.ra1ze.com` | to build |
-| `repair.com` | Staging | to build |
+| `reapie.com` | Staging | to build |
 | `apivo.com` | Production | **not yet, and not in this pass** |
 
 QA and Staging share one Hetzner box. Production gets its own, later, and
@@ -46,7 +46,7 @@ the box instead. See [ENVIRONMENTS.md](ENVIRONMENTS.md) for what that costs.
 
 ## 1. Cloudflare — zones and TLS mode
 
-For **`ra1ze.com`** and **`repair.com`** (and `apivo.com` whenever production
+For **`ra1ze.com`** and **`reapie.com`** (and `apivo.com` whenever production
 happens):
 
 1. Add the zone to Cloudflare and point the registrar's nameservers at it.
@@ -67,7 +67,7 @@ Put **all of these** in the hostname list:
 ```
 ra1ze.com
 *.ra1ze.com
-repair.com
+reapie.com
 ```
 
 `*.ra1ze.com` is what makes previews possible — every pull request gets
@@ -87,7 +87,7 @@ Create these records, all pointing at the VPS's IPv4 address:
 |---|---|---|---|
 | `A` | `ra1ze.com` (`@`) | VPS IP | **Proxied** |
 | `A` | `*.ra1ze.com` (`*`) | VPS IP | **Proxied** |
-| `A` | `repair.com` (`@`) | VPS IP | **Proxied** |
+| `A` | `reapie.com` (`@`) | VPS IP | **Proxied** |
 
 > **Check the wildcard actually goes orange.** Proxying a wildcard record has
 > historically been a paid-plan feature at Cloudflare, and if your plan will
@@ -104,7 +104,7 @@ Create these records, all pointing at the VPS's IPv4 address:
 > `APIVO_PREVIEW_DOMAIN` empty and run without previews. Tell me which and I
 > will wire it.
 
-Nothing else needs a DNS record. Staging is `repair.com` itself, QA is
+Nothing else needs a DNS record. Staging is `reapie.com` itself, QA is
 `ra1ze.com` itself, and previews are the wildcard.
 
 ---
@@ -127,7 +127,7 @@ cd apivo-news
 
 APIVO_HOST_ROLE=preprod \
 APIVO_QA_HOST=ra1ze.com \
-APIVO_STAGING_HOST=repair.com \
+APIVO_STAGING_HOST=reapie.com \
 APIVO_PREVIEW_DOMAIN=ra1ze.com \
 APIVO_ORIGIN_CERT=/root/origin.pem \
 APIVO_ORIGIN_KEY=/root/origin.key \
@@ -232,10 +232,10 @@ curl -sS https://ra1ze.com/healthz
 
 ## 7. Back in the repository — one line
 
-Once `https://repair.com` actually answers, open a pull request setting:
+Once `https://reapie.com` actually answers, open a pull request setting:
 
 ```
-APIVO_STAGING_URL=https://repair.com
+APIVO_STAGING_URL=https://reapie.com
 ```
 
 in [`deploy/hetzner/environments.env`](../deploy/hetzner/environments.env).

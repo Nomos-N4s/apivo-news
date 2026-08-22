@@ -4,7 +4,7 @@
 # acts, and NOTHING here ever overwrites a file that already holds a secret.
 #
 #   APIVO_HOST_ROLE=preprod \
-#   APIVO_QA_HOST=ra1ze.com APIVO_STAGING_HOST=repair.com \
+#   APIVO_QA_HOST=ra1ze.com APIVO_STAGING_HOST=reapie.com \
 #   APIVO_PREVIEW_DOMAIN=ra1ze.com \
 #   APIVO_ORIGIN_CERT=/root/origin.pem APIVO_ORIGIN_KEY=/root/origin.key \
 #   GHCR_USER=<github-user> GHCR_TOKEN=<read:packages PAT> \
@@ -88,7 +88,7 @@ preprod)
     CADDYFILE=Caddyfile.preprod
     EDGE_OVERLAY=docker-compose.edge.preprod.yml
     [ -n "${APIVO_QA_HOST:-}" ] || die "set APIVO_QA_HOST (this project: ra1ze.com)"
-    [ -n "${APIVO_STAGING_HOST:-}" ] || die "set APIVO_STAGING_HOST (this project: repair.com)"
+    [ -n "${APIVO_STAGING_HOST:-}" ] || die "set APIVO_STAGING_HOST (this project: reapie.com)"
     ;;
 prod)
     ENVS="prod"

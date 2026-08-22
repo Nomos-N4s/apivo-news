@@ -214,7 +214,7 @@ script itself.
 
 ```sh
 APIVO_HOST_ROLE=preprod \
-APIVO_QA_HOST=ra1ze.com APIVO_STAGING_HOST=repair.com \
+APIVO_QA_HOST=ra1ze.com APIVO_STAGING_HOST=reapie.com \
 APIVO_PREVIEW_DOMAIN=ra1ze.com \
 APIVO_ORIGIN_CERT=/root/origin.pem APIVO_ORIGIN_KEY=/root/origin.key \
 GHCR_USER=<github-user> GHCR_TOKEN=<PAT with read:packages> \
