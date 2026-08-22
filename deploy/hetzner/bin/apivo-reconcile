@@ -65,7 +65,25 @@ die() {
     log error "${1}" "${2}"
     # ::error:: as well as the JSON line: this script is also run by hand and
     # from CI, where the annotation is what a person actually sees.
-    echo "::error::apivo-reconcile ${ENV_NAME:-?}: ${2}" >&2
+    #
+    # FLATTENED, because the message can now carry a subprocess's own output
+    # - buildx's, on a failed resolve - and that output is multi-line. A
+    # workflow command is line-oriented: a newline mid-message ends the
+    # annotation early, spills the rest as loose log lines, and a line
+    # beginning `::error::` inside that remainder would be an annotation
+    # nobody wrote. Removing the newlines closes both at once.
+    #
+    # Newlines become SPACES rather than being deleted, unlike log(): that
+    # writes a JSON string for tooling, where a lost space costs nothing,
+    # while this line is read by a person and `read-only file systemERROR:`
+    # is a worse sentence than the one buildx wrote.
+    #
+    # `::` itself is deliberately left alone. It is only a workflow command
+    # at the START of a line, which the flattening already prevents, and
+    # escaping it would corrupt any IPv6 address that appears in an error -
+    # a registry failure is exactly where one shows up.
+    _annotation=$(printf '%s' "${2}" | tr '\n\r\t' '   ')
+    echo "::error::apivo-reconcile ${ENV_NAME:-?}: ${_annotation}" >&2
     exit "${3:-1}"
 }
 
@@ -184,7 +202,30 @@ resolve_digest() {
     # and ends as `docker pull repo@Name:  ...` - rejected as an invalid
     # reference, reported as a registry failure, and no environment ever rolls
     # forward on any host.
-    $DOCKER buildx imagetools inspect "$1" --format '{{println .Manifest.Digest}}' 2>/dev/null || true
+    #
+    # The error is KEPT, not sent to /dev/null. Discarding it cost an
+    # afternoon on the first host ever provisioned: buildx said
+    # `mkdir /root/.docker/buildx: read-only file system` and the operator
+    # saw only "cannot resolve", whose three suggested causes were all wrong.
+    # A `docker pull` by hand worked, which made the registry and the
+    # credential look fine and left nothing to go on.
+    #
+    # It comes back on STDOUT, merged, rather than in a variable the caller
+    # reads afterwards: this runs inside a command substitution, so a
+    # variable set here dies with the subshell and the caller would print
+    # nothing (or, under `set -u`, abort with a shell error instead of the
+    # diagnosis). The exit status says which kind of output this is.
+    $DOCKER buildx imagetools inspect "$1" --format '{{println .Manifest.Digest}}' 2>&1
+}
+
+# The one line of that output that is actually a digest.
+#
+# Anchored, so the human-readable block buildx prints when it ignores the
+# --format (`Digest:    sha256:...`, with leading text) does NOT match and is
+# correctly treated as "no digest". It also means a warning on stderr cannot
+# be mistaken for the answer now that stderr is merged in.
+digest_line() {
+    printf '%s\n' "$1" | sed -n 's/^\(sha256:[0-9a-f][0-9a-f]*\)$/\1/p' | head -n 1
 }
 
 read_state_field() {
@@ -200,12 +241,19 @@ compose() {
     $DOCKER compose "$@"
 }
 
-# What the environment should be running, according to its channel.
-API_DIGEST=$(resolve_digest "$API_REPO:$APIVO_CHANNEL")
-WEB_DIGEST=$(resolve_digest "$WEB_REPO:$APIVO_CHANNEL")
+# What the environment should be running, according to its channel. A failure
+# reports buildx's own words rather than a guess at what went wrong.
+if ! API_OUT=$(resolve_digest "$API_REPO:$APIVO_CHANNEL"); then
+    die registry "cannot resolve $API_REPO:$APIVO_CHANNEL - $API_OUT. Nothing was changed; the environment keeps serving whatever it already had. If a plain 'docker pull' of that reference works by hand but this does not, the difference is the systemd sandbox this unit runs under, not the registry or the credential." 1
+fi
+if ! WEB_OUT=$(resolve_digest "$WEB_REPO:$APIVO_CHANNEL"); then
+    die registry "cannot resolve $WEB_REPO:$APIVO_CHANNEL - $WEB_OUT. Nothing was changed; the environment keeps serving whatever it already had. If a plain 'docker pull' of that reference works by hand but this does not, the difference is the systemd sandbox this unit runs under, not the registry or the credential." 1
+fi
+API_DIGEST=$(digest_line "$API_OUT")
+WEB_DIGEST=$(digest_line "$WEB_OUT")
 
 if [ -z "$API_DIGEST" ] || [ -z "$WEB_DIGEST" ]; then
-    die registry "cannot resolve $APIVO_REGISTRY/{api,web}:$APIVO_CHANNEL - the registry is unreachable, the credential has expired (docker login ghcr.io), or the publish workflow has never moved this channel. Nothing was changed; the environment keeps serving whatever it already had." 1
+    die registry "cannot resolve $APIVO_REGISTRY/{api,web}:$APIVO_CHANNEL - buildx exited 0 but printed no digest, which is either a channel the publish workflow has never moved or the --format trap documented on resolve_digest. Nothing was changed; the environment keeps serving whatever it already had." 1
 fi
 
 RUNNING_API=$(read_state_field "$CURRENT" API_DIGEST)
