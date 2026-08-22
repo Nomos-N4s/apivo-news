@@ -1,0 +1,83 @@
+# Shared Caddy snippets. Imported by Caddyfile.preprod and Caddyfile.prod so
+# the routing rule and the response hardening are written once and cannot
+# drift between environments.
+
+# ---------------------------------------------------------------------------
+# (hardening) — what every response from every environment carries.
+# ---------------------------------------------------------------------------
+(hardening) {
+	encode zstd gzip
+
+	header {
+		# The deployment is https-only and says so. `preload` is deliberately
+		# NOT among these: submitting a domain to the browser-vendor preload
+		# list is a commitment that outlives the deployment, and it is not
+		# reversible on any useful timescale.
+		#
+		# This mattered on Cloudflare only for a custom domain (workers.dev
+		# sits under an HSTS-preloaded TLD). Here it matters on every
+		# hostname: nothing upgrades a first plain-http visit for us.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+		# Caddy names itself in every response otherwise. The version of the
+		# reverse proxy is not information a caller needs.
+		-Server
+	}
+}
+
+# ---------------------------------------------------------------------------
+# (apivo-routes) — which container answers.
+#
+# Replaces the path routing that deploy/cloudflare/routing.js did, with the
+# same split: the API answers /api/…, /healthz and /readyz; the Astro
+# frontend answers everything else. The API is not published on a host port
+# in any environment and this is the only thing that talks to it.
+#
+# The Worker went to some length to decode the path once and collapse
+# repeated slashes before testing it, because /api/v1/%65ditorial/queue is
+# editorial to the Go router and looked like nothing in particular to a
+# naive prefix test. That care was load-bearing for the Worker's RATE LIMIT,
+# which was expressed as an inversion over paths — a path that slipped past
+# the test went unlimited.
+#
+# It is not load-bearing here, and the difference is worth stating rather
+# than leaving to be rediscovered. This snippet only chooses an upstream:
+# every /api/… path lands on the Go router either way, and what an editorial
+# route requires — a valid JWT, and the editor role enforced a second time
+# by the database — is enforced in Go, by the same code, whatever proxy is
+# in front. Caddy also matches on Go's already-decoded r.URL.Path, so the
+# encoding trick above resolves before any matcher sees it.
+#
+# The rate limit itself has NOT moved here. It is named as the one blocking
+# follow-up in docs/ENVIRONMENTS.md, and until it lands the Cloudflare Worker
+# is still the thing that carries it.
+# ---------------------------------------------------------------------------
+(apivo-routes) {
+	@api path /api/* /healthz /readyz
+
+	handle @api {
+		reverse_proxy {args[0]}:8080
+	}
+
+	handle {
+		reverse_proxy {args[1]}:4321
+	}
+}
+
+# ---------------------------------------------------------------------------
+# (origin-tls) — the certificate Cloudflare's proxy connects to.
+#
+# A Cloudflare Origin Certificate: free, valid for years, trusted by
+# Cloudflare and by nothing else, which is exactly right for a certificate
+# that should only ever be presented to Cloudflare. Set the zone to
+# "Full (strict)" so Cloudflare verifies it.
+#
+# provision.sh installs it. There is no ACME here on purpose: HTTP-01 through
+# an orange-clouded record is unreliable, and DNS-01 would mean a Cloudflare
+# API token with DNS edit rights sitting on the VPS — a much larger key than
+# the one problem it solves. docs/ENVIRONMENTS.md records how to move to
+# DNS-01 later if wildcard per-PR preview hostnames make it worth it.
+# ---------------------------------------------------------------------------
+(origin-tls) {
+	tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key
+}

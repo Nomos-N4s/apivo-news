@@ -1,0 +1,30 @@
+# Edge overlay for the pre-production VPS: attaches Caddy to QA's and
+# Staging's edge networks.
+#
+# The two networks are `external: true` because the application stacks own
+# them — each is created by `docker compose up` on that environment, and the
+# edge must not create an empty one under the same name and then route to
+# nothing. If Caddy will not start because a network is missing, the answer
+# is that the environment has never been reconciled; run it once
+# (`systemctl start apivo-reconcile@qa`) and start the edge again.
+#
+# This overlay is also the isolation boundary between the two environments.
+# Caddy sits on both networks; QA and Staging sit only on their own. Neither
+# can open a connection to the other's containers, so a compromised
+# dependency in QA — where every push to main lands, unreviewed by anyone
+# once it is merged — gets no closer to Staging's Supabase credentials than
+# an attacker on the internet would.
+
+services:
+  caddy:
+    networks:
+      qa-edge: {}
+      staging-edge: {}
+
+networks:
+  qa-edge:
+    name: apivo-qa-edge
+    external: true
+  staging-edge:
+    name: apivo-staging-edge
+    external: true

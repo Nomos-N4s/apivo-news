@@ -1,0 +1,50 @@
+# The production host.
+#
+# NOTHING RUNS HERE YET. There is no production VPS, no production Supabase
+# project and no production DNS record; this file is the role written ahead
+# of the box, so that provisioning production later is running provision.sh
+# with APIVO_HOST_ROLE=prod rather than designing a deployment under time
+# pressure on the day it is first needed.
+#
+# It is deliberately the same file as Caddyfile.preprod with one site instead
+# of two: production must not be the environment with its own bespoke proxy
+# config that nothing has rehearsed. Staging exercises every line of this
+# except the hostname.
+
+{
+	auto_https disable_redirects
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+import /etc/caddy/snippets.caddy
+
+# ---------------------------------------------------------------------------
+# Production — final semver tags only (v0.2.0), behind an approval gate.
+# ---------------------------------------------------------------------------
+https://{$APIVO_PROD_HOST} {
+	import origin-tls
+	import hardening
+	import apivo-routes apivo-prod-api apivo-prod-web
+}
+
+# The apex/www counterpart, whichever of the two production is not served on.
+# Cloudflare can do this redirect at the edge instead; it is here so the
+# origin is correct on its own, and so a Cloudflare rule that is deleted by
+# accident degrades to a redirect rather than to a certificate error.
+https://{$APIVO_PROD_ALT_HOST} {
+	import origin-tls
+	redir https://{$APIVO_PROD_HOST}{uri} permanent
+}
+
+:443 {
+	tls internal
+	abort
+}
+
+:80 {
+	abort
+}
