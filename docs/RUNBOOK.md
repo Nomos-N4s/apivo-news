@@ -121,7 +121,7 @@ scp origin.pem origin.key root@<vps-ip>:/root/
 Then, on the box as root:
 
 ```sh
-apt-get update && apt-get install -y git
+apt-get update && apt-get install -y git ufw iptables-persistent
 git clone https://github.com/Nomos-N4s/apivo-news.git
 cd apivo-news
 
@@ -142,6 +142,21 @@ sh deploy/hetzner/provision.sh
 installs a deny-by-default firewall that admits 443 from Cloudflare's
 published ranges and ssh on that port. A wrong value locks you out of the box
 and Hetzner's console is the only way back in.
+
+**Install `ufw` and `iptables-persistent` first**, which is why they are in
+the `apt-get` line above:
+
+- Without `ufw`, provisioning dies at the firewall step — after everything
+  else has already been installed, so you get a half-provisioned box and a
+  one-line error.
+- Without `iptables-persistent`, the rules in the `DOCKER-USER` chain **do
+  not survive a reboot**. That matters more than it sounds: `ufw` alone does
+  not cover Docker's published ports at all — Docker writes its own DNAT and
+  FORWARD rules that are consulted before ufw's INPUT chain ever sees the
+  packet, so `ufw deny 443` leaves Caddy wide open while `ufw status` claims
+  otherwise. `DOCKER-USER` is the chain that actually closes it, and it is
+  the one that is lost on reboot if nothing persists it. The script warns and
+  continues rather than failing, so this is easy to miss.
 
 The script installs Docker if it is missing, installs the compose files, the
 Caddy config and the systemd timers, generates a Postgres certificate for QA
@@ -239,13 +254,29 @@ gates anything.
 
 None of these block the box coming up.
 
-1. **Merge queue** on `main`, in branch protection. CI already accepts
-   `merge_group`.
-2. **A `production` Environment** (Settings → Environments) with yourself as a
+1. **Branch protection on `main`**, with `ci.yml`'s jobs as required status
+   checks. CI runs on every pull request today but nothing makes it *block* a
+   merge — that is a settings click, and the checks have to be named
+   individually (`go`, `lint`, `frontend`, `docker`, `web-image`, `openapi`,
+   `sqlc-drift`, `ts-types-drift`, `kubeconform`, `wrangler`,
+   `commit-hygiene`, `hetzner`).
+2. **Merge queue** on `main`. CI already accepts `merge_group`; enabling the
+   queue is the click.
+3. **A `production` Environment** (Settings → Environments) with yourself as a
    required reviewer. This is the approval gate for final releases; it does
    nothing until production exists, and it costs nothing to create now.
-3. Nothing for GHCR. The automatic `GITHUB_TOKEN` publishes and deletes image
-   tags; no secret to create.
+   **Leave its "Deployment branches and tags" rule as *All branches*, or add
+   a tag rule matching `v*`** — every real release enters this Environment on
+   a tag ref, and the default branch-only rule would block the approval job
+   rather than prompt you.
+4. Nothing for GHCR, and nothing to create as a secret: the automatic
+   `GITHUB_TOKEN` publishes and deletes image tags.
+
+One consequence of this repository being **public**: pull requests from forks
+get a read-only `GITHUB_TOKEN` regardless of what a workflow asks for, so
+they cannot publish preview images. `preview.yml` skips both its jobs for
+fork pull requests rather than failing them. A maintainer who wants a preview
+of an outside contribution pushes the branch to this repository.
 
 ---
 

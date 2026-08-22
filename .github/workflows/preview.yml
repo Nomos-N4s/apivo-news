@@ -39,7 +39,12 @@ jobs:
   # Closed: delete the tags. The host does the rest.
   # ---------------------------------------------------------------------------
   teardown:
-    if: github.event.action == 'closed'
+    # Same fork restriction as `publish` below, for the same reason and with
+    # the same consequence: a fork pull request never published preview tags,
+    # so there is nothing to delete when it closes.
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -114,7 +119,19 @@ jobs:
   # thing next to it that you can click.
   # ---------------------------------------------------------------------------
   publish:
-    if: github.event.action != 'closed'
+    # NOT for pull requests from forks. GitHub grants those runs a READ-ONLY
+    # GITHUB_TOKEN whatever the `permissions:` block below asks for, so
+    # `packages: write` is not obtainable and the push to GHCR fails. This
+    # repository is public and allows forking, so that is a real path rather
+    # than a hypothetical one.
+    #
+    # Skipped rather than left to fail: a red cross on an outside
+    # contributor's first pull request is a poor way to say "previews are for
+    # branches in this repository". A maintainer who wants one pushes the
+    # branch here.
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
