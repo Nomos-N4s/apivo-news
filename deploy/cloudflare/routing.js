@@ -6,19 +6,24 @@
 // Cloudflare CONTAINERS is no longer a deployment target, and no release
 // pipeline calls wrangler.
 //
-// This file and its neighbours are kept, and still validated by CI, for ONE
-// reason: the Worker carries the per-caller RATE LIMIT on the editorial
-// endpoints, expressed as an inversion so that a route added later is limited
-// from its first request. Caddy only chooses an upstream and says so.
+// This file and its neighbours are kept, and still validated by CI, as the
+// REFERENCE IMPLEMENTATION of the per-caller rate limit on the editorial
+// endpoints — expressed as an inversion, so that a route added later is
+// limited from its first request.
 //
-// Nothing about authorisation is weaker for that — a valid JWT, and the
-// database's second check of the editor role, are enforced in Go by the same
-// code whatever proxy is in front — but the rate limit itself would simply be
-// lost if this were deleted today.
+// BE PRECISE ABOUT WHAT THAT MEANS TODAY: nothing deploys this Worker, so
+// this rate limit ENFORCES NOTHING. The Hetzner deployment has no rate limit
+// on the editorial endpoints at all. Keeping the code is not keeping the
+// protection; it is keeping the design and its tests so the port does not
+// have to rediscover them.
+//
+// Authorisation is unaffected — a valid JWT, and the database's second check
+// of the editor role, are enforced in Go by the same code whatever proxy is
+// in front. What is absent is the bound on invalid-token load.
 //
 // Porting it to Go middleware (in-repo, testable, applying in every
-// environment including local development) is the blocking follow-up.
-// Deleting this directory is what that unblocks.
+// environment including local development) is REQUIRED BEFORE ANY PUBLIC
+// DEPLOYMENT, and deleting this directory is what that unblocks.
 // ===========================================================================
 
 // The Worker's request-shaping rules, kept apart from the Worker itself.

@@ -108,8 +108,20 @@ deploy)
     # is recorded in the journal beside every automatic one and cannot run
     # concurrently with the timer's own tick.
     echo "reconciling $ENV_NAME now..."
-    systemctl start "apivo-reconcile@$ENV_NAME.service" || true
-    journalctl -u "apivo-reconcile@$ENV_NAME.service" -n 20 --no-pager -o cat
+    # The reconciler exits non-zero for a registry it cannot reach, a rollout
+    # that failed, and a rollback that failed after it — the three things
+    # someone running this most needs to hear. Printing the journal afterwards
+    # must not become the command's verdict: `systemctl start; journalctl`
+    # exits with journalctl's status, which is 0 whenever it managed to print
+    # something, so a failed deploy would read as a successful one to an
+    # operator skimming and to anything scripting this.
+    rc=0
+    systemctl start "apivo-reconcile@$ENV_NAME.service" || rc=$?
+    journalctl -u "apivo-reconcile@$ENV_NAME.service" -n 20 --no-pager -o cat || true
+    if [ "$rc" -ne 0 ]; then
+        echo "apivoctl: the reconcile of $ENV_NAME FAILED (exit $rc) — the lines above say why." >&2
+    fi
+    exit "$rc"
     ;;
 
 logs)

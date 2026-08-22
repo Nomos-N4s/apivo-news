@@ -30,7 +30,7 @@ import /etc/caddy/snippets.caddy
 https://{$APIVO_QA_HOST} {
 	import origin-tls
 	import hardening
-	import apivo-routes apivo-qa-api apivo-qa-web
+	import apivo-routes apivo-qa-api apivo-qa-web {$APIVO_QA_HOST}
 }
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ https://{$APIVO_QA_HOST} {
 https://{$APIVO_STAGING_HOST} {
 	import origin-tls
 	import hardening
-	import apivo-routes apivo-staging-api apivo-staging-web
+	import apivo-routes apivo-staging-api apivo-staging-web {$APIVO_STAGING_HOST}
 }
 
 # Anything arriving on an address this file does not name is refused without

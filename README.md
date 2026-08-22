@@ -158,11 +158,13 @@ annotated semver tags by the release pipeline
 the one-time setup and the rollback procedure live in
 [docs/RELEASING.md](docs/RELEASING.md).
 
-Cloudflare Containers is **retired**. `wrangler.jsonc` and
-[deploy/cloudflare/](deploy/cloudflare/) remain in the tree, and CI still
-validates them, only because the Worker carries the per-caller rate limit on
-the editorial endpoints and Caddy does not; porting that to Go middleware is
-the blocking follow-up. Nothing deploys there.
+Cloudflare Containers is **retired** — nothing deploys there.
+`wrangler.jsonc` and [deploy/cloudflare/](deploy/cloudflare/) remain in the
+tree, still validated by CI, as the reference implementation of the
+per-caller rate limit on the editorial endpoints. Keeping the code is not
+keeping the protection: **the Hetzner deployment has no editorial rate limit
+at all**, and porting one to Go middleware is required before anything is
+publicly reachable ([docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md)).
 
 ## Quality gates (CI-enforced)
 

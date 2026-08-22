@@ -51,7 +51,14 @@ pull)
 image)
     case "$2" in
     # The version the release pipeline stamped into the image as an OCI label.
-    inspect) read_or label_version 'v0.1.0' ;;
+    # api and web are answered separately so a test can present the mismatched
+    # pair that a half-moved channel produces.
+    inspect)
+        case "$5" in
+        */web@*) read_or web_label_version "$(read_or label_version 'v0.1.0')" ;;
+        *) read_or label_version 'v0.1.0' ;;
+        esac
+        ;;
     prune) : ;;
     esac
     ;;
@@ -258,6 +265,37 @@ run qa
 check "a moved channel rolls forward" 0 '"event":"rollout_ok"'
 check_state "the new digest is recorded" API_DIGEST "$DIGEST_B"
 check_state "the new version is recorded" VERSION v0.2.0
+
+# ===========================================================================
+# A channel caught half-moved.
+#
+# publish.yml points api:<channel> and web:<channel> at their digests in two
+# separate registry calls, and a tick can land between them. Rolling that out
+# would put a new api beside the previous frontend and report success, because
+# the only version assertion downstream is against the api.
+# ===========================================================================
+
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' 'v0.2.0' > "$STUB_DIR/label_version"
+printf '%s' 'v0.1.0' > "$STUB_DIR/web_label_version"
+run qa
+check "a half-moved channel is not rolled out" 0 '"event":"version_skew"'
+check_state "and the environment stays on the matched pair it had" API_DIGEST "$DIGEST_A"
+if [ -e "$STUB_DIR/up_count" ]; then
+    echo "FAIL: a half-moved channel still ran compose up"
+    FAILS=1
+else
+    echo "ok: a half-moved channel touches the running stack not at all"
+fi
+
+# ...and the very next tick, once the other tag has caught up, deploys it.
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' 'v0.2.0' > "$STUB_DIR/web_label_version"
+run qa
+check "and the tick after the channel settles rolls forward" 0 '"event":"rollout_ok"'
+check_state "onto the new pair" API_DIGEST "$DIGEST_B"
 
 # ===========================================================================
 # The registry is unreachable.

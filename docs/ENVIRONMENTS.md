@@ -150,6 +150,7 @@ APIVO_HOST_ROLE=preprod \
 APIVO_QA_HOST=qa.example.com APIVO_STAGING_HOST=staging.example.com \
 APIVO_ORIGIN_CERT=/root/origin.pem APIVO_ORIGIN_KEY=/root/origin.key \
 GHCR_USER=<github-user> GHCR_TOKEN=<PAT with read:packages> \
+APIVO_CONFIGURE_FIREWALL=yes \
 sh deploy/hetzner/provision.sh
 ```
 
@@ -165,11 +166,15 @@ What it deliberately does **not** do:
   present and empty — a safe documented state for all of them — and then never
   touches them again. A script that could fill them in would be a script that
   had to be given them.
-- Touch the firewall, unless `APIVO_CONFIGURE_FIREWALL=yes`. Getting that
-  wrong locks you out of the box, so it is a deliberate act. **Do run it**: it
-  admits 443 from Cloudflare's published ranges only, and without it anyone
-  who learns the VPS address talks straight to Caddy and every protection
-  configured at the edge is one DNS lookup away from irrelevant.
+- Decide for you whether to configure the firewall. `APIVO_CONFIGURE_FIREWALL`
+  has **no default** and the script refuses to run until it is `yes` or `no`,
+  because both answers are dangerous in different directions and a default
+  would pick one of those hazards silently. `yes` admits 443 from
+  Cloudflare's published ranges only, plus ssh — check `APIVO_SSH_PORT` first
+  if you do not use 22, since a wrong value locks you out of the box. `no` is
+  correct only when something else already restricts inbound 443; otherwise
+  anyone who learns the VPS address talks straight to Caddy and every
+  protection configured at the edge is one DNS lookup away from irrelevant.
 
 Finally, record the public URL in
 [deploy/hetzner/environments.env](../deploy/hetzner/environments.env), in a
@@ -256,32 +261,47 @@ were real costs:
   to wake it. A container on a VPS is not stopped for being idle;
   `POLL_INTERVAL` simply works.
 
-### The one thing that has not moved yet
+### THE EDITORIAL RATE LIMIT IS GONE, AND NOTHING REPLACES IT YET
 
-[`deploy/cloudflare/`](../deploy/cloudflare/) and `wrangler.jsonc` are still
-in the tree, and the `wrangler` CI job still proves them. They are **retired
-but not deleted**, for one specific reason: the Worker carries the
-**per-caller rate limit on the editorial endpoints**, expressed as an
-inversion — every `/api/…` path that is not a public reader endpoint is
-limited, so a route added later is limited from its first request.
+State this plainly, because an earlier draft of this document did not: **the
+Hetzner deployment has no rate limit on the editorial endpoints.**
 
-Caddy does not carry that. It only chooses an upstream, and it says so in
-[snippets.caddy](../deploy/hetzner/caddy/snippets.caddy). Nothing about
-authorisation is weaker for it — a valid JWT and the database's second check
-of the editor role are enforced in Go, by the same code, whatever proxy is in
-front — but the *rate limit* would be lost if `worker.js` were deleted today.
+The Cloudflare Worker carried one — a per-caller limit expressed as an
+inversion, so that every `/api/…` path which is not a public reader endpoint
+was limited, and a route added later was limited from its first request.
+Nothing deploys that Worker any more. Keeping
+[`deploy/cloudflare/`](../deploy/cloudflare/) and `wrangler.jsonc` in the tree
+keeps the *design and its tests*; it does not keep the *protection*.
 
-So it stays until the limit has a new home. The right home is Go middleware
-in the api itself: in-repo, testable, applying in every environment including
-local development, and independent of which proxy is in front. Cloudflare WAF
-rules would also work and would be configured in a dashboard, which this
-project has already decided against. **That port is the blocking follow-up to
-this change**, and deleting the Cloudflare deployment is what it unblocks.
+Caddy does not carry it, and does not pretend to
+([snippets.caddy](../deploy/hetzner/caddy/snippets.caddy) says so). What is
+unaffected is authorisation: a valid JWT and the database's second check of
+the editor role are enforced in Go, by the same code, whatever proxy is in
+front. What is absent is the bound on invalid-token load — an attacker who
+cannot get *in* can still make the api do JWT verification work all day.
+
+Nothing is publicly reachable today, so nothing is currently exposed. That is
+the only reason this is a follow-up rather than a defect in production.
+
+**Porting the limit to Go middleware is required before the first public
+deployment.** In the api itself it is in-repo, testable, applies in every
+environment including local development, and is independent of which proxy is
+in front — strictly better than where it was. Cloudflare WAF rules would also
+work, and would live in a dashboard, which this project has already decided
+against. Deleting `deploy/cloudflare/` is what that port unblocks.
+
+## Required before anything is publicly reachable
+
+- **The editorial rate limit**, ported to Go middleware. See above. This is
+  not a nice-to-have and not a follow-up that can drift: today there is no
+  limit at all, and the environments are only safe because nobody can reach
+  them.
+- **The firewall**, on every host — `provision.sh` will not run without an
+  explicit answer, and `no` is only correct when something else restricts
+  inbound 443 to Cloudflare's ranges.
 
 ## Deferred, deliberately
 
-- **The rate limiter port**, above. The one thing blocking deletion of the
-  Cloudflare path.
 - **Per-PR preview environments** (`pr-137.qa.<domain>`), so an agent can see
   its own change running before it merges. The biggest remaining unlock, and
   the one thing that would justify wildcard certificates and therefore DNS-01.

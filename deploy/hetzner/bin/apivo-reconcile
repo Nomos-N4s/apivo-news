@@ -197,8 +197,35 @@ fi
 # image itself rather than from the tag that led here. This is what the
 # frontend renders in its footer and what the release probe compares against,
 # so it must come from the artefact.
-IMAGE_VERSION=$($DOCKER image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$API_REPO@$API_DIGEST" 2>/dev/null || true)
-[ -n "$IMAGE_VERSION" ] || IMAGE_VERSION=dev
+image_version() {
+    _v=$($DOCKER image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$1" 2>/dev/null || true)
+    [ -n "$_v" ] || _v=dev
+    printf '%s' "$_v"
+}
+
+IMAGE_VERSION=$(image_version "$API_REPO@$API_DIGEST")
+WEB_VERSION=$(image_version "$WEB_REPO@$WEB_DIGEST")
+
+# ---------------------------------------------------------------------------
+# The two channel tags do not move atomically.
+#
+# publish.yml points api:<channel> and web:<channel> at their digests in two
+# separate registry calls, and this host may tick between them. Resolving the
+# tags independently would then pin a NEW api beside the PREVIOUS web, roll it
+# out, and report success - because the only version assertion downstream is
+# against the api. A frontend a release behind its API is exactly the state
+# that produces a blank page or a 500 on a field the old template does not
+# know about.
+#
+# Refusing here costs nothing: the channel has not been consumed, so the next
+# tick sixty seconds later sees the matched pair and rolls it out. The only
+# way this becomes permanent is if the publish itself half-failed, which is a
+# real problem that should be loud rather than silently deployed.
+# ---------------------------------------------------------------------------
+if [ "$IMAGE_VERSION" != "$WEB_VERSION" ]; then
+    log info version_skew "api is $IMAGE_VERSION but web is $WEB_VERSION; waiting for the channel to settle"
+    exit 0
+fi
 
 write_images_env() {
     # write_images_env <api-digest> <web-digest> <version>
@@ -286,10 +313,20 @@ if roll_out "$API_DIGEST" "$WEB_DIGEST" "$IMAGE_VERSION"; then
     [ -r "$CURRENT" ] && cp "$CURRENT" "$PREVIOUS"
     record_state "$CURRENT" "$API_DIGEST" "$WEB_DIGEST" "$IMAGE_VERSION"
 
-    # Yesterday's images are the other way a small host fills its disk. Only
-    # dangling layers are removed - never `-a`, which on this box would
-    # delete the rollback target that is not currently running.
-    $DOCKER image prune -f >/dev/null 2>&1 || true
+    # Yesterday's images are the other way a small host fills its disk.
+    #
+    # The age filter is load-bearing, not caution. Every image here is pulled
+    # BY DIGEST, so none of them carries a tag - and an untagged image is
+    # what `docker image prune` calls dangling and removes by default. The
+    # release this host would roll back to is untagged and, once the new one
+    # is serving, referenced by no container: a bare prune is entitled to
+    # delete the very thing `previous` names. `apivoctl rollback` would then
+    # depend on re-pulling from a registry that may be exactly what is
+    # unavailable when someone is breaking glass.
+    #
+    # `until` keeps anything pulled in the last week, which covers every
+    # rollback target worth having while still bounding the disk.
+    $DOCKER image prune -f --filter "until=${APIVO_IMAGE_RETENTION:-168h}" >/dev/null 2>&1 || true
 
     log info rollout_ok "$ENV_NAME now serves $IMAGE_VERSION (api $API_DIGEST)"
     exit 0

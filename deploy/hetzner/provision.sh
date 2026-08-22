@@ -7,6 +7,7 @@
 #   APIVO_QA_HOST=qa.example.com APIVO_STAGING_HOST=staging.example.com \
 #   APIVO_ORIGIN_CERT=/root/origin.pem APIVO_ORIGIN_KEY=/root/origin.key \
 #   GHCR_USER=<github-user> GHCR_TOKEN=<read:packages PAT> \
+#   APIVO_CONFIGURE_FIREWALL=yes \
 #   sh deploy/hetzner/provision.sh
 #
 # It leaves the host in a state where nothing else has to be done to it,
@@ -24,8 +25,9 @@
 # touches again. A provisioning script that could fill them in would be a
 # provisioning script that had to be given them.
 #
-# It does not touch the firewall unless asked (APIVO_CONFIGURE_FIREWALL=yes).
-# Getting that wrong locks you out of the box, so it is a deliberate act.
+# It does not choose for you whether to configure the firewall. Both answers
+# are dangerous in different directions, so APIVO_CONFIGURE_FIREWALL has no
+# default and the script refuses to run until it is set to yes or no.
 set -eu
 
 HERE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -37,7 +39,14 @@ UNITS=/etc/systemd/system
 
 APIVO_HOST_ROLE="${APIVO_HOST_ROLE:-}"
 APIVO_REGISTRY="${APIVO_REGISTRY:-ghcr.io/nomos-n4s/apivo-news}"
-APIVO_CONFIGURE_FIREWALL="${APIVO_CONFIGURE_FIREWALL:-no}"
+# No default. Both answers are dangerous in different directions - `yes`
+# mis-set locks you out of the box, `no` leaves the origin reachable by
+# anyone who learns its address, which makes every protection configured at
+# the Cloudflare edge one DNS lookup away from irrelevant. A default would
+# pick one of those hazards on the operator's behalf and, being a default,
+# would be the one nobody thought about. So the script refuses to run until
+# somebody has answered.
+APIVO_CONFIGURE_FIREWALL="${APIVO_CONFIGURE_FIREWALL:-}"
 APIVO_SSH_PORT="${APIVO_SSH_PORT:-22}"
 
 say() { printf '\n=== %s ===\n' "$1"; }
@@ -54,6 +63,23 @@ say "Preflight"
 
 [ "$(id -u)" = 0 ] || die "run as root"
 command -v systemctl >/dev/null 2>&1 || die "no systemd on this host"
+
+case "$APIVO_CONFIGURE_FIREWALL" in
+yes | no) ;;
+*)
+    die "set APIVO_CONFIGURE_FIREWALL to 'yes' or 'no' - there is no default.
+
+  yes  admit 443 from Cloudflare's published ranges only, and ssh on port
+       $APIVO_SSH_PORT. This is what you want: the edge publishes Caddy on
+       80/443 to every interface, so without it anyone who learns this host's
+       address reaches the origin directly and Cloudflare's WAF, rate limits
+       and bot rules protect nothing. Check APIVO_SSH_PORT first if you do not
+       use 22 - a wrong value here locks you out of the box.
+
+  no   change nothing. Only correct if a firewall is already managed
+       elsewhere (Hetzner Cloud Firewall, a hardened image, or by hand)."
+    ;;
+esac
 
 case "$APIVO_HOST_ROLE" in
 preprod)
@@ -246,11 +272,19 @@ note "installed $CADDYFILE and its hostnames"
 # else, which is exactly right for a certificate only ever presented to
 # Cloudflare. Set the zone to Full (strict) so it is actually verified.
 if [ -n "${APIVO_ORIGIN_CERT:-}" ] && [ -n "${APIVO_ORIGIN_KEY:-}" ]; then
+    [ -r "$APIVO_ORIGIN_CERT" ] || die "APIVO_ORIGIN_CERT=$APIVO_ORIGIN_CERT cannot be read"
+    [ -r "$APIVO_ORIGIN_KEY" ] || die "APIVO_ORIGIN_KEY=$APIVO_ORIGIN_KEY cannot be read"
     install -m 0644 "$APIVO_ORIGIN_CERT" "$ETC/edge/certs/origin.pem"
     install -m 0640 "$APIVO_ORIGIN_KEY" "$ETC/edge/certs/origin.key"
     note "installed the origin certificate"
-elif [ -e "$ETC/edge/certs/origin.pem" ]; then
+# BOTH files, not just the certificate. Caddy names the pair and will not
+# start HTTPS without either, so treating a lone origin.pem as "already
+# present" reports a provisioned host that cannot serve — and it reports it
+# on the re-run someone does precisely to check the first run worked.
+elif [ -e "$ETC/edge/certs/origin.pem" ] && [ -e "$ETC/edge/certs/origin.key" ]; then
     note "origin certificate already present, left alone"
+elif [ -e "$ETC/edge/certs/origin.pem" ] || [ -e "$ETC/edge/certs/origin.key" ]; then
+    die "the origin certificate at $ETC/edge/certs/ is HALF installed - Caddy needs both origin.pem and origin.key and will not start with one. Remove the stray file and re-run with APIVO_ORIGIN_CERT and APIVO_ORIGIN_KEY set to both halves."
 else
     note "NO ORIGIN CERTIFICATE. Caddy will not start until one is installed:"
     note "  Cloudflare dashboard -> SSL/TLS -> Origin Server -> Create Certificate"
@@ -330,10 +364,12 @@ if [ "$APIVO_CONFIGURE_FIREWALL" = yes ]; then
     ufw --force enable >/dev/null
     note "ufw enabled: ssh, and 443 from Cloudflare only"
 else
-    say "Firewall (skipped)"
-    note "Nothing was changed. Re-run with APIVO_CONFIGURE_FIREWALL=yes to admit"
-    note "only Cloudflare's ranges on 443 — until then, anyone who learns this"
-    note "host's address bypasses every protection configured at the edge."
+    say "Firewall (declined)"
+    note "APIVO_CONFIGURE_FIREWALL=no, so nothing was changed here."
+    note "Something else must restrict inbound 443 to Cloudflare's ranges — a"
+    note "Hetzner Cloud Firewall, or rules already on this host. If nothing"
+    note "does, the origin is reachable directly and Cloudflare's WAF, rate"
+    note "limits and bot rules are protecting a path attackers need not take."
 fi
 
 # ---------------------------------------------------------------------------

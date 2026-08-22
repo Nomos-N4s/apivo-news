@@ -27,7 +27,7 @@ import /etc/caddy/snippets.caddy
 https://{$APIVO_PROD_HOST} {
 	import origin-tls
 	import hardening
-	import apivo-routes apivo-prod-api apivo-prod-web
+	import apivo-routes apivo-prod-api apivo-prod-web {$APIVO_PROD_HOST}
 }
 
 # The apex/www counterpart, whichever of the two production is not served on.

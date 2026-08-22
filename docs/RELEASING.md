@@ -91,11 +91,13 @@ environment *tracks*; the digest is what it *runs*. "What is running in
 staging" therefore has one answer that cannot drift under a tag someone
 moved.
 
-**Cloudflare Containers is retired.** `wrangler.jsonc` and
-`deploy/cloudflare/` are still in the tree and still validated by CI, because
-the Worker carries the editorial rate limit and Caddy does not. Porting that
-limit to Go middleware is the blocking follow-up; deleting the Cloudflare
-path is what it unblocks. Nothing deploys there.
+**Cloudflare Containers is retired** and nothing deploys there.
+`wrangler.jsonc` and `deploy/cloudflare/` remain, still validated by CI, as
+the reference implementation of the editorial rate limit — which means the
+deployment currently has **no editorial rate limit in force**. Porting it to
+Go middleware is required before anything is publicly reachable
+([ENVIRONMENTS.md](ENVIRONMENTS.md)); deleting the Cloudflare path is what
+that unblocks.
 
 ## Semver discipline (pre-1.0)
 

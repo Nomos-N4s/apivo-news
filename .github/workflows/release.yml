@@ -146,25 +146,39 @@ jobs:
           echo "health_url=$health" >> "$GITHUB_OUTPUT"
           echo "$VERSION is a release to the '$channel' channel"
 
-      # THERE IS NO PRODUCTION ENVIRONMENT YET - no VPS, no Supabase project,
-      # no DNS record. A final semver tag would move the `prod` channel to an
-      # image no host tracks, publish a GitHub Release announcing it, and
-      # then fail at the probe having already told the world.
+      # A release to an environment that does not exist is refused HERE,
+      # before anything is published - and for EITHER channel, not just
+      # production.
       #
-      # So it is refused here instead, before anything is published, and the
-      # refusal names what is missing. The presence of APIVO_PROD_URL is the
-      # signal: filling it in is the last step of provisioning that host, and
-      # it is the thing the probe cannot work without.
+      # The order of the pipeline is what makes this necessary. The channel
+      # moves in `publish`, and the probe that checks the environment came up
+      # runs after it. So an environment with no URL recorded would have its
+      # channel moved first and only then fail as unprobed: the environment
+      # has changed, a GitHub Release may already announce it, and nothing
+      # verified any of it. That is precisely the state this pipeline exists
+      # to prevent.
       #
-      # Release candidates (v0.2.0-rc.1) are unaffected and are the whole
-      # point of the pre-1.0 phase: they exercise this identical pipeline
-      # against staging, so that the first production release is the first
-      # time this workflow has run to a NEW HOST, not the first time it has
-      # run at all.
-      - name: Refuse a production release while production does not exist
-        if: steps.mode.outputs.channel == 'prod' && steps.mode.outputs.health_url == ''
+      # Today BOTH urls are empty, so this guards release candidates exactly
+      # as much as it guards production. Writing it for `prod` alone would
+      # have been a guard against the case that cannot happen yet while
+      # leaving open the one that can.
+      #
+      # A url appearing in environments.env is the signal that an environment
+      # exists: filling it in is the last step of provisioning a host, and it
+      # is the thing the probe cannot work without.
+      - name: Refuse a release to an environment that does not exist
+        if: steps.mode.outputs.health_url == ''
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          CHANNEL: ${{ steps.mode.outputs.channel }}
         run: |
-          echo "::error::${{ steps.tag.outputs.version }} is a FINAL release, which targets production - and there is no production environment yet (APIVO_PROD_URL is empty in deploy/hetzner/environments.env). Nothing was published. Cut a release candidate instead (git tag -a v0.2.0-rc.1) to release to staging, or provision the production host first: docs/ENVIRONMENTS.md."
+          var="APIVO_$(printf '%s' "$CHANNEL" | tr '[:lower:]' '[:upper:]')_URL"
+          if [ "$CHANNEL" = prod ]; then
+            hint="Cut a release candidate instead (git tag -a v0.2.0-rc.1) to release to staging, or provision the production host first."
+          else
+            hint="Provision the staging host and record its URL first."
+          fi
+          echo "::error::$VERSION is a release to '$CHANNEL', and that environment does not exist yet ($var is empty in deploy/hetzner/environments.env). NOTHING was published and no channel moved. $hint See docs/ENVIRONMENTS.md."
           exit 1
 
   # The full CI matrix on the tagged commit, by calling ci.yml rather than

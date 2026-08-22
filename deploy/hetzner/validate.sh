@@ -199,6 +199,85 @@ check_caddyfile Caddyfile.prod \
     APIVO_PROD_HOST=validate.invalid \
     APIVO_PROD_ALT_HOST=www.validate.invalid
 
+# ---------------------------------------------------------------------------
+# The same-origin rewrite, asserted by RUNNING it.
+#
+# `caddy validate` cannot catch a broken rewrite. It accepts
+# `header_up Origin https://{http.request.host} ...` quite happily, and that
+# form silently rewrites nothing — header_up does not expand placeholders in
+# its search argument. A config that parses is not a config that works, and
+# the failure here is invisible until an editor cannot sign in.
+#
+# So the real snippet is loaded, with its upstreams pointed at echo sites in
+# the same Caddy process, and asked what the container would actually
+# receive. Both directions matter and both are asserted: the site's own
+# https origin MUST be rewritten (or every editorial form post is refused),
+# and a foreign origin MUST NOT be (or the CSRF check is defeated).
+# ---------------------------------------------------------------------------
+REWRITE="$TMP/rewrite"
+mkdir -p "$REWRITE"
+cp "$CADDY_DIR/snippets.caddy" "$REWRITE/snippets.caddy"
+cat > "$REWRITE/Caddyfile" <<'EOF'
+{
+	auto_https off
+	admin off
+}
+
+import /rw/snippets.caddy
+
+# The upstreams the routes snippet expects, answering with what they were
+# handed rather than with content.
+:8080 {
+	respond "api"
+}
+
+:4321 {
+	respond "origin={http.request.header.Origin}|referer={http.request.header.Referer}"
+}
+
+:9081 {
+	import apivo-routes 127.0.0.1 127.0.0.1 site.validate.invalid
+}
+EOF
+
+rewrite_probe() {
+    # rewrite_probe <header-line> — what the web container receives.
+    docker run --rm -v "$REWRITE:/rw:ro" --entrypoint sh "$CADDY_IMAGE" -c "
+        caddy start --config /rw/Caddyfile >/dev/null 2>&1
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            wget -q -O- --header='$1' http://127.0.0.1:9081/ 2>/dev/null && exit 0
+            sleep 1
+        done
+        exit 1
+    " 2>/dev/null || true
+}
+
+got=$(rewrite_probe "Origin: https://site.validate.invalid")
+case "$got" in
+"origin=http://site.validate.invalid"*)
+    echo "ok: this site's own https origin is rewritten (editorial form posts work)"
+    ;;
+"origin=https://site.validate.invalid"*)
+    fail "the same-origin rewrite does NOT fire: the web container still sees 'https://', so csrf.ts compares it against its own 'http://' origin and refuses every editorial form post — sign-in, approval, withdrawal, source registration"
+    ;;
+*)
+    fail "could not probe the same-origin rewrite (got: ${got:-nothing}); the Caddy image may be unavailable"
+    ;;
+esac
+
+got=$(rewrite_probe "Origin: https://evil.validate.invalid")
+case "$got" in
+"origin=https://evil.validate.invalid"*)
+    echo "ok: a foreign origin is left alone (the CSRF check still refuses it)"
+    ;;
+"")
+    fail "could not probe the same-origin rewrite with a foreign origin"
+    ;;
+*)
+    fail "a FOREIGN origin was rewritten to '$got' — the rewrite is not host-exact and the CSRF check can be defeated"
+    ;;
+esac
+
 # The snippets file is imported by both Caddyfiles, so its syntax is already
 # proved above — but it has no site addresses of its own and would never be
 # fmt-checked without this.

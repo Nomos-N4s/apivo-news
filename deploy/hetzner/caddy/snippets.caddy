@@ -48,9 +48,11 @@
 # in front. Caddy also matches on Go's already-decoded r.URL.Path, so the
 # encoding trick above resolves before any matcher sees it.
 #
-# The rate limit itself has NOT moved here. It is named as the one blocking
-# follow-up in docs/ENVIRONMENTS.md, and until it lands the Cloudflare Worker
-# is still the thing that carries it.
+# The rate limit itself has NOT moved here, and nothing else carries it: the
+# Worker that used to is no longer deployed. There is currently NO rate limit
+# on the editorial endpoints in this deployment. docs/ENVIRONMENTS.md names
+# porting it to Go middleware as a precondition for anything being publicly
+# reachable.
 # ---------------------------------------------------------------------------
 (apivo-routes) {
 	@api path /api/* /healthz /readyz
@@ -60,7 +62,48 @@
 	}
 
 	handle {
-		reverse_proxy {args[1]}:4321
+		reverse_proxy {args[1]}:4321 {
+			# ---------------------------------------------------------------
+			# The same-origin rewrite, without which every editorial form post
+			# is refused.
+			#
+			# The container speaks plain HTTP, and @astrojs/node builds
+			# `Astro.url` from the socket and the Host header — it ignores
+			# X-Forwarded-Proto entirely. So `Astro.url.origin` is
+			# `http://<host>` while the browser sends `Origin: https://<host>`,
+			# and web/src/lib/csrf.ts compares the two and says no. Sign-in,
+			# approval, withdrawal and source registration all break, and they
+			# break with a 403 that looks like a permissions problem rather
+			# than a proxy one.
+			#
+			# The Cloudflare Worker did this same rewrite for this same reason
+			# (rewriteSameSiteOriginHeaders in deploy/cloudflare/routing.js).
+			# Moving the proxy without moving the rewrite would have shipped a
+			# deployment where no editor can sign in.
+			#
+			# It is HOST-EXACT, and that is what preserves the CSRF property:
+			# only this site's own https origin is rewritten. A post from
+			# https://evil.example arrives still saying https://evil.example,
+			# matches nothing and is refused exactly as before. For any
+			# attacker origin O, the replacement can only produce
+			# `http://<host>` if O was already `https://<host>` — a
+			# near-miss like https://<host>.evil.example rewrites to
+			# http://<host>.evil.example, which still matches nothing.
+			#
+			# The host arrives as a SNIPPET ARGUMENT rather than as the
+			# request-time placeholder {http.request.host}, and that is not a
+			# style choice. `header_up` does not expand placeholders in its
+			# search argument — a find of "https://{http.request.host}" is
+			# matched literally, matches nothing, and silently rewrites
+			# nothing at all. Snippet arguments are substituted when the
+			# Caddyfile is parsed, so what reaches this directive is a plain
+			# string, which is the form that works. (`caddy validate` accepts
+			# both, which is why this is asserted by running it — see
+			# deploy/hetzner/validate.sh.)
+			# ---------------------------------------------------------------
+			header_up Origin https://{args[2]} http://{args[2]}
+			header_up Referer https://{args[2]} http://{args[2]}
+		}
 	}
 }
 
