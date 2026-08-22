@@ -1,0 +1,101 @@
+# A Postgres container on the host, layered over docker-compose.yml.
+#
+# Used by QA and Staging, by listing this file in COMPOSE_FILE (provision.sh
+# writes it). Production reaches Supabase and never loads this file.
+#
+# Staging is on this list for an economic reason, not a technical one: the
+# Supabase free tier is a single project, and the single project has to be
+# production. Pointing Staging at the production project instead would put
+# release-candidate migrations on production data, so a container is the
+# lesser cost. What it costs is real and worth naming — Staging no longer
+# rehearses the database production will actually use, so connection
+# limits, extension availability and Supabase-side policy are NOT exercised
+# before a final release. When a paid tier arrives, Staging moves back by
+# dropping this file from its COMPOSE_FILE and setting DATABASE_URL; no code
+# changes.
+#
+# ---------------------------------------------------------------------------
+# Why this container speaks TLS
+# ---------------------------------------------------------------------------
+#
+# The api refuses to start when APP_ENV=prod and DATABASE_URL carries an
+# sslmode that permits a cleartext session — `disable`, `allow`, `prefer`, or
+# absent (internal/platform/config: requireEncryptedDatabase). That check
+# exists because every DATABASE_URL example in this repository ends in
+# sslmode=disable, so the value most likely to be copied into a deployment is
+# the one that must never be there.
+#
+# The lazy way round it in QA is APP_ENV=dev. That would cost real fidelity:
+# `dev` also turns off JSON logging and, through web/src/lib/secure-request.ts
+# ("APP_ENV=prod is authoritative"), stops the Secure attribute going on every
+# cookie the app writes — on an environment that is served over https like
+# every other. QA would then be the one environment where a cookie bug cannot
+# reproduce.
+#
+# So the container gets a certificate instead and QA connects with
+# sslmode=require. The config gate accepts `require` and `verify-ca`
+# deliberately — it refuses cleartext, and leaves verification to the
+# operator. Here the "server" is a container on a network marked
+# `internal: true`, one hop from the client, so encryption without chain
+# verification is the honest setting: a self-signed certificate cannot prove
+# an identity, and pretending otherwise with verify-full would mean shipping a
+# CA bundle to make a local socket look like Supabase.
+#
+# The certificate is generated once by provision.sh, which also chowns the key
+# to the uid Postgres runs as *inside this image* rather than assuming one.
+# Postgres refuses to start on a key it does not own or that is group- or
+# world-readable, and that uid is an implementation detail of the image.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: apivo-${APIVO_ENV}-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${APIVO_PG_DB:-apivo}
+      POSTGRES_USER: ${APIVO_PG_USER:-apivo}
+      POSTGRES_PASSWORD: ${APIVO_PG_PASSWORD:?provision.sh generates this into the stack env file}
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/apivo/certs/postgres.crt
+      - -c
+      - ssl_key_file=/etc/apivo/certs/postgres.key
+    volumes:
+      - ${APIVO_ETC:-/etc/apivo}/${APIVO_ENV}/pg-certs:/etc/apivo/certs:ro
+      - pgdata:/var/lib/postgresql/data
+    # No `ports`. The data network is internal and this is the only service
+    # besides the api on it; nothing reaches Postgres from the host or the
+    # LAN. Use `apivoctl psql qa` for a shell (docs/ENVIRONMENTS.md).
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${APIVO_PG_USER:-apivo} -d ${APIVO_PG_DB:-apivo}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: ${APIVO_LOG_MAX_SIZE:-10m}
+        max-file: ${APIVO_LOG_MAX_FILE:-3}
+    deploy:
+      resources:
+        limits:
+          cpus: ${APIVO_PG_CPUS:-1.0}
+          memory: ${APIVO_PG_MEMORY:-512M}
+
+  # The api migrates the schema on boot, so it must not start against a
+  # Postgres that is still initialising. Declared here rather than in the base
+  # file because staging and production have no `postgres` service at all, and
+  # a depends_on naming a service that does not exist fails the whole config.
+  api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+    name: apivo-${APIVO_ENV}-pgdata

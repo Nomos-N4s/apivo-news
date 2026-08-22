@@ -1,0 +1,67 @@
+# The edge: one Caddy per host, in front of every environment on it.
+#
+# Layered with exactly one of the role overlays, which is what attaches Caddy
+# to the environment networks that exist on this host:
+#
+#   pre-production VPS   docker-compose.edge.yml + docker-compose.edge.preprod.yml
+#   production VPS       docker-compose.edge.yml + docker-compose.edge.prod.yml
+#
+# provision.sh writes the pair into COMPOSE_FILE in /etc/apivo/edge/stack.env.
+#
+# The edge is deliberately NOT reconciled from a registry channel like the
+# application stacks are. Its config is this repository's, it changes when a
+# human changes it, and a proxy that rolls itself forward automatically is a
+# proxy that can take every environment on the host down at once, including
+# the one serving the evidence of what broke.
+
+name: apivo-edge
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    container_name: apivo-edge-caddy
+    restart: unless-stopped
+    # The only ports published on the whole host. The firewall provision.sh
+    # installs admits them from Cloudflare's ranges only.
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file:
+      - ${APIVO_ETC:-/etc/apivo}/edge/caddy.env
+    volumes:
+      - ${APIVO_ETC:-/etc/apivo}/edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${APIVO_ETC:-/etc/apivo}/edge/snippets.caddy:/etc/caddy/snippets.caddy:ro
+      # The Cloudflare Origin Certificate and its key. Read-only, and the key
+      # is 0640 root:root on the host — Caddy runs as root in this image, and
+      # the mount is the only thing that reads it.
+      - ${APIVO_ETC:-/etc/apivo}/edge/certs:/etc/caddy/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: ${APIVO_LOG_MAX_SIZE:-10m}
+        max-file: ${APIVO_LOG_MAX_FILE:-3}
+    healthcheck:
+      # Caddy's own admin API on loopback inside the container. Proves the
+      # process is up and its config loaded, without depending on any
+      # upstream being healthy — a proxy whose backend is down is still a
+      # working proxy, and must not be restarted for it.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: ${APIVO_EDGE_CPUS:-1.0}
+          memory: ${APIVO_EDGE_MEMORY:-256M}
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  caddy-data:
+    name: apivo-edge-caddy-data
+  caddy-config:
+    name: apivo-edge-caddy-config

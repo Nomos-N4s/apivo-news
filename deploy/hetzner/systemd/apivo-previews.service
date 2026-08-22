@@ -1,0 +1,37 @@
+# Reconcile the running previews with the open pull requests.
+#
+# The list comes from the registry: CI publishes a `pr-<n>` tag when a pull
+# request opens and deletes it when the pull request closes, so this unit
+# creates and destroys environments without anything ever connecting to this
+# host.
+
+[Unit]
+Description=Reconcile per-pull-request preview environments
+Documentation=https://github.com/Nomos-N4s/apivo-news/blob/main/docs/ENVIRONMENTS.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/apivo/bin/apivo-previews
+
+# Creating a preview is a database plus two containers that must come up
+# healthy; several may appear at once when a batch of pull requests opens.
+TimeoutStartSec=900
+
+User=root
+ProtectSystem=strict
+ReadWritePaths=/var/lib/apivo /run/docker.sock
+# read-only, not yes: the GHCR credential lives in /root/.docker/config.json
+# and this unit lists tags with it. Same reason as apivo-reconcile@.service.
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=apivo-previews
+
+[Install]
+WantedBy=multi-user.target

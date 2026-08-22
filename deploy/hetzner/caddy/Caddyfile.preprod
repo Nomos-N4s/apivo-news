@@ -1,0 +1,99 @@
+# The pre-production host: QA and Staging, side by side on one VPS.
+#
+# Hostnames come from the environment so no domain is committed here —
+# provision.sh writes them into /etc/apivo/edge/caddy.env. Caddy refuses to
+# start on an unset {$VAR} in a site address rather than serving something
+# nobody meant, which is the failure mode to want.
+{
+	# Every site below presents a certificate this file names explicitly (a
+	# Cloudflare Origin Certificate — see the (origin-tls) snippet), so Caddy
+	# never issues one and never needs an ACME account or an email. What is
+	# switched off here is only the automatic :80 -> :443 redirect vhost:
+	# Cloudflare terminates the browser's TLS and always reaches this origin
+	# on 443, so a redirect listener would exist purely to be scanned.
+	auto_https disable_redirects
+
+	# Access logs as JSON on stdout, which the docker json-file driver
+	# rotates (deploy/hetzner/compose/docker-compose.edge.yml). A VPS has a
+	# finite disk and nothing sweeping it.
+	log {
+		output stdout
+		format json
+	}
+}
+
+import /etc/caddy/snippets.caddy
+
+# ---------------------------------------------------------------------------
+# QA — every push to main lands here, automatically, within a minute.
+# ---------------------------------------------------------------------------
+https://{$APIVO_QA_HOST} {
+	import origin-tls
+	import hardening
+	import crawler-fence
+	import apivo-routes apivo-qa-api apivo-qa-web {$APIVO_QA_HOST}
+}
+
+# ---------------------------------------------------------------------------
+# Staging — release candidates only (v0.2.0-rc.1 and friends).
+# ---------------------------------------------------------------------------
+https://{$APIVO_STAGING_HOST} {
+	import origin-tls
+	import hardening
+	import crawler-fence
+	import apivo-routes apivo-staging-api apivo-staging-web {$APIVO_STAGING_HOST}
+}
+
+# ---------------------------------------------------------------------------
+# Previews — one per open pull request, at pr-<n>.{$APIVO_PREVIEW_DOMAIN}.
+#
+# The origin certificate must cover this wildcard. A Cloudflare Origin
+# Certificate can be issued for *.example.com alongside the names above, so
+# this needs no ACME and no DNS API token on the host.
+#
+# The matcher is the security boundary: only ^pr-[0-9]+ reaches the routing
+# snippet, so no other label can be turned into a container name to proxy at.
+# Everything else on the wildcard is refused here rather than 502-ing
+# somewhere further in.
+#
+# It matches on the HOST PREFIX rather than on a label index, and that is not
+# a style preference. `{labels.N}` counts from the RIGHT, so the leftmost
+# label of a preview host is {labels.3} only when the preview domain has
+# exactly two labels. Point previews at a one-level domain — pr-1.example.com
+# rather than pr-1.qa.example.com — and {labels.3} is the EMPTY STRING: the
+# matcher never fires, every preview 403s, and the upstream degrades to
+# `apivo--api`. Nothing warns, because the config is still valid.
+#
+# The suffix needs no checking here: Caddy's `*` matches exactly one label, so
+# reaching this block already proves the host is <something>.<preview domain>
+# (a.b.example.com does not match *.example.com at all). Asserting the prefix
+# is therefore asserting the whole name.
+# ---------------------------------------------------------------------------
+https://*.{$APIVO_PREVIEW_DOMAIN} {
+	import origin-tls
+	import hardening
+
+	@preview header_regexp preview Host ^(pr-[0-9]+)\.
+	handle @preview {
+		import crawler-fence
+		import apivo-preview-routes
+	}
+
+	handle {
+		abort
+	}
+}
+
+# Anything arriving on an address this file does not name is refused without
+# naming what does live here. In practice that is a scan straight at the VPS
+# IP: Cloudflare only ever sends the two hostnames above, and the firewall
+# provision.sh installs only admits Cloudflare's ranges in the first place.
+# This is the third layer, not the first.
+:443 {
+	tls internal
+	abort
+}
+
+:80 {
+	abort
+}

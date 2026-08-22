@@ -1,0 +1,125 @@
+# The runtime, for every environment.
+#
+# ONE file serves qa, staging and production. The environment is a variable,
+# not a fork: `APIVO_ENV` names it, and everything that differs between
+# environments differs in the env files under /etc/apivo/<env>/ — never
+# here. That is deliberate. Three near-identical compose files drift the
+# moment one of them is edited in a hurry, and the whole point of a staging
+# environment is that it is shaped like production. Parity by construction
+# beats parity by discipline.
+#
+# What genuinely differs between environments:
+#
+#   qa       a Postgres container on this host (docker-compose.local-db.yml
+#            is layered on via COMPOSE_FILE), throwaway data
+#   staging  its own Supabase EU project, production-shaped
+#   prod     its own Supabase EU project, on its own VPS
+#
+# All three run APP_ENV=prod. That is not a mistake: `prod` in this codebase
+# means "hardened" — JSON logs, Secure cookies, a DATABASE_URL that must be
+# encrypted — not "the production instance". A QA environment that runs with
+# the guards off is a QA environment that cannot find the bugs the guards
+# would have caught.
+#
+# Images are ALWAYS pinned by digest. The reconciler
+# (deploy/hetzner/bin/apivo-reconcile) resolves the environment's channel
+# tag to a digest and writes it to /var/lib/apivo/<env>/images.env, which is
+# where ${APIVO_API_IMAGE} and ${APIVO_WEB_IMAGE} below come from. A tag is
+# what an environment *tracks*; a digest is what it *runs*.
+
+name: apivo-${APIVO_ENV}
+
+services:
+  # The Go API. Not published on any host port and not reachable from the
+  # edge network's outside — Caddy is the only thing that talks to it, over
+  # the compose network by container name. Same topology as every other
+  # deployment this project has had (specs/001-epiloyes-alpha/contracts):
+  # the API is not publicly routable, in any environment.
+  api:
+    image: ${APIVO_API_IMAGE:?the reconciler must pin an api image digest}
+    container_name: apivo-${APIVO_ENV}-api
+    restart: unless-stopped
+    # Secrets live in this file and are read by the Docker daemon, not by
+    # the reconciler: `env_file` keeps DATABASE_URL out of the reconciler's
+    # process environment and out of `docker compose config` output.
+    env_file:
+      - ${APIVO_ETC:-/etc/apivo}/${APIVO_ENV}/api.env
+    environment:
+      HTTP_ADDR: ":8080"
+      # Hardened everywhere. See the note at the top of this file.
+      APP_ENV: prod
+    networks:
+      - edge
+      - data
+    # A VPS has a finite disk and no platform sweeping logs away. Unbounded
+    # json-file logging is the single most common way a small host runs out
+    # of space, and it takes the whole box down with it, every environment
+    # on it at once.
+    logging:
+      driver: json-file
+      options:
+        max-size: ${APIVO_LOG_MAX_SIZE:-10m}
+        max-file: ${APIVO_LOG_MAX_FILE:-3}
+    # The image declares its own HEALTHCHECK (the binary probes itself), so
+    # nothing is restated here. `docker compose up -d --wait` honours it,
+    # which is what makes the reconciler's rollout gate real.
+    deploy:
+      resources:
+        limits:
+          cpus: ${APIVO_API_CPUS:-1.0}
+          memory: ${APIVO_API_MEMORY:-512M}
+    security_opt:
+      - no-new-privileges:true
+
+  # The Astro frontend. Also unpublished: Caddy fronts it.
+  web:
+    image: ${APIVO_WEB_IMAGE:?the reconciler must pin a web image digest}
+    container_name: apivo-${APIVO_ENV}-web
+    restart: unless-stopped
+    env_file:
+      - ${APIVO_ETC:-/etc/apivo}/${APIVO_ENV}/web.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4321"
+      # The frontend renders every page server-side from the API. On this
+      # deployment that is a private hop across the compose network by
+      # container name — no exit to the public internet and back, which is
+      # what the Cloudflare Containers shape forced (a container there is
+      # reachable only through its Durable Object, so the deployment's own
+      # public origin was the only address the web container had). Worth
+      # naming as a straight win of moving to a VPS.
+      API_BASE_URL: http://apivo-${APIVO_ENV}-api:8080
+      # Rendered in the footer's fine print, and the thing the release probe
+      # compares against. Pinned by the reconciler alongside the digests.
+      PUBLIC_APP_VERSION: ${APIVO_VERSION:-dev}
+    networks:
+      - edge
+    logging:
+      driver: json-file
+      options:
+        max-size: ${APIVO_LOG_MAX_SIZE:-10m}
+        max-file: ${APIVO_LOG_MAX_FILE:-3}
+    deploy:
+      resources:
+        limits:
+          cpus: ${APIVO_WEB_CPUS:-1.0}
+          memory: ${APIVO_WEB_MEMORY:-512M}
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  # Caddy joins this one, per environment, as an external network. Two
+  # environments on the same host therefore never share a network: qa cannot
+  # reach staging's containers, and a compromised dependency in qa gets no
+  # closer to staging's database than an outside attacker would.
+  edge:
+    name: apivo-${APIVO_ENV}-edge
+
+  # api <-> postgres only, and only where a local Postgres exists (qa).
+  # `internal: true` means no route to the internet from this network at
+  # all; the api reaches Supabase over `edge` in the environments that use
+  # it. Declared in every environment so the api's network list does not
+  # have to change between them.
+  data:
+    name: apivo-${APIVO_ENV}-data
+    internal: true

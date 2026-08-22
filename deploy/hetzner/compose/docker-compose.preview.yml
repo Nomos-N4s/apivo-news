@@ -1,0 +1,107 @@
+# One pull request, running.
+#
+# `APIVO_PREVIEW` is the preview's name — `pr-142` — and it comes from a
+# CHANNEL TAG IN THE REGISTRY, not from anything that reached this host over
+# the network. CI pushes `:pr-142` when the pull request opens or is pushed
+# to, and DELETES that tag when the pull request closes. The host lists the
+# tags every minute and converges: a tag with no stack gets one, a stack with
+# no tag is destroyed.
+#
+# That is what keeps previews inside the same pull-based model as everything
+# else. Teardown is not a webhook anyone could forge or forget to send; it is
+# the absence of a tag, and absence converges just as reliably as presence.
+#
+# Previews deliberately DO NOT get their own Postgres container. On one VPS
+# that would be N Postgres instances for N open pull requests, and the box
+# would fall over long before the pull requests did. They share one instance
+# (docker-compose.preview-db.yml) with a database each, created and dropped
+# by the reconciler. Separate database, separate schema, no cross-talk — the
+# isolation that matters for a preview, at a fraction of the memory.
+
+name: apivo-${APIVO_PREVIEW}
+
+services:
+  api:
+    image: ${APIVO_PREVIEW_API_IMAGE:?the preview reconciler must pin an api image digest}
+    container_name: apivo-${APIVO_PREVIEW}-api
+    restart: unless-stopped
+    # Written by the reconciler when the preview is created: DATABASE_URL for
+    # this pull request's own database, and nothing else that differs.
+    env_file:
+      - ${APIVO_STATE_DIR:-/var/lib/apivo}/previews/${APIVO_PREVIEW}/api.env
+    environment:
+      HTTP_ADDR: ":8080"
+      # Hardened, like every other environment. A preview that runs with the
+      # guards off cannot show you the bug the guards would have caught, which
+      # is the entire reason to look at one.
+      APP_ENV: prod
+      LOG_LEVEL: info
+      # A preview polls nothing and translates nothing. Feeds cost bandwidth
+      # and the translation provider costs real money per article, and neither
+      # tells a reviewer anything about the change in front of them. Both are
+      # off by the documented disable switch rather than left to a default.
+      POLL_INTERVAL: "0"
+      TRANSLATION_INTERVAL: "0"
+    networks:
+      - preview-edge
+      - preview-data
+    logging:
+      driver: json-file
+      options:
+        max-size: ${APIVO_PREVIEW_LOG_MAX_SIZE:-5m}
+        max-file: "2"
+    deploy:
+      resources:
+        limits:
+          cpus: ${APIVO_PREVIEW_API_CPUS:-0.5}
+          memory: ${APIVO_PREVIEW_API_MEMORY:-384M}
+    security_opt:
+      - no-new-privileges:true
+
+  web:
+    image: ${APIVO_PREVIEW_WEB_IMAGE:?the preview reconciler must pin a web image digest}
+    container_name: apivo-${APIVO_PREVIEW}-web
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4321"
+      API_BASE_URL: http://apivo-${APIVO_PREVIEW}-api:8080
+      PUBLIC_APP_VERSION: ${APIVO_PREVIEW_VERSION:-preview}
+      # Supabase Auth is deliberately absent. A preview signs nobody in: the
+      # editorial screens keep their fixture preview, which is the documented
+      # empty-value behaviour. Handing a throwaway environment built from an
+      # unreviewed branch the keys to a real auth project is not a trade worth
+      # making for the convenience of clicking through a sign-in.
+      PUBLIC_SUPABASE_URL: ""
+      PUBLIC_SUPABASE_ANON_KEY: ""
+    networks:
+      - preview-edge
+    logging:
+      driver: json-file
+      options:
+        max-size: ${APIVO_PREVIEW_LOG_MAX_SIZE:-5m}
+        max-file: "2"
+    deploy:
+      resources:
+        limits:
+          cpus: ${APIVO_PREVIEW_WEB_CPUS:-0.5}
+          memory: ${APIVO_PREVIEW_WEB_MEMORY:-384M}
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  # Shared by every preview and by Caddy, and external because Caddy joins it
+  # ONCE at boot. A network per preview would mean attaching the running proxy
+  # to a new network for every pull request opened, which is a restart of the
+  # thing standing in front of QA and Staging.
+  #
+  # So previews can reach one another. They are all equally unreviewed code
+  # from open branches, and what matters is that this network reaches neither
+  # QA, nor Staging, nor either of their databases.
+  preview-edge:
+    name: apivo-preview-edge
+    external: true
+
+  preview-data:
+    name: apivo-preview-data
+    external: true

@@ -1,0 +1,21 @@
+# Edge overlay for the production VPS: attaches Caddy to production's edge
+# network, and to nothing else.
+#
+# NOTHING RUNS HERE YET — there is no production VPS. See Caddyfile.prod.
+#
+# That production is alone on its host is the reason for a second VPS at all,
+# and it is not about load. It is that QA runs whatever was merged to main
+# minutes ago, and a host is a shared blast radius: one compromised
+# dependency with a shell in a QA container is `docker exec` away from
+# production's DATABASE_URL if they share a daemon. Two boxes, and that
+# sentence stops being true.
+
+services:
+  caddy:
+    networks:
+      prod-edge: {}
+
+networks:
+  prod-edge:
+    name: apivo-prod-edge
+    external: true

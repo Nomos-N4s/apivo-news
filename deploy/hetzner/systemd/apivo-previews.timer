@@ -1,0 +1,24 @@
+# Every minute, like the environment reconcilers.
+#
+# It is the same latency budget: a pull request opened now is clickable in
+# about the time its images take to build, plus up to a minute. And a closed
+# pull request's environment is gone within a minute of the tag being deleted,
+# which is what keeps a busy repository from filling the host with the
+# leftovers of merged work.
+
+[Unit]
+Description=Reconcile preview environments every minute
+Documentation=https://github.com/Nomos-N4s/apivo-news/blob/main/docs/ENVIRONMENTS.md
+
+[Timer]
+Unit=apivo-previews.service
+OnBootSec=90s
+OnUnitActiveSec=60s
+# Offset from the environment reconcilers so a preview rollout and a QA
+# rollout do not pull from the registry over the same uplink at the same
+# instant.
+RandomizedDelaySec=20s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

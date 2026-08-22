@@ -1,0 +1,271 @@
+#!/bin/sh
+# Every open pull request, running. And nothing else.
+#
+# Usage: apivo-previews
+#
+# The registry is the list. CI pushes `api:pr-142` and `web:pr-142` when a
+# pull request opens or is pushed to, and DELETES both tags when it closes.
+# This runs every minute, asks the registry which `pr-*` tags exist, and makes
+# the host match:
+#
+#   a tag with no stack   -> create the preview (database, then containers)
+#   a stack with no tag   -> destroy it, and drop its database
+#
+# Teardown is therefore the ABSENCE of something rather than the arrival of a
+# message. A webhook can be missed, dropped, delivered twice, or forged; an
+# absent tag converges every minute forever. It also means a preview outlives
+# neither its pull request nor a CI outage that forgot to clean up: the next
+# tick notices either way.
+#
+# ---------------------------------------------------------------------------
+# Exit codes
+#   0  converged (whether or not anything changed)
+#   1  the registry could not be listed, or a create/destroy failed
+#   2  configuration error - nothing was attempted
+# ---------------------------------------------------------------------------
+#
+# Overridable for the test suite, exactly as apivo-reconcile does:
+#   APIVO_DOCKER, APIVO_ETC, APIVO_STATE, APIVO_CURL
+set -eu
+
+DOCKER="${APIVO_DOCKER:-docker}"
+CURL="${APIVO_CURL:-curl}"
+ETC="${APIVO_ETC:-/etc/apivo}"
+STATE="${APIVO_STATE:-/var/lib/apivo}"
+
+CONF="$ETC/preview/stack.env"
+PREVIEW_STATE="$STATE/previews"
+
+log() {
+    _msg=$(printf '%s' "$3" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\n\r\t')
+    printf '{"level":"%s","event":"%s","preview":"%s","msg":"%s"}\n' "$1" "$2" "${4:-}" "$_msg"
+}
+
+die() {
+    log error "$1" "$2"
+    echo "::error::apivo-previews: $2" >&2
+    exit "${3:-1}"
+}
+
+[ -r "$CONF" ] || die config "no readable $CONF; this host does not serve previews (provision.sh creates it)" 2
+
+set -a
+# shellcheck source=/dev/null
+. "$CONF"
+set +a
+
+for _required in APIVO_REGISTRY APIVO_PREVIEW_PG_PASSWORD COMPOSE_FILE; do
+    eval "_v=\${$_required:-}"
+    [ -n "$_v" ] || die config "$CONF does not set $_required" 2
+done
+
+# How many previews this host will run at once. Each is two containers plus a
+# database, and the box also carries QA, Staging and the edge. Without a cap,
+# a busy afternoon of open pull requests is an outage for the environments
+# that matter.
+MAX="${APIVO_PREVIEW_MAX:-5}"
+PG_USER="${APIVO_PREVIEW_PG_USER:-apivo}"
+
+mkdir -p "$PREVIEW_STATE"
+
+# ---------------------------------------------------------------------------
+# What the registry says should exist.
+#
+# The Docker Registry v2 tag list, using the credential `docker login` already
+# stored. No GitHub token on this host and no inbound endpoint: the host reads
+# from the registry and can write nothing back to it, which is the same
+# one-directional property the application stacks have.
+# ---------------------------------------------------------------------------
+registry_auth() {
+    # The base64 user:token `docker login` wrote. Read at the point of use and
+    # never logged.
+    sed -n 's/.*"ghcr.io"[^}]*"auth"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+        "${DOCKER_CONFIG:-$HOME/.docker}/config.json" 2>/dev/null | head -n 1
+}
+
+list_preview_tags() {
+    # list_preview_tags <repository-path> - one `pr-<n>` tag per line.
+    #
+    # Returns NON-ZERO if the registry could not be asked, and that
+    # distinction is the most important line in this file. Teardown here is
+    # driven by absence, so a failure that came back as "no tags" instead of
+    # as an error would destroy every open pull request's preview at once, on
+    # nothing worse than a network blip. Every step therefore captures its
+    # output and checks its status, rather than ending the pipeline in a
+    # `grep || true` that reports success whatever happened upstream.
+    _repo="$1"
+    _auth=$(registry_auth)
+    [ -n "$_auth" ] || return 1
+
+    _tokresp=$($CURL -fsS --max-time 20 \
+        -H "Authorization: Basic $_auth" \
+        "https://ghcr.io/token?service=ghcr.io&scope=repository:$_repo:pull" 2>/dev/null) || return 1
+    _token=$(printf '%s' "$_tokresp" |
+        sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+    [ -n "$_token" ] || return 1
+
+    _body=$($CURL -fsS --max-time 20 -H "Authorization: Bearer $_token" \
+        "https://ghcr.io/v2/$_repo/tags/list" 2>/dev/null) || return 1
+
+    # Only NOW may an empty result mean "no previews", because the registry
+    # has answered.
+    printf '%s' "$_body" |
+        sed -n 's/.*"tags"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' |
+        tr ',' '\n' | tr -d '" ' | grep -E '^pr-[0-9]+$' || true
+}
+
+# The repository path without the registry host, which is what the v2 API
+# wants: ghcr.io/nomos-n4s/apivo-news -> nomos-n4s/apivo-news
+REPO_PATH=${APIVO_REGISTRY#ghcr.io/}
+
+if ! WANTED=$(list_preview_tags "$REPO_PATH/api"); then
+    die registry "cannot list preview tags for $REPO_PATH/api - the registry is unreachable or the credential has expired (docker login ghcr.io). No preview was created or destroyed." 1
+fi
+
+# Both images must exist for a preview to be runnable. A tag pair caught
+# half-published is skipped this tick and picked up on the next, exactly as
+# the application reconciler waits for a half-moved channel to settle.
+if ! WEB_TAGS=$(list_preview_tags "$REPO_PATH/web"); then
+    die registry "cannot list preview tags for $REPO_PATH/web - the registry is unreachable or the credential has expired (docker login ghcr.io). No preview was created or destroyed." 1
+fi
+
+DESIRED=""
+for tag in $WANTED; do
+    if printf '%s\n' "$WEB_TAGS" | grep -qx "$tag"; then
+        DESIRED="$DESIRED $tag"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# The cap, applied to the NEWEST pull requests.
+#
+# Highest number first, because a reviewer waiting on a preview is far more
+# likely to be waiting on the pull request opened this morning than on the one
+# that has been open for three weeks. What gets dropped is logged rather than
+# silently truncated: a preview that never appears and never says why is worse
+# than one that says it is queued.
+# ---------------------------------------------------------------------------
+# Guarded, because `printf '%s\n' $DESIRED` on an EMPTY list prints one empty
+# line, and the sed below would turn that into a preview named "pr-" and
+# dutifully try to start it.
+ORDERED=""
+if [ -n "$DESIRED" ]; then
+    # shellcheck disable=SC2086 # deliberate: $DESIRED is a space-separated
+    # list being split into one tag per line for the numeric sort below.
+    ORDERED=$(printf '%s\n' $DESIRED | sed 's/^pr-//' | sort -rn | sed 's/^/pr-/')
+fi
+KEEP=$(printf '%s\n' "$ORDERED" | head -n "$MAX")
+DROPPED=$(printf '%s\n' "$ORDERED" | tail -n +"$((MAX + 1))")
+[ -n "$DROPPED" ] && log warn capped "over the limit of $MAX concurrent previews; not starting: $(printf '%s' "$DROPPED" | tr '\n' ' ')"
+
+running_previews() {
+    for _d in "$PREVIEW_STATE"/*/; do
+        [ -d "$_d" ] || continue
+        _n=${_d%/}
+        printf '%s\n' "${_n##*/}"
+    done
+}
+
+compose_for() {
+    # compose_for <preview> <compose args...>
+    _p="$1"
+    shift
+    APIVO_PREVIEW="$_p" APIVO_STATE_DIR="$STATE" $DOCKER compose "$@"
+}
+
+psql_maint() {
+    # A statement against the shared preview Postgres, as the owner.
+    $DOCKER exec -e PGPASSWORD="$APIVO_PREVIEW_PG_PASSWORD" apivo-preview-postgres \
+        psql -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 -c "$1" >/dev/null 2>&1
+}
+
+db_name_for() {
+    # pr-142 -> apivo_pr_142. Digits only by construction (the tag pattern),
+    # so there is nothing here an identifier could be escaped with.
+    printf 'apivo_%s' "$(printf '%s' "$1" | tr '-' '_')"
+}
+
+FAILED=0
+
+create_preview() {
+    _p="$1"
+    _db=$(db_name_for "$_p")
+    log info creating "starting preview" "$_p"
+
+    if ! psql_maint "CREATE DATABASE $_db"; then
+        # Already there is fine - a previous tick may have got this far and
+        # then failed to start the containers.
+        psql_maint "SELECT 1 FROM pg_database WHERE datname = '$_db'" ||
+            {
+                log error create_failed "could not create the database $_db" "$_p"
+                FAILED=1
+                return 1
+            }
+    fi
+
+    mkdir -p "$PREVIEW_STATE/$_p"
+    # sslmode=require, like QA: the server is a container one hop away with a
+    # self-signed certificate, so encrypt without claiming to verify.
+    umask 077
+    cat > "$PREVIEW_STATE/$_p/api.env" <<EOF
+DATABASE_URL=postgres://$PG_USER:$APIVO_PREVIEW_PG_PASSWORD@apivo-preview-postgres:5432/$_db?sslmode=require
+EOF
+
+    APIVO_PREVIEW_API_IMAGE="$APIVO_REGISTRY/api:$_p"
+    APIVO_PREVIEW_WEB_IMAGE="$APIVO_REGISTRY/web:$_p"
+    APIVO_PREVIEW_VERSION="$_p"
+    export APIVO_PREVIEW_API_IMAGE APIVO_PREVIEW_WEB_IMAGE APIVO_PREVIEW_VERSION
+
+    if compose_for "$_p" up -d --remove-orphans --wait --wait-timeout "${APIVO_PREVIEW_WAIT:-120}" >/dev/null 2>&1; then
+        log info created "$_p is serving" "$_p"
+        return 0
+    fi
+
+    log error create_failed "the preview did not come up; leaving it for the next tick" "$_p"
+    FAILED=1
+    return 1
+}
+
+destroy_preview() {
+    _p="$1"
+    _db=$(db_name_for "$_p")
+    log info destroying "the pull request is closed or the tag is gone" "$_p"
+
+    APIVO_PREVIEW_API_IMAGE="none" APIVO_PREVIEW_WEB_IMAGE="none" \
+        compose_for "$_p" down --remove-orphans --volumes >/dev/null 2>&1 || true
+
+    # WITH (FORCE) because a container that has not finished dying still holds
+    # a connection, and a DROP that waits for it would leave the database
+    # behind on every teardown until somebody noticed the disk.
+    psql_maint "DROP DATABASE IF EXISTS $_db WITH (FORCE)" ||
+        log warn db_not_dropped "the database $_db could not be dropped" "$_p"
+
+    rm -rf "${PREVIEW_STATE:?}/$_p"
+    log info destroyed "$_p is gone" "$_p"
+}
+
+# ---------------------------------------------------------------------------
+# Converge.
+# ---------------------------------------------------------------------------
+for want in $KEEP; do
+    [ -n "$want" ] || continue
+    if [ -d "$PREVIEW_STATE/$want" ]; then
+        # Already up. `up -d` without --wait is the self-healing tick: a
+        # container that died comes back, and it is a no-op otherwise.
+        APIVO_PREVIEW_API_IMAGE="$APIVO_REGISTRY/api:$want" \
+            APIVO_PREVIEW_WEB_IMAGE="$APIVO_REGISTRY/web:$want" \
+            APIVO_PREVIEW_VERSION="$want" \
+            compose_for "$want" up -d --remove-orphans >/dev/null 2>&1 || true
+        continue
+    fi
+    create_preview "$want" || true
+done
+
+for have in $(running_previews); do
+    if ! printf '%s\n' "$KEEP" | grep -qx "$have"; then
+        destroy_preview "$have"
+    fi
+done
+
+[ "$FAILED" -eq 0 ] || exit 1
+exit 0

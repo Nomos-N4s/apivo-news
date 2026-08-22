@@ -1,0 +1,39 @@
+# The clock behind the deployment.
+#
+# Every minute, per environment. That interval is the whole latency budget
+# between "merged to main" and "running in QA" on this side of the pipeline —
+# the other side is however long the publish workflow takes to build and push
+# the images. A minute is short enough that an agent watching for its own
+# change does not have to wonder whether the mechanism is working, and long
+# enough that two registry HEAD requests a minute per environment is a
+# rounding error.
+#
+# There is no webhook and nothing listens for one. A push-based deploy needs
+# an inbound endpoint, a shared secret to forge, and a credential in CI that
+# can reach this host; this needs none of the three, and it converges after a
+# network partition without anyone re-triggering anything.
+
+[Unit]
+Description=Reconcile the apivo %i environment every minute
+Documentation=https://github.com/Nomos-N4s/apivo-news/blob/main/docs/ENVIRONMENTS.md
+
+[Timer]
+Unit=apivo-reconcile@%i.service
+
+# First tick a minute after boot: the Docker daemon has to be up, and the
+# containers' own `restart: unless-stopped` will have brought the last known
+# state back before this runs and confirms it.
+OnBootSec=60s
+
+# Counted from when the last run FINISHED, not when it started, so a slow
+# rollout never overlaps the next tick.
+OnUnitActiveSec=60s
+
+# QA and Staging both live on the pre-production host. Without this they tick
+# in lockstep and can pull two image sets over one uplink at the same moment;
+# the jitter costs nothing and removes the pile-up.
+RandomizedDelaySec=15s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

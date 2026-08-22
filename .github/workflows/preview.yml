@@ -1,0 +1,211 @@
+# A running copy of every open pull request.
+#
+# An agent's change reaching a reviewer used to require merging it, which made
+# `main` the place changes were first seen working. This is the fix: a pull
+# request gets pr-<n>.<preview domain> within a couple of minutes of being
+# opened, and loses it within a minute of being closed.
+#
+# ---------------------------------------------------------------------------
+# Teardown is a DELETED TAG, not a message
+# ---------------------------------------------------------------------------
+#
+# `closed` fires for a merge and for an abandonment alike, and all it does is
+# delete the two `pr-<n>` image tags. The host lists the tags every minute and
+# destroys any preview whose tag has gone (deploy/hetzner/bin/apivo-previews).
+#
+# That indirection is the point. A webhook straight to the host would need an
+# inbound endpoint, a secret to present, and would leak a preview forever the
+# one time it was dropped. An absent tag converges every minute, for as long
+# as the host is up, whether or not this job ever ran.
+name: preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per pull request, and cancellable: pushing three times in a minute should
+  # build the third one, not all three. This is the opposite choice from
+  # publish.yml, because nothing here can leave a channel half-moved - the
+  # worst a cancelled preview build does is leave the previous preview up.
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Closed: delete the tags. The host does the rest.
+  # ---------------------------------------------------------------------------
+  teardown:
+    # Same fork restriction as `publish` below, for the same reason and with
+    # the same consequence: a fork pull request never published preview tags,
+    # so there is nothing to delete when it closes.
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Delete this pull request's image tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          # The package name is the repository name plus the image, which is
+          # how publish.yml and preview both address GHCR.
+          repo=${GITHUB_REPOSITORY#*/}
+
+          # Packages live under /orgs/<owner>/ for an organisation and
+          # /users/<owner>/ for a personal account, and the wrong one answers
+          # 404. Guessing would make teardown fail SILENTLY on the account
+          # type nobody tested — previews would then leak until the host's cap
+          # evicted them, which looks like previews simply not working.
+          scope=""
+          for candidate in orgs users; do
+            if gh api "/$candidate/$OWNER/packages/container/$repo%2Fapi/versions" \
+              --jq 'length' >/dev/null 2>&1; then
+              scope="$candidate"
+              break
+            fi
+          done
+          if [ -z "$scope" ]; then
+            echo "::error::cannot read container package versions for '$OWNER' under either /orgs/ or /users/. The pr-$PR image tags were NOT deleted, so the host will keep this preview running until its cap evicts it. Check that GITHUB_TOKEN has packages:write and that the package exists."
+            exit 1
+          fi
+
+          deleted=0
+          for image in api web; do
+            pkg="$repo%2F$image"
+            # Find the version whose tags include pr-<n>, then delete it. A
+            # preview image has exactly one tag and no other environment ever
+            # points at it, so deleting the version is deleting the tag.
+            ids=$(gh api --paginate \
+              "/$scope/$OWNER/packages/container/$pkg/versions" \
+              --jq ".[] | select(.metadata.container.tags[]? == \"pr-$PR\") | .id" 2>/dev/null || true)
+            for id in $ids; do
+              if gh api -X DELETE "/$scope/$OWNER/packages/container/$pkg/versions/$id" >/dev/null 2>&1; then
+                echo "deleted $image:pr-$PR (version $id)"
+                deleted=$((deleted + 1))
+              else
+                echo "::error::could not delete $image:pr-$PR (version $id); the host will keep serving this preview"
+                exit 1
+              fi
+            done
+          done
+
+          # Zero is NOT an error. A pull request that never built a preview —
+          # closed before CI finished, or opened before previews existed — has
+          # nothing to delete, and the host is already not running one for it.
+          {
+            echo "## Preview \`pr-$PR\` torn down"
+            echo
+            echo "Removed $deleted image version(s) via /$scope/."
+            echo "The host destroys the environment and drops its database"
+            echo "within a minute of the tags disappearing."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Open or pushed to: build and publish, so the host can pick it up.
+  #
+  # NOT gated on the full CI matrix, deliberately. A preview is for looking at
+  # a change, and the change most worth looking at is often the one whose
+  # tests are still red. CI's verdict is on the pull request page; this is the
+  # thing next to it that you can click.
+  # ---------------------------------------------------------------------------
+  publish:
+    # NOT for pull requests from forks. GitHub grants those runs a READ-ONLY
+    # GITHUB_TOKEN whatever the `permissions:` block below asks for, so
+    # `packages: write` is not obtainable and the push to GHCR fails. This
+    # repository is public and allows forking, so that is a real path rather
+    # than a hypothetical one.
+    #
+    # Skipped rather than left to fail: a red cross on an outside
+    # contributor's first pull request is a poor way to say "previews are for
+    # branches in this repository". A maintainer who wants one pushes the
+    # branch here.
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Name this preview
+        id: what
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # Lowercased for the same reason publish.yml does it: an image
+          # reference must be lowercase and an owner need not be.
+          registry="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          echo "REGISTRY=$registry" >> "$GITHUB_ENV"
+          echo "tag=pr-$PR" >> "$GITHUB_OUTPUT"
+          echo "building preview pr-$PR"
+
+      # Stamped like any other build, so the footer and /healthz say which
+      # pull request this is rather than "dev".
+      - name: Stamp the version into the build context
+        run: printf 'pr-%s' '${{ github.event.pull_request.number }}' > VERSION
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the api image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/api:${{ steps.what.outputs.tag }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.what.outputs.tag }}
+            org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push the web image
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          push: true
+          tags: ${{ env.REGISTRY }}/web:${{ steps.what.outputs.tag }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.what.outputs.tag }}
+            org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Say where it will be
+        env:
+          TAG: ${{ steps.what.outputs.tag }}
+        run: |
+          . ./deploy/hetzner/environments.env
+          {
+            echo "## Preview: \`$TAG\`"
+            echo
+            if [ -n "${APIVO_PREVIEW_DOMAIN:-}" ]; then
+              echo "https://$TAG.$APIVO_PREVIEW_DOMAIN — live within about a minute."
+            else
+              echo "Images published. No preview host is configured yet"
+              echo "(APIVO_PREVIEW_DOMAIN is empty in deploy/hetzner/environments.env),"
+              echo "so nothing is serving them."
+            fi
+            echo
+            echo "It has its own database, no auth configured, and neither feed"
+            echo "polling nor translation running. It disappears when this pull"
+            echo "request closes."
+          } >> "$GITHUB_STEP_SUMMARY"

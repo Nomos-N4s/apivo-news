@@ -1,0 +1,214 @@
+# Shared Caddy snippets. Imported by Caddyfile.preprod and Caddyfile.prod so
+# the routing rule and the response hardening are written once and cannot
+# drift between environments.
+
+# ---------------------------------------------------------------------------
+# (hardening) — what every response from every environment carries.
+# ---------------------------------------------------------------------------
+(hardening) {
+	encode zstd gzip
+
+	header {
+		# The deployment is https-only and says so. `preload` is deliberately
+		# NOT among these: submitting a domain to the browser-vendor preload
+		# list is a commitment that outlives the deployment, and it is not
+		# reversible on any useful timescale.
+		#
+		# This mattered on Cloudflare only for a custom domain (workers.dev
+		# sits under an HSTS-preloaded TLD). Here it matters on every
+		# hostname: nothing upgrades a first plain-http visit for us.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+		# Caddy names itself in every response otherwise. The version of the
+		# reverse proxy is not information a caller needs.
+		-Server
+	}
+}
+
+# ---------------------------------------------------------------------------
+# (crawler-fence) — FR-013, founder decision D6.
+#
+# The retired Worker refused declared crawlers at the edge, and it did so for
+# a specific reason that survives the move: `/api/…` is routed AROUND the web
+# container, and web/src/middleware.ts — the fence everything else relies on
+# — ships inside that container. The Go api has no inbound User-Agent check.
+# Without this block, `curl -H 'User-Agent: GPTBot' https://<host>/api/v1/front`
+# returns the article corpus as JSON on every environment and every preview,
+# where the Worker returned 403.
+#
+# Applied to the whole site, as the Worker did, so it covers the HTML pages
+# too. That is deliberate duplication: D6 says the fence is never the sole
+# enforcement, and the copy in the web container stays.
+#
+# `Vary: User-Agent` because the same URL answers differently by User-Agent
+# and a shared cache must never hand one audience the other's response.
+#
+# THE LIST IS DUPLICATED — a third copy, alongside deploy/cloudflare/routing.js
+# and web/src/middleware.ts. deploy/hetzner/validate.sh asserts this one and
+# routing.js's agree, so the copies cannot drift silently. The way to get back
+# to one copy is to move the fence into Go middleware on the api, next to the
+# rate limiter that belongs there for the same reason.
+# ---------------------------------------------------------------------------
+(crawler-fence) {
+	@crawler header_regexp User-Agent (?i)(GPTBot|ClaudeBot|CCBot|Google-Extended|Bytespider|PerplexityBot|Amazonbot|meta-externalagent|ia_archiver|archive\.org_bot|Googlebot|Bingbot|DuckDuckBot|Baiduspider|YandexBot|Applebot)
+	handle @crawler {
+		header Vary User-Agent
+		respond 403
+	}
+}
+
+# ---------------------------------------------------------------------------
+# (apivo-routes) — which container answers.
+#
+# Replaces the path routing that deploy/cloudflare/routing.js did, with the
+# same split: the API answers /api/…, /healthz and /readyz; the Astro
+# frontend answers everything else. The API is not published on a host port
+# in any environment and this is the only thing that talks to it.
+#
+# The Worker went to some length to decode the path once and collapse
+# repeated slashes before testing it, because /api/v1/%65ditorial/queue is
+# editorial to the Go router and looked like nothing in particular to a
+# naive prefix test. That care was load-bearing for the Worker's RATE LIMIT,
+# which was expressed as an inversion over paths — a path that slipped past
+# the test went unlimited.
+#
+# It is not load-bearing here, and the difference is worth stating rather
+# than leaving to be rediscovered. This snippet only chooses an upstream:
+# every /api/… path lands on the Go router either way, and what an editorial
+# route requires — a valid JWT, and the editor role enforced a second time
+# by the database — is enforced in Go, by the same code, whatever proxy is
+# in front. Caddy also matches on Go's already-decoded r.URL.Path, so the
+# encoding trick above resolves before any matcher sees it.
+#
+# The rate limit itself has NOT moved here, and nothing else carries it: the
+# Worker that used to is no longer deployed. There is currently NO rate limit
+# on the editorial endpoints in this deployment. docs/ENVIRONMENTS.md names
+# porting it to Go middleware as a precondition for anything being publicly
+# reachable.
+# ---------------------------------------------------------------------------
+(apivo-routes) {
+	@api path /api/* /healthz /readyz
+
+	handle @api {
+		reverse_proxy {args[0]}:8080
+	}
+
+	handle {
+		reverse_proxy {args[1]}:4321 {
+			# ---------------------------------------------------------------
+			# The same-origin rewrite, without which every editorial form post
+			# is refused.
+			#
+			# The container speaks plain HTTP, and @astrojs/node builds
+			# `Astro.url` from the socket and the Host header — it ignores
+			# X-Forwarded-Proto entirely. So `Astro.url.origin` is
+			# `http://<host>` while the browser sends `Origin: https://<host>`,
+			# and web/src/lib/csrf.ts compares the two and says no. Sign-in,
+			# approval, withdrawal and source registration all break, and they
+			# break with a 403 that looks like a permissions problem rather
+			# than a proxy one.
+			#
+			# The Cloudflare Worker did this same rewrite for this same reason
+			# (rewriteSameSiteOriginHeaders in deploy/cloudflare/routing.js).
+			# Moving the proxy without moving the rewrite would have shipped a
+			# deployment where no editor can sign in.
+			#
+			# It is HOST-EXACT, and that is what preserves the CSRF property:
+			# only this site's own https origin is rewritten. A post from
+			# https://evil.example arrives still saying https://evil.example,
+			# matches nothing and is refused exactly as before. For any
+			# attacker origin O, the replacement can only produce
+			# `http://<host>` if O was already `https://<host>` — a
+			# near-miss like https://<host>.evil.example rewrites to
+			# http://<host>.evil.example, which still matches nothing.
+			#
+			# The host arrives as a SNIPPET ARGUMENT rather than as the
+			# request-time placeholder {http.request.host}, and that is not a
+			# style choice. `header_up` does not expand placeholders in its
+			# search argument — a find of "https://{http.request.host}" is
+			# matched literally, matches nothing, and silently rewrites
+			# nothing at all. Snippet arguments are substituted when the
+			# Caddyfile is parsed, so what reaches this directive is a plain
+			# string, which is the form that works. (`caddy validate` accepts
+			# both, which is why this is asserted by running it — see
+			# deploy/hetzner/validate.sh.)
+			# ---------------------------------------------------------------
+			header_up Origin https://{args[2]} http://{args[2]}
+			header_up Referer https://{args[2]} http://{args[2]}
+		}
+	}
+}
+
+# ---------------------------------------------------------------------------
+# (origin-tls) — the certificate Cloudflare's proxy connects to.
+#
+# A Cloudflare Origin Certificate: free, valid for years, trusted by
+# Cloudflare and by nothing else, which is exactly right for a certificate
+# that should only ever be presented to Cloudflare. Set the zone to
+# "Full (strict)" so Cloudflare verifies it.
+#
+# provision.sh installs it. There is no ACME here on purpose: HTTP-01 through
+# an orange-clouded record is unreliable, and DNS-01 would mean a Cloudflare
+# API token with DNS edit rights sitting on the VPS — a much larger key than
+# the one problem it solves. docs/ENVIRONMENTS.md records how to move to
+# DNS-01 later if wildcard per-PR preview hostnames make it worth it.
+# ---------------------------------------------------------------------------
+(origin-tls) {
+	tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key
+}
+
+# ---------------------------------------------------------------------------
+# (apivo-preview-routes) — one open pull request, at pr-<n>.<preview domain>.
+#
+# Same split as (apivo-routes): the API answers /api/…, /healthz and /readyz,
+# the frontend answers everything else. The upstream is derived from the
+# hostname at request time, so a pull request opening does not require the
+# proxy in front of QA and Staging to be restarted.
+#
+# {re.preview.1} is the `pr-<n>` captured by the @preview matcher in the site
+# block that imports this. The caller does not get to choose it freely: that
+# matcher admits only ^pr-[0-9]+ , so `apivo-qa-api.example.com` is refused
+# rather than turned into a container name.
+#
+# It is a CAPTURE and not {labels.N} because a label index counts from the
+# right, and so silently depends on how deep the preview domain is. See the
+# long note in Caddyfile.preprod; the short version is that {labels.3} is
+# correct for pr-1.qa.example.com and EMPTY for pr-1.example.com, and the
+# difference is invisible to `caddy validate`.
+#
+# ---------------------------------------------------------------------------
+# WHAT A PREVIEW DELIBERATELY DOES NOT DO
+# ---------------------------------------------------------------------------
+#
+# There is no Origin/Referer rewrite here, so a preview's editorial FORM POSTS
+# would be refused by web/src/lib/csrf.ts — the mismatch (apivo-routes) exists
+# to fix.
+#
+# It is absent because it cannot be made to work here and be verifiable.
+# `header_up` does not expand placeholders in its search argument, so the
+# per-request hostname cannot be used; the named environments pass their host
+# as a parse-time snippet argument instead, and a wildcard site has no single
+# host to pass. The regexp form (`re:` with a capture reference) does not
+# substitute in Caddy 2.10 — tested against `$1`, `{re.1}` and
+# `{http.regexp.<name>.1}`, all of which leave the header untouched.
+#
+# It costs nothing that a reviewer needs, because a preview ships with
+# PUBLIC_SUPABASE_URL empty (docker-compose.preview.yml): nobody can sign in,
+# the editorial screens serve their fixture preview, and no authenticated POST
+# is reachable to be refused. Reader pages are GET and work normally.
+#
+# If previews ever need working editorial forms, the fix is the one that was
+# always better anyway: make the same-origin check independent of the proxy,
+# in web/src/lib/, rather than compensating for it in three proxies.
+# ---------------------------------------------------------------------------
+(apivo-preview-routes) {
+	@preview-api path /api/* /healthz /readyz
+
+	handle @preview-api {
+		reverse_proxy apivo-{re.preview.1}-api:8080
+	}
+
+	handle {
+		reverse_proxy apivo-{re.preview.1}-web:4321
+	}
+}
