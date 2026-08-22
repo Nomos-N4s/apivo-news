@@ -358,7 +358,13 @@ PREVIEW="$TMP/preview"
 mkdir -p "$PREVIEW"
 cp "$CADDY_DIR/snippets.caddy" "$PREVIEW/snippets.caddy"
 
-preview_matcher=$(sed -n '/^https:\/\/\*\.{\$APIVO_PREVIEW_DOMAIN}/,/^}/p' \
+# Matched on `https://*.` rather than on the variable name: the site address
+# is the only wildcard site in the file, and naming the variable here would
+# put a `$` inside single quotes for no gain.
+preview_site_count=$(grep -c '^https://\*\.' "$CADDY_DIR/Caddyfile.preprod" || true)
+[ "$preview_site_count" = 1 ] ||
+    fail "expected exactly one wildcard site in Caddyfile.preprod, found $preview_site_count; the preview checks below lift their matcher from the first one and may be testing the wrong block"
+preview_matcher=$(sed -n '/^https:\/\/\*\./,/^}/p' \
     "$CADDY_DIR/Caddyfile.preprod" |
     sed -n 's/^[[:space:]]*\(@preview .*\)$/\1/p' | head -n 1)
 if [ -z "$preview_matcher" ]; then
