@@ -80,15 +80,29 @@ jobs:
           # type nobody tested — previews would then leak until the host's cap
           # evicted them, which looks like previews simply not working.
           scope=""
+          probe_errors=""
           for candidate in orgs users; do
-            if gh api "/$candidate/$OWNER/packages/container/$repo%2Fapi/versions" \
-              --jq 'length' >/dev/null 2>&1; then
+            # Each attempt's error is KEPT. One of the two is expected to fail
+            # — an owner is an organisation or a user, not both — so they are
+            # only printed if BOTH fail, at which point they are the whole
+            # diagnosis. This is the same mistake the delete loop below used
+            # to make, and it was still here after that one was fixed.
+            if err=$(gh api "/$candidate/$OWNER/packages/container/$repo%2Fapi/versions" \
+              --jq 'length' 2>&1); then
               scope="$candidate"
               break
             fi
+            probe_errors="$probe_errors
+            /$candidate/: $err"
           done
           if [ -z "$scope" ]; then
-            echo "::error::cannot read container package versions for '$OWNER' under either /orgs/ or /users/. The pr-$PR image tags were NOT deleted, so the host will keep this preview running until its cap evicts it. Check that GITHUB_TOKEN has packages:write and that the package exists."
+            if [ "$USING_PAT" = "true" ]; then
+              cred="the PREVIEW_CLEANUP_TOKEN secret (it needs read:packages, and delete:packages to do the deleting)"
+            else
+              cred="GITHUB_TOKEN, which often cannot read another account's packages - configure a PREVIEW_CLEANUP_TOKEN secret with read:packages and delete:packages"
+            fi
+            echo "::error::cannot read container package versions for '$OWNER' under either /orgs/ or /users/. The pr-$PR image tags were NOT deleted, so a host would keep this preview running until its cap evicts it. Check $cred, and that the package exists."
+            printf '%s\n' "$probe_errors"
             exit 1
           fi
 
@@ -99,9 +113,21 @@ jobs:
             # Find the version whose tags include pr-<n>, then delete it. A
             # preview image has exactly one tag and no other environment ever
             # points at it, so deleting the version is deleting the tag.
-            ids=$(gh api --paginate \
+            # A FAILED listing must not look like an empty one. `|| true`
+            # with stderr discarded made the two identical: a listing that
+            # errored produced no ids, deleted nothing, and reported
+            # "0 versions removed" as success — a green check over a preview
+            # that outlives its pull request, which is the single outcome
+            # this whole mechanism exists to prevent. It is the same trap
+            # apivo-previews is written around on the host side.
+            if ! ids=$(gh api --paginate \
               "/$scope/$OWNER/packages/container/$pkg/versions" \
-              --jq ".[] | select(.metadata.container.tags[]? == \"pr-$PR\") | .id" 2>/dev/null || true)
+              --jq ".[] | select(.metadata.container.tags[]? == \"pr-$PR\") | .id" 2>&1); then
+              echo "::warning::could not list versions of $image; nothing was deleted for it"
+              printf '%s\n' "$ids" | sed 's/^/    /'
+              failed=$((failed + 1))
+              continue
+            fi
             for id in $ids; do
               # The API's own error is CAPTURED, not discarded. An earlier
               # version sent it to /dev/null, so the one run that failed for
