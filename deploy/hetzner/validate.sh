@@ -113,6 +113,47 @@ check_env staging docker-compose.yml
 check_env prod docker-compose.yml
 
 # ---------------------------------------------------------------------------
+# The preview stacks.
+#
+# A preview is one pull request, named by a registry tag. Both files are
+# rendered here so a typo in either is a red pull request rather than a
+# preview that never appears and never says why.
+# ---------------------------------------------------------------------------
+APIVO_PREVIEW=pr-1
+APIVO_PREVIEW_API_IMAGE=ghcr.io/nomos-n4s/apivo-news/api:pr-1
+APIVO_PREVIEW_WEB_IMAGE=ghcr.io/nomos-n4s/apivo-news/web:pr-1
+APIVO_PREVIEW_PG_PASSWORD=validate-only
+APIVO_STATE_DIR="$TMP/state"
+export APIVO_PREVIEW APIVO_PREVIEW_API_IMAGE APIVO_PREVIEW_WEB_IMAGE
+export APIVO_PREVIEW_PG_PASSWORD APIVO_STATE_DIR
+mkdir -p "$APIVO_STATE_DIR/previews/pr-1" "$APIVO_ETC/preview/pg-certs"
+: > "$APIVO_STATE_DIR/previews/pr-1/api.env"
+
+if preview=$(docker compose -f "$COMPOSE_DIR/docker-compose.preview.yml" config 2>&1); then
+    echo "ok: the preview stack parses"
+    printf '%s' "$preview" | grep -q -F 'apivo-pr-1-api' ||
+        fail "the preview stack does not name its containers after the pull request"
+    printf '%s' "$preview" | grep -q 'published:' &&
+        fail "a preview publishes a host port; previews are reachable only through Caddy"
+    # A preview must not poll feeds or spend translation budget: it exists to
+    # be looked at, and both of those cost money or bandwidth per open pull
+    # request.
+    printf '%s' "$preview" | grep -q 'POLL_INTERVAL: *"0"' ||
+        fail "a preview does not disable feed polling"
+    printf '%s' "$preview" | grep -q 'TRANSLATION_INTERVAL: *"0"' ||
+        fail "a preview does not disable the translation pipeline"
+    echo "ok: the preview is unpublished, and polls and translates nothing"
+else
+    fail "the preview stack does not parse: $preview"
+fi
+
+if out=$(docker compose -f "$COMPOSE_DIR/docker-compose.preview-db.yml" config 2>&1); then
+    echo "ok: the shared preview database parses"
+else
+    fail "the shared preview database does not parse: $out"
+fi
+
+# ---------------------------------------------------------------------------
 # The edge, in both host roles.
 # ---------------------------------------------------------------------------
 : > "$APIVO_ETC/edge/caddy.env"
@@ -202,7 +243,8 @@ check_caddyfile() {
 
 check_caddyfile Caddyfile.preprod \
     APIVO_QA_HOST=qa.validate.invalid \
-    APIVO_STAGING_HOST=staging.validate.invalid
+    APIVO_STAGING_HOST=staging.validate.invalid \
+    APIVO_PREVIEW_DOMAIN=qa.validate.invalid
 check_caddyfile Caddyfile.prod \
     APIVO_PROD_HOST=validate.invalid \
     APIVO_PROD_ALT_HOST=www.validate.invalid

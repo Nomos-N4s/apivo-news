@@ -42,6 +42,32 @@ https://{$APIVO_STAGING_HOST} {
 	import apivo-routes apivo-staging-api apivo-staging-web {$APIVO_STAGING_HOST}
 }
 
+# ---------------------------------------------------------------------------
+# Previews — one per open pull request, at pr-<n>.{$APIVO_PREVIEW_DOMAIN}.
+#
+# The origin certificate must cover this wildcard. A Cloudflare Origin
+# Certificate can be issued for *.qa.example.com alongside the names above, so
+# this needs no ACME and no DNS API token on the host.
+#
+# The `expression` matcher is the security boundary: only ^pr-[0-9]+$ reaches
+# the routing snippet, so no other label can be turned into a container name
+# to proxy at. Everything else on the wildcard is refused here rather than
+# 502-ing somewhere further in.
+# ---------------------------------------------------------------------------
+https://*.{$APIVO_PREVIEW_DOMAIN} {
+	import origin-tls
+	import hardening
+
+	@preview expression {labels.3}.matches('^pr-[0-9]+$')
+	handle @preview {
+		import apivo-preview-routes
+	}
+
+	handle {
+		abort
+	}
+}
+
 # Anything arriving on an address this file does not name is refused without
 # naming what does live here. In practice that is a scan straight at the VPS
 # IP: Cloudflare only ever sends the two hostnames above, and the firewall

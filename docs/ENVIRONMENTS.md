@@ -143,6 +143,49 @@ the version it reports matches. If it does not converge within a few minutes,
 the reconciler refused something and said why — ask a human to read
 `journalctl -u apivo-reconcile@qa`.
 
+## Previews: one environment per open pull request
+
+A pull request gets `pr-142.<preview domain>` a couple of minutes after it is
+opened, and loses it within a minute of being closed — merged or abandoned,
+the same path either way.
+
+This exists because without it, **the only way to see a change running is to
+merge it**, which makes `main` the place changes are first tried. At any real
+rate of merging, QA then becomes a blur in which nobody can say whose change
+broke what.
+
+**Teardown is a deleted tag, not a message.** CI publishes `api:pr-142` and
+`web:pr-142` when the pull request opens or is pushed to, and deletes both
+when it closes. The host lists `pr-*` tags every minute and converges: a tag
+with no stack gets one, a stack with no tag is destroyed. A webhook straight
+to the host would need an inbound endpoint and a secret, and would leak an
+environment forever the one time it was dropped. An absent tag converges every
+minute regardless.
+
+That design has one dangerous edge, and it is worth naming because the code is
+written around it: **a registry that cannot be reached must be an error, never
+an empty list.** An empty list means "every pull request is closed" and tears
+everything down. `apivo-previews` therefore checks the status of every call
+rather than ending its pipeline in a `grep || true`, and
+[its test suite](../deploy/hetzner/bin/apivo-previews_test.sh) spends four
+assertions on exactly that distinction.
+
+| | |
+|---|---|
+| **Database** | one shared Postgres, a database per pull request, dropped on teardown. Its data is on a tmpfs — a preview's contents are worth nothing once the pull request closes. |
+| **Auth** | none. `PUBLIC_SUPABASE_URL` is empty, so the editorial screens serve their fixture preview and nobody signs in. A throwaway environment built from an unreviewed branch does not get keys to a real auth project. |
+| **Ingestion** | off. `POLL_INTERVAL=0` and `TRANSLATION_INTERVAL=0`: feeds cost bandwidth and translation costs real money per article, per open pull request, and neither tells a reviewer anything. |
+| **Cap** | `APIVO_PREVIEW_MAX`, default 5, newest pull requests first. Over the cap the host logs which ones it is not starting rather than silently dropping them. |
+| **Isolation** | previews share a network with each other and reach neither QA, Staging, nor either database. |
+
+**Editorial form posts do not work in a preview**, and that is a stated
+limitation rather than an oversight: the wildcard site cannot do the
+same-origin rewrite the named environments do (the reasons, and what was
+tested, are in [snippets.caddy](../deploy/hetzner/caddy/snippets.caddy)). It
+costs nothing today because a preview has no auth to sign in with. If previews
+ever need working editorial forms, the fix is the better one anyway — make the
+same-origin check independent of the proxy, in `web/src/lib/`.
+
 ## Provisioning a host
 
 ```sh
@@ -302,9 +345,6 @@ against. Deleting `deploy/cloudflare/` is what that port unblocks.
 
 ## Deferred, deliberately
 
-- **Per-PR preview environments** (`pr-137.qa.<domain>`), so an agent can see
-  its own change running before it merges. The biggest remaining unlock, and
-  the one thing that would justify wildcard certificates and therefore DNS-01.
 - **The production host.** Provision it when there is something to protect.
 - **Backups.** Supabase covers staging and production; QA is fixtures and
   deliberately disposable. Nothing on a VPS holds state that matters yet —

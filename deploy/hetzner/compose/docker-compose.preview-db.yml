@@ -1,0 +1,72 @@
+# One Postgres for every preview, with a database each.
+#
+# Brought up once by provision.sh and left alone. The reconciler creates
+# `apivo_pr_142` when a preview appears and drops it when the preview goes,
+# so a pull request gets a schema of its own without the host getting another
+# Postgres process.
+#
+# Its data lives in a tmpfs. Preview data is worth nothing the moment the
+# pull request closes, and a tmpfs means a reboot leaves no orphaned volumes
+# to sweep up and no disk consumed by branches nobody merged. The cost is
+# that the previews are empty after a reboot — which is correct, because
+# the api migrates its schema on boot and a preview has no state anyone
+# should be attached to.
+#
+# TLS, like QA's, so previews run APP_ENV=prod with sslmode=require and are
+# shaped like every other environment.
+
+name: apivo-preview-db
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: apivo-preview-postgres
+    restart: unless-stopped
+    environment:
+      # The maintenance database. Per-preview databases are created inside
+      # this instance by the reconciler.
+      POSTGRES_DB: postgres
+      POSTGRES_USER: ${APIVO_PREVIEW_PG_USER:-apivo}
+      POSTGRES_PASSWORD: ${APIVO_PREVIEW_PG_PASSWORD:?provision.sh generates this}
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/apivo/certs/postgres.crt
+      - -c
+      - ssl_key_file=/etc/apivo/certs/postgres.key
+      # Every preview holds a pool against this one instance, so the default
+      # 100 is the ceiling on how many previews can be up at once before
+      # connections start being refused. Raised to match the cap the
+      # reconciler enforces, with room to spare.
+      - -c
+      - max_connections=200
+    volumes:
+      - ${APIVO_ETC:-/etc/apivo}/preview/pg-certs:/etc/apivo/certs:ro
+    tmpfs:
+      # Nothing here survives a reboot, on purpose. See the header.
+      - /var/lib/postgresql/data:size=${APIVO_PREVIEW_PG_TMPFS:-512m}
+    networks:
+      - preview-data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${APIVO_PREVIEW_PG_USER:-apivo} -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+    deploy:
+      resources:
+        limits:
+          cpus: ${APIVO_PREVIEW_PG_CPUS:-1.0}
+          memory: ${APIVO_PREVIEW_PG_MEMORY:-512M}
+
+networks:
+  preview-data:
+    name: apivo-preview-data
+    external: true

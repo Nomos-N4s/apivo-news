@@ -97,13 +97,14 @@ worker-validate:
 # digest mismatch and the version mismatch are all exercised without a host.
 hetzner-test:
 	sh deploy/hetzner/bin/apivo-reconcile_test.sh
+	sh deploy/hetzner/bin/apivo-previews_test.sh
 
 ## hetzner-validate: prove the whole VPS configuration without a VPS (matches CI)
 # Every environment's compose configuration rendered and asserted, plus both
 # Caddyfiles through `caddy validate`. This is to the Hetzner deployment what
 # worker-validate is to the Cloudflare one.
 hetzner-validate: hetzner-test
-	shellcheck -s sh deploy/hetzner/bin/apivo-reconcile deploy/hetzner/bin/apivo-reconcile_test.sh deploy/hetzner/bin/apivoctl deploy/hetzner/provision.sh deploy/hetzner/validate.sh scripts/env_status.sh
+	shellcheck -s sh deploy/hetzner/bin/apivo-reconcile deploy/hetzner/bin/apivo-reconcile_test.sh deploy/hetzner/bin/apivo-previews deploy/hetzner/bin/apivo-previews_test.sh deploy/hetzner/bin/apivoctl deploy/hetzner/provision.sh deploy/hetzner/validate.sh scripts/env_status.sh
 	sh deploy/hetzner/validate.sh
 
 ## env-status: what every environment is actually serving, right now

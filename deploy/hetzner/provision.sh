@@ -123,6 +123,7 @@ say "Installing to $PREFIX"
 
 mkdir -p "$PREFIX/bin" "$PREFIX/compose" "$PREFIX/caddy" "$STATE"
 install -m 0755 "$HERE/bin/apivo-reconcile" "$PREFIX/bin/apivo-reconcile"
+install -m 0755 "$HERE/bin/apivo-previews" "$PREFIX/bin/apivo-previews"
 install -m 0755 "$HERE/bin/apivoctl" "$PREFIX/bin/apivoctl"
 ln -sf "$PREFIX/bin/apivoctl" /usr/local/bin/apivoctl
 cp "$HERE/compose/"*.yml "$PREFIX/compose/"
@@ -235,6 +236,56 @@ if [ "$APIVO_HOST_ROLE" = preprod ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 3b. Previews - one environment per open pull request.
+#
+# Pre-production only. Production does not run other people's branches.
+# ---------------------------------------------------------------------------
+if [ "$APIVO_HOST_ROLE" = preprod ]; then
+    say "Previews"
+    mkdir -p "$ETC/preview/pg-certs"
+
+    if [ -e "$ETC/preview/stack.env" ]; then
+        note "stack.env exists, left alone"
+    else
+        preview_pg_password=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+        cat > "$ETC/preview/stack.env" <<EOF
+# Written by provision.sh. Previews are created and destroyed by
+# apivo-previews, from the pr-<n> tags CI publishes and deletes.
+APIVO_REGISTRY=$APIVO_REGISTRY
+COMPOSE_FILE=$PREFIX/compose/docker-compose.preview.yml
+APIVO_PREVIEW_PG_PASSWORD=$preview_pg_password
+APIVO_PREVIEW_PG_USER=apivo
+# How many previews run at once. Each is two containers plus a database on a
+# box that also carries QA and Staging, so this is the line between "reviewers
+# can click a link" and "the environments that matter fell over".
+APIVO_PREVIEW_MAX=${APIVO_PREVIEW_MAX:-5}
+APIVO_PREVIEW_API_MEMORY=384M
+APIVO_PREVIEW_WEB_MEMORY=384M
+EOF
+        chmod 0640 "$ETC/preview/stack.env"
+        note "wrote stack.env (cap: ${APIVO_PREVIEW_MAX:-5} concurrent previews)"
+    fi
+
+    if [ -e "$ETC/preview/pg-certs/postgres.key" ]; then
+        note "preview Postgres certificate already present"
+    else
+        openssl req -new -x509 -days 3650 -nodes \
+            -out "$ETC/preview/pg-certs/postgres.crt" \
+            -keyout "$ETC/preview/pg-certs/postgres.key" \
+            -subj "/CN=apivo-preview-postgres" 2>/dev/null
+        pv_uid=$(docker run --rm postgres:17-alpine id -u postgres)
+        chown "$pv_uid:$pv_uid" "$ETC/preview/pg-certs/postgres.key" "$ETC/preview/pg-certs/postgres.crt"
+        chmod 0600 "$ETC/preview/pg-certs/postgres.key"
+        chmod 0644 "$ETC/preview/pg-certs/postgres.crt"
+        note "generated the preview Postgres certificate"
+    fi
+
+    docker network create apivo-preview-edge >/dev/null 2>&1 || true
+    docker network create apivo-preview-data >/dev/null 2>&1 || true
+    note "preview networks ready"
+fi
+
+# ---------------------------------------------------------------------------
 # 4. The edge
 # ---------------------------------------------------------------------------
 say "Configuring the edge"
@@ -258,6 +309,9 @@ if [ "$APIVO_HOST_ROLE" = preprod ]; then
     cat > "$ETC/edge/caddy.env" <<EOF
 APIVO_QA_HOST=$APIVO_QA_HOST
 APIVO_STAGING_HOST=$APIVO_STAGING_HOST
+# The wildcard previews are served under. The origin certificate must cover
+# *.this or Caddy will not start.
+APIVO_PREVIEW_DOMAIN=${APIVO_PREVIEW_DOMAIN:-$APIVO_QA_HOST}
 EOF
 else
     cat > "$ETC/edge/caddy.env" <<EOF
@@ -318,6 +372,10 @@ say "Installing systemd units"
 install -m 0644 "$HERE/systemd/apivo-reconcile@.service" "$UNITS/apivo-reconcile@.service"
 install -m 0644 "$HERE/systemd/apivo-reconcile@.timer" "$UNITS/apivo-reconcile@.timer"
 install -m 0644 "$HERE/systemd/apivo-edge.service" "$UNITS/apivo-edge.service"
+if [ "$APIVO_HOST_ROLE" = preprod ]; then
+    install -m 0644 "$HERE/systemd/apivo-previews.service" "$UNITS/apivo-previews.service"
+    install -m 0644 "$HERE/systemd/apivo-previews.timer" "$UNITS/apivo-previews.timer"
+fi
 systemctl daemon-reload
 
 for env_name in $ENVS; do
@@ -326,6 +384,20 @@ for env_name in $ENVS; do
 done
 systemctl enable apivo-edge.service
 note "apivo-edge.service enabled"
+
+if [ "$APIVO_HOST_ROLE" = preprod ]; then
+    # The shared preview database comes up now: apivo-previews creates a
+    # database inside it per pull request and cannot do that against a
+    # Postgres that is not running.
+    APIVO_PREVIEW_PG_PASSWORD=$(sed -n 's/^APIVO_PREVIEW_PG_PASSWORD=//p' "$ETC/preview/stack.env" | head -n 1)
+    export APIVO_PREVIEW_PG_PASSWORD
+    APIVO_ETC="$ETC"
+    export APIVO_ETC
+    docker compose -f "$PREFIX/compose/docker-compose.preview-db.yml" up -d --wait --wait-timeout 120 >/dev/null 2>&1 ||
+        note "NOTE: the shared preview Postgres did not come up; previews will not start until it does"
+    systemctl enable --now apivo-previews.timer
+    note "apivo-previews.timer enabled - open pull requests appear within a minute"
+fi
 
 # The edge declares each environment's network `external: true`, so the
 # network must exist before Caddy can start. Creating them here rather than

@@ -124,3 +124,53 @@
 (origin-tls) {
 	tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key
 }
+
+# ---------------------------------------------------------------------------
+# (apivo-preview-routes) — one open pull request, at pr-<n>.<preview domain>.
+#
+# Same split as (apivo-routes): the API answers /api/…, /healthz and /readyz,
+# the frontend answers everything else. The upstream is derived from the
+# hostname at request time, so a pull request opening does not require the
+# proxy in front of QA and Staging to be restarted.
+#
+# {labels.3} is the leftmost label of pr-142.qa.example.com. The caller does
+# not get to choose it freely: the site block below admits only hostnames
+# matching ^pr-[0-9]+$, so `apivo-qa-api.qa.example.com` is refused rather
+# than turned into a container name.
+#
+# ---------------------------------------------------------------------------
+# WHAT A PREVIEW DELIBERATELY DOES NOT DO
+# ---------------------------------------------------------------------------
+#
+# There is no Origin/Referer rewrite here, so a preview's editorial FORM POSTS
+# would be refused by web/src/lib/csrf.ts — the mismatch (apivo-routes) exists
+# to fix.
+#
+# It is absent because it cannot be made to work here and be verifiable.
+# `header_up` does not expand placeholders in its search argument, so the
+# per-request hostname cannot be used; the named environments pass their host
+# as a parse-time snippet argument instead, and a wildcard site has no single
+# host to pass. The regexp form (`re:` with a capture reference) does not
+# substitute in Caddy 2.10 — tested against `$1`, `{re.1}` and
+# `{http.regexp.<name>.1}`, all of which leave the header untouched.
+#
+# It costs nothing that a reviewer needs, because a preview ships with
+# PUBLIC_SUPABASE_URL empty (docker-compose.preview.yml): nobody can sign in,
+# the editorial screens serve their fixture preview, and no authenticated POST
+# is reachable to be refused. Reader pages are GET and work normally.
+#
+# If previews ever need working editorial forms, the fix is the one that was
+# always better anyway: make the same-origin check independent of the proxy,
+# in web/src/lib/, rather than compensating for it in three proxies.
+# ---------------------------------------------------------------------------
+(apivo-preview-routes) {
+	@preview-api path /api/* /healthz /readyz
+
+	handle @preview-api {
+		reverse_proxy apivo-{labels.3}-api:8080
+	}
+
+	handle {
+		reverse_proxy apivo-{labels.3}-web:4321
+	}
+}
