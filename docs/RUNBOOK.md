@@ -269,8 +269,17 @@ None of these block the box coming up.
    a tag rule matching `v*`** — every real release enters this Environment on
    a tag ref, and the default branch-only rule would block the approval job
    rather than prompt you.
-4. Nothing for GHCR, and nothing to create as a secret: the automatic
-   `GITHUB_TOKEN` publishes and deletes image tags.
+4. **One secret, for preview teardown only.** `GITHUB_TOKEN` publishes
+   package versions but generally cannot delete them — `packages: write`
+   covers the push, not the delete — so a closed pull request's preview
+   images stay in the registry and its environment would keep running until
+   the cap evicts it. Either:
+   - add a repository secret `PREVIEW_CLEANUP_TOKEN`, a classic PAT with
+     **read:packages** and **delete:packages**; or
+   - on each package's page (`api` and `web`) under *Package settings →
+     Manage Actions access*, give this repository the **Admin** role.
+
+   Either one is enough. Nothing else about GHCR needs configuring.
 
 One consequence of this repository being **public**: pull requests from forks
 get a read-only `GITHUB_TOKEN` regardless of what a workflow asks for, so
