@@ -28,7 +28,7 @@ import /etc/caddy/snippets.caddy
 # QA — every push to main lands here, automatically, within a minute.
 # ---------------------------------------------------------------------------
 https://{$APIVO_QA_HOST} {
-	import origin-tls
+	import origin-tls origin
 	import hardening
 	import crawler-fence
 	import apivo-routes apivo-qa-api apivo-qa-web {$APIVO_QA_HOST}
@@ -38,7 +38,7 @@ https://{$APIVO_QA_HOST} {
 # Staging — release candidates only (v0.2.0-rc.1 and friends).
 # ---------------------------------------------------------------------------
 https://{$APIVO_STAGING_HOST} {
-	import origin-tls
+	import origin-tls origin-staging
 	import hardening
 	import crawler-fence
 	import apivo-routes apivo-staging-api apivo-staging-web {$APIVO_STAGING_HOST}
@@ -47,9 +47,18 @@ https://{$APIVO_STAGING_HOST} {
 # ---------------------------------------------------------------------------
 # Previews — one per open pull request, at pr-<n>.{$APIVO_PREVIEW_DOMAIN}.
 #
-# The origin certificate must cover this wildcard. A Cloudflare Origin
-# Certificate can be issued for *.example.com alongside the names above, so
-# this needs no ACME and no DNS API token on the host.
+# The origin certificate must cover this wildcard, and it is the SAME
+# certificate QA presents (`origin`) because previews live in the QA
+# hostname's zone: Cloudflare includes the apex and the first-level wildcard
+# in a zone's certificate by default, so one certificate per zone covers
+# ra1ze.com and *.ra1ze.com together. Staging is a different zone and so a
+# different certificate (`origin-staging`).
+#
+# Two certificates rather than one covering everything, because the
+# Cloudflare DASHBOARD cannot issue a certificate spanning zones - only its
+# API can. Requiring the API here would have put a curl and an Origin CA Key
+# between a new host and its first byte served, to save copying one more
+# file. This needs no ACME and no DNS API token on the host either way.
 #
 # The matcher is the security boundary: only ^pr-[0-9]+ reaches the routing
 # snippet, so no other label can be turned into a container name to proxy at.
@@ -70,7 +79,7 @@ https://{$APIVO_STAGING_HOST} {
 # is therefore asserting the whole name.
 # ---------------------------------------------------------------------------
 https://*.{$APIVO_PREVIEW_DOMAIN} {
-	import origin-tls
+	import origin-tls origin
 	import hardening
 
 	@preview header_regexp preview Host ^(pr-[0-9]+)\.

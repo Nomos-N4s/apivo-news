@@ -53,7 +53,20 @@ jobs:
     steps:
       - name: Delete this pull request's image tags
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A personal access token with `delete:packages` when one is
+          # configured, and the automatic token otherwise.
+          #
+          # GITHUB_TOKEN publishes package versions perfectly well and often
+          # CANNOT DELETE THEM: `packages: write` covers the push, while the
+          # delete endpoint wants a token with `delete:packages` and admin on
+          # the package. That is what failed the first time this ran for
+          # real — the listing succeeded, the delete did not.
+          #
+          # The fallback is deliberate rather than a hard requirement: a
+          # repository with no PAT still publishes previews, and only loses
+          # exact teardown.
+          GH_TOKEN: ${{ secrets.PREVIEW_CLEANUP_TOKEN || secrets.GITHUB_TOKEN }}
+          USING_PAT: ${{ secrets.PREVIEW_CLEANUP_TOKEN != '' }}
           PR: ${{ github.event.pull_request.number }}
           OWNER: ${{ github.repository_owner }}
         run: |
@@ -67,48 +80,120 @@ jobs:
           # type nobody tested — previews would then leak until the host's cap
           # evicted them, which looks like previews simply not working.
           scope=""
+          probe_errors=""
           for candidate in orgs users; do
-            if gh api "/$candidate/$OWNER/packages/container/$repo%2Fapi/versions" \
-              --jq 'length' >/dev/null 2>&1; then
+            # Each attempt's error is KEPT. One of the two is expected to fail
+            # — an owner is an organisation or a user, not both — so they are
+            # only printed if BOTH fail, at which point they are the whole
+            # diagnosis. This is the same mistake the delete loop below used
+            # to make, and it was still here after that one was fixed.
+            if err=$(gh api "/$candidate/$OWNER/packages/container/$repo%2Fapi/versions" \
+              --jq 'length' 2>&1); then
               scope="$candidate"
               break
             fi
+            probe_errors="$probe_errors
+            /$candidate/: $err"
           done
           if [ -z "$scope" ]; then
-            echo "::error::cannot read container package versions for '$OWNER' under either /orgs/ or /users/. The pr-$PR image tags were NOT deleted, so the host will keep this preview running until its cap evicts it. Check that GITHUB_TOKEN has packages:write and that the package exists."
+            if [ "$USING_PAT" = "true" ]; then
+              cred="the PREVIEW_CLEANUP_TOKEN secret (it needs read:packages, and delete:packages to do the deleting)"
+            else
+              cred="GITHUB_TOKEN, which often cannot read another account's packages - configure a PREVIEW_CLEANUP_TOKEN secret with read:packages and delete:packages"
+            fi
+            echo "::error::cannot read container package versions for '$OWNER' under either /orgs/ or /users/. The pr-$PR image tags were NOT deleted, so a host would keep this preview running until its cap evicts it. Check $cred, and that the package exists."
+            printf '%s\n' "$probe_errors"
             exit 1
           fi
 
           deleted=0
+          failed=0
           for image in api web; do
             pkg="$repo%2F$image"
             # Find the version whose tags include pr-<n>, then delete it. A
             # preview image has exactly one tag and no other environment ever
             # points at it, so deleting the version is deleting the tag.
-            ids=$(gh api --paginate \
+            # A FAILED listing must not look like an empty one. `|| true`
+            # with stderr discarded made the two identical: a listing that
+            # errored produced no ids, deleted nothing, and reported
+            # "0 versions removed" as success — a green check over a preview
+            # that outlives its pull request, which is the single outcome
+            # this whole mechanism exists to prevent. It is the same trap
+            # apivo-previews is written around on the host side.
+            if ! ids=$(gh api --paginate \
               "/$scope/$OWNER/packages/container/$pkg/versions" \
-              --jq ".[] | select(.metadata.container.tags[]? == \"pr-$PR\") | .id" 2>/dev/null || true)
+              --jq ".[] | select(.metadata.container.tags[]? == \"pr-$PR\") | .id" 2>&1); then
+              echo "::warning::could not list versions of $image; nothing was deleted for it"
+              printf '%s\n' "$ids" | sed 's/^/    /'
+              failed=$((failed + 1))
+              continue
+            fi
             for id in $ids; do
-              if gh api -X DELETE "/$scope/$OWNER/packages/container/$pkg/versions/$id" >/dev/null 2>&1; then
+              # The API's own error is CAPTURED, not discarded. An earlier
+              # version sent it to /dev/null, so the one run that failed for
+              # real reported "could not delete" and threw away the sentence
+              # saying why. Never hide the diagnosis of the failure you are
+              # reporting.
+              if err=$(gh api -X DELETE \
+                "/$scope/$OWNER/packages/container/$pkg/versions/$id" 2>&1); then
                 echo "deleted $image:pr-$PR (version $id)"
                 deleted=$((deleted + 1))
               else
-                echo "::error::could not delete $image:pr-$PR (version $id); the host will keep serving this preview"
-                exit 1
+                echo "::warning::could not delete $image:pr-$PR (version $id)"
+                printf '%s\n' "$err" | sed 's/^/    /'
+                failed=$((failed + 1))
               fi
             done
           done
 
-          # Zero is NOT an error. A pull request that never built a preview —
-          # closed before CI finished, or opened before previews existed — has
-          # nothing to delete, and the host is already not running one for it.
+          # Zero deleted is NOT an error. A pull request that never built a
+          # preview — closed before CI finished, or opened before previews
+          # existed — has nothing to delete, and the host is already not
+          # running one for it.
+          if [ "$failed" -eq 0 ]; then
+            {
+              echo "## Preview \`pr-$PR\` torn down"
+              echo
+              echo "Removed $deleted image version(s) via /$scope/."
+              echo "The host destroys the environment and drops its database"
+              echo "within a minute of the tags disappearing."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Deletion was refused. Say what that costs and how to fix it, and
+          # fail — a preview that outlives its pull request is the failure
+          # this whole mechanism exists to prevent, so it must not pass
+          # quietly. The error text above this line is the API's own.
           {
-            echo "## Preview \`pr-$PR\` torn down"
+            echo "## Preview \`pr-$PR\` was NOT torn down"
             echo
-            echo "Removed $deleted image version(s) via /$scope/."
-            echo "The host destroys the environment and drops its database"
-            echo "within a minute of the tags disappearing."
+            echo "$failed image version(s) could not be deleted; the API's"
+            echo "response is in the job log above."
+            echo
+            if [ "$USING_PAT" = "true" ]; then
+              echo "A \`PREVIEW_CLEANUP_TOKEN\` IS configured, so this is not"
+              echo "the usual cause. Check that the token has **delete:packages**"
+              echo "and admin on the package, and that it has not expired."
+            else
+              echo "No \`PREVIEW_CLEANUP_TOKEN\` is configured, and the automatic"
+              echo "\`GITHUB_TOKEN\` usually cannot delete package versions —"
+              echo "\`packages: write\` covers publishing, not deletion."
+              echo
+              echo "Two ways to fix it, either is enough:"
+              echo
+              echo "1. Add a repository secret \`PREVIEW_CLEANUP_TOKEN\`: a"
+              echo "   classic PAT with **read:packages** and **delete:packages**."
+              echo "2. Or, on each package's page (\`api\` and \`web\`) under"
+              echo "   Package settings → Manage Actions access, give this"
+              echo "   repository the **Admin** role."
+            fi
+            echo
+            echo "Until then a closed pull request's images stay in the registry,"
+            echo "so a host would keep serving its preview until the"
+            echo "\`APIVO_PREVIEW_MAX\` cap evicts it."
           } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
   # ---------------------------------------------------------------------------
   # Open or pushed to: build and publish, so the host can pick it up.

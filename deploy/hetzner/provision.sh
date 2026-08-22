@@ -7,6 +7,8 @@
 #   APIVO_QA_HOST=ra1ze.com APIVO_STAGING_HOST=reapie.com \
 #   APIVO_PREVIEW_DOMAIN=ra1ze.com \
 #   APIVO_ORIGIN_CERT=/root/origin.pem APIVO_ORIGIN_KEY=/root/origin.key \
+#   APIVO_STAGING_ORIGIN_CERT=/root/origin-staging.pem \
+#   APIVO_STAGING_ORIGIN_KEY=/root/origin-staging.key \
 #   GHCR_USER=<github-user> GHCR_TOKEN=<read:packages PAT> \
 #   APIVO_CONFIGURE_FIREWALL=yes \
 #   sh deploy/hetzner/provision.sh
@@ -361,24 +363,51 @@ note "installed $CADDYFILE and its hostnames"
 # The Cloudflare Origin Certificate: trusted by Cloudflare and by nothing
 # else, which is exactly right for a certificate only ever presented to
 # Cloudflare. Set the zone to Full (strict) so it is actually verified.
-if [ -n "${APIVO_ORIGIN_CERT:-}" ] && [ -n "${APIVO_ORIGIN_KEY:-}" ]; then
-    [ -r "$APIVO_ORIGIN_CERT" ] || die "APIVO_ORIGIN_CERT=$APIVO_ORIGIN_CERT cannot be read"
-    [ -r "$APIVO_ORIGIN_KEY" ] || die "APIVO_ORIGIN_KEY=$APIVO_ORIGIN_KEY cannot be read"
-    install -m 0644 "$APIVO_ORIGIN_CERT" "$ETC/edge/certs/origin.pem"
-    install -m 0640 "$APIVO_ORIGIN_KEY" "$ETC/edge/certs/origin.key"
-    note "installed the origin certificate"
-# BOTH files, not just the certificate. Caddy names the pair and will not
-# start HTTPS without either, so treating a lone origin.pem as "already
-# present" reports a provisioned host that cannot serve — and it reports it
-# on the re-run someone does precisely to check the first run worked.
-elif [ -e "$ETC/edge/certs/origin.pem" ] && [ -e "$ETC/edge/certs/origin.key" ]; then
-    note "origin certificate already present, left alone"
-elif [ -e "$ETC/edge/certs/origin.pem" ] || [ -e "$ETC/edge/certs/origin.key" ]; then
-    die "the origin certificate at $ETC/edge/certs/ is HALF installed - Caddy needs both origin.pem and origin.key and will not start with one. Remove the stray file and re-run with APIVO_ORIGIN_CERT and APIVO_ORIGIN_KEY set to both halves."
-else
-    note "NO ORIGIN CERTIFICATE. Caddy will not start until one is installed:"
-    note "  Cloudflare dashboard -> SSL/TLS -> Origin Server -> Create Certificate"
-    note "  then copy them to $ETC/edge/certs/origin.pem and origin.key"
+#
+# ONE PER CLOUDFLARE ZONE, because the Cloudflare dashboard cannot issue a
+# certificate spanning zones — only its API can. A zone's certificate covers
+# its apex and its first-level wildcard by default, so `origin` covers the QA
+# hostname AND the preview wildcard that lives beside it, while staging's
+# separate zone needs `origin-staging`. A production host has one zone and
+# therefore only ever needs `origin`.
+install_origin_pair() {
+    _base=$1
+    _cert=$2
+    _key=$3
+    _what=$4
+    _hint=$5
+    if [ -n "$_cert" ] && [ -n "$_key" ]; then
+        [ -r "$_cert" ] || die "$_hint=$_cert cannot be read"
+        [ -r "$_key" ] || die "the key for $_what ($_key) cannot be read"
+        install -m 0644 "$_cert" "$ETC/edge/certs/$_base.pem"
+        install -m 0640 "$_key" "$ETC/edge/certs/$_base.key"
+        note "installed $_what"
+    # BOTH files, not just the certificate. Caddy names the pair and will not
+    # start HTTPS without either, so treating a lone .pem as "already
+    # present" reports a provisioned host that cannot serve — and it reports
+    # it on the re-run someone does precisely to check the first run worked.
+    elif [ -e "$ETC/edge/certs/$_base.pem" ] && [ -e "$ETC/edge/certs/$_base.key" ]; then
+        note "$_what already present, left alone"
+    elif [ -e "$ETC/edge/certs/$_base.pem" ] || [ -e "$ETC/edge/certs/$_base.key" ]; then
+        die "$_what at $ETC/edge/certs/ is HALF installed - Caddy needs both $_base.pem and $_base.key and will not start with one. Remove the stray file and re-run with both halves set."
+    else
+        note "MISSING: $_what. Caddy will not start until it is installed:"
+        note "  Cloudflare dashboard -> the right zone -> SSL/TLS -> Origin Server"
+        note "  -> Create Certificate, then copy the pair to"
+        note "  $ETC/edge/certs/$_base.pem and $_base.key"
+    fi
+}
+
+install_origin_pair origin \
+    "${APIVO_ORIGIN_CERT:-}" "${APIVO_ORIGIN_KEY:-}" \
+    "the origin certificate" APIVO_ORIGIN_CERT
+
+# Staging is its own Cloudflare zone, so its own certificate. Only the
+# pre-production host serves it.
+if [ "$APIVO_HOST_ROLE" = preprod ]; then
+    install_origin_pair origin-staging \
+        "${APIVO_STAGING_ORIGIN_CERT:-}" "${APIVO_STAGING_ORIGIN_KEY:-}" \
+        "the staging origin certificate" APIVO_STAGING_ORIGIN_CERT
 fi
 
 # ---------------------------------------------------------------------------

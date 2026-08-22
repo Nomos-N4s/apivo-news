@@ -217,6 +217,8 @@ APIVO_HOST_ROLE=preprod \
 APIVO_QA_HOST=ra1ze.com APIVO_STAGING_HOST=reapie.com \
 APIVO_PREVIEW_DOMAIN=ra1ze.com \
 APIVO_ORIGIN_CERT=/root/origin.pem APIVO_ORIGIN_KEY=/root/origin.key \
+APIVO_STAGING_ORIGIN_CERT=/root/origin-staging.pem \
+APIVO_STAGING_ORIGIN_KEY=/root/origin-staging.key \
 GHCR_USER=<github-user> GHCR_TOKEN=<PAT with read:packages> \
 APIVO_CONFIGURE_FIREWALL=yes \
 sh deploy/hetzner/provision.sh

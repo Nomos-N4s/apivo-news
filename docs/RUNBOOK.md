@@ -31,7 +31,8 @@ nothing below provisions it.
   - 4 GB is not enough for this shape.
   - `amd64`, not ARM. The images are built `linux/amd64` only; Hetzner's CAX
     line needs the Dockerfile made cross-aware first.
-- **The three domains on Cloudflare**, in the same account.
+- **The domains on Cloudflare**, in the same account. Each is its own zone
+  and gets its own origin certificate — see step 2.
 - **A GitHub personal access token** with `read:packages` only. This is the
   one credential the box needs and the only thing it uses it for: pulling
   images. It can read nothing else and write nothing.
@@ -57,27 +58,38 @@ Certificate, which is trusted by Cloudflare and by nothing else. On *Flexible*
 Cloudflare would talk to the origin in cleartext; on *Full* it would accept
 any certificate at all, which makes the encryption decorative.
 
-## 2. Cloudflare — the origin certificate
+## 2. Cloudflare — two origin certificates, one per zone
 
-**SSL/TLS → Origin Server → Create Certificate.** Take the default (Cloudflare
-generates the key), 15 years.
+**One per Cloudflare zone**, so two: one in `ra1ze.com`, one in `reapie.com`.
 
-Put **all of these** in the hostname list:
+In **each** zone: **SSL/TLS → Origin Server → Create Certificate**, take every
+default (Cloudflare generates the key, 15 years, and the hostname list is
+already right), Create.
 
-```
-ra1ze.com
-*.ra1ze.com
-reapie.com
-```
+The default list is `example.com, *.example.com` — the apex and the
+first-level wildcard — which is exactly what each zone needs:
+
+| Zone | Covers | Serves |
+|---|---|---|
+| `ra1ze.com` | `ra1ze.com`, `*.ra1ze.com` | QA **and** every preview |
+| `reapie.com` | `reapie.com`, `*.reapie.com` | Staging |
 
 `*.ra1ze.com` is what makes previews possible — every pull request gets
-`pr-<n>.ra1ze.com` and they must all be covered by the one certificate on the
-box. A certificate without it means previews serve a TLS error.
+`pr-<n>.ra1ze.com`. It is in the default list, so simply do not remove it.
 
-Save the two blocks Cloudflare shows you. **The key is shown once.**
+Save both blocks for each. **Each private key is shown exactly once.** Name
+them so the next step is unambiguous:
 
-You need one certificate covering all the names, not one per domain — the box
-runs a single Caddy and presents a single origin certificate.
+```
+origin.pem          origin.key          <- from the ra1ze.com zone
+origin-staging.pem  origin-staging.key  <- from the reapie.com zone
+```
+
+**Why two and not one covering everything.** A single certificate spanning
+both zones *is* possible — but only through Cloudflare's API, with an Origin
+CA Key and a hand-built CSR. The **dashboard cannot do it**: its hostname
+list is confined to the zone you are in. Two certificates and two `scp`
+arguments is the cheaper trade, and Caddy presents the right one per site.
 
 ## 3. Cloudflare — DNS
 
@@ -115,7 +127,9 @@ Copy the certificate and key onto the box first:
 
 ```sh
 # from your machine
-scp origin.pem origin.key root@<vps-ip>:/root/
+scp origin.pem origin.key \
+    origin-staging.pem origin-staging.key \
+    root@<vps-ip>:/root/
 ```
 
 Then, on the box as root:
@@ -131,6 +145,8 @@ APIVO_STAGING_HOST=reapie.com \
 APIVO_PREVIEW_DOMAIN=ra1ze.com \
 APIVO_ORIGIN_CERT=/root/origin.pem \
 APIVO_ORIGIN_KEY=/root/origin.key \
+APIVO_STAGING_ORIGIN_CERT=/root/origin-staging.pem \
+APIVO_STAGING_ORIGIN_KEY=/root/origin-staging.key \
 GHCR_USER=<your-github-username> \
 GHCR_TOKEN=<the read:packages token> \
 APIVO_CONFIGURE_FIREWALL=yes \
@@ -232,7 +248,7 @@ curl -sS https://ra1ze.com/healthz
 
 ## 7. Back in the repository — one line
 
-Once `https://reapie.com` actually answers, open a pull request setting:
+Once the **edge** answers on `reapie.com`, open a pull request setting:
 
 ```
 APIVO_STAGING_URL=https://reapie.com
@@ -240,15 +256,50 @@ APIVO_STAGING_URL=https://reapie.com
 
 in [`deploy/hetzner/environments.env`](../deploy/hetzner/environments.env).
 
+**The edge answering is not the app answering, and here you want the first.**
+Check with:
+
+```sh
+curl -sS -o /dev/null -w '%{http_code}\n' https://reapie.com/healthz
+```
+
+A **502 is the expected, correct answer at this point** — it means DNS,
+Cloudflare, the origin certificate and Caddy all work, and Caddy has nothing
+to proxy to because staging has no images yet. Staging gets its first images
+from the first release candidate, and that is the *next* step, not this one.
+A timeout or a TLS error is the failure to chase; a 502 is the green light.
+
+Waiting for a 200 here would deadlock: `:staging` cannot move until this URL
+is set, and the URL is what this step sets.
+
 This is the second ordering constraint, and it runs the other way: that value
-is empty *on purpose* until the host serves. An empty URL is the guard in
+is empty *on purpose* until the host exists. An empty URL is the guard in
 `release.yml` that refuses to publish images and move the `:staging` tag
-toward an environment that is not there. Filling it in early does not make
-staging work sooner — it only deletes the guard, so an `-rc` tag would move
-the channel and then fail its probe with nothing to roll back to.
+toward an environment that is not there. Filling it in before the box is
+provisioned does not make staging work sooner — it only deletes the guard, so
+an `-rc` tag would move the channel and then fail its probe with nothing to
+roll back to.
 
 `APIVO_QA_URL` and `APIVO_PREVIEW_DOMAIN` are already set, because neither
 gates anything.
+
+### Then cut the first release candidate
+
+QA fills itself — every merge to `main` publishes `:qa` and the box converges
+within the minute. **Staging does not.** Nothing moves `:staging` except a
+release candidate, so until you cut one, `reapie.com` stays a 502 however
+healthy the box is:
+
+```sh
+git tag -a v0.1.0-rc.1 -m "first staging release candidate"
+git push origin v0.1.0-rc.1
+```
+
+That runs `release.yml`, which moves `:staging`, waits for the box to
+converge and probes `https://reapie.com/healthz` for up to five minutes —
+long enough for the timer to fire, the pull, the rollout and the schema
+migration. A green run means staging is serving that exact version, proven
+by the version stamped in the payload rather than by a 200 alone.
 
 ## 8. GitHub — three settings
 
@@ -269,8 +320,17 @@ None of these block the box coming up.
    a tag rule matching `v*`** — every real release enters this Environment on
    a tag ref, and the default branch-only rule would block the approval job
    rather than prompt you.
-4. Nothing for GHCR, and nothing to create as a secret: the automatic
-   `GITHUB_TOKEN` publishes and deletes image tags.
+4. **One secret, for preview teardown only.** `GITHUB_TOKEN` publishes
+   package versions but generally cannot delete them — `packages: write`
+   covers the push, not the delete — so a closed pull request's preview
+   images stay in the registry and its environment would keep running until
+   the cap evicts it. Either:
+   - add a repository secret `PREVIEW_CLEANUP_TOKEN`, a classic PAT with
+     **read:packages** and **delete:packages**; or
+   - on each package's page (`api` and `web`) under *Package settings →
+     Manage Actions access*, give this repository the **Admin** role.
+
+   Either one is enough. Nothing else about GHCR needs configuring.
 
 One consequence of this repository being **public**: pull requests from forks
 get a read-only `GITHUB_TOKEN` regardless of what a workflow asks for, so
