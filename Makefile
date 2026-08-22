@@ -17,7 +17,7 @@ DATABASE_URL_TEST ?= postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
 # `make test RACE=` and let CI cover the race detection.
 RACE ?= -race
 
-.PHONY: setup db-up db-down test test-unit cover vet lint openapi-lint sqlc ts-types web-install web-check web-build worker-test worker-validate
+.PHONY: setup db-up db-down test test-unit cover vet lint openapi-lint sqlc ts-types web-install web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status
 
 ## setup: one-time developer setup - route git hooks through .githooks
 setup:
@@ -91,3 +91,22 @@ worker-test:
 # --dry-run needs no credentials and uploads nothing.
 worker-validate:
 	npx --yes wrangler@4 deploy --dry-run --containers-rollout none
+
+## hetzner-test: prove the deployment reconciler's decisions (matches CI)
+# A stub registry and daemon stand in for the real ones, so the rollback, the
+# digest mismatch and the version mismatch are all exercised without a host.
+hetzner-test:
+	sh deploy/hetzner/bin/apivo-reconcile_test.sh
+
+## hetzner-validate: prove the whole VPS configuration without a VPS (matches CI)
+# Every environment's compose configuration rendered and asserted, plus both
+# Caddyfiles through `caddy validate`. This is to the Hetzner deployment what
+# worker-validate is to the Cloudflare one.
+hetzner-validate: hetzner-test
+	shellcheck -s sh deploy/hetzner/bin/apivo-reconcile deploy/hetzner/bin/apivo-reconcile_test.sh deploy/hetzner/bin/apivoctl deploy/hetzner/provision.sh deploy/hetzner/validate.sh scripts/env_status.sh
+	sh deploy/hetzner/validate.sh
+
+## env-status: what every environment is actually serving, right now
+# One HTTPS request per environment. No credentials, no SSH, no VPS access.
+env-status:
+	sh scripts/env_status.sh

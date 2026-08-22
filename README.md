@@ -38,7 +38,7 @@ recorded written permission and is rejected without it.
 | Database | Supabase (Postgres), EU region; plain Postgres 17 locally |
 | Auth | Supabase Auth: Astro uses the JS SDK, Go validates the JWT |
 | Types | Generated from the schema — `sqlc` (Go), `supabase gen types` (TS). Never hand-written on both sides |
-| Deployment | Container-first: Cloudflare Containers today, Kubernetes-ready |
+| Deployment | Container-first: Hetzner VPS behind Cloudflare, Kubernetes-ready |
 
 Module boundaries (enforced by [arch_test.go](internal/arch/arch_test.go)):
 
@@ -117,26 +117,52 @@ migrations to a scratch database and regenerates
 Supabase CLI. Run it alongside `make sqlc` after every migration change and
 commit the result (CI fails on drift here too).
 
-## Cloudflare deployment
+## Deployment
 
-[wrangler.jsonc](wrangler.jsonc) declares both images — the Go API
-(`Dockerfile`) and the Astro frontend (`web/Dockerfile`) — as Cloudflare
-Containers pinned to `jurisdiction: "eu"` for GDPR residency. The
-containers are the artefact; the only Cloudflare-specific glue is the
-Worker shim in [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js),
-which routes all public traffic to the web container. The Go API has no
-public route. Secrets (`DATABASE_URL`, later provider keys) are set with
-`npx wrangler secret put <NAME>` and are never committed. CI validates the
-configuration on every PR with
-`wrangler deploy --dry-run --containers-rollout none` — a full parse and
-Worker bundle needing no Cloudflare credentials; images build at deploy
-time (`npx wrangler deploy`).
+Three environments, two hosts, one mechanism —
+[docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) is the full picture.
+
+| | Deploys on | Database | Exists |
+|---|---|---|---|
+| **QA** | every push to `main` | Postgres container on the host | yes |
+| **Staging** | a `-rc` tag | its own Supabase EU project | yes |
+| **Production** | a final semver tag, behind one approval | its own Supabase EU project | **not yet** |
+
+The application runs as containers on a Hetzner VPS (EU, so GDPR residency
+is a property of the host rather than a setting), behind Caddy, behind
+Cloudflare for DNS, edge TLS, CDN and WAF. All three environments run
+`APP_ENV=prod` — in this codebase that means *hardened*, not *the production
+instance*, and an environment running with the guards off cannot find the
+bugs the guards would have caught.
+
+**Nothing pushes to a host.** No CI job holds an SSH key, no agent has a
+shell on a VPS, and there is no inbound endpoint on one. CI builds both
+images, proves the published artefact names its own version, and moves a
+channel tag — and that is the deploy. Each host asks the registry every
+minute whether its channel has moved, pulls by digest, rolls out, and then
+*proves the roll-forward* rather than assuming it; a rollout that comes up on
+the wrong image or serving the wrong version is rolled back on the spot. The
+reconciler is [`deploy/hetzner/bin/apivo-reconcile`](deploy/hetzner/bin/apivo-reconcile)
+and its decisions have a test suite CI runs on every PR.
+
+Ask what is actually running, from anywhere, with no credentials:
+
+```sh
+sh scripts/env_status.sh          # or --json
+make hetzner-validate             # prove the whole config without a host
+```
 
 Production deploys are never run by hand: releases are cut only from
 annotated semver tags by the release pipeline
-([.github/workflows/release.yml](.github/workflows/release.yml)) — the
-rules, the one-time secret setup and the rollback procedure live in
+([.github/workflows/release.yml](.github/workflows/release.yml)) — the rules,
+the one-time setup and the rollback procedure live in
 [docs/RELEASING.md](docs/RELEASING.md).
+
+Cloudflare Containers is **retired**. `wrangler.jsonc` and
+[deploy/cloudflare/](deploy/cloudflare/) remain in the tree, and CI still
+validates them, only because the Worker carries the per-caller rate limit on
+the editorial endpoints and Caddy does not; porting that to Go middleware is
+the blocking follow-up. Nothing deploys there.
 
 ## Quality gates (CI-enforced)
 

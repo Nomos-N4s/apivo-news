@@ -1,3 +1,26 @@
+// ===========================================================================
+// RETIRED. Nothing deploys here.
+//
+// The application runs on a Hetzner VPS behind Caddy behind Cloudflare
+// (docs/ENVIRONMENTS.md). Cloudflare keeps DNS, edge TLS, CDN and WAF;
+// Cloudflare CONTAINERS is no longer a deployment target, and no release
+// pipeline calls wrangler.
+//
+// This file and its neighbours are kept, and still validated by CI, for ONE
+// reason: the Worker carries the per-caller RATE LIMIT on the editorial
+// endpoints, expressed as an inversion so that a route added later is limited
+// from its first request. Caddy only chooses an upstream and says so.
+//
+// Nothing about authorisation is weaker for that — a valid JWT, and the
+// database's second check of the editor role, are enforced in Go by the same
+// code whatever proxy is in front — but the rate limit itself would simply be
+// lost if this were deleted today.
+//
+// Porting it to Go middleware (in-repo, testable, applying in every
+// environment including local development) is the blocking follow-up.
+// Deleting this directory is what that unblocks.
+// ===========================================================================
+
 // Cloudflare deployment shim — a deployment artefact, not application code.
 //
 // Cloudflare Containers are hosted by Durable Object classes and reached
