@@ -48,19 +48,32 @@ https://{$APIVO_STAGING_HOST} {
 # Previews — one per open pull request, at pr-<n>.{$APIVO_PREVIEW_DOMAIN}.
 #
 # The origin certificate must cover this wildcard. A Cloudflare Origin
-# Certificate can be issued for *.qa.example.com alongside the names above, so
+# Certificate can be issued for *.example.com alongside the names above, so
 # this needs no ACME and no DNS API token on the host.
 #
-# The `expression` matcher is the security boundary: only ^pr-[0-9]+$ reaches
-# the routing snippet, so no other label can be turned into a container name
-# to proxy at. Everything else on the wildcard is refused here rather than
-# 502-ing somewhere further in.
+# The matcher is the security boundary: only ^pr-[0-9]+ reaches the routing
+# snippet, so no other label can be turned into a container name to proxy at.
+# Everything else on the wildcard is refused here rather than 502-ing
+# somewhere further in.
+#
+# It matches on the HOST PREFIX rather than on a label index, and that is not
+# a style preference. `{labels.N}` counts from the RIGHT, so the leftmost
+# label of a preview host is {labels.3} only when the preview domain has
+# exactly two labels. Point previews at a one-level domain — pr-1.example.com
+# rather than pr-1.qa.example.com — and {labels.3} is the EMPTY STRING: the
+# matcher never fires, every preview 403s, and the upstream degrades to
+# `apivo--api`. Nothing warns, because the config is still valid.
+#
+# The suffix needs no checking here: Caddy's `*` matches exactly one label, so
+# reaching this block already proves the host is <something>.<preview domain>
+# (a.b.example.com does not match *.example.com at all). Asserting the prefix
+# is therefore asserting the whole name.
 # ---------------------------------------------------------------------------
 https://*.{$APIVO_PREVIEW_DOMAIN} {
 	import origin-tls
 	import hardening
 
-	@preview expression {labels.3}.matches('^pr-[0-9]+$')
+	@preview header_regexp preview Host ^(pr-[0-9]+)\.
 	handle @preview {
 		import crawler-fence
 		import apivo-preview-routes

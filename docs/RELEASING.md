@@ -205,8 +205,8 @@ are **never** repository secrets: a release does not read GitHub's, and a
 
 | Key | Value |
 | --- | --- |
-| `DATABASE_URL` | Staging and production: that environment's own Supabase (EU) connection string, **with `sslmode=verify-full`**. QA: the container on the host, with `sslmode=require`. |
-| `JWKS_URL`, `JWT_AUDIENCE` | Supabase Auth, per environment, pointing at *that* environment's project. |
+| `DATABASE_URL` | Production: its own Supabase (EU) connection string, **with `sslmode=verify-full`**. QA and Staging: the Postgres container on the host, with `sslmode=require` (the free tier is one Supabase project and it is production's — see [ENVIRONMENTS.md](ENVIRONMENTS.md)). |
+| `JWKS_URL`, `JWT_AUDIENCE` | Supabase Auth. Production points at its own project; QA and Staging have no project of their own, so leaving these empty unmounts the editorial routes and keeps serving readers. |
 | `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY` | The matching half, in `web.env`. Not credentials. |
 | `TRANSLATION_*` | The provider and budget, once decided. The caps are real money and are per-environment — QA runs every merge, so if it translates at all it carries a small cap of its own. |
 

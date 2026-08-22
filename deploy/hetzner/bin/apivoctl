@@ -25,7 +25,7 @@ usage: apivoctl <command> [args]
   deploy <env>        reconcile now instead of waiting for the next tick
   logs <env> [svc]    follow the logs of an environment (svc: api | web | postgres)
   ps <env>            the environment's containers
-  psql <env>          a psql shell on an environment's own Postgres (QA only)
+  psql <env>          a psql shell on an environment's own Postgres (QA, Staging)
   pause <env>         stop reconciling — use before investigating a broken env
   resume <env>        reconcile again
   rollback <env>      BREAK GLASS: pin the previous digest by hand (see below)

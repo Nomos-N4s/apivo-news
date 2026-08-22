@@ -4,7 +4,8 @@
 # acts, and NOTHING here ever overwrites a file that already holds a secret.
 #
 #   APIVO_HOST_ROLE=preprod \
-#   APIVO_QA_HOST=qa.example.com APIVO_STAGING_HOST=staging.example.com \
+#   APIVO_QA_HOST=ra1ze.com APIVO_STAGING_HOST=repair.com \
+#   APIVO_PREVIEW_DOMAIN=ra1ze.com \
 #   APIVO_ORIGIN_CERT=/root/origin.pem APIVO_ORIGIN_KEY=/root/origin.key \
 #   GHCR_USER=<github-user> GHCR_TOKEN=<read:packages PAT> \
 #   APIVO_CONFIGURE_FIREWALL=yes \
@@ -86,14 +87,14 @@ preprod)
     ENVS="qa staging"
     CADDYFILE=Caddyfile.preprod
     EDGE_OVERLAY=docker-compose.edge.preprod.yml
-    [ -n "${APIVO_QA_HOST:-}" ] || die "set APIVO_QA_HOST (e.g. qa.example.com)"
-    [ -n "${APIVO_STAGING_HOST:-}" ] || die "set APIVO_STAGING_HOST"
+    [ -n "${APIVO_QA_HOST:-}" ] || die "set APIVO_QA_HOST (this project: ra1ze.com)"
+    [ -n "${APIVO_STAGING_HOST:-}" ] || die "set APIVO_STAGING_HOST (this project: repair.com)"
     ;;
 prod)
     ENVS="prod"
     CADDYFILE=Caddyfile.prod
     EDGE_OVERLAY=docker-compose.edge.prod.yml
-    [ -n "${APIVO_PROD_HOST:-}" ] || die "set APIVO_PROD_HOST (e.g. example.com)"
+    [ -n "${APIVO_PROD_HOST:-}" ] || die "set APIVO_PROD_HOST (this project: apivo.com)"
     [ -n "${APIVO_PROD_ALT_HOST:-}" ] || die "set APIVO_PROD_ALT_HOST (the name that redirects to it, e.g. www.example.com)"
     ;;
 *)
@@ -142,26 +143,37 @@ say "Configuring environments"
 for env_name in $ENVS; do
     mkdir -p "$ETC/$env_name"
 
-    if [ "$env_name" = qa ]; then
+    # QA and Staging both run a Postgres container; only production reaches
+    # Supabase. That is an economic constraint rather than a design
+    # preference: the Supabase free tier is one project, and the one project
+    # has to be production. The alternative — pointing Staging at the
+    # production project — would have release candidates running migrations
+    # against production data, which is worse than the parity gap this
+    # accepts. See docs/ENVIRONMENTS.md.
+    case "$env_name" in
+    qa | staging)
         compose_files="$PREFIX/compose/docker-compose.yml:$PREFIX/compose/docker-compose.local-db.yml"
-    else
+        ;;
+    *)
         compose_files="$PREFIX/compose/docker-compose.yml"
-    fi
+        ;;
+    esac
 
     if [ -e "$ETC/$env_name/stack.env" ]; then
         note "$env_name: stack.env exists, left alone"
     else
-        # QA's Postgres password. Generated, never typed: this is the one
-        # credential on the host that nobody needs to know.
-        # QA's Postgres block, and QA's only. Written unconditionally, it put
-        # a generated APIVO_PG_PASSWORD into staging's and production's
-        # stack.env too - which made apivoctl's "this environment uses
-        # Supabase" guard dead code on every provisioned host, so
-        # `apivoctl psql staging` reached for a postgres service those stacks
-        # do not define and failed with docker's error instead of the message
-        # written for exactly that case.
+        # The Postgres password for the environments that have a Postgres.
+        # Generated, never typed: this is the one credential on the host that
+        # nobody needs to know.
+        #
+        # Written ONLY for those environments. Written unconditionally, it put
+        # a generated APIVO_PG_PASSWORD into production's stack.env too -
+        # which made apivoctl's "this environment uses Supabase" guard dead
+        # code on every provisioned host, so `apivoctl psql prod` reached for
+        # a postgres service that stack does not define and failed with
+        # docker's error instead of the message written for exactly that case.
         pg_block=""
-        if [ "$env_name" = qa ]; then
+        if [ "$env_name" = qa ] || [ "$env_name" = staging ]; then
             pg_password=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
             pg_block="APIVO_PG_PASSWORD=$pg_password
 APIVO_PG_DB=apivo
@@ -220,37 +232,43 @@ EOF
 done
 
 # ---------------------------------------------------------------------------
-# 3. QA's Postgres certificate
+# 3. Postgres certificates for the environments that run their own Postgres
 #
-# So that QA can run APP_ENV=prod like every other environment. The api
-# refuses a cleartext DATABASE_URL under APP_ENV=prod, and the alternative —
-# running QA at APP_ENV=dev — would cost JSON logging and, more importantly,
-# the Secure attribute on every cookie the app writes. QA would become the
-# one environment where a cookie bug cannot reproduce.
+# QA and Staging, on this host. So that both can run APP_ENV=prod like every
+# other environment: the api refuses a cleartext DATABASE_URL under
+# APP_ENV=prod, and the alternative — running them at APP_ENV=dev — would
+# cost JSON logging and, more importantly, the Secure attribute on every
+# cookie the app writes. They would become the environments where a cookie
+# bug cannot reproduce, which is the opposite of what a staging host is for.
 #
 # The uid is read out of the image rather than assumed. Postgres refuses to
 # start on a key it does not own, and which uid it runs as is an
-# implementation detail of the image that has changed before.
+# implementation detail of the image that has changed before. It is read once
+# and reused, because `docker run` per environment is a second of provisioning
+# spent proving the same fact twice.
 # ---------------------------------------------------------------------------
 if [ "$APIVO_HOST_ROLE" = preprod ]; then
-    say "QA Postgres certificate"
-    certs="$ETC/qa/pg-certs"
-    if [ -e "$certs/postgres.key" ]; then
-        note "already present, left alone"
-    else
+    say "Postgres certificates (QA and Staging)"
+    pg_uid=""
+    for env_name in qa staging; do
+        certs="$ETC/$env_name/pg-certs"
+        if [ -e "$certs/postgres.key" ]; then
+            note "$env_name: already present, left alone"
+            continue
+        fi
         mkdir -p "$certs"
         openssl req -new -x509 -days 3650 -nodes \
             -out "$certs/postgres.crt" -keyout "$certs/postgres.key" \
-            -subj "/CN=apivo-qa-postgres" 2>/dev/null
-        pg_uid=$(docker run --rm postgres:17-alpine id -u postgres)
+            -subj "/CN=apivo-$env_name-postgres" 2>/dev/null
+        [ -n "$pg_uid" ] || pg_uid=$(docker run --rm postgres:17-alpine id -u postgres)
         chown "$pg_uid:$pg_uid" "$certs/postgres.key" "$certs/postgres.crt"
         chmod 0600 "$certs/postgres.key"
         chmod 0644 "$certs/postgres.crt"
-        note "generated, owned by uid $pg_uid (read from the postgres image)"
-        note "QA's DATABASE_URL should be:"
+        note "$env_name: generated, owned by uid $pg_uid (read from the postgres image)"
+        note "$env_name: DATABASE_URL should be:"
         note "  postgres://apivo:\$APIVO_PG_PASSWORD@postgres:5432/apivo?sslmode=require"
-        note "  (the password is in $ETC/qa/stack.env)"
-    fi
+        note "  (the password is in $ETC/$env_name/stack.env)"
+    done
 fi
 
 # ---------------------------------------------------------------------------

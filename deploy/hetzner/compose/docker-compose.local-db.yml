@@ -1,8 +1,18 @@
 # A Postgres container on the host, layered over docker-compose.yml.
 #
-# Used by QA only, by listing this file in COMPOSE_FILE (see
-# env/qa.stack.env.example). Staging and production reach their own Supabase
-# EU projects and never load this file.
+# Used by QA and Staging, by listing this file in COMPOSE_FILE (provision.sh
+# writes it). Production reaches Supabase and never loads this file.
+#
+# Staging is on this list for an economic reason, not a technical one: the
+# Supabase free tier is a single project, and the single project has to be
+# production. Pointing Staging at the production project instead would put
+# release-candidate migrations on production data, so a container is the
+# lesser cost. What it costs is real and worth naming — Staging no longer
+# rehearses the database production will actually use, so connection
+# limits, extension availability and Supabase-side policy are NOT exercised
+# before a final release. When a paid tier arrives, Staging moves back by
+# dropping this file from its COMPOSE_FILE and setting DATABASE_URL; no code
+# changes.
 #
 # ---------------------------------------------------------------------------
 # Why this container speaks TLS

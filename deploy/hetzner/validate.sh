@@ -106,10 +106,12 @@ check_env() {
     fi
 }
 
-# QA layers the local Postgres on; staging and production do not, and that
-# single difference is the whole difference between them.
+# QA and Staging layer the local Postgres on; production does not, and that
+# single difference is the whole difference between them. Staging is here
+# because the Supabase free tier is one project and it has to be production
+# — see docs/ENVIRONMENTS.md for what that costs.
 check_env qa docker-compose.yml docker-compose.local-db.yml
-check_env staging docker-compose.yml
+check_env staging docker-compose.yml docker-compose.local-db.yml
 check_env prod docker-compose.yml
 
 # ---------------------------------------------------------------------------
@@ -241,10 +243,18 @@ check_caddyfile() {
     fi
 }
 
+# Both preview-domain depths, because the shape of the name changes what the
+# preview site block has to cope with, and validating only one depth is how
+# the {labels.3} bug reached main: qa.validate.invalid happens to be exactly
+# the depth that makes a right-counted label index look correct.
 check_caddyfile Caddyfile.preprod \
     APIVO_QA_HOST=qa.validate.invalid \
     APIVO_STAGING_HOST=staging.validate.invalid \
     APIVO_PREVIEW_DOMAIN=qa.validate.invalid
+check_caddyfile Caddyfile.preprod \
+    APIVO_QA_HOST=validate.invalid \
+    APIVO_STAGING_HOST=staging.validate.invalid \
+    APIVO_PREVIEW_DOMAIN=validate.invalid
 check_caddyfile Caddyfile.prod \
     APIVO_PROD_HOST=validate.invalid \
     APIVO_PROD_ALT_HOST=www.validate.invalid
@@ -327,6 +337,133 @@ case "$got" in
     fail "a FOREIGN origin was rewritten to '$got' — the rewrite is not host-exact and the CSRF check can be defeated"
     ;;
 esac
+
+# ---------------------------------------------------------------------------
+# Preview routing, asserted by RUNNING it — at TWO preview-domain depths.
+#
+# `caddy validate` cannot catch this either, and the first version of this
+# deployment shipped the bug: the preview upstream was derived from
+# {labels.3}, a label index counted from the RIGHT. That is the leftmost label
+# of pr-1.qa.example.com and the EMPTY STRING for pr-1.example.com. Point
+# previews at a one-level domain and every preview 403s while the config stays
+# perfectly valid — and this file did not notice, because it validated with a
+# two-label preview domain, which is exactly the depth that makes the wrong
+# index look right.
+#
+# So both depths are probed, and the matcher is LIFTED from the real
+# Caddyfile rather than restated here. Restating it would only ever prove
+# that a copy works.
+# ---------------------------------------------------------------------------
+PREVIEW="$TMP/preview"
+mkdir -p "$PREVIEW"
+cp "$CADDY_DIR/snippets.caddy" "$PREVIEW/snippets.caddy"
+
+preview_matcher=$(sed -n '/^https:\/\/\*\.{\$APIVO_PREVIEW_DOMAIN}/,/^}/p' \
+    "$CADDY_DIR/Caddyfile.preprod" |
+    sed -n 's/^[[:space:]]*\(@preview .*\)$/\1/p' | head -n 1)
+if [ -z "$preview_matcher" ]; then
+    fail "could not lift the @preview matcher out of Caddyfile.preprod; the preview routing checks below would prove nothing"
+    preview_matcher="@preview expression false"
+fi
+
+# The upstreams resolve because the container is given host entries for them,
+# so a request that reaches the echo proves the placeholder expanded to
+# exactly `pr-7` — `apivo--api` or a literal placeholder does not resolve and
+# comes back 502. The catch-all answers 200 rather than aborting like the real
+# file: this test only needs to tell "the matcher did not fire" apart from
+# "it fired", and an aborted connection is indistinguishable from a Caddy that
+# never started.
+cat > "$PREVIEW/Caddyfile" <<EOF
+{
+	auto_https off
+	admin off
+}
+
+import /pv/snippets.caddy
+
+:8080 {
+	respond "api-upstream"
+}
+
+:4321 {
+	respond "web-upstream"
+}
+
+:9082 {
+	$preview_matcher
+	handle @preview {
+		import apivo-preview-routes
+	}
+	handle {
+		respond "REFUSED"
+	}
+}
+EOF
+
+preview_probe() {
+    # preview_probe <host-header> <path> — what the preview site routes to.
+    docker run --rm \
+        --add-host apivo-pr-7-api:127.0.0.1 \
+        --add-host apivo-pr-7-web:127.0.0.1 \
+        -v "$PREVIEW:/pv:ro" --entrypoint sh "$CADDY_IMAGE" -c "
+        caddy start --config /pv/Caddyfile >/dev/null 2>&1
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            wget -q -O- --header='Host: $1' 'http://127.0.0.1:9082$2' 2>/dev/null && exit 0
+            sleep 1
+        done
+        exit 1
+    " 2>/dev/null || true
+}
+
+# A ONE-LEVEL preview domain (pr-7.example.com). This is the case the label
+# index got wrong, and the case this deployment actually uses.
+got=$(preview_probe pr-7.example.com /)
+case "$got" in
+web-upstream)
+    echo "ok: a preview on a one-level domain reaches its own web container"
+    ;;
+REFUSED)
+    fail "a preview on a one-level domain (pr-7.example.com) is REFUSED by the @preview matcher. The matcher depends on how deep the preview domain is - almost certainly a {labels.N} index, which is empty at this depth. Every preview would 403."
+    ;;
+*)
+    fail "a preview on a one-level domain did not reach its web container (got: ${got:-nothing}). If this is a 502 the upstream placeholder did not expand to 'pr-7'."
+    ;;
+esac
+
+# A TWO-LEVEL preview domain (pr-7.qa.example.com), so the fix is not merely
+# the old bug moved one label along.
+got=$(preview_probe pr-7.qa.example.com /)
+case "$got" in
+web-upstream)
+    echo "ok: and so does a preview on a two-level domain"
+    ;;
+*)
+    fail "a preview on a two-level domain (pr-7.qa.example.com) did not reach its web container (got: ${got:-nothing}); the preview routing works at one depth only"
+    ;;
+esac
+
+got=$(preview_probe pr-7.example.com /api/x)
+case "$got" in
+api-upstream)
+    echo "ok: and /api/* reaches that preview's api container, not its frontend"
+    ;;
+*)
+    fail "a preview's /api/* did not reach its api container (got: ${got:-nothing})"
+    ;;
+esac
+
+# The security property: no label but pr-<n> may become a container name.
+for hostile in apivo-qa-api.example.com pr-.example.com pr-7x.example.com; do
+    got=$(preview_probe "$hostile" /)
+    case "$got" in
+    REFUSED)
+        echo "ok: $hostile is refused rather than proxied at"
+        ;;
+    *)
+        fail "$hostile was NOT refused (got: ${got:-nothing}); a hostname that is not pr-<n> can be turned into a container name to proxy at"
+        ;;
+    esac
+done
 
 # ---------------------------------------------------------------------------
 # The crawler fence list, against the copy it was taken from.

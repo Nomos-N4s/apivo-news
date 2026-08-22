@@ -125,8 +125,11 @@ Three environments, two hosts, one mechanism —
 | | Deploys on | Database | Provisioned |
 |---|---|---|---|
 | **QA** | every push to `main` | Postgres container on the host | not yet |
-| **Staging** | a `-rc` tag | its own Supabase EU project | not yet |
+| **Staging** | a `-rc` tag | Postgres container on the host | not yet |
 | **Production** | a final semver tag, behind one approval | its own Supabase EU project | not yet |
+
+Bringing the hosts up is [docs/RUNBOOK.md](docs/RUNBOOK.md) — every step
+that needs a human, in order.
 
 The application runs as containers on a Hetzner VPS (EU, so GDPR residency
 is a property of the host rather than a setting), behind Caddy, behind

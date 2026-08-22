@@ -9,7 +9,7 @@ asking anyone.
 | **Deploys on** | every push to `main` | a `-rc` tag | a final semver tag |
 | **Gate** | none — automatic | none — automatic | one human approval |
 | **Host** | pre-production VPS | pre-production VPS | its own VPS |
-| **Database** | Postgres container on the host | its own Supabase EU project | its own Supabase EU project |
+| **Database** | Postgres container on the host | Postgres container on the host | its own Supabase EU project |
 | **Data** | throwaway, resettable | production-shaped | real |
 | **`APP_ENV`** | `prod` | `prod` | `prod` |
 | **Channel** | `:qa` | `:staging` | `:prod` |
@@ -39,11 +39,24 @@ container with fixtures in it, so it can be reset without a conversation, and
 a destructive migration costs nothing. Nothing here is precious.
 
 **Staging is the dress rehearsal.** It deploys release candidates only, from
-the identical pipeline that will later deploy production, against its own
-Supabase project, with production's shape. Nothing is manual here that is not
-manual in production. Its job is to make the first production release boring —
-the first time that pipeline runs to a *new host*, not the first time it runs
-at all.
+the identical pipeline that will later deploy production, with production's
+shape. Nothing is manual here that is not manual in production. Its job is to
+make the first production release boring — the first time that pipeline runs
+to a *new host*, not the first time it runs at all.
+
+**One part of that rehearsal is missing, and it is worth being blunt about
+which.** Staging runs a Postgres container, not its own Supabase project,
+because the Supabase free tier is a single project and that project has to be
+production. The alternative — pointing Staging at the production project —
+would have release-candidate migrations running against production data, and
+no parity argument is worth that. So what Staging still rehearses is the
+pipeline, the images, the proxy, the approval gate and the migrations; what it
+does **not** rehearse is Supabase itself: connection limits, pooler
+behaviour, extension availability, and anything enforced Supabase-side. A
+release can therefore still fail on first contact with production's database
+in a way staging could not have shown. When a paid tier arrives this closes by
+dropping `docker-compose.local-db.yml` from staging's `COMPOSE_FILE` and
+setting its `DATABASE_URL` — no code change.
 
 If those two descriptions ever collapse into one, collapse the environments
 too and save the money.
@@ -67,11 +80,11 @@ environment where a cookie bug cannot reproduce, because
 authoritative for the `Secure` attribute. An environment that runs with the
 guards off cannot find the bugs the guards would have caught.
 
-`require` rather than `verify-full` for QA specifically: the server is a
+`require` rather than `verify-full` for QA and Staging: the server is a
 container one hop away on a network marked `internal: true`, and a
 self-signed certificate cannot prove an identity. Encrypting without claiming
-to verify is honest. Staging and production reach Supabase across the public
-internet and use `verify-full`.
+to verify is honest. Production reaches Supabase across the public internet
+and uses `verify-full`.
 
 ## How a deploy actually happens
 
@@ -195,9 +208,14 @@ same-origin check independent of the proxy, in `web/src/lib/`.
 
 ## Provisioning a host
 
+**Step by step, with this project's real domains and everything that needs a
+human: [RUNBOOK.md](RUNBOOK.md).** What follows is the reference for the
+script itself.
+
 ```sh
 APIVO_HOST_ROLE=preprod \
-APIVO_QA_HOST=qa.example.com APIVO_STAGING_HOST=staging.example.com \
+APIVO_QA_HOST=ra1ze.com APIVO_STAGING_HOST=repair.com \
+APIVO_PREVIEW_DOMAIN=ra1ze.com \
 APIVO_ORIGIN_CERT=/root/origin.pem APIVO_ORIGIN_KEY=/root/origin.key \
 GHCR_USER=<github-user> GHCR_TOKEN=<PAT with read:packages> \
 APIVO_CONFIGURE_FIREWALL=yes \
@@ -206,8 +224,8 @@ sh deploy/hetzner/provision.sh
 
 Idempotent, and it never overwrites a file that holds a secret. It installs
 the programs, the compose files, the Caddy config and the systemd timers, and
-generates QA's Postgres certificate with the uid read out of the Postgres
-image rather than assumed.
+generates the Postgres certificates for QA and Staging with the uid read out
+of the Postgres image rather than assumed.
 
 What it deliberately does **not** do:
 
@@ -353,9 +371,11 @@ against. Deleting `deploy/cloudflare/` is what that port unblocks.
 ## Deferred, deliberately
 
 - **The production host.** Provision it when there is something to protect.
-- **Backups.** Supabase covers staging and production; QA is fixtures and
-  deliberately disposable. Nothing on a VPS holds state that matters yet —
-  and the moment production exists, that sentence needs re-checking.
+- **Backups.** Supabase covers production. QA and Staging are containers on
+  the VPS with no backup at all — QA is fixtures and deliberately disposable,
+  and staging's data is rebuilt from a release candidate rather than kept.
+  Nothing on a VPS holds state that matters yet — and the moment production
+  exists, that sentence needs re-checking.
 - **`linux/arm64` images.** Built for `amd64` only. Hetzner's ARM line (CAX)
   needs the Dockerfile made cross-aware first — two lines, `TARGETARCH` and
   `--platform=$BUILDPLATFORM` — and is worth it if the box is ARM.

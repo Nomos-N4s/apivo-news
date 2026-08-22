@@ -165,10 +165,16 @@
 # hostname at request time, so a pull request opening does not require the
 # proxy in front of QA and Staging to be restarted.
 #
-# {labels.3} is the leftmost label of pr-142.qa.example.com. The caller does
-# not get to choose it freely: the site block below admits only hostnames
-# matching ^pr-[0-9]+$, so `apivo-qa-api.qa.example.com` is refused rather
-# than turned into a container name.
+# {re.preview.1} is the `pr-<n>` captured by the @preview matcher in the site
+# block that imports this. The caller does not get to choose it freely: that
+# matcher admits only ^pr-[0-9]+ , so `apivo-qa-api.example.com` is refused
+# rather than turned into a container name.
+#
+# It is a CAPTURE and not {labels.N} because a label index counts from the
+# right, and so silently depends on how deep the preview domain is. See the
+# long note in Caddyfile.preprod; the short version is that {labels.3} is
+# correct for pr-1.qa.example.com and EMPTY for pr-1.example.com, and the
+# difference is invisible to `caddy validate`.
 #
 # ---------------------------------------------------------------------------
 # WHAT A PREVIEW DELIBERATELY DOES NOT DO
@@ -199,10 +205,10 @@
 	@preview-api path /api/* /healthz /readyz
 
 	handle @preview-api {
-		reverse_proxy apivo-{labels.3}-api:8080
+		reverse_proxy apivo-{re.preview.1}-api:8080
 	}
 
 	handle {
-		reverse_proxy apivo-{labels.3}-web:4321
+		reverse_proxy apivo-{re.preview.1}-web:4321
 	}
 }
