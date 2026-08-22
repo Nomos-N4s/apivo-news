@@ -1,0 +1,194 @@
+#!/bin/sh
+# The operator's console on a deployment host.
+#
+# Everything here is a convenience over docker/systemd, deliberately: this
+# tool must never become the way things are deployed, because then the way
+# things are deployed would live on a box instead of in a repository. Shipping
+# code happens by merging or tagging, and the host converges (apivo-reconcile).
+# What is left over is the handful of questions and interventions a person
+# actually has on a host — and one break-glass, marked as such.
+#
+# NOTE FOR AGENTS: you do not have a shell here and do not need one. To ask
+# what is deployed where, run `scripts/env_status.sh` from a checkout; it
+# answers over plain HTTPS with no credentials. See docs/ENVIRONMENTS.md.
+set -eu
+
+ETC="${APIVO_ETC:-/etc/apivo}"
+STATE="${APIVO_STATE:-/var/lib/apivo}"
+DOCKER="${APIVO_DOCKER:-docker}"
+
+usage() {
+    cat >&2 <<'EOF'
+usage: apivoctl <command> [args]
+
+  status [env]        what every environment is running, and whether it is healthy
+  deploy <env>        reconcile now instead of waiting for the next tick
+  logs <env> [svc]    follow the logs of an environment (svc: api | web | postgres)
+  ps <env>            the environment's containers
+  psql <env>          a psql shell on an environment's own Postgres (QA only)
+  pause <env>         stop reconciling — use before investigating a broken env
+  resume <env>        reconcile again
+  rollback <env>      BREAK GLASS: pin the previous digest by hand (see below)
+  edge reload         apply an edited Caddy config
+
+The ordinary way to deploy is to merge to main (QA), or tag (staging, prod).
+The ordinary way to roll back is to re-run the release workflow from the
+previous tag, which moves the channel — see docs/RELEASING.md. `rollback`
+here is for when CI itself is unavailable.
+EOF
+    exit 2
+}
+
+[ "$#" -ge 1 ] || usage
+COMMAND="$1"
+shift
+
+envs() {
+    for _d in "$ETC"/*/; do
+        _n=${_d%/}
+        _n=${_n##*/}
+        [ "$_n" = edge ] && continue
+        [ -r "$ETC/$_n/stack.env" ] && echo "$_n"
+    done
+}
+
+require_env() {
+    [ "$#" -ge 1 ] || usage
+    [ -r "$ETC/$1/stack.env" ] || {
+        echo "apivoctl: this host does not serve the '$1' environment (it serves: $(envs | tr '\n' ' '))" >&2
+        exit 2
+    }
+    ENV_NAME="$1"
+    set -a
+    # shellcheck source=/dev/null
+    . "$ETC/$ENV_NAME/stack.env"
+    # The digests the reconciler pinned, so `docker compose` here addresses
+    # exactly what is running rather than re-resolving the channel tag.
+    # shellcheck source=/dev/null
+    [ -r "$STATE/$ENV_NAME/images.env" ] && . "$STATE/$ENV_NAME/images.env"
+    set +a
+}
+
+field() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1; }
+
+status_one() {
+    _env="$1"
+    _cur="$STATE/$_env/current"
+    _version=$(field "$_cur" VERSION)
+    _digest=$(field "$_cur" API_DIGEST)
+    _at=$(field "$_cur" AT)
+    _channel=$(sed -n 's/^APIVO_CHANNEL=//p' "$ETC/$_env/stack.env" | head -n 1)
+    _paused=""
+    [ -e "$ETC/$_env/paused" ] && _paused="  [PAUSED]"
+
+    # What is actually up, asked of the daemon rather than of the state file:
+    # the state file records intent, and the gap between the two is the only
+    # interesting thing this command can tell anyone.
+    _up=$($DOCKER ps --filter "name=apivo-$_env-" --filter "health=healthy" --format '{{.Names}}' 2>/dev/null | wc -l | tr -d ' ')
+    _all=$($DOCKER ps -a --filter "name=apivo-$_env-" --format '{{.Names}}' 2>/dev/null | wc -l | tr -d ' ')
+
+    printf '%-10s %-9s %-12s %s/%s healthy   %s%s\n' \
+        "$_env" "$_channel" "${_version:-never}" "$_up" "$_all" "${_at:-—}" "$_paused"
+    [ -n "$_digest" ] && printf '           api %s\n' "$_digest"
+}
+
+case "$COMMAND" in
+status)
+    printf '%-10s %-9s %-12s %-17s %s\n' ENV CHANNEL VERSION CONTAINERS "DEPLOYED AT"
+    if [ "$#" -ge 1 ]; then
+        status_one "$1"
+    else
+        envs | while read -r e; do status_one "$e"; done
+    fi
+    ;;
+
+deploy)
+    require_env "$@"
+    # Through systemd rather than by calling the script, so a manual deploy
+    # is recorded in the journal beside every automatic one and cannot run
+    # concurrently with the timer's own tick.
+    echo "reconciling $ENV_NAME now..."
+    systemctl start "apivo-reconcile@$ENV_NAME.service" || true
+    journalctl -u "apivo-reconcile@$ENV_NAME.service" -n 20 --no-pager -o cat
+    ;;
+
+logs)
+    require_env "$@"
+    shift
+    $DOCKER compose logs -f --tail 200 "$@"
+    ;;
+
+ps)
+    require_env "$@"
+    $DOCKER compose ps
+    ;;
+
+psql)
+    require_env "$@"
+    [ -n "${APIVO_PG_PASSWORD:-}" ] || {
+        echo "apivoctl: '$ENV_NAME' has no Postgres of its own — it uses Supabase. Connect with the DATABASE_URL in $ETC/$ENV_NAME/api.env, from somewhere that is allowed to." >&2
+        exit 2
+    }
+    $DOCKER compose exec postgres psql -U "${APIVO_PG_USER:-apivo}" -d "${APIVO_PG_DB:-apivo}"
+    ;;
+
+pause)
+    require_env "$@"
+    touch "$ETC/$ENV_NAME/paused"
+    echo "$ENV_NAME will not be reconciled until 'apivoctl resume $ENV_NAME'."
+    echo "Containers keep running; nothing restarts them if they stop."
+    ;;
+
+resume)
+    require_env "$@"
+    rm -f "$ETC/$ENV_NAME/paused"
+    echo "$ENV_NAME resumes on the next tick (within a minute), and will roll to whatever its channel now points at."
+    ;;
+
+rollback)
+    require_env "$@"
+    PREV="$STATE/$ENV_NAME/previous"
+    [ -r "$PREV" ] || {
+        echo "apivoctl: no previous release recorded for $ENV_NAME — there is nothing to roll back to." >&2
+        exit 1
+    }
+    _api=$(field "$PREV" API_DIGEST)
+    _web=$(field "$PREV" WEB_DIGEST)
+    _ver=$(field "$PREV" VERSION)
+
+    cat >&2 <<EOF
+BREAK GLASS: pinning $ENV_NAME to $_ver by hand.
+
+This diverges the host from its channel, so reconciliation is being PAUSED —
+otherwise the next tick would roll straight back to the build you are backing
+out of. The environment now runs something no tag names, which is a state to
+leave as quickly as you can.
+
+The real fix is to move the channel: re-run the release workflow from the
+previous tag (docs/RELEASING.md), then 'apivoctl resume $ENV_NAME'.
+EOF
+    touch "$ETC/$ENV_NAME/paused"
+    cat > "$STATE/$ENV_NAME/images.env" <<EOF
+# Pinned by hand via 'apivoctl rollback'. Reconciliation is paused.
+APIVO_API_IMAGE=$APIVO_REGISTRY/api@$_api
+APIVO_WEB_IMAGE=$APIVO_REGISTRY/web@$_web
+APIVO_VERSION=$_ver
+EOF
+    set -a
+    # shellcheck source=/dev/null
+    . "$STATE/$ENV_NAME/images.env"
+    set +a
+    $DOCKER compose up -d --remove-orphans --wait --wait-timeout 180
+    echo "$ENV_NAME is pinned to $_ver and paused."
+    ;;
+
+edge)
+    [ "${1:-}" = reload ] || usage
+    systemctl restart apivo-edge.service
+    systemctl --no-pager --lines=10 status apivo-edge.service || true
+    ;;
+
+*)
+    usage
+    ;;
+esac

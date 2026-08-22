@@ -1,0 +1,42 @@
+# The edge: one Caddy in front of every environment on this host.
+#
+# Deliberately NOT on a timer. The application stacks reconcile themselves
+# from a registry channel because that is how code ships; the proxy's
+# configuration is this repository's and changes when a person changes it. A
+# proxy that rolled itself forward automatically could take every environment
+# on the host down at once — including the one serving the evidence of what
+# broke.
+#
+# So this unit exists to do two things: bring Caddy up at boot, and give
+# "apply the Caddy config I just edited" a name:
+#
+#   systemctl restart apivo-edge
+#
+# which is also `apivoctl edge reload`.
+
+[Unit]
+Description=apivo edge proxy (Caddy)
+Documentation=https://github.com/Nomos-N4s/apivo-news/blob/main/docs/ENVIRONMENTS.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# The environment networks belong to the application stacks and are declared
+# `external: true` here, so Caddy will not start until each environment has
+# been reconciled at least once. That ordering is real, not incidental: a
+# proxy that started first would have to invent the networks, and would then
+# route to nothing while looking perfectly healthy.
+EnvironmentFile=/etc/apivo/edge/stack.env
+ExecStart=/usr/bin/docker compose up -d --remove-orphans --wait --wait-timeout 120
+ExecStop=/usr/bin/docker compose down
+
+TimeoutStartSec=300
+User=root
+SyslogIdentifier=apivo-edge
+
+[Install]
+WantedBy=multi-user.target

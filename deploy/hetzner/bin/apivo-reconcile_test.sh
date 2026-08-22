@@ -1,0 +1,357 @@
+#!/bin/sh
+# Unit-style tests for apivo-reconcile. CI runs this on every PR, for the
+# same reason the release workflow proves its own guard before trusting it:
+# this script is the only thing standing between a bad image and every
+# environment that tracks its channel, and a gate is only as good as the
+# proof that it closes.
+#
+# There is no Docker daemon here, no registry and no container. Every call
+# the reconciler makes to the outside goes through $APIVO_DOCKER, so a stub
+# stands in for all of it and the tests state the interesting situations
+# directly - a registry that will not answer, a rollout whose containers come
+# up healthy but on the wrong image, a first-ever deploy that fails and has
+# nothing to fall back to.
+#
+# Everything happens under mktemp. Nothing outside it is read or written.
+set -eu
+
+RECONCILE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/apivo-reconcile
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+STUB_DIR="$TMP/stub"
+mkdir -p "$STUB_DIR"
+
+# ---------------------------------------------------------------------------
+# The stub docker.
+#
+# It models just enough of a daemon and a registry to make the reconciler's
+# decisions observable: which digest a tag resolves to, whether a rollout
+# succeeds, and what the containers claim to be running afterwards. Its
+# default behaviour is the happy path, so each test states only its own
+# deviation from it.
+# ---------------------------------------------------------------------------
+cat > "$TMP/docker" <<'STUB'
+#!/bin/sh
+echo "$*" >> "$STUB_DIR/calls"
+read_or() { [ -r "$STUB_DIR/$1" ] && cat "$STUB_DIR/$1" || printf '%s' "$2"; }
+case "$1" in
+buildx)
+    # buildx imagetools inspect <ref> --format '{{.Manifest.Digest}}'
+    case "$4" in
+    */api:*) read_or digest_api '' ;;
+    */web:*) read_or digest_web '' ;;
+    esac
+    ;;
+pull)
+    [ -e "$STUB_DIR/pull_fails" ] && exit 1
+    exit 0
+    ;;
+image)
+    case "$2" in
+    # The version the release pipeline stamped into the image as an OCI label.
+    inspect) read_or label_version 'v0.1.0' ;;
+    prune) : ;;
+    esac
+    ;;
+container)
+    # container inspect --format '{{.Config.Image}}' <name>
+    # Answers with whatever the reconciler most recently pinned, which is what
+    # a real daemon would say after a successful rollout. A test that wants a
+    # container stuck on the old image writes running_override.
+    if [ -e "$STUB_DIR/running_override" ]; then
+        cat "$STUB_DIR/running_override"
+    else
+        case "$5" in
+        *-api) sed -n 's/^APIVO_API_IMAGE=//p' "$STUB_IMAGES_ENV" ;;
+        *-web) sed -n 's/^APIVO_WEB_IMAGE=//p' "$STUB_IMAGES_ENV" ;;
+        esac
+    fi
+    ;;
+exec)
+    # The frontend fetching the api's /healthz. A healthy stack serves the
+    # version that was deployed, so that is what the pin says.
+    if [ -e "$STUB_DIR/served_override" ]; then
+        cat "$STUB_DIR/served_override"
+    else
+        sed -n 's/^APIVO_VERSION=//p' "$STUB_IMAGES_ENV"
+    fi
+    ;;
+compose)
+    case "$2" in
+    up)
+        # One exit code per line in compose_exits, consumed in order, so a
+        # test can say "the rollout fails and the rollback that follows
+        # succeeds". Past the end of the file, everything succeeds.
+        n=$(( $(cat "$STUB_DIR/up_count" 2>/dev/null || echo 0) + 1 ))
+        echo "$n" > "$STUB_DIR/up_count"
+        code=$(sed -n "${n}p" "$STUB_DIR/compose_exits" 2>/dev/null || true)
+        exit "${code:-0}"
+        ;;
+    esac
+    ;;
+esac
+exit 0
+STUB
+chmod +x "$TMP/docker"
+
+export STUB_DIR
+export APIVO_DOCKER="$TMP/docker"
+export APIVO_ETC="$TMP/etc"
+export APIVO_STATE="$TMP/state"
+export STUB_IMAGES_ENV="$APIVO_STATE/qa/images.env"
+
+DIGEST_A="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+DIGEST_B="sha256:2222222222222222222222222222222222222222222222222222222222222222"
+WEB_A="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+WEB_B="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+REGISTRY="ghcr.io/nomos-n4s/apivo-news"
+
+FAILS=0
+
+# Reset to the happy path: a fresh QA environment tracking a registry that
+# serves DIGEST_A/WEB_A as v0.1.0, and a daemon that does as it is told.
+reset() {
+    rm -rf "$APIVO_ETC" "$APIVO_STATE" "$STUB_DIR"
+    mkdir -p "$APIVO_ETC/qa" "$APIVO_STATE" "$STUB_DIR"
+    cat > "$APIVO_ETC/qa/stack.env" <<EOF
+APIVO_ENV=qa
+APIVO_CHANNEL=qa
+APIVO_REGISTRY=$REGISTRY
+COMPOSE_FILE=/opt/apivo/compose/docker-compose.yml
+EOF
+    printf '%s' "$DIGEST_A" > "$STUB_DIR/digest_api"
+    printf '%s' "$WEB_A" > "$STUB_DIR/digest_web"
+    printf '%s' 'v0.1.0' > "$STUB_DIR/label_version"
+}
+
+# Bring the environment to a known-good running state, so a test can then
+# break the NEXT rollout and observe the rollback. The call counter is reset
+# afterwards, so a test's compose_exits always describes the rollouts it is
+# actually about rather than counting from the fixture that set it up.
+settle() {
+    sh "$RECONCILE" qa >/dev/null 2>&1
+    rm -f "$STUB_DIR/up_count"
+}
+
+run() {
+    # run <env> - captures stdout+stderr and the exit code, never aborts.
+    set +e
+    OUT=$(sh "$RECONCILE" "$1" 2>&1)
+    RC=$?
+    set -e
+}
+
+check() {
+    # check <description> <expected-rc> <required-output-fragment>
+    if [ "$RC" -ne "$2" ]; then
+        echo "FAIL: $1 - expected exit $2, got $RC: $OUT"
+        FAILS=1
+        return
+    fi
+    if [ -n "$3" ] && ! printf '%s' "$OUT" | grep -q -F -e "$3"; then
+        echo "FAIL: $1 - exit $2 as expected, but the output never said '$3': $OUT"
+        FAILS=1
+        return
+    fi
+    echo "ok: $1"
+}
+
+check_state() {
+    # check_state <description> <key> <expected>
+    got=$(sed -n "s/^$2=//p" "$APIVO_STATE/qa/current" 2>/dev/null | head -n 1)
+    if [ "$got" != "$3" ]; then
+        echo "FAIL: $1 - current $2 is '${got:-unset}', expected '$3'"
+        FAILS=1
+    else
+        echo "ok: $1"
+    fi
+}
+
+check_pinned() {
+    # check_pinned <description> <expected-api-ref>
+    got=$(sed -n 's/^APIVO_API_IMAGE=//p' "$STUB_IMAGES_ENV" 2>/dev/null)
+    if [ "$got" != "$2" ]; then
+        echo "FAIL: $1 - compose is pinned to '${got:-nothing}', expected '$2'"
+        FAILS=1
+    else
+        echo "ok: $1"
+    fi
+}
+
+# ===========================================================================
+# Configuration refusals. Nothing is attempted, and the exit code says so
+# (2, not 1): a misconfigured unit has not failed a deploy, it has failed to
+# describe one.
+# ===========================================================================
+
+reset
+run "../../etc/passwd"
+check "an environment name that could escape a path is refused" 2 "not lowercase alphanumeric"
+
+reset
+run staging
+check "an environment this host does not serve is refused" 2 "does not serve the 'staging' environment"
+
+reset
+sed -i 's/^APIVO_CHANNEL=.*//' "$APIVO_ETC/qa/stack.env"
+run qa
+check "a stack.env missing a required key is refused" 2 "does not set APIVO_CHANNEL"
+
+reset
+sed -i 's/^APIVO_ENV=qa/APIVO_ENV=prod/' "$APIVO_ETC/qa/stack.env"
+run qa
+check "a stack.env whose APIVO_ENV contradicts the unit is refused" 2 "neither is trustworthy"
+
+# The one that matters most of these: a unit pointed at the wrong directory
+# would otherwise reconcile production's channel into QA's containers.
+
+# ===========================================================================
+# The first deploy.
+# ===========================================================================
+
+reset
+run qa
+check "a fresh environment rolls out" 0 '"event":"rollout_ok"'
+check_state "the rollout is recorded" API_DIGEST "$DIGEST_A"
+check_state "the version is recorded from the image label" VERSION v0.1.0
+check_pinned "compose is pinned by digest, not by tag" "$REGISTRY/api@$DIGEST_A"
+
+# ===========================================================================
+# The quiet path - by far the most common tick, and the one that must stay
+# silent. A reconciler that logs every minute is a reconciler whose logs
+# nobody reads on the day it matters.
+# ===========================================================================
+
+reset
+settle
+run qa
+check "an unmoved channel exits quietly" 0 ""
+if [ -n "$OUT" ]; then
+    echo "FAIL: an unmoved channel said something: $OUT"
+    FAILS=1
+else
+    echo "ok: an unmoved channel says nothing at all"
+fi
+
+# ...but it still runs `up`, which is what brings back a container that died
+# between ticks. This is the whole self-healing story, so it is asserted
+# rather than assumed.
+if [ "$(cat "$STUB_DIR/up_count")" != "1" ]; then
+    echo "FAIL: an unmoved channel did not converge the stack (up ran $(cat "$STUB_DIR/up_count" 2>/dev/null || echo 0) times, expected 1)"
+    FAILS=1
+else
+    echo "ok: an unmoved channel still converges the running stack"
+fi
+
+# ===========================================================================
+# A channel that moved.
+# ===========================================================================
+
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' 'v0.2.0' > "$STUB_DIR/label_version"
+run qa
+check "a moved channel rolls forward" 0 '"event":"rollout_ok"'
+check_state "the new digest is recorded" API_DIGEST "$DIGEST_B"
+check_state "the new version is recorded" VERSION v0.2.0
+
+# ===========================================================================
+# The registry is unreachable.
+#
+# The single most likely real failure - an expired GHCR credential - and the
+# one where doing nothing is the correct action. The environment keeps
+# serving.
+# ===========================================================================
+
+reset
+settle
+: > "$STUB_DIR/digest_api"
+run qa
+check "an unresolvable channel refuses to act" 1 "cannot resolve"
+check "and says the environment was left alone" 1 "keeps serving whatever it already had"
+check_state "the running state is untouched" API_DIGEST "$DIGEST_A"
+
+# ===========================================================================
+# Rollouts that fail.
+# ===========================================================================
+
+reset
+printf '1\n' > "$STUB_DIR/compose_exits"
+run qa
+check "a first-ever rollout that fails cannot roll back" 1 '"event":"rollback_impossible"'
+check "and says the environment is down" 1 "It is DOWN"
+check "and names the pause switch rather than leaving it to be guessed" 1 "paused"
+
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' 'v0.2.0' > "$STUB_DIR/label_version"
+# The new rollout fails; the rollback that follows succeeds.
+printf '1\n0\n' > "$STUB_DIR/compose_exits"
+run qa
+check "a failed rollout rolls back" 1 '"event":"rolled_back"'
+check_pinned "and compose is pinned to the digest that was serving" "$REGISTRY/api@$DIGEST_A"
+check_state "and the recorded state still names the good release" API_DIGEST "$DIGEST_A"
+check "and it warns that the channel will be retried" 1 "the next tick will try it again"
+
+reset
+settle
+printf '1\n1\n' > "$STUB_DIR/compose_exits"
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+run qa
+check "a failed rollback is reported as down, not as a rollback" 1 '"event":"rollback_failed"'
+
+# ===========================================================================
+# Rollouts that LOOK healthy.
+#
+# `up --wait` returning 0 only says the containers report healthy - and the
+# previous container reports healthy just as happily if the new one never
+# replaced it. These two tests are the difference between proving a
+# roll-forward and assuming one.
+# ===========================================================================
+
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$REGISTRY/api@$DIGEST_A" > "$STUB_DIR/running_override"
+run qa
+check "a container still on the old image fails the rollout" 1 '"event":"digest_mismatch"'
+check_state "and the environment is left on the release that works" API_DIGEST "$DIGEST_A"
+
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' 'v0.1.0' > "$STUB_DIR/served_override"
+printf '%s' 'v0.2.0' > "$STUB_DIR/label_version"
+run qa
+check "an api serving the wrong version fails the rollout" 1 '"event":"version_mismatch"'
+
+# ===========================================================================
+# The maintenance switch.
+# ===========================================================================
+
+reset
+settle
+touch "$APIVO_ETC/qa/paused"
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+rm -f "$STUB_DIR/calls"
+run qa
+check "a paused environment does not reconcile" 0 '"event":"paused"'
+if [ -e "$STUB_DIR/calls" ]; then
+    echo "FAIL: a paused environment still called docker: $(cat "$STUB_DIR/calls")"
+    FAILS=1
+else
+    echo "ok: a paused environment touches nothing at all"
+fi
+
+if [ "$FAILS" -ne 0 ]; then
+    echo "apivo-reconcile: FAILURES"
+    exit 1
+fi
+echo "apivo-reconcile: all tests passed"

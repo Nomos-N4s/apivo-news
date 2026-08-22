@@ -1,0 +1,315 @@
+#!/bin/sh
+# The deploy. One environment, one tick.
+#
+# Usage: apivo-reconcile <env>
+#
+# Nothing pushes to this host. No CI job holds an SSH key, no agent has a
+# shell here, and there is no inbound webhook to forge: the host decides,
+# every minute, whether what it is running is what its channel says it should
+# be, and converges if it is not. That is the whole deployment mechanism.
+#
+# A systemd timer runs this per environment (apivo-reconcile@qa.timer). It is
+# also the manual deploy command - `systemctl start apivo-reconcile@qa` - so
+# the path a person takes in a hurry is the same path that runs unattended,
+# and is therefore as tested as the automatic one.
+#
+#   1. read the environment's channel tag (qa | staging | prod)
+#   2. resolve it to an image DIGEST at the registry, without pulling
+#   3. if the digest is what is already running, converge and stop
+#   4. otherwise: pin the digest, roll out, and PROVE the roll-forward
+#   5. if the proof fails, put the previous digest back
+#
+# The distinction in (2) is the point of the whole design: a tag is what an
+# environment TRACKS, a digest is what it RUNS. Every container on every
+# environment is pinned by digest, so "what is running in staging" has one
+# answer that cannot drift under a tag someone moved.
+#
+# ---------------------------------------------------------------------------
+# Exit codes
+#   0  converged (whether or not anything changed)
+#   1  a rollout failed; the previous digest was restored, or could not be
+#   2  usage or configuration error - nothing was attempted
+# ---------------------------------------------------------------------------
+#
+# Everything the script touches outside itself goes through a variable, so
+# the test suite can substitute a stub and prove the decisions without a
+# registry, a daemon, or a container:
+#
+#   APIVO_DOCKER   the docker command                 (default: docker)
+#   APIVO_ETC      per-environment configuration      (default: /etc/apivo)
+#   APIVO_STATE    what is running, and what was      (default: /var/lib/apivo)
+set -eu
+
+DOCKER="${APIVO_DOCKER:-docker}"
+ETC="${APIVO_ETC:-/etc/apivo}"
+STATE="${APIVO_STATE:-/var/lib/apivo}"
+
+# How long to wait for every container to report healthy before calling the
+# rollout failed. The api migrates the schema on boot, so this is not just
+# process start-up; a long migration on a large table is the case that makes
+# a short timeout roll back a deploy that would have come up fine.
+WAIT_TIMEOUT="${APIVO_WAIT_TIMEOUT:-180}"
+
+# ---------------------------------------------------------------------------
+# Logging: one JSON object per line, on stdout, for journald to capture.
+#
+# JSON rather than prose because this is the log an agent reads to answer
+# "what happened to my deploy" without a shell on the box - the same reason
+# the api emits JSON at APP_ENV=prod. `msg` is the only field that can carry
+# arbitrary text, so it is the only one escaped.
+# ---------------------------------------------------------------------------
+log() {
+    _level="$1"
+    _event="$2"
+    _msg="$3"
+    _msg=$(printf '%s' "$_msg" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\n\r\t')
+    printf '{"level":"%s","event":"%s","env":"%s","msg":"%s"}\n' \
+        "$_level" "$_event" "${ENV_NAME:-?}" "$_msg"
+}
+
+die() {
+    log error "${1}" "${2}"
+    # ::error:: as well as the JSON line: this script is also run by hand and
+    # from CI, where the annotation is what a person actually sees.
+    echo "::error::apivo-reconcile ${ENV_NAME:-?}: ${2}" >&2
+    exit "${3:-1}"
+}
+
+if [ "$#" -ne 1 ]; then
+    echo "usage: $0 <env>" >&2
+    exit 2
+fi
+
+ENV_NAME="$1"
+# The environment name becomes container names, network names and file paths.
+# It arrives from a systemd unit instance, which is user-supplied text, so it
+# is validated rather than trusted: anything outside this set could escape a
+# path or name a container in another environment.
+case "$ENV_NAME" in
+'' | *[!a-z0-9-]*)
+    die usage "environment name '$ENV_NAME' is not lowercase alphanumeric with dashes" 2
+    ;;
+esac
+
+ENV_DIR="$ETC/$ENV_NAME"
+STATE_DIR="$STATE/$ENV_NAME"
+STACK_ENV="$ENV_DIR/stack.env"
+
+[ -r "$STACK_ENV" ] || die config "no readable $STACK_ENV; this host does not serve the '$ENV_NAME' environment (provision.sh creates it)" 2
+
+# ---------------------------------------------------------------------------
+# The maintenance switch. A reconciler with no way to stop it is a reconciler
+# that fights an operator who is mid-investigation: `docker compose stop` on a
+# broken container would be undone within the minute, along with the evidence.
+# ---------------------------------------------------------------------------
+if [ -e "$ENV_DIR/paused" ]; then
+    log info paused "reconciliation is paused by $ENV_DIR/paused; remove it to resume"
+    exit 0
+fi
+
+# stack.env is structural configuration only - no application secrets - so
+# sourcing it into this shell is deliberate and bounded. DATABASE_URL and the
+# translation credential live in api.env, which the Docker daemon reads
+# directly as the service's env_file and this script never opens.
+set -a
+# shellcheck source=/dev/null
+. "$STACK_ENV"
+set +a
+
+for _required in APIVO_ENV APIVO_CHANNEL APIVO_REGISTRY COMPOSE_FILE; do
+    eval "_value=\${$_required:-}"
+    [ -n "$_value" ] || die config "$STACK_ENV does not set $_required" 2
+done
+
+[ "$APIVO_ENV" = "$ENV_NAME" ] || die config "$STACK_ENV sets APIVO_ENV=$APIVO_ENV but this unit is '$ENV_NAME'; the two name the same environment or neither is trustworthy" 2
+
+API_REPO="$APIVO_REGISTRY/api"
+WEB_REPO="$APIVO_REGISTRY/web"
+
+mkdir -p "$STATE_DIR"
+CURRENT="$STATE_DIR/current"
+PREVIOUS="$STATE_DIR/previous"
+IMAGES_ENV="$STATE_DIR/images.env"
+
+# ---------------------------------------------------------------------------
+# Resolve a tag to the digest the registry serves for it, WITHOUT pulling.
+#
+# `buildx imagetools inspect` is a registry query: on the overwhelmingly
+# common tick - nothing has changed - this is two HTTP requests and no image
+# data crosses the wire. Pulling first and comparing afterwards would work
+# too, and would move gigabytes a day for an answer that is almost always
+# "no".
+# ---------------------------------------------------------------------------
+resolve_digest() {
+    $DOCKER buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}' 2>/dev/null || true
+}
+
+read_state_field() {
+    # read_state_field <file> <key> - absent file or key yields empty, which
+    # every caller treats as "nothing is recorded", never as an error.
+    [ -r "$1" ] || return 0
+    sed -n "s/^$2=//p" "$1" | head -n 1
+}
+
+compose() {
+    # COMPOSE_FILE is exported from stack.env, so docker compose finds its own
+    # files; the project name comes from the `name:` key in the base file.
+    $DOCKER compose "$@"
+}
+
+# What the environment should be running, according to its channel.
+API_DIGEST=$(resolve_digest "$API_REPO:$APIVO_CHANNEL")
+WEB_DIGEST=$(resolve_digest "$WEB_REPO:$APIVO_CHANNEL")
+
+if [ -z "$API_DIGEST" ] || [ -z "$WEB_DIGEST" ]; then
+    die registry "cannot resolve $APIVO_REGISTRY/{api,web}:$APIVO_CHANNEL - the registry is unreachable, the credential has expired (docker login ghcr.io), or the publish workflow has never moved this channel. Nothing was changed; the environment keeps serving whatever it already had." 1
+fi
+
+RUNNING_API=$(read_state_field "$CURRENT" API_DIGEST)
+RUNNING_WEB=$(read_state_field "$CURRENT" WEB_DIGEST)
+
+# ---------------------------------------------------------------------------
+# The quiet path: the channel has not moved.
+#
+# `up -d` still runs, without --wait, and that is the self-healing property
+# rather than a redundant call: a container that died, was OOM-killed, or was
+# stopped by hand comes back on the next tick. It is a no-op when everything
+# is already running, and it is the reason there is no separate "is anything
+# down" alarm to write.
+# ---------------------------------------------------------------------------
+if [ -n "$RUNNING_API" ] && [ "$API_DIGEST" = "$RUNNING_API" ] && [ "$WEB_DIGEST" = "$RUNNING_WEB" ]; then
+    if compose up -d --remove-orphans >/dev/null 2>&1; then
+        exit 0
+    fi
+    die converge "the channel has not moved, but bringing the existing stack up failed; the environment may be degraded. Check: docker compose ps" 1
+fi
+
+log info rollout_start "$APIVO_CHANNEL moved: api ${RUNNING_API:-none} -> $API_DIGEST, web ${RUNNING_WEB:-none} -> $WEB_DIGEST"
+
+# The digests are pulled before anything is torn down, so a registry that
+# fails half way costs nothing: the running stack is untouched until every
+# byte of the new one is on the host.
+if ! $DOCKER pull -q "$API_REPO@$API_DIGEST" >/dev/null 2>&1 || ! $DOCKER pull -q "$WEB_REPO@$WEB_DIGEST" >/dev/null 2>&1; then
+    die registry "failed to pull the pinned digests; the running stack was not touched" 1
+fi
+
+# The version the release pipeline stamped into the image, read from the
+# image itself rather than from the tag that led here. This is what the
+# frontend renders in its footer and what the release probe compares against,
+# so it must come from the artefact.
+IMAGE_VERSION=$($DOCKER image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$API_REPO@$API_DIGEST" 2>/dev/null || true)
+[ -n "$IMAGE_VERSION" ] || IMAGE_VERSION=dev
+
+write_images_env() {
+    # write_images_env <api-digest> <web-digest> <version>
+    # Written whole to a temporary file and renamed, so a compose run that
+    # starts mid-write can never read half a pin. Same directory, so the
+    # rename stays within one filesystem and cannot degrade to copy-then-
+    # delete.
+    _tmp="$IMAGES_ENV.new"
+    {
+        echo "# Written by apivo-reconcile. Hand edits are overwritten on the next tick."
+        echo "APIVO_API_IMAGE=$API_REPO@$1"
+        echo "APIVO_WEB_IMAGE=$WEB_REPO@$2"
+        echo "APIVO_VERSION=$3"
+    } > "$_tmp"
+    mv "$_tmp" "$IMAGES_ENV"
+    set -a
+    # shellcheck source=/dev/null
+    . "$IMAGES_ENV"
+    set +a
+}
+
+record_state() {
+    # record_state <file> <api-digest> <web-digest> <version>
+    _tmp="$1.new"
+    {
+        echo "API_DIGEST=$2"
+        echo "WEB_DIGEST=$3"
+        echo "VERSION=$4"
+        echo "AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "$_tmp"
+    mv "$_tmp" "$1"
+}
+
+# ---------------------------------------------------------------------------
+# Prove the roll-forward.
+#
+# `up -d --wait` returning 0 means every container reported HEALTHY, by its
+# own healthcheck, which for the api means the binary answered its own
+# /healthz. That is necessary and not sufficient: the PREVIOUS container
+# answers a healthcheck just as happily if the new one never replaced it.
+#
+# So the containers are asked which image they are actually running, and it
+# must be the digest just pinned. On Cloudflare this question could only be
+# answered by trusting an HTTP response; here the daemon knows, so the
+# stronger check is also the cheaper one.
+# ---------------------------------------------------------------------------
+verify_running_digest() {
+    # verify_running_digest <container> <expected-ref>
+    _got=$($DOCKER container inspect --format '{{.Config.Image}}' "$1" 2>/dev/null || true)
+    [ "$_got" = "$2" ] && return 0
+    log error digest_mismatch "$1 is running '${_got:-nothing}', not the pinned '$2'"
+    return 1
+}
+
+# And then, end to end: the frontend container fetches the api's /healthz
+# across the compose network and reports the version the api SERVES. It
+# proves the network path, the api's readiness and the version stamp in one
+# request, and it needs no extra image on the host - the frontend runs Node,
+# whose built-in fetch is what its own healthcheck already uses.
+served_version() {
+    $DOCKER exec "apivo-$ENV_NAME-web" node -e \
+        'fetch("http://apivo-'"$ENV_NAME"'-api:8080/healthz").then(r=>r.json()).then(j=>process.stdout.write(String(j.version||""))).catch(()=>process.exit(1))' \
+        2>/dev/null || true
+}
+
+roll_out() {
+    # roll_out <api-digest> <web-digest> <version>
+    write_images_env "$1" "$2" "$3"
+    compose up -d --remove-orphans --wait --wait-timeout "$WAIT_TIMEOUT" || return 1
+    verify_running_digest "apivo-$ENV_NAME-api" "$API_REPO@$1" || return 1
+    verify_running_digest "apivo-$ENV_NAME-web" "$WEB_REPO@$2" || return 1
+
+    _served=$(served_version)
+    if [ "$_served" != "$3" ]; then
+        log error version_mismatch "the api serves version '${_served:-no answer}', expected '$3'"
+        return 1
+    fi
+    return 0
+}
+
+if roll_out "$API_DIGEST" "$WEB_DIGEST" "$IMAGE_VERSION"; then
+    # The state that was good is kept as the rollback target only AFTER the
+    # new one is proven, so `previous` always names a rollout that once
+    # served rather than merely one that was attempted.
+    [ -r "$CURRENT" ] && cp "$CURRENT" "$PREVIOUS"
+    record_state "$CURRENT" "$API_DIGEST" "$WEB_DIGEST" "$IMAGE_VERSION"
+
+    # Yesterday's images are the other way a small host fills its disk. Only
+    # dangling layers are removed - never `-a`, which on this box would
+    # delete the rollback target that is not currently running.
+    $DOCKER image prune -f >/dev/null 2>&1 || true
+
+    log info rollout_ok "$ENV_NAME now serves $IMAGE_VERSION (api $API_DIGEST)"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# The rollout failed. Put back what was serving.
+# ---------------------------------------------------------------------------
+log error rollout_failed "rolling back $ENV_NAME to the previous digest"
+
+PREV_API=$(read_state_field "$CURRENT" API_DIGEST)
+PREV_WEB=$(read_state_field "$CURRENT" WEB_DIGEST)
+PREV_VERSION=$(read_state_field "$CURRENT" VERSION)
+
+if [ -z "$PREV_API" ]; then
+    die rollback_impossible "the rollout failed and there is no previous digest to return to - this environment has never had a successful one. It is DOWN. The channel still points at the broken build, so every tick will retry it: pause with 'touch $ENV_DIR/paused' before investigating, and check 'docker compose logs'." 1
+fi
+
+if roll_out "$PREV_API" "$PREV_WEB" "${PREV_VERSION:-dev}"; then
+    die rolled_back "the rollout failed and $ENV_NAME was rolled back to ${PREV_VERSION:-the previous digest}. The channel still points at the broken build, so the next tick will try it again - fix it forward, or move the channel back." 1
+fi
+
+die rollback_failed "the rollout failed AND the rollback to ${PREV_VERSION:-the previous digest} also failed. $ENV_NAME is DOWN and no automatic path remains: pause with 'touch $ENV_DIR/paused', then investigate with 'docker compose ps' and 'docker compose logs'." 1

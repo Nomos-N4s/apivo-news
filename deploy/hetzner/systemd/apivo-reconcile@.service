@@ -1,0 +1,49 @@
+# Reconcile one environment with its release channel.
+#
+# Templated on the environment name: apivo-reconcile@qa, apivo-reconcile@staging.
+# The instance name is passed straight to the script, which validates it
+# rather than trusting it — a unit instance is user-supplied text and it
+# becomes container names and file paths.
+#
+# This unit is BOTH halves of the deployment: the timer starts it every
+# minute, and `systemctl start apivo-reconcile@qa` is the manual deploy. The
+# path a person takes at 2am is therefore the same path that has run
+# unattended a thousand times, rather than a second, less-tested one.
+
+[Unit]
+Description=Reconcile the apivo %i environment with its release channel
+Documentation=https://github.com/Nomos-N4s/apivo-news/blob/main/docs/ENVIRONMENTS.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/apivo/bin/apivo-reconcile %i
+
+# The rollout waits for every container to report healthy (the api migrates
+# the schema on boot), and a failed rollout then rolls back and waits again.
+# This bound sits above both, so a genuinely stuck deploy is killed rather
+# than holding the timer off forever — but not so tight that it kills a long
+# migration that would have finished.
+TimeoutStartSec=900
+
+# Root, because it drives the Docker daemon and reads /etc/apivo/*/api.env,
+# which holds the database credential. The hardening below is what keeps that
+# from being a blanket grant: the unit can write only its own state directory,
+# and the rest of the filesystem is read-only to it.
+User=root
+ProtectSystem=strict
+ReadWritePaths=/var/lib/apivo /run/docker.sock
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+# One JSON object per line on stdout, captured by journald:
+#   journalctl -u apivo-reconcile@qa -o cat | jq
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=apivo-reconcile
+
+[Install]
+WantedBy=multi-user.target
