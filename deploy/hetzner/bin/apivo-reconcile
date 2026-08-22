@@ -65,7 +65,25 @@ die() {
     log error "${1}" "${2}"
     # ::error:: as well as the JSON line: this script is also run by hand and
     # from CI, where the annotation is what a person actually sees.
-    echo "::error::apivo-reconcile ${ENV_NAME:-?}: ${2}" >&2
+    #
+    # FLATTENED, because the message can now carry a subprocess's own output
+    # - buildx's, on a failed resolve - and that output is multi-line. A
+    # workflow command is line-oriented: a newline mid-message ends the
+    # annotation early, spills the rest as loose log lines, and a line
+    # beginning `::error::` inside that remainder would be an annotation
+    # nobody wrote. Removing the newlines closes both at once.
+    #
+    # Newlines become SPACES rather than being deleted, unlike log(): that
+    # writes a JSON string for tooling, where a lost space costs nothing,
+    # while this line is read by a person and `read-only file systemERROR:`
+    # is a worse sentence than the one buildx wrote.
+    #
+    # `::` itself is deliberately left alone. It is only a workflow command
+    # at the START of a line, which the flattening already prevents, and
+    # escaping it would corrupt any IPv6 address that appears in an error -
+    # a registry failure is exactly where one shows up.
+    _annotation=$(printf '%s' "${2}" | tr '\n\r\t' '   ')
+    echo "::error::apivo-reconcile ${ENV_NAME:-?}: ${_annotation}" >&2
     exit "${3:-1}"
 }
 
@@ -223,7 +241,6 @@ compose() {
     $DOCKER compose "$@"
 }
 
-# What the environment should be running, according to its channel.
 # What the environment should be running, according to its channel. A failure
 # reports buildx's own words rather than a guess at what went wrong.
 if ! API_OUT=$(resolve_digest "$API_REPO:$APIVO_CHANNEL"); then

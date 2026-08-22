@@ -365,11 +365,16 @@ check_state "the running state is untouched" API_DIGEST "$DIGEST_A"
 # reported three possible causes, none of them the real one.
 reset
 settle
-printf 'ERROR: mkdir /root/.docker/buildx: read-only file system\n' > "$STUB_DIR/buildx_error"
+# MULTI-LINE, as buildx's errors are. A workflow command is line-oriented,
+# so an unflattened message would end the ::error:: annotation at the first
+# newline and spill the rest as loose lines - and a line starting ::error::
+# in that remainder would be an annotation nobody wrote.
+printf 'ERROR: mkdir /root/.docker/buildx: read-only file system\nhint: the sandbox\n' > "$STUB_DIR/buildx_error"
 run qa
 check "a failing buildx is reported with buildx's own error" 1 "read-only file system"
 check "and that failure still says the environment was left alone" 1 "keeps serving whatever it already had"
 check "and points at the sandbox, since docker pull by hand would work" 1 "systemd sandbox"
+check "and a multi-line error is flattened into one annotation" 1 "read-only file system hint: the sandbox"
 check_state "a failing buildx touches the running state not at all" API_DIGEST "$DIGEST_A"
 : > "$STUB_DIR/buildx_error"
 
