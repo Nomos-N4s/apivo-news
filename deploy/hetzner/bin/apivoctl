@@ -89,7 +89,14 @@ status_one() {
 
     printf '%-10s %-9s %-12s %s/%s healthy   %s%s\n' \
         "$_env" "$_channel" "${_version:-never}" "$_up" "$_all" "${_at:-—}" "$_paused"
-    [ -n "$_digest" ] && printf '           api %s\n' "$_digest"
+    # `if`, not `[ ] && printf`: that form is the function's last command, so
+    # an environment with no digest recorded yet would return 1 — and under
+    # `set -eu` that aborts the loop in `status`, hiding every environment
+    # after the first one that has never deployed.
+    if [ -n "$_digest" ]; then
+        printf '           api %s\n' "$_digest"
+    fi
+    return 0
 }
 
 case "$COMMAND" in

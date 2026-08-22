@@ -81,13 +81,21 @@ check_env() {
     done
     echo "ok: $env_name namespaces its containers and networks"
 
-    # The contract topology, in every environment: the API is not publicly
-    # routable. `docker compose config` renders host port publishing under a
-    # `published:` key, so the api service having one at all is the failure.
-    if printf '%s' "$rendered" | awk '/^  api:/,/^  [a-z]/' | grep -q 'published:'; then
-        fail "$env_name: the api publishes a host port; it must be reachable only through Caddy"
+    # The contract topology, in every environment: nothing in an application
+    # stack is publicly routable. `docker compose config` renders host port
+    # publishing under a `published:` key, and NO service here may have one —
+    # only the edge stack publishes ports, and it is checked separately.
+    #
+    # Asserted over the whole rendered document rather than over an awk range
+    # scoped to the api service. `awk '/^  api:/,/^  [a-z]/'` looks like it
+    # scopes to that service and does not: the start pattern also matches the
+    # end pattern, so the range closes on its own first line and the grep
+    # sees only "  api:". It could never fail. The document-wide form is both
+    # stronger and honest about what it checks.
+    if printf '%s' "$rendered" | grep -q 'published:'; then
+        fail "$env_name: a service publishes a host port; the application stacks must be reachable only through Caddy"
     else
-        echo "ok: $env_name keeps the api off the host's network"
+        echo "ok: $env_name publishes no host ports at all"
     fi
 
     # The data network carries the database and must never route outward.

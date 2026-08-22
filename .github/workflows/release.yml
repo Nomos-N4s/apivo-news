@@ -227,7 +227,13 @@ jobs:
 
   release:
     needs: [guard, verify, publish]
-    if: always() && needs.verify.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    # `publish` succeeded, or this is a dry run — and NOT merely "publish was
+    # skipped". A rejected production approval also skips `publish`, and
+    # accepting `skipped` meant a refused release still published a GitHub
+    # Release announcing a version that was never built and never deployed,
+    # then failed at the probe. The approval has to be able to stop the
+    # pipeline, or it is decoration.
+    if: always() && needs.verify.result == 'success' && (needs.publish.result == 'success' || needs.guard.outputs.dry_run == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

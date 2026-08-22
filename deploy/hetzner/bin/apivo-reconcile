@@ -131,6 +131,27 @@ CURRENT="$STATE_DIR/current"
 PREVIOUS="$STATE_DIR/previous"
 IMAGES_ENV="$STATE_DIR/images.env"
 
+# The digests the last successful rollout pinned, loaded before ANY compose
+# invocation.
+#
+# This has to happen here rather than only inside the rollout, because the
+# quiet path runs `compose up -d` too - that is what makes the reconciler
+# self-healing - and the compose files declare
+# `image: ${APIVO_API_IMAGE:?...}`. Without these in the environment, the most
+# frequently executed path in the whole system fails on every tick with an
+# unset variable, and reports a degraded environment that is in fact running
+# perfectly well.
+#
+# Absent on a host that has never rolled out. That is not an error: the
+# rollout below is what creates the file, and every path that runs compose
+# before then sets these itself.
+if [ -r "$IMAGES_ENV" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    . "$IMAGES_ENV"
+    set +a
+fi
+
 # ---------------------------------------------------------------------------
 # Resolve a tag to the digest the registry serves for it, WITHOUT pulling.
 #

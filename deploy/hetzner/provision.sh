@@ -325,7 +325,19 @@ for env_name in $ENVS; do
     note "apivo-reconcile@$env_name.timer enabled — $env_name reconciles every minute"
 done
 systemctl enable apivo-edge.service
-note "apivo-edge.service enabled (started below, once an environment exists)"
+note "apivo-edge.service enabled"
+
+# The edge declares each environment's network `external: true`, so the
+# network must exist before Caddy can start. Creating them here rather than
+# relying on the application stacks to do it first removes a real reboot
+# hazard: apivo-edge.service and the reconcilers all start at boot, and if
+# Caddy wins the race it fails on a missing network and stays failed.
+# `docker network create` on an existing network is an error, not a
+# surprise - ignore it.
+for env_name in $ENVS; do
+    docker network create "apivo-$env_name-edge" >/dev/null 2>&1 || true
+    note "network apivo-$env_name-edge ready"
+done
 
 # ---------------------------------------------------------------------------
 # 7. The firewall — opt-in, because getting it wrong locks you out
@@ -350,10 +362,12 @@ if [ "$APIVO_CONFIGURE_FIREWALL" = yes ]; then
         sed -n 's/^\[ *\([0-9]*\).*/\1/p' | sort -rn |
         while read -r n; do ufw --force delete "$n" >/dev/null; done
 
+    cf_v4=""
     for family in 4 6; do
         if ! ranges=$(curl -fsS --max-time 20 "https://www.cloudflare.com/ips-v$family"); then
             die "could not fetch Cloudflare's IPv$family ranges; no firewall rules were changed for that family, and the host may now admit ssh only"
         fi
+        [ "$family" = 4 ] && cf_v4="$ranges"
         for cidr in $ranges; do
             ufw allow from "$cidr" to any port 443 proto tcp comment 'apivo-edge' >/dev/null
         done
@@ -363,6 +377,35 @@ if [ "$APIVO_CONFIGURE_FIREWALL" = yes ]; then
     ufw default deny incoming >/dev/null
     ufw --force enable >/dev/null
     note "ufw enabled: ssh, and 443 from Cloudflare only"
+
+    # ufw ALONE DOES NOT COVER THIS EDGE, and believing otherwise is the
+    # dangerous part. Docker publishes a container port by writing its own
+    # DNAT and FORWARD rules, which are consulted before ufw's INPUT chain
+    # ever sees the packet - so `ufw deny 443` leaves Caddy wide open and
+    # the ufw status output says the opposite.
+    #
+    # DOCKER-USER is the chain Docker documents for exactly this: it is
+    # consulted first on forwarded traffic and Docker never flushes it. The
+    # rules below are rebuilt from scratch each run, and they restrict only
+    # 443 - everything else RETURNs untouched, so nothing here can cut off
+    # ssh or inter-container traffic.
+    iptables -N DOCKER-USER 2>/dev/null || true
+    iptables -F DOCKER-USER
+    for cidr in $cf_v4; do
+        iptables -A DOCKER-USER -s "$cidr" -p tcp --dport 443 -j RETURN
+    done
+    iptables -A DOCKER-USER -p tcp --dport 443 -j DROP
+    iptables -A DOCKER-USER -j RETURN
+    note "DOCKER-USER rules installed (ufw alone does not cover published container ports)"
+
+    if command -v netfilter-persistent >/dev/null 2>&1; then
+        netfilter-persistent save >/dev/null 2>&1 || true
+        note "iptables rules persisted across reboot"
+    else
+        note "NOTE: install iptables-persistent, or the DOCKER-USER rules are lost on reboot."
+    fi
+    note "Better still, put a Hetzner Cloud Firewall in front of this host: it"
+    note "sits outside the machine, so no container runtime can route around it."
 else
     say "Firewall (declined)"
     note "APIVO_CONFIGURE_FIREWALL=no, so nothing was changed here."

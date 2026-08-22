@@ -35,7 +35,13 @@ TimeoutStartSec=900
 User=root
 ProtectSystem=strict
 ReadWritePaths=/var/lib/apivo /run/docker.sock
-ProtectHome=yes
+# read-only, NOT yes. `docker login` stores the GHCR credential in
+# /root/.docker/config.json, and ProtectHome=yes makes /root an empty
+# directory to this unit — so the pull would fail as unauthorised on every
+# tick, on a host where `docker pull` by hand works perfectly. Nothing here
+# needs to WRITE under /root, so read-only keeps the hardening and the
+# credential both.
+ProtectHome=read-only
 PrivateTmp=yes
 NoNewPrivileges=yes
 

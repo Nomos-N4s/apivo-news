@@ -84,8 +84,6 @@ jobs:
     outputs:
       api_digest: ${{ steps.api.outputs.digest }}
       web_digest: ${{ steps.web.outputs.digest }}
-    env:
-      REGISTRY: ghcr.io/${{ github.repository }}
     steps:
       - uses: actions/checkout@v7
 
@@ -116,7 +114,16 @@ jobs:
           esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
-          echo "publishing $version to the '$channel' channel"
+
+          # An image reference must be lowercase, and an owner need not be:
+          # this repository is Nomos-N4s/apivo-news, so the obvious
+          # ghcr.io/${{ github.repository }} is `ghcr.io/Nomos-N4s/...` — an
+          # invalid reference that fails the build with "repository name must
+          # be lowercase". Workflow expressions have no toLower, so it is done
+          # here and exported for every later step.
+          registry="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          echo "REGISTRY=$registry" >> "$GITHUB_ENV"
+          echo "publishing $version to the '$channel' channel as $registry"
 
       # The stamp channel the Dockerfile reads: a VERSION file at the context
       # root (git-ignored, never committed), turned into

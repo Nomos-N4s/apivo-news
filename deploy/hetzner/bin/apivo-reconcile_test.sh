@@ -88,6 +88,16 @@ exec)
 compose)
     case "$2" in
     up)
+        # The compose files declare `image: ${APIVO_API_IMAGE:?...}`, so real
+        # compose REFUSES to run when the pins are not in the environment.
+        # The stub refuses too, and that is the whole point of it: a stub that
+        # accepted anything let the quiet path ship calling `up` without ever
+        # loading images.env, which broke every sixty-second tick on every
+        # host while the suite stayed green.
+        if [ -z "${APIVO_API_IMAGE:-}" ] || [ -z "${APIVO_WEB_IMAGE:-}" ]; then
+            echo "stub compose: APIVO_API_IMAGE/APIVO_WEB_IMAGE not set" >&2
+            exit 1
+        fi
         # One exit code per line in compose_exits, consumed in order, so a
         # test can say "the rollout fails and the rollback that follows
         # succeeds". Past the end of the file, everything succeeds.
