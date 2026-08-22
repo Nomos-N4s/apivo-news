@@ -55,6 +55,25 @@ jobs:
           # The package name is the repository name plus the image, which is
           # how publish.yml and preview both address GHCR.
           repo=${GITHUB_REPOSITORY#*/}
+
+          # Packages live under /orgs/<owner>/ for an organisation and
+          # /users/<owner>/ for a personal account, and the wrong one answers
+          # 404. Guessing would make teardown fail SILENTLY on the account
+          # type nobody tested — previews would then leak until the host's cap
+          # evicted them, which looks like previews simply not working.
+          scope=""
+          for candidate in orgs users; do
+            if gh api "/$candidate/$OWNER/packages/container/$repo%2Fapi/versions" \
+              --jq 'length' >/dev/null 2>&1; then
+              scope="$candidate"
+              break
+            fi
+          done
+          if [ -z "$scope" ]; then
+            echo "::error::cannot read container package versions for '$OWNER' under either /orgs/ or /users/. The pr-$PR image tags were NOT deleted, so the host will keep this preview running until its cap evicts it. Check that GITHUB_TOKEN has packages:write and that the package exists."
+            exit 1
+          fi
+
           deleted=0
           for image in api web; do
             pkg="$repo%2F$image"
@@ -62,22 +81,29 @@ jobs:
             # preview image has exactly one tag and no other environment ever
             # points at it, so deleting the version is deleting the tag.
             ids=$(gh api --paginate \
-              "/orgs/$OWNER/packages/container/$pkg/versions" \
+              "/$scope/$OWNER/packages/container/$pkg/versions" \
               --jq ".[] | select(.metadata.container.tags[]? == \"pr-$PR\") | .id" 2>/dev/null || true)
             for id in $ids; do
-              if gh api -X DELETE "/orgs/$OWNER/packages/container/$pkg/versions/$id" >/dev/null 2>&1; then
+              if gh api -X DELETE "/$scope/$OWNER/packages/container/$pkg/versions/$id" >/dev/null 2>&1; then
                 echo "deleted $image:pr-$PR (version $id)"
                 deleted=$((deleted + 1))
               else
-                echo "::warning::could not delete $image:pr-$PR (version $id)"
+                echo "::error::could not delete $image:pr-$PR (version $id); the host will keep serving this preview"
+                exit 1
               fi
             done
           done
-          # Not an error. A pull request that never built one - closed before
-          # CI finished, or opened before previews existed - has nothing to
-          # delete, and the host is already not running a preview for it.
-          echo "removed $deleted preview image version(s) for pr-$PR" >> "$GITHUB_STEP_SUMMARY"
-          echo "The host tears the environment down within a minute." >> "$GITHUB_STEP_SUMMARY"
+
+          # Zero is NOT an error. A pull request that never built a preview —
+          # closed before CI finished, or opened before previews existed — has
+          # nothing to delete, and the host is already not running one for it.
+          {
+            echo "## Preview \`pr-$PR\` torn down"
+            echo
+            echo "Removed $deleted image version(s) via /$scope/."
+            echo "The host destroys the environment and drops its database"
+            echo "within a minute of the tags disappearing."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
   # Open or pushed to: build and publish, so the host can pick it up.
