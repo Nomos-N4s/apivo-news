@@ -31,7 +31,8 @@ nothing below provisions it.
   - 4 GB is not enough for this shape.
   - `amd64`, not ARM. The images are built `linux/amd64` only; Hetzner's CAX
     line needs the Dockerfile made cross-aware first.
-- **The three domains on Cloudflare**, in the same account.
+- **The domains on Cloudflare**, in the same account. Each is its own zone
+  and gets its own origin certificate — see step 2.
 - **A GitHub personal access token** with `read:packages` only. This is the
   one credential the box needs and the only thing it uses it for: pulling
   images. It can read nothing else and write nothing.
@@ -57,27 +58,38 @@ Certificate, which is trusted by Cloudflare and by nothing else. On *Flexible*
 Cloudflare would talk to the origin in cleartext; on *Full* it would accept
 any certificate at all, which makes the encryption decorative.
 
-## 2. Cloudflare — the origin certificate
+## 2. Cloudflare — two origin certificates, one per zone
 
-**SSL/TLS → Origin Server → Create Certificate.** Take the default (Cloudflare
-generates the key), 15 years.
+**One per Cloudflare zone**, so two: one in `ra1ze.com`, one in `reapie.com`.
 
-Put **all of these** in the hostname list:
+In **each** zone: **SSL/TLS → Origin Server → Create Certificate**, take every
+default (Cloudflare generates the key, 15 years, and the hostname list is
+already right), Create.
 
-```
-ra1ze.com
-*.ra1ze.com
-reapie.com
-```
+The default list is `example.com, *.example.com` — the apex and the
+first-level wildcard — which is exactly what each zone needs:
+
+| Zone | Covers | Serves |
+|---|---|---|
+| `ra1ze.com` | `ra1ze.com`, `*.ra1ze.com` | QA **and** every preview |
+| `reapie.com` | `reapie.com`, `*.reapie.com` | Staging |
 
 `*.ra1ze.com` is what makes previews possible — every pull request gets
-`pr-<n>.ra1ze.com` and they must all be covered by the one certificate on the
-box. A certificate without it means previews serve a TLS error.
+`pr-<n>.ra1ze.com`. It is in the default list, so simply do not remove it.
 
-Save the two blocks Cloudflare shows you. **The key is shown once.**
+Save both blocks for each. **Each private key is shown exactly once.** Name
+them so the next step is unambiguous:
 
-You need one certificate covering all the names, not one per domain — the box
-runs a single Caddy and presents a single origin certificate.
+```
+origin.pem          origin.key          <- from the ra1ze.com zone
+origin-staging.pem  origin-staging.key  <- from the reapie.com zone
+```
+
+**Why two and not one covering everything.** A single certificate spanning
+both zones *is* possible — but only through Cloudflare's API, with an Origin
+CA Key and a hand-built CSR. The **dashboard cannot do it**: its hostname
+list is confined to the zone you are in. Two certificates and two `scp`
+arguments is the cheaper trade, and Caddy presents the right one per site.
 
 ## 3. Cloudflare — DNS
 
@@ -115,7 +127,9 @@ Copy the certificate and key onto the box first:
 
 ```sh
 # from your machine
-scp origin.pem origin.key root@<vps-ip>:/root/
+scp origin.pem origin.key \
+    origin-staging.pem origin-staging.key \
+    root@<vps-ip>:/root/
 ```
 
 Then, on the box as root:
@@ -131,6 +145,8 @@ APIVO_STAGING_HOST=reapie.com \
 APIVO_PREVIEW_DOMAIN=ra1ze.com \
 APIVO_ORIGIN_CERT=/root/origin.pem \
 APIVO_ORIGIN_KEY=/root/origin.key \
+APIVO_STAGING_ORIGIN_CERT=/root/origin-staging.pem \
+APIVO_STAGING_ORIGIN_KEY=/root/origin-staging.key \
 GHCR_USER=<your-github-username> \
 GHCR_TOKEN=<the read:packages token> \
 APIVO_CONFIGURE_FIREWALL=yes \

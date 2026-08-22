@@ -25,7 +25,7 @@ import /etc/caddy/snippets.caddy
 # Production — final semver tags only (v0.2.0), behind an approval gate.
 # ---------------------------------------------------------------------------
 https://{$APIVO_PROD_HOST} {
-	import origin-tls
+	import origin-tls origin
 	import hardening
 	import crawler-fence
 	import apivo-routes apivo-prod-api apivo-prod-web {$APIVO_PROD_HOST}
@@ -36,7 +36,7 @@ https://{$APIVO_PROD_HOST} {
 # origin is correct on its own, and so a Cloudflare rule that is deleted by
 # accident degrades to a redirect rather than to a certificate error.
 https://{$APIVO_PROD_ALT_HOST} {
-	import origin-tls
+	import origin-tls origin
 	redir https://{$APIVO_PROD_HOST}{uri} permanent
 }
 

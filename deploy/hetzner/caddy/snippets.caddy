@@ -154,7 +154,7 @@
 # DNS-01 later if wildcard per-PR preview hostnames make it worth it.
 # ---------------------------------------------------------------------------
 (origin-tls) {
-	tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key
+	tls /etc/caddy/certs/{args[0]}.pem /etc/caddy/certs/{args[0]}.key
 }
 
 # ---------------------------------------------------------------------------

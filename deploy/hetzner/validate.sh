@@ -189,10 +189,21 @@ done
 # ---------------------------------------------------------------------------
 CERTS="$TMP/certs"
 mkdir -p "$CERTS"
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-    -keyout "$CERTS/origin.key" -out "$CERTS/origin.pem" \
-    -subj "/CN=validate.invalid" >/dev/null 2>&1 ||
-    fail "could not generate a throwaway certificate for the Caddyfile checks"
+# One per certificate the Caddyfiles name, because `caddy validate` opens
+# every one of them: a missing origin-staging.pem fails the whole check with
+# an error about a file rather than about the config. Deriving the list from
+# the Caddyfiles themselves means adding a zone cannot leave this behind.
+CERT_NAMES=$(grep -ho 'import origin-tls [a-z-]*' "$CADDY_DIR"/Caddyfile.* |
+    awk '{print $3}' | sort -u)
+[ -n "$CERT_NAMES" ] ||
+    fail "no 'import origin-tls <name>' found in any Caddyfile; the certificate names could not be derived"
+for _name in $CERT_NAMES; do
+    openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+        -keyout "$CERTS/$_name.key" -out "$CERTS/$_name.pem" \
+        -subj "/CN=validate.invalid" >/dev/null 2>&1 ||
+        fail "could not generate the throwaway '$_name' certificate for the Caddyfile checks"
+done
+echo "ok: throwaway certificates for $(echo "$CERT_NAMES" | tr '\n' ' ')"
 
 if ! docker image inspect "$CADDY_IMAGE" >/dev/null 2>&1; then
     docker pull -q "$CADDY_IMAGE" >/dev/null 2>&1 ||
