@@ -50,6 +50,12 @@ const version = trimmedVersion === undefined || trimmedVersion === '' ? undefine
     <a class="brand" href={home}>epilo<span class="brand-yes">YES</span></a>
     <span class="tag tag-neutral alpha">{t.alphaLabel}</span>
     <a class="about" href={`/${lang}/about`}>{t.aboutLabel}</a>
+    {/* The way in for editorial staff. The sign-in control on the front
+        page is the READER's, and it is a disabled placeholder for a
+        capability still on the cut list — so until this link existed, the
+        only route to the editorial screens was typing the URL. Here rather
+        than in the masthead because it is for the few, not the many. */}
+    <a class="editorial" href={`/${lang}/editor/signin`}>{t.editorialLabel}</a>
     <p class="legal">
       <span>{t.imprint}</span>
       <span aria-hidden="true">·</span>
@@ -65,6 +71,15 @@ const version = trimmedVersion === undefined || trimmedVersion === '' ? undefine
 </footer>
 
 <style>
+  .editorial {
+    color: var(--color-text);
+    opacity: 0.7;
+  }
+  .editorial:hover,
+  .editorial:focus-visible {
+    opacity: 1;
+  }
+
   .site-footer {
     border-top: 2px solid var(--color-divider);
   }

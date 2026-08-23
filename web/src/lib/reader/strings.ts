@@ -78,6 +78,15 @@ export interface UiStrings {
    * the product actually runs, never aspirations.
    */
   readonly aboutLabel: string;
+  /**
+   * The way in to the editorial screens, from any reader page.
+   *
+   * Not the reader's `signIn` above, which is a disabled placeholder for a
+   * capability that is still on the cut list. This one leads somewhere that
+   * exists, and without it the only route to /{lang}/editor/signin was
+   * typing it — which is how the editorial staff found out.
+   */
+  readonly editorialLabel: string;
   readonly aboutHeading: string;
   readonly aboutIntro: string;
   readonly aboutPipelineHeading: string;
@@ -170,6 +179,7 @@ const EL: UiStrings = {
   contact: 'Επικοινωνία',
   legalPending: 'εκκρεμούν πριν από τη δημόσια κυκλοφορία',
   aboutLabel: 'Σχετικά',
+  editorialLabel: 'Σύνταξη',
   aboutHeading: 'Σχετικά με το epiloYES',
   aboutIntro:
     'Το epiloYES είναι μια πολύγλωσση τοπική εφημερίδα για τις ελληνικές κοινότητες του εξωτερικού. Η γλώσσα ανάγνωσης και οι τόποι που παρακολουθείτε είναι δύο ανεξάρτητοι άξονες: διαβάζετε στα ελληνικά ή στα γερμανικά, για όποιους τόπους σας αφορούν — η αλλαγή του ενός δεν αγγίζει ποτέ τον άλλον.',
@@ -280,6 +290,7 @@ const DE: UiStrings = {
   contact: 'Kontakt',
   legalPending: 'vor dem öffentlichen Start erforderlich',
   aboutLabel: 'Über epiloYES',
+  editorialLabel: 'Redaktion',
   aboutHeading: 'Über epiloYES',
   aboutIntro:
     'epiloYES ist eine mehrsprachige Lokalzeitung für die griechischen Gemeinden im Ausland. Lesesprache und Orte sind zwei unabhängige Achsen: Sie lesen auf Griechisch oder Deutsch, über die Orte, die Sie betreffen — die eine Wahl berührt die andere nie.',
