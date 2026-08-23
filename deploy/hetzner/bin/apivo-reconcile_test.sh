@@ -174,6 +174,13 @@ APIVO_CHANNEL=qa
 APIVO_REGISTRY=$REGISTRY
 COMPOSE_FILE=/opt/apivo/compose/docker-compose.yml
 EOF
+    # The frontend's certificate. A provisioned host has one; the reconciler
+    # refuses to converge without it, because the container reads both files
+    # at startup and dies if they are absent (see the check in apivo-reconcile).
+    # Contents are never read here - only the reconciler's stat is.
+    mkdir -p "$APIVO_ETC/qa/web-certs"
+    : > "$APIVO_ETC/qa/web-certs/web.crt"
+    : > "$APIVO_ETC/qa/web-certs/web.key"
     printf '%s' "$DIGEST_A" > "$STUB_DIR/digest_api"
     printf '%s' "$WEB_A" > "$STUB_DIR/digest_web"
     printf '%s' 'v0.1.0' > "$STUB_DIR/label_version"
@@ -466,6 +473,40 @@ if [ -e "$STUB_DIR/calls" ]; then
 else
     echo "ok: a paused environment touches nothing at all"
 fi
+
+# ===========================================================================
+# A host with no frontend certificate is REFUSED, not left to crash-loop.
+#
+# compose sets SERVER_CERT_PATH and SERVER_KEY_PATH, which is what makes
+# @astrojs/node serve https and therefore what makes Astro.url carry the
+# browser's scheme - without which the site refuses its own form posts. The
+# standalone entry reads both files at startup with readFileSync, so absent
+# they throw ENOENT and the container dies and restarts, forever.
+#
+# Nothing would say why. A bind mount whose source is missing is created
+# EMPTY by Docker rather than refused, so the mount looks correct and the
+# only sentence that names the problem is inside a container that is not up
+# long enough to be read. This is also exactly the state a host provisioned
+# before certificates existed upgrades INTO.
+# ===========================================================================
+
+reset
+rm -f "$APIVO_ETC/qa/web-certs/web.crt"
+run qa
+check "a missing frontend certificate is refused before anything is started" 2 "no frontend certificate"
+# Refused BEFORE converging, not after: `up_count` is written by the compose
+# stub, so its absence is the assertion that nothing was started.
+if [ -e "$STUB_DIR/up_count" ]; then
+    echo "FAIL: the stack was brought up anyway ($(cat "$STUB_DIR/up_count") times); the refusal must come before compose"
+    FAILS=1
+else
+    echo "ok: and nothing was brought up"
+fi
+
+reset
+rm -f "$APIVO_ETC/qa/web-certs/web.key"
+run qa
+check "a certificate with no key is refused too" 2 "no frontend certificate"
 
 if [ "$FAILS" -ne 0 ]; then
     echo "apivo-reconcile: FAILURES"
