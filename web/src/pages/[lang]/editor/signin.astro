@@ -101,7 +101,7 @@ const signedOut = Astro.url.searchParams.get('signedout') !== null;
         </section>
       ) : (
         <section class="panel">
-          <form method="post" action={here}>
+          <form method="post" action={here} data-tour="signin-form">
             <div class="field">
               <label for="s-email">{reader.emailLabel}</label>
               <input

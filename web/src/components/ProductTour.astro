@@ -1,0 +1,201 @@
+---
+import type { ReadingLanguage } from '../lib/reader/axes';
+import { tourStrings } from '../lib/tour/strings';
+import type { TourId } from '../lib/tour/tours';
+
+// The guided tour, mounted on a screen that takes part in one.
+//
+// ---------------------------------------------------------------------------
+// This is additive, and must stay that way
+//
+// The editorial screens ship no client JavaScript by design — selection is
+// a link and approval is a form POST, so the queue works with scripting
+// off. This component is the first script on those pages, and it earns
+// that only by being removable: every step highlights something that is
+// already on screen and already usable. If the bundle fails to load, the
+// import 404s, or the browser blocks it, the screens behave exactly as
+// they did before. Nothing here is ever asked whether a control may run.
+//
+// The launcher starts hidden and is revealed by the script, so a visitor
+// without JavaScript is never shown a button that would do nothing.
+//
+// ---------------------------------------------------------------------------
+// Why the copy is not in here
+//
+// Steps carry a key; `lib/tour/strings` carries the words, per language.
+// The whole product treats language as an axis, and the tour is read by
+// the people least able to forgive an English-only surface — the editorial
+// staff whose own screens are in el and de.
+interface Props {
+  lang: ReadingLanguage;
+  tour: TourId;
+}
+
+const { lang, tour } = Astro.props;
+const s = tourStrings(lang);
+---
+
+<button
+  type="button"
+  class="tour-launch"
+  data-tour-launch={tour}
+  data-tour-restart={s.restart}
+  aria-label={s.startLabel}
+  hidden>{s.start}</button
+>
+
+<script>
+  import { driver, type Driver } from 'driver.js';
+  import 'driver.js/dist/driver.css';
+
+  import { isReadingLanguage } from '../lib/reader/axes';
+  import {
+    advance,
+    DONE,
+    normalisePath,
+    pageSteps,
+    readCursor,
+    resolve,
+    serialise,
+    storageKey,
+  } from '../lib/tour/progress';
+  import { tourStrings } from '../lib/tour/strings';
+  import { tourById } from '../lib/tour/tours';
+
+  const launcher = document.querySelector<HTMLButtonElement>('[data-tour-launch]');
+  const langAttr = document.documentElement.lang;
+  const tour = launcher === null ? null : tourById(launcher.dataset['tourLaunch'] ?? '');
+
+  if (launcher !== null && tour !== null && isReadingLanguage(langAttr)) {
+    const lang = langAttr;
+    const copy = tourStrings(lang);
+    const key = storageKey(tour.id);
+    const path = normalisePath(window.location.pathname);
+
+    // Storage throws rather than returning null in a browser that has
+    // disabled it — Safari's private mode historically, and any profile
+    // with site data blocked. A tour is not worth an exception that stops
+    // the rest of the page's scripts, so both directions swallow.
+    const read = (): string | null => {
+      try {
+        return window.localStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    };
+    const write = (value: string): void => {
+      try {
+        window.localStorage.setItem(key, value);
+      } catch {
+        /* A tour that cannot remember where it got to is still a tour. */
+      }
+    };
+
+    const hasAnchor = (anchor: string): boolean =>
+      document.querySelector(`[data-tour="${anchor}"]`) !== null;
+
+    const run = (from: number): void => {
+      const placed = pageSteps(tour, from, path, lang, hasAnchor);
+      if (placed.length === 0) {
+        return;
+      }
+
+      let shown = placed[0]?.index ?? from;
+      let ranToEnd = false;
+
+      const instance: Driver = driver({
+        showProgress: false,
+        allowClose: true,
+        overlayOpacity: 0.6,
+        nextBtnText: copy.next,
+        prevBtnText: copy.previous,
+        doneBtnText: copy.done,
+        steps: placed.map(({ step }) => ({
+          ...(step.anchor === null ? {} : { element: `[data-tour="${step.anchor}"]` }),
+          popover: {
+            title: copy.steps[step.key].title,
+            description: copy.steps[step.key].body,
+          },
+        })),
+        onHighlighted: () => {
+          const at = placed[instance.getActiveIndex() ?? 0];
+          if (at !== undefined) {
+            shown = at.index;
+            // Written as they go, not at the end: the visitor may follow a
+            // link out of a highlighted element mid-tour, and that is the
+            // tour working rather than a tour being abandoned.
+            write(serialise(at.index));
+          }
+        },
+        onDestroyStarted: () => {
+          // Reaching the end of this page's run is progress; closing on a
+          // middle step is a decline. Telling them apart is the whole
+          // difference between "continue on the next screen" and "stop
+          // interrupting me", and driver.js reports both as a destroy.
+          ranToEnd = !instance.hasNextStep();
+          instance.destroy();
+        },
+        onDestroyed: () => {
+          write(ranToEnd ? serialise(advance(tour, shown)) : DONE);
+          syncLauncher();
+        },
+      });
+
+      instance.drive();
+    };
+
+    function syncLauncher(): void {
+      if (launcher === null) {
+        return;
+      }
+      const finished = read() === DONE;
+      launcher.textContent = finished
+        ? (launcher.dataset['tourRestart'] ?? launcher.textContent)
+        : launcher.textContent;
+      launcher.hidden = false;
+    }
+
+    launcher.addEventListener('click', () => {
+      write(serialise(0));
+      run(0);
+    });
+
+    syncLauncher();
+
+    const decision = resolve(tour, readCursor(read(), tour), path, lang, hasAnchor);
+    if (decision.kind === 'show') {
+      run(decision.step);
+    } else if (decision.kind === 'done') {
+      write(DONE);
+      syncLauncher();
+    }
+  }
+</script>
+
+<style>
+  .tour-launch {
+    font: inherit;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-text);
+    background: transparent;
+    border: 1px solid var(--color-divider);
+    padding: 0.25rem 0.6rem;
+    cursor: pointer;
+  }
+  .tour-launch:hover,
+  .tour-launch:focus-visible {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+  }
+  /* The tour explains what is on screen; it must not become the reason
+     somebody cannot read it. */
+  @media (prefers-reduced-motion: reduce) {
+    :global(.driver-popover),
+    :global(.driver-overlay) {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+</style>
