@@ -25,6 +25,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Nomos-N4s/apivo-news/internal/account"
 	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
 	"github.com/Nomos-N4s/apivo-news/internal/identity"
@@ -55,6 +56,12 @@ const healthcheckTimeout = 3 * time.Second
 // Every pattern the module registers lives under it, so mounting the prefix
 // mounts the module whole - and unsetting JWKS_URL unmounts it whole.
 const editorialPrefix = "/api/v1/editorial/"
+
+// accountPrefix is where the account module's route table is mounted. It
+// is gated on the same JWKS as editorial and mounted or unmounted with it:
+// both need a verified bearer token, and a deployment that can verify one
+// can verify the other.
+const accountPrefix = "/api/v1/account/"
 
 // readerPrefix is where the content module's route table is mounted. It
 // covers the whole API namespace because the module also answers what nobody
@@ -123,14 +130,14 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// failure than editorial endpoints answering 404. ERROR level and a
 		// named consequence make the cause obvious in the first log line
 		// rather than something to deduce from a 404 later.
-		log.ErrorContext(ctx, "JWKS_URL is not set: every /api/v1/editorial/ route is UNMOUNTED and will answer 404; reader endpoints are unaffected. Set JWKS_URL to the auth provider JWKS endpoint to enable editorial endpoints")
+		log.ErrorContext(ctx, "JWKS_URL is not set: every /api/v1/editorial/ and /api/v1/account/ route is UNMOUNTED and will answer 404; reader endpoints are unaffected. Set JWKS_URL to the auth provider JWKS endpoint to enable them")
 	} else {
-		editorialRoute, closeVerifier, err := newEditorialRoute(ctx, cfg, log, pool)
+		authenticated, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, log, pool)
 		if err != nil {
 			return err
 		}
 		defer closeVerifier()
-		routes = append(routes, editorialRoute)
+		routes = append(routes, authenticated...)
 	}
 
 	// The feed poll loop runs beside the HTTP server, on the same pool and
@@ -226,23 +233,57 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 	return srv.Run(ctx)
 }
 
-// newEditorialRoute wires the editorial module: JWT verification against
-// the configured JWKS, subject-to-account mapping and the account.role
-// lookup from identity, adapted behind editorial's consumer-defined auth
-// seam. The returned func stops the verifier's background JWKS refreshing.
-func newEditorialRoute(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool) (platformhttp.Route, func(), error) {
+// newAuthenticatedRoutes wires every module that needs a verified bearer
+// token: editorial, and account.
+//
+// ONE verifier, shared. Each verifier keeps a background loop refreshing
+// the JWKS, so building one per module would mean two loops fetching the
+// same document from the same provider on the same schedule, and two
+// caches that could disagree about which keys are current. The returned
+// func stops the one loop there is.
+//
+// Both routes are mounted together or not at all. They differ in what they
+// then require - editorial demands the editor role, account only that
+// somebody is signed in - but neither can answer anything without a token
+// that verifies, so the condition for mounting is the same condition.
+func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool) ([]platformhttp.Route, func(), error) {
 	verifier, err := identity.NewVerifier(ctx, identity.VerifierConfig{
 		JWKSURL:  cfg.JWKSURL,
 		Audience: cfg.JWTAudience,
 	})
 	if err != nil {
-		return platformhttp.Route{}, nil, err
+		return nil, nil, err
 	}
-	auth := newEditorAuth(identity.New(verifier, pool), identity.NewAccountRoles(pool))
-	return platformhttp.Route{
-		Pattern: editorialPrefix,
-		Handler: editorial.NewHandler(log, editorial.NewPGStore(pool), auth),
+	ids := identity.New(verifier, pool)
+	return []platformhttp.Route{
+		{
+			Pattern: editorialPrefix,
+			Handler: editorial.NewHandler(log, editorial.NewPGStore(pool), newEditorAuth(ids, identity.NewAccountRoles(pool))),
+		},
+		{
+			Pattern: accountPrefix,
+			Handler: account.NewHandler(log, account.NewPGStore(pool), accountAuth{ids: ids}),
+		},
 	}, func() { _ = verifier.Close(context.Background()) }, nil
+}
+
+// accountAuth adapts the identity module to account's consumer-defined
+// Authenticator. Deliberately thinner than editorAuth: there is no role to
+// require, because every route in that module acts on the caller's own row
+// and a reader owns theirs exactly as an editor owns theirs.
+type accountAuth struct {
+	ids *identity.Service
+}
+
+func (a accountAuth) Authenticate(ctx context.Context, token string) (account.Account, error) {
+	id, err := a.ids.Authenticate(ctx, token)
+	switch {
+	case errors.Is(err, identity.ErrInvalidToken), errors.Is(err, identity.ErrUnknownAccount):
+		return account.Account{}, fmt.Errorf("%w: %w", account.ErrUnauthenticated, err)
+	case err != nil:
+		return account.Account{}, err
+	}
+	return account.Account{ID: id.Subject}, nil
 }
 
 // newEditorAuth builds the identity-to-editorial adapter. It is the single
