@@ -513,6 +513,47 @@ else
     fail "snippets.caddy is not 'caddy fmt' clean: $out"
 fi
 
+# ---------------------------------------------------------------------------
+# The DOCKER-USER chain must not block traffic LEAVING a container.
+#
+# iptables cannot be exercised here - there is no privileged netfilter in CI -
+# so this asserts the shape of the rules provision.sh emits. That is worth
+# doing anyway, because the bug it guards is invisible until a container needs
+# the internet: DOCKER-USER hangs off FORWARD and sees both directions, so a
+# bare `--dport 443 -j DROP` also drops a container dialling out. The first
+# host provisioned answered 502 with the api crash-looping on a JWKS fetch
+# that TIMED OUT, while the same URL fetched from the host worked perfectly -
+# host traffic never traverses FORWARD.
+#
+# Two things make it safe, and both are asserted: the DROP is scoped to the
+# external interface, and a RETURN for everything arriving on any other
+# interface comes FIRST.
+# ---------------------------------------------------------------------------
+fw=$(sed -n '/iptables -N DOCKER-USER/,/DOCKER-USER rules installed/p' "$HERE/provision.sh")
+
+# Matched without a `$`, deliberately: the pattern would otherwise contain a
+# literal '$ext_if' and shellcheck's SC2016 fires on it. CI runs shellcheck
+# with no severity filter, so an info-level finding fails the job.
+return_line=$(printf '%s\n' "$fw" | grep -n -- '! -i .* -j RETURN' | cut -d: -f1 | head -n 1)
+drop_line=$(printf '%s\n' "$fw" | grep -n -- '-p tcp --dport 443 -j DROP' | cut -d: -f1 | head -n 1)
+
+if [ -z "$return_line" ]; then
+    fail "provision.sh does not RETURN traffic arriving on an interface other than the external one, so the DOCKER-USER 443 DROP will also drop container-originated HTTPS - the api cannot fetch its JWKS and every environment answers 502"
+elif [ -z "$drop_line" ]; then
+    fail "provision.sh no longer drops inbound 443 in DOCKER-USER; ufw does not cover published container ports, so the origin would be reachable by anyone who learns its address"
+elif [ "$return_line" -ge "$drop_line" ]; then
+    fail "provision.sh emits the DOCKER-USER 443 DROP (line $drop_line of that block) at or before the RETURN for non-external interfaces (line $return_line); the DROP is evaluated first and container-originated HTTPS dies"
+else
+    echo "ok: DOCKER-USER returns container-originated traffic before dropping inbound 443"
+fi
+
+if printf '%s\n' "$fw" | grep -q -- '-p tcp --dport 443 -j DROP' &&
+    ! printf '%s\n' "$fw" | grep -q -- '-i .* -p tcp --dport 443 -j DROP'; then
+    fail "the DOCKER-USER 443 DROP in provision.sh is not scoped to the external interface, so it matches traffic in both directions"
+else
+    echo "ok: the DOCKER-USER 443 DROP is scoped to the external interface"
+fi
+
 if [ "$FAILS" -ne 0 ]; then
     echo "hetzner config: FAILURES"
     exit 1
