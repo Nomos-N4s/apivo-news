@@ -311,6 +311,14 @@ genuinely `https://`, and both checks agree unaided — on previews too. The
 three Caddy rewrites are gone, and `validate.sh` asserts the hop is
 encrypted *and* that the browser's Origin now arrives untouched.
 
+**Upgrading an existing host costs a short frontend outage, and the order
+matters.** Re-run `provision.sh`: it writes the certificates and restarts the
+edge if one is running, so the proxy speaks TLS to the frontend. Until each
+environment reconciles onto an image that *serves* TLS, that hop fails. The
+script prints the `systemctl start apivo-reconcile@<env>.service` lines to
+close the window — run them straight away. The API is unaffected; it is
+proxied over plain http and always was.
+
 ## Provisioning a host
 
 **Step by step, with this project's real domains and everything that needs a

@@ -130,8 +130,23 @@
 		# name. This encrypts the hop without claiming to have
 		# authenticated it, which is the same trade the Postgres
 		# connections make with sslmode=require.
-		reverse_proxy https://{args[1]}:4321 {
+		# TLS is asked for on the TRANSPORT, not by putting https:// in the
+		# upstream address. Caddy refuses a placeholder in an address that
+		# carries a scheme - "due to parsing difficulties, placeholders are
+		# not allowed when an upstream address contains a scheme" - and the
+		# preview snippet below has no choice but a placeholder, since its
+		# container name is derived per request. The scheme form parses
+		# here, where {args[1]} is substituted before the address is read,
+		# and that difference is exactly the trap: one idiom that works in
+		# both places is worth more than two that each work in one.
+		#
+		# It is the same shape of limitation that killed the Origin rewrite
+		# this replaces. Caddy expands placeholders in a great many
+		# positions and not in these, and neither refusal is visible until
+		# something runs.
+		reverse_proxy {args[1]}:4321 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 		}
@@ -212,8 +227,9 @@
 		# TLS for the same reason as (apivo-routes), and this is the site
 		# that forced it: a wildcard host could never have had the Origin
 		# rewrite, so a preview's sign-in was refused while QA's worked.
-		reverse_proxy https://apivo-{re.preview.1}-web:4321 {
+		reverse_proxy apivo-{re.preview.1}-web:4321 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 		}
