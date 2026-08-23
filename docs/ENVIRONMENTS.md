@@ -13,21 +13,27 @@ asking anyone.
 | **Data** | throwaway, resettable | production-shaped | real |
 | **`APP_ENV`** | `prod` | `prod` | `prod` |
 | **Channel** | `:qa` | `:staging` | `:prod` |
-| **Provisioned** | not yet | not yet | not yet |
+| **Provisioned** | yes — serving | host yes, no release yet | not yet |
 
-**Nothing is provisioned yet.** Every URL in
-[environments.env](../deploy/hetzner/environments.env) is empty, and the
-release pipeline refuses a release to any channel whose URL is — staging as
-much as production — before anything is published. QA and Staging need only
-the pre-production VPS configured; production needs a second VPS, its own
-Supabase project and a DNS record that do not exist.
+**The pre-production host exists and QA is serving.** Every merge to `main`
+publishes the `:qa` channel, the host converges within the minute, and
+`https://ra1ze.com` answers. Nothing is pushed to it: the box asks the
+registry whether its channel moved and rolls itself forward.
 
-So the rows below describe what each environment IS, not what is running: a
-`-rc` tag is refused today, and will release to staging the moment
-`APIVO_STAGING_URL` is filled in. Everything production needs is
-written and rehearsed — the Caddy site, the compose stack, the systemd units,
-the approval gate — so provisioning it later is running one script, not
-designing a deployment on the day it is first needed.
+**Staging's host is ready and has never had a release.** Its Caddy site
+answers on `https://reapie.com` — with a 502, correctly, because no release
+candidate has moved the `:staging` channel and there is nothing to proxy to.
+`APIVO_STAGING_URL` in
+[environments.env](../deploy/hetzner/environments.env) is still empty, and
+that emptiness is the guard: `release.yml` refuses a release to any channel
+whose URL is unset, so an `-rc` tag is refused today. Filling it in and
+cutting the first candidate are the two remaining steps, in that order.
+
+**Production is not provisioned.** It needs a second VPS, its own Supabase
+project and a DNS record, none of which exist. Everything it needs is written
+and rehearsed — the Caddy site, the compose stack, the systemd units, the
+approval gate — so provisioning it later is running one script, not designing
+a deployment on the day it is first needed.
 
 ## Why these three, and not two or four
 
