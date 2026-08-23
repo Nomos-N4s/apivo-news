@@ -39,9 +39,12 @@ nothing below provisions it.
 - Your **SSH public key** on the Hetzner box, and the **port** sshd listens
   on. If that is not 22, you need it in step 4 or you will lock yourself out.
 
-Supabase is **not** needed for this pass. The free tier is one project and
-that project is production's; QA and Staging both run a Postgres container on
-the box instead. See [ENVIRONMENTS.md](ENVIRONMENTS.md) for what that costs.
+- **A Supabase organisation with two projects**: one *nonprod*, one for
+  production later. The free tier allows two active projects per
+  organisation, so this costs nothing. From the **nonprod** project you need
+  its URL, its **anon** key, and — for seeding editors, not for any env file
+  — its **service_role** key. QA and Staging both use it: staging for its
+  database and both for auth. See [ENVIRONMENTS.md](ENVIRONMENTS.md).
 
 ---
 
@@ -182,21 +185,100 @@ overwrites a file that holds a secret.
 
 It deliberately does not fill in any credential. That is step 5.
 
-## 5. The Hetzner box — the two database URLs
+## 5. The Hetzner box — databases and auth
 
 This is the first of the two ordering constraints: the api will not start
-without it.
+without a `DATABASE_URL`.
+
+**QA uses its container; Staging uses the nonprod Supabase project.** Why they
+differ is in [ENVIRONMENTS.md](ENVIRONMENTS.md); what to type is here.
+
+### QA's database — the generated container password
+
+`provision.sh` generated it. This reads it out of `stack.env` and writes the
+URL into `api.env` without printing the password or leaving it in your shell
+history:
 
 ```sh
-# QA
-grep APIVO_PG_PASSWORD /etc/apivo/qa/stack.env
-# put this in /etc/apivo/qa/api.env, with that password substituted in:
-#   DATABASE_URL=postgres://apivo:<password>@postgres:5432/apivo?sslmode=require
-
-# Staging — a DIFFERENT generated password
-grep APIVO_PG_PASSWORD /etc/apivo/staging/stack.env
-#   DATABASE_URL=postgres://apivo:<password>@postgres:5432/apivo?sslmode=require
+pw=$(sed -n 's/^APIVO_PG_PASSWORD=//p' /etc/apivo/qa/stack.env)
+[ -n "$pw" ] || echo "no password found — stop"
+sed -i '/^#\?DATABASE_URL=/d' /etc/apivo/qa/api.env
+printf 'DATABASE_URL=postgres://apivo:%s@postgres:5432/apivo?sslmode=require\n' "$pw" \
+  >> /etc/apivo/qa/api.env
+chmod 600 /etc/apivo/qa/api.env
+unset pw
 ```
+
+The host is `postgres`, the compose service name, not `localhost`. And
+`sslmode=require` is not decoration: every environment runs `APP_ENV=prod`,
+and the api **refuses to start** on a `DATABASE_URL` whose `sslmode` permits
+an unencrypted session.
+
+### Staging's database — the nonprod Supabase project
+
+Supabase → the **nonprod** project → *Connect*. Take the connection string on
+port **`5432`** and append `?sslmode=require`:
+
+```
+DATABASE_URL=postgres://postgres.<ref>:<password>@<region>.pooler.supabase.com:5432/postgres?sslmode=require
+```
+
+**Port `5432`, not `6543`.** `golang-migrate` takes a Postgres advisory lock
+around the migration run; `6543` is transaction pooling, which does not hold
+session state, so the lock is unreliable there — migrations can fail or strand
+it.
+
+Staging must also stop composing a local database, or it starts a Postgres
+container nothing connects to. In `/etc/apivo/staging/stack.env`, drop
+`:/opt/apivo/compose/docker-compose.local-db.yml` from the end, leaving:
+
+```
+COMPOSE_FILE=/opt/apivo/compose/docker-compose.yml
+```
+
+`APIVO_PG_PASSWORD` and the generated certificate become dead weight in that
+file. Leaving them costs nothing and removes a step that could be got wrong.
+
+### Auth — both environments, the nonprod project
+
+**Check the endpoint answers before wiring it.** `NewVerifier` fetches the
+JWKS at boot and *fails construction* when it cannot, so a wrong URL means the
+api never starts, the rollout fails, and the reconciler rolls back. Recoverable,
+but avoidable:
+
+```sh
+curl -sS https://<ref>.supabase.co/auth/v1/.well-known/jwks.json | head -c 200
+```
+
+You want JSON containing `"keys"`. Then, for **each** of `qa` and `staging`:
+
+```sh
+printf 'JWKS_URL=https://<ref>.supabase.co/auth/v1/.well-known/jwks.json\n' \
+  >> /etc/apivo/<env>/api.env
+printf 'PUBLIC_SUPABASE_URL=https://<ref>.supabase.co\nPUBLIC_SUPABASE_ANON_KEY=<anon key>\n' \
+  >> /etc/apivo/<env>/web.env
+chmod 600 /etc/apivo/<env>/api.env /etc/apivo/<env>/web.env
+```
+
+Leave `JWT_AUDIENCE` unset for now. It is a real check and worth adding, but
+if it is wrong every token is rejected — add it once sign-in demonstrably
+works, so a failure has one cause rather than two.
+
+Verify after the next reconcile:
+
+```sh
+curl -sS -o /dev/null -w '%{http_code}\n' https://ra1ze.com/api/v1/editorial/queue
+```
+
+**404 → 401 is the result you want.** 401 means the module is mounted and
+refusing you for having no token. Still 404 means `JWKS_URL` did not take.
+
+Leave everything else in `api.env` and `web.env` empty. Empty is a documented,
+safe state for all of them, and a placeholder is *worse* than empty — the
+binary treats it as real and crash-loops.
+
+Re-running `provision.sh` undoes none of this: it writes `stack.env` only when
+absent, and never overwrites `api.env` or `web.env`.
 
 `sslmode=require` is not decoration. Every environment here runs
 `APP_ENV=prod`, and the api **refuses to start** on a `DATABASE_URL` whose

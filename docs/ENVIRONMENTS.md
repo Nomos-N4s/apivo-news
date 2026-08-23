@@ -9,25 +9,32 @@ asking anyone.
 | **Deploys on** | every push to `main` | a `-rc` tag | a final semver tag |
 | **Gate** | none — automatic | none — automatic | one human approval |
 | **Host** | pre-production VPS | pre-production VPS | its own VPS |
-| **Database** | Postgres container on the host | Postgres container on the host | its own Supabase EU project |
+| **Database** | Postgres container on the host | nonprod Supabase EU project | its own Supabase EU project |
+| **Auth** | nonprod Supabase project | nonprod Supabase project | its own Supabase project |
 | **Data** | throwaway, resettable | production-shaped | real |
 | **`APP_ENV`** | `prod` | `prod` | `prod` |
 | **Channel** | `:qa` | `:staging` | `:prod` |
-| **Provisioned** | not yet | not yet | not yet |
+| **Provisioned** | yes — serving | host yes, no release yet | not yet |
 
-**Nothing is provisioned yet.** Every URL in
-[environments.env](../deploy/hetzner/environments.env) is empty, and the
-release pipeline refuses a release to any channel whose URL is — staging as
-much as production — before anything is published. QA and Staging need only
-the pre-production VPS configured; production needs a second VPS, its own
-Supabase project and a DNS record that do not exist.
+**The pre-production host exists and QA is serving.** Every merge to `main`
+publishes the `:qa` channel, the host converges within the minute, and
+`https://ra1ze.com` answers. Nothing is pushed to it: the box asks the
+registry whether its channel moved and rolls itself forward.
 
-So the rows below describe what each environment IS, not what is running: a
-`-rc` tag is refused today, and will release to staging the moment
-`APIVO_STAGING_URL` is filled in. Everything production needs is
-written and rehearsed — the Caddy site, the compose stack, the systemd units,
-the approval gate — so provisioning it later is running one script, not
-designing a deployment on the day it is first needed.
+**Staging's host is ready and has never had a release.** Its Caddy site
+answers on `https://reapie.com` — with a 502, correctly, because no release
+candidate has moved the `:staging` channel and there is nothing to proxy to.
+`APIVO_STAGING_URL` in
+[environments.env](../deploy/hetzner/environments.env) is still empty, and
+that emptiness is the guard: `release.yml` refuses a release to any channel
+whose URL is unset, so an `-rc` tag is refused today. Filling it in and
+cutting the first candidate are the two remaining steps, in that order.
+
+**Production is not provisioned.** It needs a second VPS, its own Supabase
+project and a DNS record, none of which exist. Everything it needs is written
+and rehearsed — the Caddy site, the compose stack, the systemd units, the
+approval gate — so provisioning it later is running one script, not designing
+a deployment on the day it is first needed.
 
 ## Why these three, and not two or four
 
@@ -44,19 +51,42 @@ shape. Nothing is manual here that is not manual in production. Its job is to
 make the first production release boring — the first time that pipeline runs
 to a *new host*, not the first time it runs at all.
 
-**One part of that rehearsal is missing, and it is worth being blunt about
-which.** Staging runs a Postgres container, not its own Supabase project,
-because the Supabase free tier is a single project and that project has to be
-production. The alternative — pointing Staging at the production project —
-would have release-candidate migrations running against production data, and
-no parity argument is worth that. So what Staging still rehearses is the
-pipeline, the images, the proxy, the approval gate and the migrations; what it
-does **not** rehearse is Supabase itself: connection limits, pooler
-behaviour, extension availability, and anything enforced Supabase-side. A
-release can therefore still fail on first contact with production's database
-in a way staging could not have shown. When a paid tier arrives this closes by
-dropping `docker-compose.local-db.yml` from staging's `COMPOSE_FILE` and
-setting its `DATABASE_URL` — no code change.
+**Staging runs on a real Supabase project, and that is the point.** It uses
+the *nonprod* project — not production's — so release-candidate migrations
+never touch production data, while everything Supabase enforces is in the
+path: connection limits, pooler behaviour, extension availability, and the
+managed-service failure modes a container cannot reproduce. A release that
+would fail on first contact with production's database now has somewhere to
+fail first.
+
+This was previously written here as an accepted gap, on the belief that the
+free tier allowed a single project which had to be production. **That was
+wrong: the free tier allows two active projects per organisation.** One is
+production's; the other is nonprod, and staging uses it. The gap was never
+necessary — only unexamined.
+
+**QA deliberately keeps its container.** That is not a lesser version of
+staging, it is a different job: reset without a conversation, no egress on
+every query, no 500 MB ceiling, and no dependency on a free project that
+[pauses after about a week idle](#the-nonprod-project-pauses).
+
+Sharing one database between QA and staging is the tempting shortcut and the
+one thing to avoid. **The api migrates on boot**; QA deploys on every merge to
+`main` and staging deploys on `-rc` tags. A shared schema would therefore have
+QA migrating the database staging is running against, leaving staging's older
+binary talking to a schema from the future — the exact failure this split
+exists to prevent.
+
+Mechanically staging is now production's shape: `docker-compose.local-db.yml`
+is absent from its `COMPOSE_FILE` and its `DATABASE_URL` points at Supabase.
+Those are the same two facts that will be true of production, and neither is
+a code change.
+
+**Use the session-mode connection string, not transaction mode.**
+`golang-migrate` takes a Postgres advisory lock around the migration run, and
+transaction pooling does not hold session state, so that lock is unreliable
+there — migrations can fail or strand it. The pooler on `5432` is session mode
+and is correct; `6543` is not.
 
 If those two descriptions ever collapse into one, collapse the environments
 too and save the money.
@@ -85,6 +115,59 @@ container one hop away on a network marked `internal: true`, and a
 self-signed certificate cannot prove an identity. Encrypting without claiming
 to verify is honest. Production reaches Supabase across the public internet
 and uses `verify-full`.
+
+## Auth: nonprod and production, never one issuer
+
+Every environment verifies bearer tokens against a **JWKS endpoint**, named
+per environment by `JWKS_URL`. QA and Staging point at the *nonprod* Supabase
+project; production points at its own. Previews point at nothing at all.
+
+**The boundary that matters is nonprod ↔ production, and it is a real one.** A
+token is valid wherever its issuer is trusted, so a single shared project would
+make a token minted for a QA test editor cryptographically valid against
+production's API. What stands in its way today is only that production's
+`account` table has no matching row — `ErrUnknownAccount` from
+[role.go](../internal/identity/role.go). That is a genuine backstop, but it is
+one row away from being the entire authorisation boundary, and seeding rows is
+a routine thing to do in a test environment. Two issuers, and the question
+never arises.
+
+**QA and Staging sharing the nonprod issuer is deliberate, and a much weaker
+concern.** Both are throwaway, and their `account` tables live in different
+databases, so an editor seeded into QA has no account in staging and gets
+`ErrUnknownAccount` there. Splitting them further would buy an isolation
+nobody is relying on, at the cost of a third project.
+
+`JWKS_URL` empty is a supported, documented state rather than a broken one:
+the composition root logs one line and leaves **every** `/api/v1/editorial/`
+route unmounted, so an environment without auth configured exposes nothing
+that would have needed it. Reader endpoints are unaffected.
+`/api/v1/editorial/queue` answering **404 rather than 401** is the signal that
+a host has no `JWKS_URL`.
+
+`JWT_AUDIENCE` additionally requires the `aud` claim to carry a given value
+(Supabase issues `authenticated`). It is optional, and
+[config.go](../internal/platform/config/config.go) treats setting it *without*
+`JWKS_URL` as a configuration error rather than as a no-op. Add it after
+sign-in is known to work, so a rejected token has one possible cause instead
+of two.
+
+### The nonprod project pauses
+
+Free Supabase projects pause after about a week of inactivity, and a paused
+project answers neither its database nor its JWKS endpoint. The failure is
+asymmetric, and worth knowing before it happens rather than during:
+
+- **A running api keeps working.** The JWKS is cached in-process.
+- **The next rollout fails to boot.** `NewVerifier` fetches the JWKS at
+  startup and *fails construction* when it cannot — deliberately, so a
+  container never starts half-authenticated. The reconciler then rolls the
+  environment back to the digest that was serving.
+- **Staging additionally loses its database**, which is in the same project.
+  QA does not, which is one more reason its container stays.
+
+A deploy failing with a JWKS error on an environment that was fine yesterday
+is this, until proven otherwise.
 
 ## How a deploy actually happens
 
