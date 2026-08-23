@@ -49,6 +49,21 @@ die() {
 
 [ -r "$CONF" ] || die config "no readable $CONF; this host does not serve previews (provision.sh creates it)" 2
 
+# The frontend's certificate, shared by every preview on this host.
+#
+# compose sets SERVER_CERT_PATH and SERVER_KEY_PATH so @astrojs/node serves
+# https, which is what makes Astro.url carry the browser's scheme - and a
+# preview is the environment that needs it most, because a wildcard host can
+# never have the Origin rewrite the named environments used instead.
+#
+# Absent, the standalone entry throws ENOENT at startup and every preview
+# container crash-loops. Docker creates a missing bind-mount source EMPTY
+# rather than refusing, so nothing on the host says why. Checked once here,
+# for all of them.
+if [ ! -r "$ETC/preview/web-certs/web.crt" ] || [ ! -r "$ETC/preview/web-certs/web.key" ]; then
+    die config "no frontend certificate at $ETC/preview/web-certs; every preview's web container would crash-loop rather than serve. Re-run provision.sh on this host - it is idempotent." 2
+fi
+
 set -a
 # shellcheck source=/dev/null
 . "$CONF"

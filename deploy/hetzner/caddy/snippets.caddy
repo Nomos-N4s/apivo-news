@@ -94,47 +94,61 @@
 	}
 
 	handle {
+		# HTTPS to the frontend container, and the reason is Astro.url.
+		#
+		# @astrojs/node builds the request URL from the SOCKET and the Host
+		# header (astro/dist/core/app/node.js):
+		#
+		#     const isEncrypted = 'encrypted' in req.socket && req.socket.encrypted;
+		#     const protocol = isEncrypted ? 'https' : 'http';
+		#
+		# X-Forwarded-Proto is not consulted anywhere in that path, in
+		# standalone or middleware mode. Over plain http the frontend
+		# therefore believes it is on http://, and Astro's own CSRF
+		# middleware compares that against the browser's https:// Origin
+		# with === and refuses every form post the site makes of itself:
+		# sign-in, approval, withdrawal, source registration.
+		#
+		# This used to be papered over here, by rewriting the browser's
+		# Origin and Referer back to http:// before the container saw them.
+		# That rewrite is gone, and good riddance:
+		#
+		#   - It needed the hostname at PARSE time, because `header_up` does
+		#     not expand placeholders in its search argument. A wildcard
+		#     preview host has no such name, so previews never had it and
+		#     every editorial form there was refused.
+		#   - It made the CSRF property depend on the proxy getting a
+		#     find-and-replace exactly right, on three of them, forever.
+		#
+		# Giving the container a certificate makes the socket genuinely
+		# encrypted, so Astro.url is genuinely https and the check works
+		# unaided - here, on previews, and anywhere else this ever runs.
+		#
+		# The certificate is self-signed (provision.sh writes it per
+		# environment) and deliberately not verified: the upstream is one
+		# hop away on a private compose network, addressed by container
+		# name. This encrypts the hop without claiming to have
+		# authenticated it, which is the same trade the Postgres
+		# connections make with sslmode=require.
+		# TLS is asked for on the TRANSPORT, not by putting https:// in the
+		# upstream address. Caddy refuses a placeholder in an address that
+		# carries a scheme - "due to parsing difficulties, placeholders are
+		# not allowed when an upstream address contains a scheme" - and the
+		# preview snippet below has no choice but a placeholder, since its
+		# container name is derived per request. The scheme form parses
+		# here, where {args[1]} is substituted before the address is read,
+		# and that difference is exactly the trap: one idiom that works in
+		# both places is worth more than two that each work in one.
+		#
+		# It is the same shape of limitation that killed the Origin rewrite
+		# this replaces. Caddy expands placeholders in a great many
+		# positions and not in these, and neither refusal is visible until
+		# something runs.
 		reverse_proxy {args[1]}:4321 {
-			# ---------------------------------------------------------------
-			# The same-origin rewrite, without which every editorial form post
-			# is refused.
-			#
-			# The container speaks plain HTTP, and @astrojs/node builds
-			# `Astro.url` from the socket and the Host header — it ignores
-			# X-Forwarded-Proto entirely. So `Astro.url.origin` is
-			# `http://<host>` while the browser sends `Origin: https://<host>`,
-			# and web/src/lib/csrf.ts compares the two and says no. Sign-in,
-			# approval, withdrawal and source registration all break, and they
-			# break with a 403 that looks like a permissions problem rather
-			# than a proxy one.
-			#
-			# The Cloudflare Worker did this same rewrite for this same reason
-			# (rewriteSameSiteOriginHeaders in deploy/cloudflare/routing.js).
-			# Moving the proxy without moving the rewrite would have shipped a
-			# deployment where no editor can sign in.
-			#
-			# It is HOST-EXACT, and that is what preserves the CSRF property:
-			# only this site's own https origin is rewritten. A post from
-			# https://evil.example arrives still saying https://evil.example,
-			# matches nothing and is refused exactly as before. For any
-			# attacker origin O, the replacement can only produce
-			# `http://<host>` if O was already `https://<host>` — a
-			# near-miss like https://<host>.evil.example rewrites to
-			# http://<host>.evil.example, which still matches nothing.
-			#
-			# The host arrives as a SNIPPET ARGUMENT rather than as the
-			# request-time placeholder {http.request.host}, and that is not a
-			# style choice. `header_up` does not expand placeholders in its
-			# search argument — a find of "https://{http.request.host}" is
-			# matched literally, matches nothing, and silently rewrites
-			# nothing at all. Snippet arguments are substituted when the
-			# Caddyfile is parsed, so what reaches this directive is a plain
-			# string, which is the form that works. (`caddy validate` accepts
-			# both, which is why this is asserted by running it — see
-			# deploy/hetzner/validate.sh.)
-			# ---------------------------------------------------------------
-			header_up Origin https://{args[2]} http://{args[2]}
-			header_up Referer https://{args[2]} http://{args[2]}
+			transport http {
+				tls
+				tls_insecure_skip_verify
+			}
 		}
 	}
 }
@@ -177,30 +191,30 @@
 # difference is invisible to `caddy validate`.
 #
 # ---------------------------------------------------------------------------
-# WHAT A PREVIEW DELIBERATELY DOES NOT DO
+# WHAT A PREVIEW USED TO BE UNABLE TO DO
 # ---------------------------------------------------------------------------
 #
-# There is no Origin/Referer rewrite here, so a preview's editorial FORM POSTS
-# would be refused by web/src/lib/csrf.ts — the mismatch (apivo-routes) exists
-# to fix.
-#
-# It is absent because it cannot be made to work here and be verifiable.
-# `header_up` does not expand placeholders in its search argument, so the
-# per-request hostname cannot be used; the named environments pass their host
-# as a parse-time snippet argument instead, and a wildcard site has no single
+# There was no Origin/Referer rewrite here, and for a while that meant a
+# preview's editorial FORM POSTS were refused while QA's identical ones
+# worked. It was absent because it could not be made to work: `header_up`
+# does not expand placeholders in its search argument, so the per-request
+# hostname was unusable; the named environments passed their host as a
+# parse-time snippet argument instead, and a WILDCARD site has no single
 # host to pass. The regexp form (`re:` with a capture reference) does not
-# substitute in Caddy 2.10 — tested against `$1`, `{re.1}` and
-# `{http.regexp.<name>.1}`, all of which leave the header untouched.
+# substitute in Caddy 2.10 - tested against `$1`, `{re.1}` and
+# `{http.regexp.<name>.1}`, all of which left the header untouched.
 #
-# It used to cost nothing, because a preview shipped with
-# PUBLIC_SUPABASE_URL empty: nobody could sign in, so no authenticated POST
-# was reachable to be refused. Previews now borrow QA's auth project, and
-# sign-in is itself a form post, so that reasoning expired.
+# It was written off as costing nothing, because a preview shipped with
+# PUBLIC_SUPABASE_URL empty and nobody could sign in to be refused. That
+# reasoning expired the moment previews borrowed QA's auth project, and
+# sign-in is itself a form post.
 #
-# The fix went where this comment said it should: web/src/lib/csrf.ts
-# compares HOSTS rather than whole origins, so the check no longer depends on
-# any proxy rewriting anything. The rewrite above is now belt and braces for
-# the named environments rather than the thing holding them up.
+# The rewrite is now gone everywhere, and no site needs one. The frontend
+# container is reached over TLS, so Astro.url carries the scheme the browser
+# actually used, and BOTH origin checks agree with it unaided: Astro's own
+# built-in one, which compares whole origins, and web/src/lib/csrf.ts, which
+# compares hosts. The preview was the environment that could not be fixed by
+# rewriting headers, which is how it came to be fixed properly.
 # ---------------------------------------------------------------------------
 (apivo-preview-routes) {
 	@preview-api path /api/* /healthz /readyz
@@ -210,6 +224,14 @@
 	}
 
 	handle {
-		reverse_proxy apivo-{re.preview.1}-web:4321
+		# TLS for the same reason as (apivo-routes), and this is the site
+		# that forced it: a wildcard host could never have had the Origin
+		# rewrite, so a preview's sign-in was refused while QA's worked.
+		reverse_proxy apivo-{re.preview.1}-web:4321 {
+			transport http {
+				tls
+				tls_insecure_skip_verify
+			}
+		}
 	}
 }

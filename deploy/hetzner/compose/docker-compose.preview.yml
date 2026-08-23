@@ -67,6 +67,14 @@ services:
       PORT: "4321"
       API_BASE_URL: http://apivo-${APIVO_PREVIEW}-api:8080
       PUBLIC_APP_VERSION: ${APIVO_PREVIEW_VERSION:-preview}
+      # See docker-compose.yml for why the container serves TLS: Astro.url
+      # takes its scheme from the socket, and a preview is the environment
+      # that proved it, because a WILDCARD host cannot have the Origin
+      # rewrite the named environments used to paper over it. Sign-in is
+      # itself a form post, so this is what makes the auth block below
+      # usable rather than merely present.
+      SERVER_CERT_PATH: /run/web-certs/web.crt
+      SERVER_KEY_PATH: /run/web-certs/web.key
       # Supabase Auth, from the reconciler, sharing QA's nonprod project.
       #
       # This block used to hardcode empty strings, and said handing "a
@@ -91,6 +99,11 @@ services:
       # the shared project resolve to somebody this database knows.
     env_file:
       - ${APIVO_STATE_DIR:-/var/lib/apivo}/previews/${APIVO_PREVIEW}/web.env
+    volumes:
+      # One certificate for every preview on this host. It is self-signed
+      # and never verified, so a name per preview would be ceremony: what it
+      # buys is a socket that reports itself encrypted.
+      - ${APIVO_ETC:-/etc/apivo}/preview/web-certs:/run/web-certs:ro
     networks:
       - preview-edge
     logging:

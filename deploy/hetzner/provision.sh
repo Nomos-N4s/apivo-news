@@ -285,6 +285,76 @@ if [ "$APIVO_HOST_ROLE" = preprod ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 3a. Web origin certificates, so that Astro.url carries the right scheme.
+#
+# EVERY environment, on every host role, unlike the Postgres certificates
+# above: production serves the frontend too, and this is what makes its form
+# posts work.
+#
+# @astrojs/node builds the request URL from the socket and the Host header
+# (astro/dist/core/app/node.js):
+#
+#     const isEncrypted = 'encrypted' in req.socket && req.socket.encrypted;
+#     const protocol = isEncrypted ? 'https' : 'http';
+#
+# No x-forwarded-proto, in either adapter mode. Behind a TLS terminator the
+# frontend therefore believes it is on http://, and Astro's own CSRF
+# middleware compares that against the browser's https:// Origin with === -
+# so it refuses every form post the site makes of itself. Caddy used to
+# rewrite the header back to http:// to compensate, which needs the hostname
+# at PARSE time and so could never work for the wildcard preview host.
+#
+# A certificate makes the socket genuinely encrypted, and then nothing has
+# to lie. It is self-signed and the only client that sees it - Caddy, one
+# hop away on a private network - does not verify it; the same trade this
+# deployment already makes for Postgres.
+# ---------------------------------------------------------------------------
+say "Web origin certificates"
+web_uid=""
+# Staged in a temporary directory and moved into place only once the pair is
+# complete, owned and permissioned.
+#
+# Writing straight into $certs would make a half-done pair permanent. This
+# script runs under `set -e`, openssl writes both files before the uid lookup
+# and the chown, and a readiness test of "the key exists" would then be
+# satisfied by a key the server cannot read - so every later run would skip
+# the repair and every container would fail to start, on a host that reports
+# itself provisioned. The move is the last step, so an interrupted run leaves
+# the directory as it found it and the next run does the whole job.
+write_web_cert() {
+    # write_web_cert <destination-directory> <common-name>
+    _dest="$1"
+    _cn="$2"
+    _stage=$(mktemp -d)
+    openssl req -new -x509 -days 3650 -nodes \
+        -out "$_stage/web.crt" -keyout "$_stage/web.key" \
+        -subj "/CN=$_cn" 2>/dev/null
+    # Read from the image rather than assumed, for the same reason the
+    # Postgres uid is: a base image that renumbers its unprivileged user
+    # would otherwise leave a key the server cannot read, and the symptom
+    # would be a container that will not start rather than one that says so.
+    [ -n "$web_uid" ] || web_uid=$(docker run --rm node:24-slim id -u node)
+    chown "$web_uid:$web_uid" "$_stage/web.key" "$_stage/web.crt"
+    chmod 0600 "$_stage/web.key"
+    chmod 0644 "$_stage/web.crt"
+    mkdir -p "$_dest"
+    mv "$_stage/web.crt" "$_stage/web.key" "$_dest/"
+    rmdir "$_stage"
+}
+
+for env_name in $ENVS; do
+    certs="$ETC/$env_name/web-certs"
+    # BOTH, not just the key: half a pair is not a provisioned host, and the
+    # container reads both at startup.
+    if [ -e "$certs/web.key" ] && [ -e "$certs/web.crt" ]; then
+        note "$env_name: already present, left alone"
+        continue
+    fi
+    write_web_cert "$certs" "apivo-$env_name-web"
+    note "$env_name: generated, owned by uid $web_uid (read from the node image)"
+done
+
+# ---------------------------------------------------------------------------
 # 3b. Previews - one environment per open pull request.
 #
 # Pre-production only. Production does not run other people's branches.
@@ -292,6 +362,16 @@ fi
 if [ "$APIVO_HOST_ROLE" = preprod ]; then
     say "Previews"
     mkdir -p "$ETC/preview/pg-certs"
+
+    # One web certificate for every preview on this host. Self-signed and
+    # never verified, so a name per pull request would buy nothing: what it
+    # buys is a socket that reports itself encrypted (see 3a).
+    if [ -e "$ETC/preview/web-certs/web.key" ] && [ -e "$ETC/preview/web-certs/web.crt" ]; then
+        note "preview web certificate already present"
+    else
+        write_web_cert "$ETC/preview/web-certs" "apivo-preview-web"
+        note "generated the preview web certificate"
+    fi
 
     if [ -e "$ETC/preview/stack.env" ]; then
         note "stack.env exists, left alone"
@@ -460,6 +540,37 @@ for env_name in $ENVS; do
 done
 systemctl enable apivo-edge.service
 note "apivo-edge.service enabled"
+
+# An already-running edge is RESTARTED, because provisioning has just
+# installed a Caddy configuration and a configuration that is not the one
+# running is the disagreement nothing reports.
+#
+# apivo-edge deliberately has no timer: the proxy's config is this
+# repository's and changes when a person changes it, and a proxy that rolled
+# itself forward could take every environment on the host down at once. That
+# argument is about AUTOMATIC rollout. This is a person running provision.sh,
+# and applying what it just wrote is the same act.
+#
+# Only when active. On a first provision the edge cannot start yet - the
+# environment networks belong to the application stacks and do not exist
+# until each has reconciled once - so a blind restart would fail the run at
+# the last step. The summary at the end names the manual start for that case.
+#
+# The frontend upstream became TLS in this change, so there IS a window on an
+# existing host: between this restart and each environment reconciling onto
+# an image that serves TLS, the proxy speaks TLS to a container that does not
+# yet. Named rather than left to be discovered, and closed by reconciling
+# immediately - which the note below asks for.
+if systemctl is-active --quiet apivo-edge.service; then
+    systemctl restart apivo-edge.service
+    note "apivo-edge restarted, so the configuration just installed is the one running"
+    note "the frontend is DOWN until each environment reconciles onto a TLS-serving image; do that now:"
+    for env_name in $ENVS; do
+        note "  systemctl start apivo-reconcile@$env_name.service"
+    done
+else
+    note "apivo-edge is not running; start it once the environments have reconciled"
+fi
 
 if [ "$APIVO_HOST_ROLE" = preprod ]; then
     # The shared preview database comes up now: apivo-previews creates a

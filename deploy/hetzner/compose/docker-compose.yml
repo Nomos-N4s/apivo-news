@@ -92,6 +92,34 @@ services:
       # Rendered in the footer's fine print, and the thing the release probe
       # compares against. Pinned by the reconciler alongside the digests.
       PUBLIC_APP_VERSION: ${APIVO_VERSION:-dev}
+      # TLS on the last hop, so that Astro.url tells the truth.
+      #
+      # @astrojs/node builds the request URL from the SOCKET and the Host
+      # header (astro/dist/core/app/node.js):
+      #
+      #     const isEncrypted = 'encrypted' in req.socket && req.socket.encrypted;
+      #     const protocol = isEncrypted ? 'https' : 'http';
+      #
+      # There is no x-forwarded-proto handling anywhere in that path, in
+      # standalone or middleware mode. Served over plain http behind a TLS
+      # terminator, every page therefore believes it is on http://, and
+      # Astro's own CSRF middleware - which compares the browser's Origin
+      # against that URL with === - refuses every form post on the site.
+      #
+      # Handing the container a certificate makes req.socket.encrypted
+      # genuinely true, so the URL is genuinely https, and the check works
+      # on its own rather than needing a proxy to rewrite headers back into
+      # agreement with a lie. The standalone entry switches to https when
+      # both of these are set (@astrojs/node dist/standalone.js).
+      SERVER_CERT_PATH: /run/web-certs/web.crt
+      SERVER_KEY_PATH: /run/web-certs/web.key
+    volumes:
+      # Self-signed, generated per environment by provision.sh, and never
+      # verified by the one client that sees it: Caddy is a single hop away
+      # on a private network. Same trade as this deployment's Postgres,
+      # which is reached with sslmode=require for the same reason - encrypt
+      # the hop without claiming to have authenticated it.
+      - ${APIVO_ETC:-/etc/apivo}/${APIVO_ENV}/web-certs:/run/web-certs:ro
     networks:
       - edge
     logging:

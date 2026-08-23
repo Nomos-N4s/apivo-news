@@ -146,6 +146,28 @@ for _required in APIVO_ENV APIVO_CHANNEL APIVO_REGISTRY COMPOSE_FILE; do
 done
 
 [ "$APIVO_ENV" = "$ENV_NAME" ] || die config "$STACK_ENV sets APIVO_ENV=$APIVO_ENV but this unit is '$ENV_NAME'; the two name the same environment or neither is trustworthy" 2
+# The frontend's certificate, checked HERE rather than left to the container.
+#
+# compose sets SERVER_CERT_PATH and SERVER_KEY_PATH, which is what makes
+# @astrojs/node serve https - and therefore what makes Astro.url carry the
+# scheme the browser used, without which the site refuses its own form posts.
+# Its standalone entry reads both files at startup with a plain readFileSync.
+#
+# Absent, that throws ENOENT and the container dies, restarts, and dies
+# again. Nothing anywhere says why: a bind mount whose source is missing is
+# CREATED EMPTY by Docker rather than refused, so the mount looks fine, the
+# stack looks like it is merely unhealthy, and the actual sentence -
+# "no such file or directory, open '/run/web-certs/web.crt'" - is buried in
+# a restarting container's log.
+#
+# A host provisioned before this existed has no such file, so this is the
+# state an upgrade lands in. It is worth one stat and a sentence that names
+# the fix.
+WEB_CERTS="$ENV_DIR/web-certs"
+if [ ! -r "$WEB_CERTS/web.crt" ] || [ ! -r "$WEB_CERTS/web.key" ]; then
+    die config "no frontend certificate at $WEB_CERTS; the web container would crash-loop on startup rather than serve. Re-run provision.sh on this host - it is idempotent and writes one per environment." 2
+fi
+
 
 API_REPO="$APIVO_REGISTRY/api"
 WEB_REPO="$APIVO_REGISTRY/web"

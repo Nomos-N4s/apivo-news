@@ -160,6 +160,14 @@ APIVO_PG_DB=apivo
 APIVO_PG_PASSWORD=qa-stub-password
 EOF
 
+    # The frontend certificate every preview's container reads at startup.
+    # A provisioned host has one and the reconciler refuses without it, so a
+    # fixture without one would test only the refusal. Contents are never
+    # read - only the stat is.
+    mkdir -p "$APIVO_ETC/preview/web-certs"
+    : > "$APIVO_ETC/preview/web-certs/web.crt"
+    : > "$APIVO_ETC/preview/web-certs/web.key"
+
     printf '%s' '"qa","staging","pr-1","pr-2"' > "$STUB_DIR/api_tags"
     printf '%s' '"qa","staging","pr-1","pr-2"' > "$STUB_DIR/web_tags"
 }
@@ -592,6 +600,14 @@ reset
 rm -f "$APIVO_ETC/preview/stack.env"
 run
 check "a host that does not serve previews is refused" 2 "does not serve previews"
+
+# A host provisioned before the frontend needed a certificate upgrades into
+# exactly this state, and the failure it would otherwise produce is every
+# preview container restarting forever with the reason buried inside them.
+reset
+rm -f "$APIVO_ETC/preview/web-certs/web.crt"
+run
+check "a host with no frontend certificate is refused" 2 "no frontend certificate"
 
 reset
 sed -i 's/^APIVO_REGISTRY=.*//' "$APIVO_ETC/preview/stack.env"

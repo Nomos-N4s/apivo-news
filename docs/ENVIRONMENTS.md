@@ -281,22 +281,43 @@ assertions on exactly that distinction.
 | **Cap** | `APIVO_PREVIEW_MAX`, default 5, newest pull requests first. Over the cap the host logs which ones it is not starting rather than silently dropping them. |
 | **Isolation** | previews share a network with each other and reach neither QA, Staging, nor either database. |
 
-**Editorial form posts work in a preview**, and getting there took the fix
-this section used to defer. The wildcard site cannot do the same-origin
-rewrite the named environments do — `header_up` will not expand a
-placeholder in its search argument, and a wildcard has no single host to
-pass at parse time (the reasons, and what was tested, are in
-[snippets.caddy](../deploy/hetzner/caddy/snippets.caddy)).
+**Editorial form posts work in a preview**, and getting there took two
+fixes, one in the application and one in the deployment.
 
-That was written off as costing nothing "because a preview has no auth to
-sign in with", which stopped being true the moment previews got auth — and
-sign-in is itself a form post, so the two had to move together.
+`@astrojs/node` builds `Astro.url` from the socket and the `Host` header and
+never consults `X-Forwarded-Proto`, so a frontend served over plain http
+behind a TLS terminator believes it is on `http://` while the browser sends
+`https://`. Astro's own CSRF middleware compares the two with `===` and
+refuses every form post the site makes of itself. The named environments
+papered over that by rewriting the Origin header back down to `http://` in
+Caddy — which needs the hostname when the config is *parsed*, and a wildcard
+preview host has no such name. So previews had no rewrite and no working
+sign-in, while QA's identical form worked. It was written off as costing
+nothing "because a preview has no auth to sign in with", which stopped being
+true the moment previews got auth.
 
-`isSameOrigin` now compares **hosts** rather than whole origins, which makes
-it independent of every proxy instead of being compensated for in three of
-them. It gives up nothing that matters: CSRF is about which *site* posted,
-and the host is that answer; the only case lost is a post from this same
-host over http, which `isSecureRequest` and the edge redirect settle.
+`isSameOrigin` compares **hosts** rather than whole origins, which makes our
+own check independent of every proxy instead of compensated for in three of
+them. It gives up nothing that matters: CSRF asks which *site* posted, and
+the host is that answer; the only case lost is a post from this same host
+over http, which `isSecureRequest` and the edge redirect settle.
+
+That fixed our check but not Astro's, which runs first and compares whole
+origins. So each web container now holds a self-signed certificate
+(`provision.sh` writes one per environment; compose mounts it; Caddy proxies
+to `https://` and does not verify it, exactly as Postgres is reached with
+`sslmode=require`). The socket is genuinely encrypted, `Astro.url` is
+genuinely `https://`, and both checks agree unaided — on previews too. The
+three Caddy rewrites are gone, and `validate.sh` asserts the hop is
+encrypted *and* that the browser's Origin now arrives untouched.
+
+**Upgrading an existing host costs a short frontend outage, and the order
+matters.** Re-run `provision.sh`: it writes the certificates and restarts the
+edge if one is running, so the proxy speaks TLS to the frontend. Until each
+environment reconciles onto an image that *serves* TLS, that hop fails. The
+script prints the `systemctl start apivo-reconcile@<env>.service` lines to
+close the window — run them straight away. The API is unaffected; it is
+proxied over plain http and always was.
 
 ## Provisioning a host
 
