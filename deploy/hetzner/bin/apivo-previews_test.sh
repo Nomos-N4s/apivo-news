@@ -63,15 +63,36 @@ compose)
     case "$2" in
     up)
         [ -e "$STUB_DIR/up_fails" ] && exit 1
-        echo "up ${APIVO_PREVIEW:-?}" >> "$STUB_DIR/ups"
+        echo "up ${APIVO_PREVIEW:-?} ${APIVO_PREVIEW_WEB_IMAGE:-?}" >> "$STUB_DIR/ups"
+        ;;
+    pull)
+        [ -e "$STUB_DIR/pull_fails" ] && exit 1
+        echo "pull ${APIVO_PREVIEW:-?} ${APIVO_PREVIEW_WEB_IMAGE:-?}" >> "$STUB_DIR/pulls"
         ;;
     down) echo "down ${APIVO_PREVIEW:-?}" >> "$STUB_DIR/downs" ;;
     esac
     ;;
 exec)
-    # psql against the shared preview Postgres. The statement is the last arg.
+    # psql against a Postgres container. The container name tells QA's
+    # database from the preview's.
     for a in "$@"; do last="$a"; done
+    if [ "$last" = "-" ]; then
+        # `psql -f -`: the statements arrive on STDIN, not in argv. Recorded
+        # from there, because a stub that only ever looked at the last
+        # argument would record a bare "-" and let any SQL through unseen.
+        last=$(cat)
+        # Answered like psql, because the caller counts the rows it actually
+        # inserted rather than assuming the copy did something.
+        if [ -e "$STUB_DIR/insert_zero" ]; then
+            echo "INSERT 0 0"
+        else
+            echo "INSERT 0 2"
+        fi
+    fi
     echo "$last" >> "$STUB_DIR/sql"
+    case " $* " in
+    *apivo-qa-postgres*) echo "$last" >> "$STUB_DIR/qa_sql" ;;
+    esac
     ;;
 esac
 exit 0
@@ -118,6 +139,27 @@ EOF
 	}
 }
 EOF
+    # QA's own configuration, which previews borrow. Each key appears TWICE,
+    # empty then real, because that is the shape a wired host has: provision
+    # writes every key present and empty, and RUNBOOK step 5 appends. A
+    # fixture with one occurrence would let a first-match read pass.
+    mkdir -p "$APIVO_ETC/qa"
+    cat > "$APIVO_ETC/qa/web.env" <<'EOF'
+PUBLIC_SUPABASE_URL=
+PUBLIC_SUPABASE_ANON_KEY=
+PUBLIC_SUPABASE_URL=https://qaproject.supabase.co
+PUBLIC_SUPABASE_ANON_KEY=sb_publishable_stub
+EOF
+    cat > "$APIVO_ETC/qa/api.env" <<'EOF'
+JWKS_URL=
+JWKS_URL=https://qaproject.supabase.co/auth/v1/.well-known/jwks.json
+EOF
+    cat > "$APIVO_ETC/qa/stack.env" <<'EOF'
+APIVO_PG_USER=apivo
+APIVO_PG_DB=apivo
+APIVO_PG_PASSWORD=qa-stub-password
+EOF
+
     printf '%s' '"qa","staging","pr-1","pr-2"' > "$STUB_DIR/api_tags"
     printf '%s' '"qa","staging","pr-1","pr-2"' > "$STUB_DIR/web_tags"
 }
@@ -142,6 +184,33 @@ check() {
         return
     fi
     echo "ok: $1"
+}
+
+# The env files a preview's containers read live under the state directory,
+# not under the stub directory check_file looks in.
+check_env() {
+    # check_env <description> <path> <expected-fragment>
+    if [ ! -f "$2" ]; then
+        echo "FAIL: $1 - $2 does not exist"
+        FAILS=1
+        return
+    fi
+    if grep -q -F -e "$3" "$2"; then
+        echo "ok: $1"
+    else
+        echo "FAIL: $1 - $2 never says '$3': $(cat "$2")"
+        FAILS=1
+    fi
+}
+
+check_absent_file() {
+    # check_absent_file <description> <file>
+    if [ -s "$STUB_DIR/$2" ]; then
+        echo "FAIL: $1 - $2 exists and should not: $(cat "$STUB_DIR/$2")"
+        FAILS=1
+    else
+        echo "ok: $1"
+    fi
 }
 
 check_file() {
@@ -214,6 +283,121 @@ else
 fi
 
 # ===========================================================================
+# ===========================================================================
+# A preview must be able to sign an editor in.
+#
+# Every editorial screen is behind sign-in, and a preview exists to be
+# reviewed BEFORE the work reaches QA — so a preview that cannot
+# authenticate cannot show a reviewer the thing they opened it for. The
+# editorial half of the product was untestable in the one place it was meant
+# to be tested first.
+#
+# Only public values cross: the anon key ships to every browser that loads
+# QA, and the JWKS endpoint is published. The service-role key is not here.
+# ===========================================================================
+
+reset
+run
+check "previews are created" 0 '"event":"created"'
+
+if grep -q '^JWKS_URL=https://qaproject.supabase.co/auth/v1/.well-known/jwks.json$' \
+    "$APIVO_STATE/previews/pr-1/api.env" 2>/dev/null; then
+    echo "ok: the api is given QA's JWKS endpoint"
+else
+    echo "FAIL: pr-1/api.env has no JWKS_URL: $(cat "$APIVO_STATE/previews/pr-1/api.env" 2>/dev/null)"
+    FAILS=1
+fi
+
+# The LAST occurrence of each key, because provisioning writes a placeholder
+# and step 5 appends the real value — and Docker resolves env_file last-wins.
+# Reading the first match would hand the preview an empty string and report
+# that QA has no auth while QA's own container serves that project. That
+# exact bug shipped once already, in apivo-seed-editors.
+if grep -q '^PUBLIC_SUPABASE_URL=https://qaproject.supabase.co$' \
+    "$APIVO_STATE/previews/pr-1/web.env" 2>/dev/null &&
+    grep -q '^PUBLIC_SUPABASE_ANON_KEY=sb_publishable_stub$' \
+        "$APIVO_STATE/previews/pr-1/web.env" 2>/dev/null; then
+    echo "ok: the web is given QA's project, taking the real value not the placeholder"
+else
+    echo "FAIL: pr-1/web.env does not carry QA's auth: $(cat "$APIVO_STATE/previews/pr-1/web.env" 2>/dev/null)"
+    FAILS=1
+fi
+
+# Sharing an auth project is not sharing an identity: the api looks the
+# token's subject up in the database it is pointed at, and a preview's is its
+# own. Without the copy an editor signs in and is ErrUnknownAccount —
+# authenticated and unauthorised, which reads as a permissions bug.
+check_file "QA's editors are read out of QA's own database" qa_sql \
+    "from account where role = 'editor'"
+check_file "and loaded into the preview's" sql \
+    "copy _qa_editors (id, email, display_name, role) from stdin"
+check_file "through a conflict-tolerant insert, because every tick runs this" sql \
+    "on conflict do nothing"
+
+# A host whose QA has no auth yet gets the documented empty state, and is
+# told why rather than left to wonder.
+reset
+: > "$APIVO_ETC/qa/web.env"
+: > "$APIVO_ETC/qa/api.env"
+run
+check "a host with no QA auth still gets previews" 0 '"event":"created"'
+if printf '%s' "$OUT" | grep -q '"event":"no_auth"'; then
+    echo "ok: and is told its previews cannot sign anybody in"
+else
+    echo "FAIL: no auth configured, and nothing said so: $OUT"
+    FAILS=1
+fi
+check_absent_file "with no editors copied from a QA that has none" qa_sql
+
+# ===========================================================================
+# A preview that already exists must FOLLOW its pull request.
+#
+# A push to an open pull request moves its tag. `up -d` alone never notices:
+# compose does not fetch a tag it already has a local image for, so it
+# compares the running container against the stale image and does nothing.
+# The preview then serves the commit it was created from for the life of the
+# pull request — healthy, silent, and a week out of date.
+#
+# Found by a reviewer opening a preview to test work pushed an hour earlier
+# and being shown the first commit. The branch that does this was never
+# covered here at all, which is how it survived.
+# ===========================================================================
+
+reset
+run
+check "the previews are created" 0 '"event":"created"'
+# BOTH cleared, so what follows can only be explained by the second tick.
+# Leaving `pulls` in place let creation's own pull satisfy the assertions
+# below, and they passed against the unfixed script — a fixture in a shape
+# the bug could not fail.
+: > "$STUB_DIR/ups"
+: > "$STUB_DIR/pulls"
+
+# Second tick, same open pull requests, everything already on disk.
+run
+check_file "an existing preview pulls its tag again" pulls "pull pr-1"
+check_file "and the other one" pulls "pull pr-2"
+check_file "with the tag the pull request now points at" pulls "web:pr-1"
+check_file "and then converges, so a moved tag recreates the container" ups "up pr-1"
+
+# A registry that will not answer must not take a serving preview down. The
+# old version is worse than the new one and far better than none.
+reset
+run
+: > "$STUB_DIR/ups"
+: > "$STUB_DIR/pulls"
+: > "$STUB_DIR/pull_fails"
+run
+check "a preview whose pull fails is still reconciled" 0 ""
+if printf '%s' "$OUT" | grep -q '"event":"pull_failed"'; then
+    echo "ok: a failed refresh is reported"
+else
+    echo "FAIL: a failed refresh was not reported: $OUT"
+    FAILS=1
+fi
+check_live "the preview keeps serving" pr-1 yes
+rm -f "$STUB_DIR/pull_fails"
+
 # Tearing down. The whole point: a closed pull request has no tag, and no tag
 # means no preview - without anything having to tell this host so.
 # ===========================================================================
@@ -316,6 +500,74 @@ if [ "$dropped" = "pr-1 pr-2 " ]; then
     echo "ok: pull requests are ordered numerically, so pr-11 outranks pr-7"
 else
     echo "FAIL: expected exactly pr-1 and pr-2 to be dropped, got: ${dropped:-<none>} (from: $capped)"
+    FAILS=1
+fi
+
+# ===========================================================================
+# A preview that already exists gets the current configuration.
+#
+# The auth work wrote api.env and web.env in create_preview only. A preview
+# is created ONCE and converged every sixty seconds for the rest of the pull
+# request's life, so "only on creation" means "only for previews that did not
+# exist yet when the change shipped" - which is every preview except the ones
+# still being opened, and in particular not the one the change was written to
+# be tested on.
+#
+# On the host, pr-146 had been running since before the change. Installing it
+# left that preview with no web.env at all and an api.env from before
+# JWKS_URL existed; compose refuses to start a service whose env_file is
+# missing; and the converge branch ended in `|| true`, so the failure was
+# discarded. Every tick reported success and changed nothing. The operator
+# installed the fix, waited, and saw the same page.
+#
+# So this simulates exactly that: create a preview, delete its env files the
+# way a host that predates them would have none, and tick again.
+# ===========================================================================
+
+reset
+run
+check "the preview is created" 0 '"event":"created"'
+
+# A host from before the auth change: no web.env, and an api.env with no
+# JWKS_URL in it.
+rm -f "$APIVO_STATE/previews/pr-1/web.env"
+cat > "$APIVO_STATE/previews/pr-1/api.env" <<'EOF'
+DATABASE_URL=postgres://apivo:stub-password@apivo-preview-postgres:5432/apivo_pr_1?sslmode=require
+EOF
+: > "$STUB_DIR/ups"
+
+run
+if [ -f "$APIVO_STATE/previews/pr-1/web.env" ]; then
+    echo "ok: converging an existing preview writes the web env it was missing"
+else
+    echo "FAIL: an existing preview was converged without ever being given a web.env: $OUT"
+    FAILS=1
+fi
+check_env "with QA's project, so its sign-in reaches a real one" \
+    "$APIVO_STATE/previews/pr-1/web.env" "https://qaproject.supabase.co"
+check_env "and its anon key" \
+    "$APIVO_STATE/previews/pr-1/web.env" "sb_publishable_stub"
+check_env "and the api is given the JWKS endpoint it had no way to learn" \
+    "$APIVO_STATE/previews/pr-1/api.env" "jwks.json"
+check_file "and only then is the stack converged" ups "up pr-1"
+
+# ===========================================================================
+# A converge that cannot converge says so.
+#
+# `|| true` on the up branch turned a compose that refused to start into a
+# tick indistinguishable from one that had nothing to do. That is the same
+# silence this file was written to end for stale images, one branch over.
+# ===========================================================================
+
+reset
+run
+: > "$STUB_DIR/ups"
+: > "$STUB_DIR/up_fails"
+run
+if printf '%s' "$OUT" | grep -q '"event":"converge_failed"'; then
+    echo "ok: a converge that fails is reported rather than discarded"
+else
+    echo "FAIL: a failing converge was silent: $OUT"
     FAILS=1
 fi
 

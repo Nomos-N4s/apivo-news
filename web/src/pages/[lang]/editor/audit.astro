@@ -126,7 +126,7 @@ const initials = (record?.approval.approver_name ?? '')
     note={t.readOnlyAccess}
     previewData={record?.fixture === true}
   >
-    <form class="trace" method="get" action={here}>
+    <form class="trace" method="get" action={here} data-tour="audit-trail">
       <div class="field">
         <label for="trace-id">{t.traceLabel}</label>
         <input class="input" id="trace-id" name="id" value={record?.article_id ?? queryId} />

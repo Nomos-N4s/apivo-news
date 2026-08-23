@@ -276,18 +276,27 @@ assertions on exactly that distinction.
 | | |
 |---|---|
 | **Database** | one shared Postgres, a database per pull request, dropped on teardown. Its data is on a tmpfs — a preview's contents are worth nothing once the pull request closes. |
-| **Auth** | none. `PUBLIC_SUPABASE_URL` is empty, so the editorial screens serve their fixture preview and nobody signs in. A throwaway environment built from an unreviewed branch does not get keys to a real auth project. |
+| **Auth** | QA's nonprod project, written in by the reconciler, plus QA's editor rows copied into the preview's own database. Only public values cross — the anon key ships to every browser that loads QA, and the JWKS endpoint is published; the service-role key is in no env file on this host. A preview exists to be reviewed *before* the work reaches QA, and every editorial screen is behind sign-in, so a preview that could not authenticate could not show a reviewer the thing they opened it for. |
 | **Ingestion** | off. `POLL_INTERVAL=0` and `TRANSLATION_INTERVAL=0`: feeds cost bandwidth and translation costs real money per article, per open pull request, and neither tells a reviewer anything. |
 | **Cap** | `APIVO_PREVIEW_MAX`, default 5, newest pull requests first. Over the cap the host logs which ones it is not starting rather than silently dropping them. |
 | **Isolation** | previews share a network with each other and reach neither QA, Staging, nor either database. |
 
-**Editorial form posts do not work in a preview**, and that is a stated
-limitation rather than an oversight: the wildcard site cannot do the
-same-origin rewrite the named environments do (the reasons, and what was
-tested, are in [snippets.caddy](../deploy/hetzner/caddy/snippets.caddy)). It
-costs nothing today because a preview has no auth to sign in with. If previews
-ever need working editorial forms, the fix is the better one anyway — make the
-same-origin check independent of the proxy, in `web/src/lib/`.
+**Editorial form posts work in a preview**, and getting there took the fix
+this section used to defer. The wildcard site cannot do the same-origin
+rewrite the named environments do — `header_up` will not expand a
+placeholder in its search argument, and a wildcard has no single host to
+pass at parse time (the reasons, and what was tested, are in
+[snippets.caddy](../deploy/hetzner/caddy/snippets.caddy)).
+
+That was written off as costing nothing "because a preview has no auth to
+sign in with", which stopped being true the moment previews got auth — and
+sign-in is itself a form post, so the two had to move together.
+
+`isSameOrigin` now compares **hosts** rather than whole origins, which makes
+it independent of every proxy instead of being compensated for in three of
+them. It gives up nothing that matters: CSRF is about which *site* posted,
+and the host is that answer; the only case lost is a post from this same
+host over http, which `isSecureRequest` and the edge redirect settle.
 
 ## Provisioning a host
 

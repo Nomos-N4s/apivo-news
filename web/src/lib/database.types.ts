@@ -16,6 +16,7 @@ export type Database = {
           email: string
           id: string
           role: string
+          tour_progress: Json
         }
         Insert: {
           created_at?: string
@@ -23,6 +24,7 @@ export type Database = {
           email: string
           id?: string
           role?: string
+          tour_progress?: Json
         }
         Update: {
           created_at?: string
@@ -30,6 +32,7 @@ export type Database = {
           email?: string
           id?: string
           role?: string
+          tour_progress?: Json
         }
         Relationships: []
       }

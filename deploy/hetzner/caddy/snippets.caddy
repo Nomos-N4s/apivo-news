@@ -192,14 +192,15 @@
 # substitute in Caddy 2.10 — tested against `$1`, `{re.1}` and
 # `{http.regexp.<name>.1}`, all of which leave the header untouched.
 #
-# It costs nothing that a reviewer needs, because a preview ships with
-# PUBLIC_SUPABASE_URL empty (docker-compose.preview.yml): nobody can sign in,
-# the editorial screens serve their fixture preview, and no authenticated POST
-# is reachable to be refused. Reader pages are GET and work normally.
+# It used to cost nothing, because a preview shipped with
+# PUBLIC_SUPABASE_URL empty: nobody could sign in, so no authenticated POST
+# was reachable to be refused. Previews now borrow QA's auth project, and
+# sign-in is itself a form post, so that reasoning expired.
 #
-# If previews ever need working editorial forms, the fix is the one that was
-# always better anyway: make the same-origin check independent of the proxy,
-# in web/src/lib/, rather than compensating for it in three proxies.
+# The fix went where this comment said it should: web/src/lib/csrf.ts
+# compares HOSTS rather than whole origins, so the check no longer depends on
+# any proxy rewriting anything. The rewrite above is now belt and braces for
+# the named environments rather than the thing holding them up.
 # ---------------------------------------------------------------------------
 (apivo-preview-routes) {
 	@preview-api path /api/* /healthz /readyz

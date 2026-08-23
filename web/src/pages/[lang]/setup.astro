@@ -1,5 +1,6 @@
 ---
 import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import ProductTour from '../../components/ProductTour.astro';
 import {
   frontPagePath,
   isReadingLanguage,
@@ -45,6 +46,7 @@ const title = `epiloYES — ${t.setupTitle}`;
 
 <ReaderLayout lang={lang} title={title} description={t.tagline}>
   <main class="ground">
+    <div class="tour-slot"><ProductTour lang={lang} tour="reader" /></div>
     <form class="panel" method="get" action="/go" data-setup>
       <header class="panel-head">
         <h3>{t.setupTitle}</h3>
@@ -52,7 +54,7 @@ const title = `epiloYES — ${t.setupTitle}`;
       </header>
 
       <div class="panel-axes">
-        <fieldset class="axis-cell axis-one">
+        <fieldset class="axis-cell axis-one" data-tour="setup-language">
           <legend>{t.axisOneLabel}</legend>
           <label class="lang-opt">
             <input type="radio" name="lang" value="el" checked={lang === 'el'} />
@@ -67,7 +69,7 @@ const title = `epiloYES — ${t.setupTitle}`;
           <p class="axis-note">{t.alphaLanguagesNote}</p>
         </fieldset>
 
-        <fieldset class="axis-cell axis-two">
+        <fieldset class="axis-cell axis-two" data-tour="setup-places">
           <legend>
             {t.axisTwoLabel}
             <span class="count" data-count>{t.selectedCount(preselected.length)}</span>
@@ -105,7 +107,7 @@ const title = `epiloYES — ${t.setupTitle}`;
         </fieldset>
       </div>
 
-      <footer class="panel-foot">
+      <footer class="panel-foot" data-tour="setup-go">
         <span class="preview">
           {t.frontPagePreviewLabel}
           <code data-preview>{previewPath}</code>

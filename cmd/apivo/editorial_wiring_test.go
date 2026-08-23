@@ -34,6 +34,7 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/identity"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/db"
+	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
 )
 
 // newSigningKey generates an RSA signing key wrapped as a jwk.Key carrying
@@ -147,13 +148,24 @@ func TestEditorialWiringAgainstSchema(t *testing.T) {
 	key := newSigningKey(t)
 	jwks := newJWKSServer(t, key)
 
-	route, closeVerifier, err := newEditorialRoute(ctx, config.Config{JWKSURL: jwks.URL}, discardLogger(), pool)
+	routes, closeVerifier, err := newAuthenticatedRoutes(ctx, config.Config{JWKSURL: jwks.URL}, discardLogger(), pool)
 	if err != nil {
-		t.Fatalf("newEditorialRoute: %v", err)
+		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
 	t.Cleanup(closeVerifier)
-	if route.Pattern != "/api/v1/editorial/" {
-		t.Fatalf("route pattern = %q, want /api/v1/editorial/", route.Pattern)
+
+	// Both authenticated modules come from one call and one verifier. This
+	// test is about editorial's gate, so it picks that route out by
+	// pattern rather than by position - a list whose order is not part of
+	// the contract must not be indexed into.
+	var route platformhttp.Route
+	for _, candidate := range routes {
+		if candidate.Pattern == "/api/v1/editorial/" {
+			route = candidate
+		}
+	}
+	if route.Handler == nil {
+		t.Fatalf("no /api/v1/editorial/ route among %d authenticated routes", len(routes))
 	}
 
 	post := func(t *testing.T, token string) *httptest.ResponseRecorder {

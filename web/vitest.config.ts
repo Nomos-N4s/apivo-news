@@ -32,6 +32,7 @@ export default getViteConfig({
         'src/lib/reader/preference.ts',
         'src/lib/reader/strings.ts',
         'src/lib/account/consent.ts',
+        'src/lib/account/tours.ts',
         'src/lib/app-env.ts',
         'src/lib/csrf.ts',
         'src/lib/secure-request.ts',
@@ -42,6 +43,9 @@ export default getViteConfig({
         'src/lib/editorial/sourceFilters.ts',
         'src/lib/editorial/sourceForm.ts',
         'src/lib/editorial/strings.ts',
+        'src/lib/tour/progress.ts',
+        'src/lib/tour/strings.ts',
+        'src/lib/tour/tours.ts',
         'src/lib/usage.ts',
         // An endpoint rather than a lib, and included for the same reason
         // the libs are: it decides where a reader lands and what is

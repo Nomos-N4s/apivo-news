@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Nomos-N4s/apivo-news/internal/account"
 	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
@@ -98,7 +99,7 @@ func documentedOperations(t *testing.T, doc openAPIDocument) map[string]operatio
 // registeredPatterns is every route this binary mounts: the platform's own
 // plus each module's, reported by the same maps the routers are built from.
 func registeredPatterns() []string {
-	return slices.Concat(platformhttp.Patterns(), content.Patterns(), editorial.Patterns())
+	return slices.Concat(platformhttp.Patterns(), content.Patterns(), editorial.Patterns(), account.Patterns())
 }
 
 func TestOpenAPIDocumentDescribesEveryRegisteredRoute(t *testing.T) {
@@ -147,13 +148,17 @@ func TestOpenAPISecurityMatchesTheAuthGate(t *testing.T) {
 		t.Errorf("root security = %v, want an empty list so unmarked operations are public", doc.Security)
 	}
 
+	// Both authenticated prefixes, not just editorial: the two gates differ
+	// in what they require BEYOND a verified token - editorial adds the
+	// editor role - but the document says the same thing about both,
+	// because bearerAuth is what either one refuses a request for.
 	for pattern, op := range documentedOperations(t, doc) {
 		_, path, _ := strings.Cut(pattern, " ")
-		editorialOp := strings.HasPrefix(path, editorialPrefix)
+		gated := strings.HasPrefix(path, editorialPrefix) || strings.HasPrefix(path, accountPrefix)
 		switch {
-		case editorialOp && !requiresBearer(op):
-			t.Errorf("%s is behind the editor gate but the document does not require bearerAuth on it", pattern)
-		case !editorialOp && op.Security != nil:
+		case gated && !requiresBearer(op):
+			t.Errorf("%s is behind an auth gate but the document does not require bearerAuth on it", pattern)
+		case !gated && op.Security != nil:
 			t.Errorf("%s needs no token, but the document gives it operation-level security %v", pattern, *op.Security)
 		}
 	}

@@ -754,7 +754,7 @@ const chips = activeFilters(filters).map((chip) => ({
             <a class="cancel-link" href={here}>{t.cancel}</a>
           </form>
         ) : (
-          <form class="add" method="post" action={here}>
+          <form class="add" method="post" action={here} data-tour="sources-add">
             <input type="hidden" name="intent" value="add" />
             <h6>{t.addSource}</h6>
             <div class="field">

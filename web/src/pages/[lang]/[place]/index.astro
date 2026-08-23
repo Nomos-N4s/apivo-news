@@ -6,6 +6,7 @@ import FixtureNotice from '../../../components/FixtureNotice.astro';
 import Masthead from '../../../components/Masthead.astro';
 import ProvenanceDisclosure from '../../../components/ProvenanceDisclosure.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
+import ProductTour from '../../../components/ProductTour.astro';
 import {
   createReaderApi,
   ReaderConfigurationError,
@@ -131,6 +132,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
 
   <AxisBar lang={lang} places={places} />
 
+  <div class="tour-slot"><ProductTour lang={lang} tour="reader" /></div>
   <main>
     {/* Before anything else on the page: what follows is either the
         published record or invented sample data, and a reader must never
@@ -152,7 +154,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
 
     {
       lead !== undefined && (
-        <article class="lead">
+        <article class="lead" data-tour="front-lead">
           {/* The mockup's lead-photograph slot, held as composition: the
               alpha is text-only (no image handling in the contract), so
               the reserved cell renders as a quiet typographic tile until
@@ -168,7 +170,7 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
             </div>
             <h1><a class="headline-link" href={articlePath(lang, slugs, lead.id)}>{lead.headline}</a></h1>
             <p class="lead-extract">{lead.extract}</p>
-            <div class="lead-record">
+            <div class="lead-record" data-tour="front-attribution">
               <p class="attribution">
                 {lead.attribution}
                 {safeSourceUrl(lead.source_url) !== null ? (
@@ -226,6 +228,15 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
 </ReaderLayout>
 
 <style>
+  .tour-slot {
+    display: flex;
+    justify-content: flex-end;
+    padding-inline: clamp(16px, 3vw, 56px);
+  }
+  .tour-slot:has(button[hidden]) {
+    display: none;
+  }
+
   main {
     flex: 1;
   }

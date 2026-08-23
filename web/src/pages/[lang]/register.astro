@@ -1,6 +1,7 @@
 ---
 import Masthead from '../../components/Masthead.astro';
 import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import ProductTour from '../../components/ProductTour.astro';
 import {
   CONSENT_PURPOSES,
   createAccountApi,
@@ -72,6 +73,7 @@ const here = `/${lang}/register`;
 <ReaderLayout lang={lang} title={`epiloYES — ${t.createAccount}`} description={t.tagline}>
   <Masthead homeHref={DEFAULT_FRONT_PAGE} />
 
+  <div class="tour-slot"><ProductTour lang={lang} tour="reader" /></div>
   <main class="page">
     <header class="head">
       <h2>{t.createAccount}</h2>
@@ -128,7 +130,7 @@ const here = `/${lang}/register`;
         <p class="pending">{t.registrationPending}</p>
       </section>
 
-      <section class="consent">
+      <section class="consent" data-tour="register-consent">
         <h6>{t.consentHeading}</h6>
         <p class="note">{t.consentIntro}</p>
 
@@ -191,6 +193,15 @@ const here = `/${lang}/register`;
 </ReaderLayout>
 
 <style>
+  .tour-slot {
+    display: flex;
+    justify-content: flex-end;
+    padding-inline: clamp(16px, 3vw, 56px);
+  }
+  .tour-slot:has(button[hidden]) {
+    display: none;
+  }
+
   .page {
     flex: 1;
   }

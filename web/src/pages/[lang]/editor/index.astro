@@ -223,17 +223,18 @@ const defaultAttribution = (item: (typeof items)[number]): string =>
       )
     }
     <div class="work">
-      <div class="queue">
+      <div class="queue" data-tour="queue-list">
         <div class="queue-head">
           <h6>{t.awaitingApproval}</h6>
           <span class="muted">{t.newestFirst}</span>
         </div>
 
         {
-          items.map((item) => (
+          items.map((item, rowIndex) => (
             <a
               class:list={['row', { 'row-on': item.source_item_id === selected?.source_item_id }]}
               href={itemHref(item.source_item_id)}
+              data-tour={rowIndex === 0 ? 'queue-row' : undefined}
               aria-current={item.source_item_id === selected?.source_item_id ? 'true' : undefined}
             >
               <span class="row-meta">
@@ -296,7 +297,14 @@ const defaultAttribution = (item: (typeof items)[number]): string =>
         )}
       </div>
 
-      <div class="review">
+      {/* The anchor is conditional because the CONTENT is. With no row
+          selected this pane holds an empty state, and an unconditional
+          anchor made the tour narrate "opening a row shows it here for
+          review" over it — then skip the original, translation and
+          approval steps, whose anchors live inside the selected branch and
+          were genuinely absent. The review half of the tour disappeared
+          silently for anyone who pressed Next instead of picking a row. */}
+      <div class="review" data-tour={selected === undefined ? undefined : 'review-pane'}>
         {/* The notice carries the typed attribution whenever no form will:
             the queue unreadable without a token, or the posted item gone
             from it — another editor approved it meanwhile — leaving a
@@ -351,7 +359,7 @@ const defaultAttribution = (item: (typeof items)[number]): string =>
               }
 
               <div class="split">
-                <section class="original">
+                <section class="original" data-tour="review-original">
                   <div class="col-head">
                     <h6>{t.originalIn(languageName(lang, selected.source_lang ?? ''))}</h6>
                     {safeSourceUrl(selected.source_url ?? '') !== null && (
@@ -396,7 +404,7 @@ const defaultAttribution = (item: (typeof items)[number]): string =>
                   </dl>
                 </section>
 
-                <section class="translated">
+                <section class="translated" data-tour="review-translation">
                   <div class="col-head">
                     <h6 class="accent">
                       {selected.translation_id === null
@@ -433,7 +441,7 @@ const defaultAttribution = (item: (typeof items)[number]): string =>
                   </p>
                   <p class="muted extract-note">{t.extractOnlyNote}</p>
 
-                  <form class="approval" method="post" action={here}>
+                  <form class="approval" method="post" action={here} data-tour="approve-form">
                     <input type="hidden" name="source_item_id" value={selected.source_item_id} />
                     <input
                       type="hidden"

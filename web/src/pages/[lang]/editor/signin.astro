@@ -1,5 +1,6 @@
 ---
 import Masthead from '../../../components/Masthead.astro';
+import ProductTour from '../../../components/ProductTour.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
 import { isSameOrigin } from '../../../lib/csrf';
 import { editorSession } from '../../../lib/editorial/session';
@@ -69,6 +70,12 @@ const signedOut = Astro.url.searchParams.get('signedout') !== null;
 
 <ReaderLayout lang={lang} title={`epiloYES — ${t.signInTitle}`} description={reader.tagline}>
   <Masthead homeHref={DEFAULT_FRONT_PAGE} />
+  {/* The editorial tour BEGINS here, and this page does not render
+      EditorChrome — it is the one editorial screen with no chrome, because
+      nobody is signed in to name in it. Without this the tour had nowhere
+      to start: its first two steps address this route, so every other page
+      resolved them as "wait for a page you are not on", forever. */}
+  <div class="tour-slot"><ProductTour lang={lang} tour="editor" session={session} /></div>
 
   <main class="page">
     <header class="head">
@@ -101,7 +108,7 @@ const signedOut = Astro.url.searchParams.get('signedout') !== null;
         </section>
       ) : (
         <section class="panel">
-          <form method="post" action={here}>
+          <form method="post" action={here} data-tour="signin-form">
             <div class="field">
               <label for="s-email">{reader.emailLabel}</label>
               <input
@@ -140,6 +147,15 @@ const signedOut = Astro.url.searchParams.get('signedout') !== null;
 </ReaderLayout>
 
 <style>
+  .tour-slot {
+    display: flex;
+    justify-content: flex-end;
+    padding-inline: clamp(16px, 3vw, 56px);
+  }
+  .tour-slot:has(button[hidden]) {
+    display: none;
+  }
+
   .page {
     flex: 1;
   }

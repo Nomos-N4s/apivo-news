@@ -135,7 +135,11 @@ APIVO_STATE_DIR="$TMP/state"
 export APIVO_PREVIEW APIVO_PREVIEW_API_IMAGE APIVO_PREVIEW_WEB_IMAGE
 export APIVO_PREVIEW_PG_PASSWORD APIVO_STATE_DIR
 mkdir -p "$APIVO_STATE_DIR/previews/pr-1" "$APIVO_ETC/preview/pg-certs"
+# Both env files, because the preview stack now reads both: api.env for the
+# database and the JWKS endpoint, web.env for the auth project the editorial
+# screens sign in to. The reconciler writes them when it creates a preview.
 : > "$APIVO_STATE_DIR/previews/pr-1/api.env"
+: > "$APIVO_STATE_DIR/previews/pr-1/web.env"
 
 if preview=$(docker compose -f "$COMPOSE_DIR/docker-compose.preview.yml" config 2>&1); then
     echo "ok: the preview stack parses"
