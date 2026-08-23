@@ -210,9 +210,10 @@ unset pw
 ```
 
 The host is `postgres`, the compose service name, not `localhost`. And
-`sslmode=require` is not decoration: every environment runs `APP_ENV=prod`,
-and the api **refuses to start** on a `DATABASE_URL` whose `sslmode` permits
-an unencrypted session.
+`sslmode=require` is not decoration: every environment here runs
+`APP_ENV=prod`, and the api **refuses to start** on a `DATABASE_URL` whose
+`sslmode` permits an unencrypted session — `disable`, `allow`, `prefer`, or
+absent.
 
 ### Staging's database — the nonprod Supabase project
 
@@ -279,11 +280,6 @@ binary treats it as real and crash-loops.
 
 Re-running `provision.sh` undoes none of this: it writes `stack.env` only when
 absent, and never overwrites `api.env` or `web.env`.
-
-`sslmode=require` is not decoration. Every environment here runs
-`APP_ENV=prod`, and the api **refuses to start** on a `DATABASE_URL` whose
-`sslmode` permits an unencrypted session — `disable`, `allow`, `prefer`, or
-absent. The host is `postgres`, the compose service name, not `localhost`.
 
 Leave everything else in `api.env` and `web.env` empty for now. Empty is a
 documented, safe state for all of them: no `JWKS_URL` unmounts the editorial

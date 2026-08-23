@@ -526,14 +526,38 @@ if [ "$APIVO_CONFIGURE_FIREWALL" = yes ]; then
     # rules below are rebuilt from scratch each run, and they restrict only
     # 443 - everything else RETURNs untouched, so nothing here can cut off
     # ssh or inter-container traffic.
+    #
+    # THE FIRST RULE IS NOT OPTIONAL, and leaving it out cost an afternoon on
+    # the first host provisioned. DOCKER-USER hangs off FORWARD, which carries
+    # container traffic in BOTH directions - so a bare `--dport 443 -j DROP`
+    # matches a container dialling OUT to port 443 just as readily as the
+    # internet dialling in. Every rule below it is written for inbound
+    # (`-s <cloudflare>`), so nothing rescues the outbound packet.
+    #
+    # The symptom is nasty because nothing says "firewall": the api fetches
+    # its JWKS at boot, that fetch times out rather than being refused, and
+    # NewVerifier fails construction, so the api crash-loops and the site
+    # answers 502. Meanwhile the same URL fetched from the HOST works
+    # perfectly, because host traffic never traverses FORWARD. Nothing needed
+    # outbound HTTPS from a container until auth was configured, so this
+    # stayed invisible for as long as the box had no auth.
+    #
+    # Matching on the interface rather than on the source is what fixes it:
+    # anything not arriving from the internet is container-originated and is
+    # returned before the DROP is reached. Inbound still arrives on $ext_if
+    # and still meets the Cloudflare-only rules, so nothing is loosened.
+    ext_if=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+    [ -n "$ext_if" ] || die "cannot determine the default-route interface, so the firewall cannot tell inbound traffic from container-originated traffic. Set it by hand and re-run, or use APIVO_CONFIGURE_FIREWALL=no and manage the firewall elsewhere."
+
     iptables -N DOCKER-USER 2>/dev/null || true
     iptables -F DOCKER-USER
+    iptables -A DOCKER-USER ! -i "$ext_if" -j RETURN
     for cidr in $cf_v4; do
-        iptables -A DOCKER-USER -s "$cidr" -p tcp --dport 443 -j RETURN
+        iptables -A DOCKER-USER -i "$ext_if" -s "$cidr" -p tcp --dport 443 -j RETURN
     done
-    iptables -A DOCKER-USER -p tcp --dport 443 -j DROP
+    iptables -A DOCKER-USER -i "$ext_if" -p tcp --dport 443 -j DROP
     iptables -A DOCKER-USER -j RETURN
-    note "DOCKER-USER rules installed (ufw alone does not cover published container ports)"
+    note "DOCKER-USER rules installed on $ext_if (ufw alone does not cover published container ports)"
 
     if command -v netfilter-persistent >/dev/null 2>&1; then
         netfilter-persistent save >/dev/null 2>&1 || true

@@ -20,6 +20,17 @@ services:
     networks:
       qa-edge: {}
       staging-edge: {}
+      # Previews. Without this line the wildcard site resolves nothing and
+      # every preview answers 502 with its containers sitting there healthy —
+      # which is exactly what the first provisioned host did.
+      #
+      # docker-compose.preview.yml has always described this network as
+      # "shared by every preview and by Caddy", and Caddy never joined it. A
+      # preview stack creating the network is not the same as the proxy being
+      # attached to it, and nothing failed loudly at the seam: the previews
+      # came up healthy, the reconciler was satisfied, and only a request
+      # revealed that the name could not be resolved.
+      preview-edge: {}
 
 networks:
   qa-edge:
@@ -27,4 +38,10 @@ networks:
     external: true
   staging-edge:
     name: apivo-staging-edge
+    external: true
+  # External like the others, and created by provision.sh rather than by a
+  # preview stack: Caddy has to be able to start on a host where no pull
+  # request is currently open.
+  preview-edge:
+    name: apivo-preview-edge
     external: true

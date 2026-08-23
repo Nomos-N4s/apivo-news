@@ -106,12 +106,18 @@ check_env() {
     fi
 }
 
-# QA and Staging layer the local Postgres on; production does not, and that
-# single difference is the whole difference between them. Staging is here
-# because the Supabase free tier is one project and it has to be production
-# — see docs/ENVIRONMENTS.md for what that costs.
+# QA layers the local Postgres on; production does not.
+#
+# Staging is checked in BOTH shapes, because it has both. provision.sh still
+# composes it with the local database — the safe default for a box whose
+# operator has no Supabase project yet — while the documented model drops that
+# file and points staging at the nonprod project (docs/ENVIRONMENTS.md).
+# Whichever shape a given host is running, its configuration has to parse, and
+# checking only one leaves the other to be discovered by a host that will not
+# start.
 check_env qa docker-compose.yml docker-compose.local-db.yml
 check_env staging docker-compose.yml docker-compose.local-db.yml
+check_env staging docker-compose.yml
 check_env prod docker-compose.yml
 
 # ---------------------------------------------------------------------------
@@ -164,6 +170,22 @@ for role in preprod prod; do
         -f "$COMPOSE_DIR/docker-compose.edge.yml" \
         -f "$COMPOSE_DIR/docker-compose.edge.$role.yml" config 2>&1); then
         echo "ok: the $role edge configuration parses"
+
+        # Caddy must be ON every network it proxies into. Parsing proves
+        # nothing about that: the first provisioned host had a valid edge
+        # configuration, healthy preview containers, and 502 on every preview,
+        # because the preprod overlay attached Caddy to QA and Staging and not
+        # to the preview network. Nothing fails at that seam - the name simply
+        # does not resolve, and only a request finds out.
+        if [ "$role" = preprod ]; then
+            for net in apivo-qa-edge apivo-staging-edge apivo-preview-edge; do
+                if printf '%s' "$out" | grep -q -F "$net"; then
+                    echo "ok: the preprod edge joins $net"
+                else
+                    fail "the preprod edge does not join $net, so Caddy cannot resolve the containers it proxies to on that network and they answer 502 while sitting healthy"
+                fi
+            done
+        fi
     else
         fail "the $role edge configuration does not parse: $out"
     fi
@@ -511,6 +533,47 @@ if out=$(docker run --rm -v "$CADDY_DIR/snippets.caddy:/etc/caddy/snippets.caddy
     echo "ok: snippets.caddy is formatted"
 else
     fail "snippets.caddy is not 'caddy fmt' clean: $out"
+fi
+
+# ---------------------------------------------------------------------------
+# The DOCKER-USER chain must not block traffic LEAVING a container.
+#
+# iptables cannot be exercised here - there is no privileged netfilter in CI -
+# so this asserts the shape of the rules provision.sh emits. That is worth
+# doing anyway, because the bug it guards is invisible until a container needs
+# the internet: DOCKER-USER hangs off FORWARD and sees both directions, so a
+# bare `--dport 443 -j DROP` also drops a container dialling out. The first
+# host provisioned answered 502 with the api crash-looping on a JWKS fetch
+# that TIMED OUT, while the same URL fetched from the host worked perfectly -
+# host traffic never traverses FORWARD.
+#
+# Two things make it safe, and both are asserted: the DROP is scoped to the
+# external interface, and a RETURN for everything arriving on any other
+# interface comes FIRST.
+# ---------------------------------------------------------------------------
+fw=$(sed -n '/iptables -N DOCKER-USER/,/DOCKER-USER rules installed/p' "$HERE/provision.sh")
+
+# Matched without a `$`, deliberately: the pattern would otherwise contain a
+# literal '$ext_if' and shellcheck's SC2016 fires on it. CI runs shellcheck
+# with no severity filter, so an info-level finding fails the job.
+return_line=$(printf '%s\n' "$fw" | grep -n -- '! -i .* -j RETURN' | cut -d: -f1 | head -n 1)
+drop_line=$(printf '%s\n' "$fw" | grep -n -- '-p tcp --dport 443 -j DROP' | cut -d: -f1 | head -n 1)
+
+if [ -z "$return_line" ]; then
+    fail "provision.sh does not RETURN traffic arriving on an interface other than the external one, so the DOCKER-USER 443 DROP will also drop container-originated HTTPS - the api cannot fetch its JWKS and every environment answers 502"
+elif [ -z "$drop_line" ]; then
+    fail "provision.sh no longer drops inbound 443 in DOCKER-USER; ufw does not cover published container ports, so the origin would be reachable by anyone who learns its address"
+elif [ "$return_line" -ge "$drop_line" ]; then
+    fail "provision.sh emits the DOCKER-USER 443 DROP (line $drop_line of that block) at or before the RETURN for non-external interfaces (line $return_line); the DROP is evaluated first and container-originated HTTPS dies"
+else
+    echo "ok: DOCKER-USER returns container-originated traffic before dropping inbound 443"
+fi
+
+if printf '%s\n' "$fw" | grep -q -- '-p tcp --dport 443 -j DROP' &&
+    ! printf '%s\n' "$fw" | grep -q -- '-i .* -p tcp --dport 443 -j DROP'; then
+    fail "the DOCKER-USER 443 DROP in provision.sh is not scoped to the external interface, so it matches traffic in both directions"
+else
+    echo "ok: the DOCKER-USER 443 DROP is scoped to the external interface"
 fi
 
 if [ "$FAILS" -ne 0 ]; then

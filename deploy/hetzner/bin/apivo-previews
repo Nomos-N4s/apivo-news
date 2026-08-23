@@ -79,8 +79,28 @@ mkdir -p "$PREVIEW_STATE"
 registry_auth() {
     # The base64 user:token `docker login` wrote. Read at the point of use and
     # never logged.
-    sed -n 's/.*"ghcr.io"[^}]*"auth"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-        "${DOCKER_CONFIG:-$HOME/.docker}/config.json" 2>/dev/null | head -n 1
+    #
+    # FLATTENED FIRST, and that is the whole reason this function exists as
+    # more than one line. `docker login` writes config.json PRETTY-PRINTED:
+    #
+    #     "ghcr.io": {
+    #             "auth": "..."
+    #     }
+    #
+    # sed matches a line at a time, so a pattern needing `"ghcr.io"` and
+    # `"auth"` together can never match that - it only matches a single-line
+    # config.json, which docker does not produce. Previews were broken on
+    # every host from the first one, with the credential present, valid, and
+    # invisible: the tag listing bailed, and the operator was told the
+    # registry was unreachable or the credential had expired.
+    #
+    # The test suite missed it by writing its fixture on one line, so the
+    # parser was proved against the one shape that works and never against
+    # the shape it would meet. Only newlines are removed; the values
+    # themselves are left alone.
+    tr -d '\n\r' < "${DOCKER_CONFIG:-$HOME/.docker}/config.json" 2>/dev/null |
+        sed -n 's/.*"ghcr.io"[^}]*"auth"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+        head -n 1
 }
 
 list_preview_tags() {
@@ -93,19 +113,50 @@ list_preview_tags() {
     # nothing worse than a network blip. Every step therefore captures its
     # output and checks its status, rather than ending the pipeline in a
     # `grep || true` that reports success whatever happened upstream.
+    # Each failure says WHICH step failed, on stderr - journald keeps it, and
+    # a command substitution captures only stdout, so the reason survives to
+    # the log while the caller still sees a clean tag list or nothing. The
+    # single "unreachable or expired" message this replaced named three
+    # possible causes, and on the first host every one of them was wrong.
     _repo="$1"
     _auth=$(registry_auth)
-    [ -n "$_auth" ] || return 1
 
-    _tokresp=$($CURL -fsS --max-time 20 \
-        -H "Authorization: Basic $_auth" \
-        "https://ghcr.io/token?service=ghcr.io&scope=repository:$_repo:pull" 2>/dev/null) || return 1
+    # No credential is NOT fatal. These packages belong to a public
+    # repository and the registry answers an anonymous token request for
+    # them; a private one returns a token without pull scope and the tag
+    # listing below fails with its own message. Refusing here instead made a
+    # missing credential indistinguishable from an unreachable registry.
+    if [ -n "$_auth" ]; then
+        _tokresp=$($CURL -fsS --max-time 20 \
+            -H "Authorization: Basic $_auth" \
+            "https://ghcr.io/token?service=ghcr.io&scope=repository:$_repo:pull" 2>&1) || {
+            printf 'registry: the ghcr.io token request for %s failed with the stored credential: %s\n' \
+                "$_repo" "$_tokresp" >&2
+            return 1
+        }
+    else
+        printf 'registry: no ghcr.io "auth" entry in %s - asking anonymously, which works only for a public package (docker login ghcr.io)\n' \
+            "${DOCKER_CONFIG:-$HOME/.docker}/config.json" >&2
+        _tokresp=$($CURL -fsS --max-time 20 \
+            "https://ghcr.io/token?service=ghcr.io&scope=repository:$_repo:pull" 2>&1) || {
+            printf 'registry: the anonymous ghcr.io token request for %s failed: %s\n' \
+                "$_repo" "$_tokresp" >&2
+            return 1
+        }
+    fi
+
     _token=$(printf '%s' "$_tokresp" |
         sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
-    [ -n "$_token" ] || return 1
+    if [ -z "$_token" ]; then
+        printf 'registry: ghcr.io answered the token request for %s without a token in the body\n' "$_repo" >&2
+        return 1
+    fi
 
     _body=$($CURL -fsS --max-time 20 -H "Authorization: Bearer $_token" \
-        "https://ghcr.io/v2/$_repo/tags/list" 2>/dev/null) || return 1
+        "https://ghcr.io/v2/$_repo/tags/list" 2>&1) || {
+        printf 'registry: listing tags for %s failed: %s\n' "$_repo" "$_body" >&2
+        return 1
+    }
 
     # Only NOW may an empty result mean "no previews", because the registry
     # has answered.
