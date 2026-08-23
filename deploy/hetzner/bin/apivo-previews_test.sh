@@ -63,7 +63,11 @@ compose)
     case "$2" in
     up)
         [ -e "$STUB_DIR/up_fails" ] && exit 1
-        echo "up ${APIVO_PREVIEW:-?}" >> "$STUB_DIR/ups"
+        echo "up ${APIVO_PREVIEW:-?} ${APIVO_PREVIEW_WEB_IMAGE:-?}" >> "$STUB_DIR/ups"
+        ;;
+    pull)
+        [ -e "$STUB_DIR/pull_fails" ] && exit 1
+        echo "pull ${APIVO_PREVIEW:-?} ${APIVO_PREVIEW_WEB_IMAGE:-?}" >> "$STUB_DIR/pulls"
         ;;
     down) echo "down ${APIVO_PREVIEW:-?}" >> "$STUB_DIR/downs" ;;
     esac
@@ -214,6 +218,55 @@ else
 fi
 
 # ===========================================================================
+# ===========================================================================
+# A preview that already exists must FOLLOW its pull request.
+#
+# A push to an open pull request moves its tag. `up -d` alone never notices:
+# compose does not fetch a tag it already has a local image for, so it
+# compares the running container against the stale image and does nothing.
+# The preview then serves the commit it was created from for the life of the
+# pull request — healthy, silent, and a week out of date.
+#
+# Found by a reviewer opening a preview to test work pushed an hour earlier
+# and being shown the first commit. The branch that does this was never
+# covered here at all, which is how it survived.
+# ===========================================================================
+
+reset
+run
+check "the previews are created" 0 '"event":"created"'
+# BOTH cleared, so what follows can only be explained by the second tick.
+# Leaving `pulls` in place let creation's own pull satisfy the assertions
+# below, and they passed against the unfixed script — a fixture in a shape
+# the bug could not fail.
+: > "$STUB_DIR/ups"
+: > "$STUB_DIR/pulls"
+
+# Second tick, same open pull requests, everything already on disk.
+run
+check_file "an existing preview pulls its tag again" pulls "pull pr-1"
+check_file "and the other one" pulls "pull pr-2"
+check_file "with the tag the pull request now points at" pulls "web:pr-1"
+check_file "and then converges, so a moved tag recreates the container" ups "up pr-1"
+
+# A registry that will not answer must not take a serving preview down. The
+# old version is worse than the new one and far better than none.
+reset
+run
+: > "$STUB_DIR/ups"
+: > "$STUB_DIR/pulls"
+: > "$STUB_DIR/pull_fails"
+run
+check "a preview whose pull fails is still reconciled" 0 ""
+if printf '%s' "$OUT" | grep -q '"event":"pull_failed"'; then
+    echo "ok: a failed refresh is reported"
+else
+    echo "FAIL: a failed refresh was not reported: $OUT"
+    FAILS=1
+fi
+check_live "the preview keeps serving" pr-1 yes
+rm -f "$STUB_DIR/pull_fails"
+
 # Tearing down. The whole point: a closed pull request has no tag, and no tag
 # means no preview - without anything having to tell this host so.
 # ===========================================================================

@@ -267,6 +267,12 @@ EOF
     APIVO_PREVIEW_VERSION="$_p"
     export APIVO_PREVIEW_API_IMAGE APIVO_PREVIEW_WEB_IMAGE APIVO_PREVIEW_VERSION
 
+    # Pulled explicitly rather than relying on `up` to fetch what is
+    # missing: a pull request whose preview was destroyed and recreated can
+    # find its old image still on this host, and `up` would start that.
+    compose_for "$_p" pull -q >/dev/null 2>&1 ||
+        log warn pull_failed "could not pull the images for $_p; starting whatever this host already has" "$_p"
+
     if compose_for "$_p" up -d --remove-orphans --wait --wait-timeout "${APIVO_PREVIEW_WAIT:-120}" >/dev/null 2>&1; then
         log info created "$_p is serving" "$_p"
         return 0
@@ -301,8 +307,33 @@ destroy_preview() {
 for want in $KEEP; do
     [ -n "$want" ] || continue
     if [ -d "$PREVIEW_STATE/$want" ]; then
-        # Already up. `up -d` without --wait is the self-healing tick: a
-        # container that died comes back, and it is a no-op otherwise.
+        # Already up: refresh, then converge.
+        #
+        # PULL FIRST, and this is the whole point of the branch. A push to an
+        # open pull request MOVES its tag, and `up -d` alone never notices:
+        # compose does not fetch a tag it already has a local image for, so
+        # it compares the running container against the stale image, finds
+        # them identical, and does nothing. The preview then serves the
+        # commit it was created from for the life of the pull request.
+        #
+        # That is the exact opposite of what a preview is for. It was found
+        # by a reviewer opening a preview to test work pushed an hour
+        # earlier and seeing the first commit: nothing failed, no log said
+        # anything, the containers were healthy, and the page was simply
+        # old. This branch's comment used to call the tick "a no-op
+        # otherwise", which described the intent — self-healing — and
+        # accidentally described the defect.
+        #
+        # With the pull, `up -d` becomes real convergence: unchanged image
+        # id, no-op; new image id, recreate. A failed pull is not fatal —
+        # a preview serving something is better than one serving nothing —
+        # but it is logged, because "the preview is stale" must never again
+        # be a state nothing reports.
+        APIVO_PREVIEW_API_IMAGE="$APIVO_REGISTRY/api:$want" \
+            APIVO_PREVIEW_WEB_IMAGE="$APIVO_REGISTRY/web:$want" \
+            APIVO_PREVIEW_VERSION="$want" \
+            compose_for "$want" pull -q >/dev/null 2>&1 ||
+            log warn pull_failed "could not refresh the images for $want; it keeps serving the version it already has" "$want"
         APIVO_PREVIEW_API_IMAGE="$APIVO_REGISTRY/api:$want" \
             APIVO_PREVIEW_WEB_IMAGE="$APIVO_REGISTRY/web:$want" \
             APIVO_PREVIEW_VERSION="$want" \
