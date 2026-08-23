@@ -26,7 +26,7 @@ services:
     container_name: apivo-${APIVO_PREVIEW}-api
     restart: unless-stopped
     # Written by the reconciler when the preview is created: DATABASE_URL for
-    # this pull request's own database, and nothing else that differs.
+    # this pull request's own database, and JWKS_URL so an editor can sign in.
     env_file:
       - ${APIVO_STATE_DIR:-/var/lib/apivo}/previews/${APIVO_PREVIEW}/api.env
     environment:
@@ -67,13 +67,30 @@ services:
       PORT: "4321"
       API_BASE_URL: http://apivo-${APIVO_PREVIEW}-api:8080
       PUBLIC_APP_VERSION: ${APIVO_PREVIEW_VERSION:-preview}
-      # Supabase Auth is deliberately absent. A preview signs nobody in: the
-      # editorial screens keep their fixture preview, which is the documented
-      # empty-value behaviour. Handing a throwaway environment built from an
-      # unreviewed branch the keys to a real auth project is not a trade worth
-      # making for the convenience of clicking through a sign-in.
-      PUBLIC_SUPABASE_URL: ""
-      PUBLIC_SUPABASE_ANON_KEY: ""
+      # Supabase Auth, from the reconciler, sharing QA's nonprod project.
+      #
+      # This block used to hardcode empty strings, and said handing "a
+      # throwaway environment built from an unreviewed branch the keys to a
+      # real auth project" was not worth the convenience of a sign-in. Two
+      # things were wrong with that.
+      #
+      # It is not a key. PUBLIC_SUPABASE_ANON_KEY is public by construction —
+      # it ships to every browser that loads QA — and JWKS_URL is a published
+      # endpoint. The service-role key, which is the one that matters, has
+      # never been in any env file on this host and still is not.
+      #
+      # And it was not a convenience. A preview exists to be reviewed BEFORE
+      # the work reaches QA, and every editorial screen is behind sign-in, so
+      # a preview that cannot authenticate cannot show a reviewer the thing
+      # they opened it for. The editorial half of this product was
+      # untestable in the one place it was meant to be tested first.
+      #
+      # What stays true: the preview's DATABASE is its own, so nothing done
+      # here reaches QA's records. The account rows come from QA (the
+      # reconciler copies its editors in), which is what makes a token from
+      # the shared project resolve to somebody this database knows.
+    env_file:
+      - ${APIVO_STATE_DIR:-/var/lib/apivo}/previews/${APIVO_PREVIEW}/web.env
     networks:
       - preview-edge
     logging:

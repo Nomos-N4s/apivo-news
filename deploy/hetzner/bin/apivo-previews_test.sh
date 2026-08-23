@@ -73,9 +73,13 @@ compose)
     esac
     ;;
 exec)
-    # psql against the shared preview Postgres. The statement is the last arg.
+    # psql against a Postgres container. The statement is the last arg, and
+    # the container name tells QA's database from the preview's.
     for a in "$@"; do last="$a"; done
     echo "$last" >> "$STUB_DIR/sql"
+    case " $* " in
+    *apivo-qa-postgres*) echo "$last" >> "$STUB_DIR/qa_sql" ;;
+    esac
     ;;
 esac
 exit 0
@@ -122,6 +126,27 @@ EOF
 	}
 }
 EOF
+    # QA's own configuration, which previews borrow. Each key appears TWICE,
+    # empty then real, because that is the shape a wired host has: provision
+    # writes every key present and empty, and RUNBOOK step 5 appends. A
+    # fixture with one occurrence would let a first-match read pass.
+    mkdir -p "$APIVO_ETC/qa"
+    cat > "$APIVO_ETC/qa/web.env" <<'EOF'
+PUBLIC_SUPABASE_URL=
+PUBLIC_SUPABASE_ANON_KEY=
+PUBLIC_SUPABASE_URL=https://qaproject.supabase.co
+PUBLIC_SUPABASE_ANON_KEY=sb_publishable_stub
+EOF
+    cat > "$APIVO_ETC/qa/api.env" <<'EOF'
+JWKS_URL=
+JWKS_URL=https://qaproject.supabase.co/auth/v1/.well-known/jwks.json
+EOF
+    cat > "$APIVO_ETC/qa/stack.env" <<'EOF'
+APIVO_PG_USER=apivo
+APIVO_PG_DB=apivo
+APIVO_PG_PASSWORD=qa-stub-password
+EOF
+
     printf '%s' '"qa","staging","pr-1","pr-2"' > "$STUB_DIR/api_tags"
     printf '%s' '"qa","staging","pr-1","pr-2"' > "$STUB_DIR/web_tags"
 }
@@ -146,6 +171,16 @@ check() {
         return
     fi
     echo "ok: $1"
+}
+
+check_absent_file() {
+    # check_absent_file <description> <file>
+    if [ -s "$STUB_DIR/$2" ]; then
+        echo "FAIL: $1 - $2 exists and should not: $(cat "$STUB_DIR/$2")"
+        FAILS=1
+    else
+        echo "ok: $1"
+    fi
 }
 
 check_file() {
@@ -218,6 +253,70 @@ else
 fi
 
 # ===========================================================================
+# ===========================================================================
+# A preview must be able to sign an editor in.
+#
+# Every editorial screen is behind sign-in, and a preview exists to be
+# reviewed BEFORE the work reaches QA — so a preview that cannot
+# authenticate cannot show a reviewer the thing they opened it for. The
+# editorial half of the product was untestable in the one place it was meant
+# to be tested first.
+#
+# Only public values cross: the anon key ships to every browser that loads
+# QA, and the JWKS endpoint is published. The service-role key is not here.
+# ===========================================================================
+
+reset
+run
+check "previews are created" 0 '"event":"created"'
+
+if grep -q '^JWKS_URL=https://qaproject.supabase.co/auth/v1/.well-known/jwks.json$' \
+    "$APIVO_STATE/previews/pr-1/api.env" 2>/dev/null; then
+    echo "ok: the api is given QA's JWKS endpoint"
+else
+    echo "FAIL: pr-1/api.env has no JWKS_URL: $(cat "$APIVO_STATE/previews/pr-1/api.env" 2>/dev/null)"
+    FAILS=1
+fi
+
+# The LAST occurrence of each key, because provisioning writes a placeholder
+# and step 5 appends the real value — and Docker resolves env_file last-wins.
+# Reading the first match would hand the preview an empty string and report
+# that QA has no auth while QA's own container serves that project. That
+# exact bug shipped once already, in apivo-seed-editors.
+if grep -q '^PUBLIC_SUPABASE_URL=https://qaproject.supabase.co$' \
+    "$APIVO_STATE/previews/pr-1/web.env" 2>/dev/null &&
+    grep -q '^PUBLIC_SUPABASE_ANON_KEY=sb_publishable_stub$' \
+        "$APIVO_STATE/previews/pr-1/web.env" 2>/dev/null; then
+    echo "ok: the web is given QA's project, taking the real value not the placeholder"
+else
+    echo "FAIL: pr-1/web.env does not carry QA's auth: $(cat "$APIVO_STATE/previews/pr-1/web.env" 2>/dev/null)"
+    FAILS=1
+fi
+
+# Sharing an auth project is not sharing an identity: the api looks the
+# token's subject up in the database it is pointed at, and a preview's is its
+# own. Without the copy an editor signs in and is ErrUnknownAccount —
+# authenticated and unauthorised, which reads as a permissions bug.
+check_file "QA's editors are read out of QA's own database" qa_sql \
+    "from account where role = 'editor'"
+check_file "and loaded into the preview's" sql \
+    "copy account (id, email, display_name, role) from stdin"
+
+# A host whose QA has no auth yet gets the documented empty state, and is
+# told why rather than left to wonder.
+reset
+: > "$APIVO_ETC/qa/web.env"
+: > "$APIVO_ETC/qa/api.env"
+run
+check "a host with no QA auth still gets previews" 0 '"event":"created"'
+if printf '%s' "$OUT" | grep -q '"event":"no_auth"'; then
+    echo "ok: and is told its previews cannot sign anybody in"
+else
+    echo "FAIL: no auth configured, and nothing said so: $OUT"
+    FAILS=1
+fi
+check_absent_file "with no editors copied from a QA that has none" qa_sql
+
 # ===========================================================================
 # A preview that already exists must FOLLOW its pull request.
 #

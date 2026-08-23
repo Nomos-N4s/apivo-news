@@ -236,6 +236,38 @@ db_name_for() {
     printf 'apivo_%s' "$(printf '%s' "$1" | tr '-' '_')"
 }
 
+# ---------------------------------------------------------------------------
+# QA's configuration, which previews borrow.
+# ---------------------------------------------------------------------------
+
+# The LAST occurrence, not the first. provision.sh writes every key present
+# and empty, and RUNBOOK step 5 appends the real value, so a wired host has
+# each of these twice — and Docker resolves an env_file last-wins. Reading
+# the first match here would take the placeholder and report that QA has no
+# auth configured while its own web container serves that very project. That
+# exact bug shipped in apivo-seed-editors.
+qa_field() {
+    # qa_field <file> <key>
+    sed -n "s/^$2=//p" "$ETC/qa/$1" 2>/dev/null | tail -n 1
+}
+
+QA_SUPABASE_URL=$(qa_field web.env PUBLIC_SUPABASE_URL)
+QA_ANON_KEY=$(qa_field web.env PUBLIC_SUPABASE_ANON_KEY)
+QA_JWKS_URL=$(qa_field api.env JWKS_URL)
+QA_PG_USER=$(qa_field stack.env APIVO_PG_USER)
+QA_PG_DB=$(qa_field stack.env APIVO_PG_DB)
+QA_PG_PASSWORD=$(qa_field stack.env APIVO_PG_PASSWORD)
+QA_PG_USER=${QA_PG_USER:-apivo}
+QA_PG_DB=${QA_PG_DB:-apivo}
+
+# Auth is all-or-nothing: a URL without a JWKS endpoint mounts the sign-in
+# screen in front of an api that answers 404 to every editorial route, which
+# is a worse state than no auth at all.
+PREVIEW_AUTH=no
+if [ -n "$QA_SUPABASE_URL" ] && [ -n "$QA_ANON_KEY" ] && [ -n "$QA_JWKS_URL" ]; then
+    PREVIEW_AUTH=yes
+fi
+
 FAILED=0
 
 create_preview() {
@@ -262,6 +294,32 @@ create_preview() {
 DATABASE_URL=postgres://$PG_USER:$APIVO_PREVIEW_PG_PASSWORD@apivo-preview-postgres:5432/$_db?sslmode=require
 EOF
 
+    # Auth, borrowed from QA's nonprod project.
+    #
+    # Only public values cross: the anon key ships to every browser that
+    # loads QA, and the JWKS endpoint is published. The service-role key is
+    # not here and never has been.
+    #
+    # Empty when QA has none, which is the documented state that unmounts
+    # the editorial routes and leaves the screens on fixtures — the same
+    # thing every preview did before this, now because the host genuinely
+    # has no auth rather than because previews were excluded from it.
+    if [ "$PREVIEW_AUTH" = yes ]; then
+        cat >> "$PREVIEW_STATE/$_p/api.env" <<EOF
+JWKS_URL=$QA_JWKS_URL
+EOF
+        cat > "$PREVIEW_STATE/$_p/web.env" <<EOF
+PUBLIC_SUPABASE_URL=$QA_SUPABASE_URL
+PUBLIC_SUPABASE_ANON_KEY=$QA_ANON_KEY
+EOF
+    else
+        log warn no_auth "QA has no auth configured, so $_p cannot sign anybody in; its editorial screens stay on fixtures (docs/RUNBOOK.md step 5)" "$_p"
+        cat > "$PREVIEW_STATE/$_p/web.env" <<EOF
+PUBLIC_SUPABASE_URL=
+PUBLIC_SUPABASE_ANON_KEY=
+EOF
+    fi
+
     APIVO_PREVIEW_API_IMAGE="$APIVO_REGISTRY/api:$_p"
     APIVO_PREVIEW_WEB_IMAGE="$APIVO_REGISTRY/web:$_p"
     APIVO_PREVIEW_VERSION="$_p"
@@ -274,6 +332,7 @@ EOF
         log warn pull_failed "could not pull the images for $_p; starting whatever this host already has" "$_p"
 
     if compose_for "$_p" up -d --remove-orphans --wait --wait-timeout "${APIVO_PREVIEW_WAIT:-120}" >/dev/null 2>&1; then
+        copy_qa_editors "$_p" "$_db"
         log info created "$_p is serving" "$_p"
         return 0
     fi
@@ -281,6 +340,42 @@ EOF
     log error create_failed "the preview did not come up; leaving it for the next tick" "$_p"
     FAILED=1
     return 1
+}
+
+# Copies QA's editors into this preview's own database.
+#
+# Sharing an auth PROJECT is not sharing an identity. The api verifies a
+# token and then looks the subject up in the database it is pointed at
+# (internal/identity/role.go); a preview's database is its own and starts
+# empty, so an editor who signed in would be ErrUnknownAccount —
+# authenticated and unauthorised, which looks exactly like a permissions bug
+# and is not one.
+#
+# Copied from QA rather than created here because the ids must be the ones
+# the shared auth project issued, and QA already holds them. That also keeps
+# the service-role key out of this: apivo-seed-editors needs it to ask
+# Supabase for an id, and this needs nothing but a row QA already has.
+#
+# Runs after the stack is healthy, because the api migrates the schema on
+# boot and `account` does not exist until it has.
+copy_qa_editors() {
+    _p="$1"
+    _db="$2"
+    [ "$PREVIEW_AUTH" = yes ] || return 0
+
+    if $DOCKER exec -e PGPASSWORD="$QA_PG_PASSWORD" apivo-qa-postgres \
+        psql -U "$QA_PG_USER" -d "$QA_PG_DB" -At \
+        -c "copy (select id, email, display_name, role from account where role = 'editor') to stdout" 2>/dev/null |
+        $DOCKER exec -i -e PGPASSWORD="$APIVO_PREVIEW_PG_PASSWORD" apivo-preview-postgres \
+            psql -U "$PG_USER" -d "$_db" -v ON_ERROR_STOP=1 -q \
+            -c "copy account (id, email, display_name, role) from stdin" >/dev/null 2>&1; then
+        log info editors "copied QA's editors into $_p, so its sign-in resolves to somebody this database knows" "$_p"
+        return 0
+    fi
+
+    # Not fatal. The preview serves readers either way, and an editor who
+    # cannot sign in here is a worse preview rather than a broken host.
+    log warn editors_failed "could not copy QA's editors into $_p; signing in there will authenticate but find no account (seed QA first: apivo-seed-editors qa)" "$_p"
 }
 
 destroy_preview() {
