@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   advance,
+  matchesPath,
   normalisePath,
   pageSteps,
   readCursor,
@@ -196,5 +197,56 @@ describe('pageSteps', () => {
     expect(last).toBeDefined();
     const next = advance(TOUR, last!.index);
     expect(readCursor(serialise(next), TOUR)).toBe(3);
+  });
+});
+
+// The reader's routes carry values — a front page is /{lang}/{place} and an
+// article /{lang}/{place}/a/{id}. A step is about the SHAPE of a page, not
+// one row of data, so those segments match whatever is in them. The
+// language does not: it is an axis, and a tour running in Greek must not
+// resume on the German copy of the same screen.
+describe('matchesPath', () => {
+  const step = (path: string) => ({ path, anchor: null, key: 'signInIntro' as const });
+
+  it('matches a literal route', () => {
+    expect(matchesPath(step('/{lang}/editor'), '/el/editor', 'el')).toBe(true);
+  });
+
+  it('matches any value in a non-language segment', () => {
+    expect(matchesPath(step('/{lang}/{place}'), '/el/athina', 'el')).toBe(true);
+    expect(matchesPath(step('/{lang}/{place}'), '/el/munich+bayern', 'el')).toBe(true);
+  });
+
+  it('matches a value segment deeper in the path', () => {
+    expect(matchesPath(step('/{lang}/{place}/a/{id}'), '/el/athina/a/9f2c', 'el')).toBe(true);
+  });
+
+  it('refuses another language on the same screen', () => {
+    expect(matchesPath(step('/{lang}/{place}'), '/de/munich', 'el')).toBe(false);
+  });
+
+  it('refuses a different depth', () => {
+    expect(matchesPath(step('/{lang}/{place}'), '/el/athina/a/9f2c', 'el')).toBe(false);
+    expect(matchesPath(step('/{lang}/{place}/a/{id}'), '/el/athina', 'el')).toBe(false);
+  });
+
+  it('refuses an empty value segment', () => {
+    expect(matchesPath(step('/{lang}/{place}'), '/el/', 'el')).toBe(false);
+  });
+
+  it('refuses a literal segment that differs', () => {
+    expect(matchesPath(step('/{lang}/editor/sources'), '/el/editor/audit', 'el')).toBe(false);
+  });
+
+  // The whole point of generalising: before this, a step on a reader route
+  // compared '/{lang}/{place}' to '/el/athina' as strings and never matched,
+  // so every reader step resolved as "wait" forever — the same shape as the
+  // bug that stopped the editorial tour starting.
+  it('resolves a step on a value-carrying route', () => {
+    const readerTour = {
+      id: 'editor' as const,
+      steps: [step('/{lang}/{place}')],
+    };
+    expect(resolve(readerTour, 0, '/el/athina', 'el', everything)).toEqual({ kind: 'show', step: 0 });
   });
 });

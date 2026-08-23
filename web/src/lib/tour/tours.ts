@@ -20,7 +20,7 @@
  */
 
 /** A tour a visitor can be shown. */
-export type TourId = 'editor';
+export type TourId = 'editor' | 'reader';
 
 /** The copy keys a step may carry; `./strings` supplies one entry each. */
 export type TourCopyKey =
@@ -35,7 +35,16 @@ export type TourCopyKey =
   | 'spendLedger'
   | 'sourcesNav'
   | 'sourcesAdd'
-  | 'auditTrail';
+  | 'auditTrail'
+  // The reader's first visit.
+  | 'setupLanguage'
+  | 'setupPlaces'
+  | 'setupGo'
+  | 'frontLead'
+  | 'frontAttribution'
+  | 'articleBody'
+  | 'articleProvenance'
+  | 'registerConsent';
 
 export interface TourStep {
   /**
@@ -84,16 +93,40 @@ const EDITOR_TOUR: Tour = {
   ],
 };
 
+/**
+ * The reader's first visit: the two axes, the front page they build, and
+ * what a story on it is actually made of.
+ *
+ * Its later steps sit on ROUTES THAT CARRY VALUES — `/{lang}/{place}` and
+ * `/{lang}/{place}/a/{id}`. A step is about the shape of a screen, not one
+ * row of data, so those segments match whatever is in them (matchesPath in
+ * ./progress). `{lang}` is the exception: the reading language is an axis,
+ * and a tour begun in Greek does not resume on the German page.
+ *
+ * Nobody signing in is required, and nothing here records against an
+ * account, because a reader has none. Progress stays in the browser for
+ * this tour, which is what the fallback in ProductTour is for.
+ */
+const READER_TOUR: Tour = {
+  id: 'reader',
+  steps: [
+    { path: '/{lang}/setup', anchor: 'setup-language', key: 'setupLanguage' },
+    { path: '/{lang}/setup', anchor: 'setup-places', key: 'setupPlaces' },
+    { path: '/{lang}/setup', anchor: 'setup-go', key: 'setupGo' },
+    { path: '/{lang}/{place}', anchor: 'front-lead', key: 'frontLead' },
+    { path: '/{lang}/{place}', anchor: 'front-attribution', key: 'frontAttribution' },
+    { path: '/{lang}/{place}/a/{id}', anchor: 'article-body', key: 'articleBody' },
+    { path: '/{lang}/{place}/a/{id}', anchor: 'article-provenance', key: 'articleProvenance' },
+    { path: '/{lang}/register', anchor: 'register-consent', key: 'registerConsent' },
+  ],
+};
+
 const TOURS: Readonly<Record<TourId, Tour>> = {
   editor: EDITOR_TOUR,
+  reader: READER_TOUR,
 };
 
 /** The tour with this id, or null. Storage is not to be trusted (see progress.ts). */
 export function tourById(id: string): Tour | null {
   return Object.prototype.hasOwnProperty.call(TOURS, id) ? (TOURS[id as TourId] ?? null) : null;
-}
-
-/** A step's path with the reading language filled in. */
-export function stepPath(step: TourStep, lang: string): string {
-  return step.path.replace('{lang}', lang);
 }

@@ -24,7 +24,42 @@
  *    So a step whose anchor is missing is stepped over, and a tour whose
  *    remaining steps are all missing ends rather than stalling.
  */
-import { stepPath, type Tour, type TourStep } from './tours';
+import { type Tour, type TourStep } from './tours';
+
+/**
+ * Whether a step's path addresses the page currently open.
+ *
+ * Compared segment by segment rather than as strings, because the reader's
+ * routes carry values: a front page is `/{lang}/{place}` and an article is
+ * `/{lang}/{place}/a/{id}`. A step cannot name the place or the article it
+ * will be shown on — it is about the SHAPE of the page, not one row of
+ * data — so every `{…}` segment except `{lang}` matches whatever is there.
+ *
+ * `{lang}` is the exception because it is not free: the reading language
+ * is an axis (FR-009) and a tour running in Greek must not resume on the
+ * German copy of the same screen.
+ */
+export function matchesPath(step: TourStep, currentPath: string, lang: string): boolean {
+  const want = step.path.split('/');
+  const got = currentPath.split('/');
+  if (want.length !== got.length) {
+    return false;
+  }
+  return want.every((segment, i) => {
+    const actual = got[i];
+    if (actual === undefined) {
+      return false;
+    }
+    if (segment === '{lang}') {
+      return actual === lang;
+    }
+    if (segment.startsWith('{') && segment.endsWith('}')) {
+      // A value segment: anything non-empty is this page.
+      return actual !== '';
+    }
+    return segment === actual;
+  });
+}
 
 /** What the controller should do on this page load. */
 export type Resolution =
@@ -86,7 +121,7 @@ export function resolve(
     if (step === undefined) {
       break;
     }
-    if (stepPath(step, lang) !== currentPath) {
+    if (!matchesPath(step, currentPath, lang)) {
       // The next thing to say belongs on a page the visitor is not on.
       // Parking is right: they may be on their way there, and dragging
       // them somewhere they did not ask to go is what makes product tours
@@ -157,7 +192,7 @@ export function pageSteps(
   const out: PlacedStep[] = [];
   for (let index = from < 0 ? 0 : from; index < tour.steps.length; index += 1) {
     const step = tour.steps[index];
-    if (step === undefined || stepPath(step, lang) !== currentPath) {
+    if (step === undefined || !matchesPath(step, currentPath, lang)) {
       break;
     }
     if (step.anchor !== null && !hasAnchor(step.anchor)) {

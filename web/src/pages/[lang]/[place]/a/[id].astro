@@ -2,6 +2,7 @@
 import { API_BASE_URL, APP_ENV } from 'astro:env/server';
 import FixtureNotice from '../../../../components/FixtureNotice.astro';
 import ReaderLayout from '../../../../layouts/ReaderLayout.astro';
+import ProductTour from '../../../../components/ProductTour.astro';
 import {
   createReaderApi,
   ReaderConfigurationError,
@@ -109,6 +110,7 @@ const title = `${article.headline} · epiloYES`;
   footerNote={t.reassurance}
   homeHref={backHref}
 >
+  <div class="tour-slot"><ProductTour lang={lang} tour="reader" /></div>
   <header class="head">
     <a class="brand" href={backHref}>epilo<span class="brand-yes">YES</span></a>
     <span class="head-rule" aria-hidden="true"></span>
@@ -150,7 +152,7 @@ const title = `${article.headline} · epiloYES`;
       )
     }
 
-    <article class="reading">
+    <article class="reading" data-tour="article-body">
       <div class="meta">
         <span class="kicker">{kickerLabel}</span>
         <span class="meta-rule" aria-hidden="true"></span>
@@ -184,7 +186,7 @@ const title = `${article.headline} · epiloYES`;
     </article>
 
     <aside class="rail">
-      <section class="record">
+      <section class="record" data-tour="article-provenance">
         <h6>{t.record}</h6>
         <dl>
           {
@@ -226,6 +228,15 @@ const title = `${article.headline} · epiloYES`;
 </ReaderLayout>
 
 <style>
+  .tour-slot {
+    display: flex;
+    justify-content: flex-end;
+    padding-inline: clamp(16px, 3vw, 56px);
+  }
+  .tour-slot:has(button[hidden]) {
+    display: none;
+  }
+
   .head {
     display: flex;
     align-items: center;

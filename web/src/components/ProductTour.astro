@@ -50,8 +50,13 @@ import type { TourId } from '../lib/tour/tours';
 interface Props {
   lang: ReadingLanguage;
   tour: TourId;
-  /** Whose progress to load; anonymous sessions simply have none. */
-  session: EditorSession;
+  /**
+   * Whose progress to load. Omitted on the reader's screens, which have no
+   * session at all: a reader is not signed in, owns no account row, and
+   * their progress lives in the browser. Passing nothing is that state,
+   * not a caller forgetting.
+   */
+  session?: EditorSession | undefined;
 }
 
 const { lang, tour, session } = Astro.props;
@@ -60,7 +65,7 @@ const s = tourStrings(lang);
 // Never throws: no API configured, no token, a non-2xx and a network
 // failure all mean "no progress recorded", and a tour must not be the
 // reason an editorial screen fails to render.
-const progress = await readTourProgress(API_BASE_URL, session.token);
+const progress = await readTourProgress(API_BASE_URL, session?.token ?? null);
 const serverCursor = progress[tour] ?? '';
 ---
 

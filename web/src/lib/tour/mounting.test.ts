@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { stepPath, tourById, type Tour } from './tours';
+import { tourById, type Tour } from './tours';
 
 /**
  * The tour, checked against the pages it claims to describe.
@@ -37,11 +37,13 @@ function read(path: string): string {
 }
 
 /**
- * The page file a step's path resolves to. `/{lang}/editor` is a directory
- * route, so it is `editor/index.astro`; the rest are files.
+ * The page file a step's path resolves to. A tour writes its routes the way
+ * a person says them — `/{lang}/{place}/a/{id}` — and Astro writes them
+ * `[lang]/[place]/a/[id]`, so every `{…}` becomes `[…]`. `/{lang}/editor`
+ * and `/{lang}/{place}` are directory routes and resolve to index.astro.
  */
 function pageFor(path: string): string {
-  const route = stepPath({ path, anchor: null, key: 'signInIntro' }, '[lang]');
+  const route = path.replace(/\{([a-z]+)\}/g, '[$1]');
   const direct = `pages${route}.astro`;
   return existsSync(`${SRC}${direct}`) ? direct : `pages${route}/index.astro`;
 }
@@ -49,10 +51,18 @@ function pageFor(path: string): string {
 /** Every source that could carry an anchor or mount the controller. */
 const COMPONENTS = ['components/EditorChrome.astro', 'components/ProductTour.astro'];
 
+// Every tour, so a new one cannot be added without its pages being
+// checked. The ids are listed rather than derived because the map they
+// come from is deliberately private — tourById is the only way in, and it
+// is the function that refuses an id storage invented.
+const TOUR_IDS = ['editor', 'reader'] as const;
+
 function allTours(): Tour[] {
-  const editor = tourById('editor');
-  expect(editor).not.toBeNull();
-  return [editor!];
+  return TOUR_IDS.map((id) => {
+    const tour = tourById(id);
+    expect(tour, `${id} is not a tour`).not.toBeNull();
+    return tour!;
+  });
 }
 
 describe('every page a tour visits can actually run it', () => {

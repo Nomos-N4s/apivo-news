@@ -83,13 +83,45 @@ const EL: TourStrings = {
       title: 'Ο έλεγχος',
       body: 'Κάθε έγκριση, με όνομα και ώρα. Αυτό είναι το μητρώο που δεν επινοείται.',
     },
+    setupLanguage: {
+      title: 'Η γλώσσα που διαβάζετε',
+      body: 'Δύο γλώσσες στο άλφα. Η επιλογή γράφεται στη διεύθυνση, οπότε ο σύνδεσμος μοιράζεται όπως είναι.',
+    },
+    setupPlaces: {
+      title: 'Οι τόποι που ακολουθείτε',
+      body: 'Διαλέξτε όσους θέλετε. Η πρώτη σελίδα φτιάχνεται από αυτούς και από τίποτε άλλο.',
+    },
+    setupGo: {
+      title: 'Η πρώτη σας σελίδα',
+      body: 'Και οι δύο επιλογές ταξιδεύουν στη διεύθυνση, όχι σε λογαριασμό. Για να διαβάσετε δεν χρειάζεται εγγραφή.',
+    },
+    frontLead: {
+      title: 'Η κύρια είδηση',
+      body: 'Ό,τι βλέπετε εδώ το ενέκρινε συντάκτης με όνομα. Τίποτα δεν δημοσιεύεται από μόνο του.',
+    },
+    frontAttribution: {
+      title: 'Από πού προέρχεται',
+      body: 'Η πηγή, ο σύνδεσμος και η ώρα. Δημοσιεύουμε απόσπασμα και παραπομπή, ποτέ ολόκληρο το κείμενο άλλου.',
+    },
+    articleBody: {
+      title: 'Το απόσπασμα',
+      body: 'Απόσπασμα, όχι αναδημοσίευση. Για το πλήρες κείμενο ο σύνδεσμος οδηγεί στην πηγή.',
+    },
+    articleProvenance: {
+      title: 'Το μητρώο',
+      body: 'Ποιος ενέκρινε, πότε, από ποια πηγή και με ποια μετάφραση. Αυτό είναι το μέρος που δεν επινοείται.',
+    },
+    registerConsent: {
+      title: 'Η συγκατάθεση',
+      body: 'Μία εγγραφή ανά σκοπό, με ημερομηνία. Η ανάκληση δεν σβήνει το ιστορικό — του βάζει ημερομηνία λήξης.',
+    },
   },
   next: 'Επόμενο',
   previous: 'Προηγούμενο',
   done: 'Τέλος',
   start: 'Ξενάγηση',
   restart: 'Ξανά από την αρχή',
-  startLabel: 'Ξεκινήστε την ξενάγηση των συντακτικών οθονών',
+  startLabel: 'Ξεκινήστε την ξενάγηση αυτής της οθόνης',
 };
 
 const DE: TourStrings = {
@@ -142,13 +174,45 @@ const DE: TourStrings = {
       title: 'Der Prüfpfad',
       body: 'Jede Freigabe, mit Namen und Uhrzeit. Das ist der Nachweis, der nicht erfunden wird.',
     },
+    setupLanguage: {
+      title: 'Die Sprache, in der Sie lesen',
+      body: 'Zwei Sprachen im Alpha. Die Wahl steht in der Adresse, der Link lässt sich also weitergeben, wie er ist.',
+    },
+    setupPlaces: {
+      title: 'Die Orte, denen Sie folgen',
+      body: 'Wählen Sie so viele, wie Sie möchten. Die Titelseite entsteht aus ihnen und aus nichts sonst.',
+    },
+    setupGo: {
+      title: 'Ihre Titelseite',
+      body: 'Beide Achsen reisen in der Adresse, nicht in einem Konto. Zum Lesen ist keine Anmeldung nötig.',
+    },
+    frontLead: {
+      title: 'Die Hauptmeldung',
+      body: 'Was hier steht, hat eine benannte Person freigegeben. Nichts erscheint von selbst.',
+    },
+    frontAttribution: {
+      title: 'Woher sie stammt',
+      body: 'Quelle, Link und Zeitpunkt. Wir veröffentlichen Auszug und Verweis, nie den ganzen Text eines anderen.',
+    },
+    articleBody: {
+      title: 'Der Auszug',
+      body: 'Ein Auszug, kein Nachdruck. Für den vollen Text führt der Link zur Quelle.',
+    },
+    articleProvenance: {
+      title: 'Der Nachweis',
+      body: 'Wer freigegeben hat, wann, aus welcher Quelle und mit welcher Übersetzung. Das ist die Stelle, die nicht erfunden wird.',
+    },
+    registerConsent: {
+      title: 'Die Einwilligung',
+      body: 'Ein datierter Eintrag je Zweck. Ein Widerruf löscht die Geschichte nicht — er setzt ihr ein Enddatum.',
+    },
   },
   next: 'Weiter',
   previous: 'Zurück',
   done: 'Fertig',
   start: 'Führung',
   restart: 'Von vorn',
-  startLabel: 'Führung durch die Redaktionsansichten starten',
+  startLabel: 'Führung durch diese Ansicht starten',
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, TourStrings>> = { el: EL, de: DE };
