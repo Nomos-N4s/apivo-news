@@ -16,6 +16,8 @@ type Account struct {
 	CreatedAt   pgtype.Timestamptz
 	// What this person may do: readers read, editors approve. Approval authority is checked by the database (article_insert_guard, is_entitled), never by application code alone.
 	Role string
+	// Where this person got to in each guided tour, as {tour_id: cursor}. The cursor is a step index as text, or 'done'. Written by the front end and not interpreted here beyond being an object: the tours are defined in the web app, and a cursor that no longer addresses a step is discarded on read rather than migrated.
+	TourProgress []byte
 }
 
 // Only approved content. A row here IS the approval (I-1): approved_by is NOT NULL, so a draft or unapproved article is unrepresentable. The review queue operates on translations/source_items; approval creates the article.
