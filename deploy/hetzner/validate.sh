@@ -170,6 +170,22 @@ for role in preprod prod; do
         -f "$COMPOSE_DIR/docker-compose.edge.yml" \
         -f "$COMPOSE_DIR/docker-compose.edge.$role.yml" config 2>&1); then
         echo "ok: the $role edge configuration parses"
+
+        # Caddy must be ON every network it proxies into. Parsing proves
+        # nothing about that: the first provisioned host had a valid edge
+        # configuration, healthy preview containers, and 502 on every preview,
+        # because the preprod overlay attached Caddy to QA and Staging and not
+        # to the preview network. Nothing fails at that seam - the name simply
+        # does not resolve, and only a request finds out.
+        if [ "$role" = preprod ]; then
+            for net in apivo-qa-edge apivo-staging-edge apivo-preview-edge; do
+                if printf '%s' "$out" | grep -q -F "$net"; then
+                    echo "ok: the preprod edge joins $net"
+                else
+                    fail "the preprod edge does not join $net, so Caddy cannot resolve the containers it proxies to on that network and they answer 502 while sitting healthy"
+                fi
+            done
+        fi
     else
         fail "the $role edge configuration does not parse: $out"
     fi
