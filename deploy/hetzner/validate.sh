@@ -297,23 +297,42 @@ check_caddyfile Caddyfile.prod \
     APIVO_PROD_ALT_HOST=www.validate.invalid
 
 # ---------------------------------------------------------------------------
-# The same-origin rewrite, asserted by RUNNING it.
+# The scheme the frontend sees, asserted by RUNNING it.
 #
-# `caddy validate` cannot catch a broken rewrite. It accepts
-# `header_up Origin https://{http.request.host} ...` quite happily, and that
-# form silently rewrites nothing — header_up does not expand placeholders in
-# its search argument. A config that parses is not a config that works, and
-# the failure here is invisible until an editor cannot sign in.
+# This is the whole reason the frontend is reached over TLS. @astrojs/node
+# builds Astro.url from the SOCKET and the Host header
+# (astro/dist/core/app/node.js):
 #
-# So the real snippet is loaded, with its upstreams pointed at echo sites in
-# the same Caddy process, and asked what the container would actually
-# receive. Both directions matter and both are asserted: the site's own
-# https origin MUST be rewritten (or every editorial form post is refused),
-# and a foreign origin MUST NOT be (or the CSRF check is defeated).
+#     const isEncrypted = 'encrypted' in req.socket && req.socket.encrypted;
+#     const protocol = isEncrypted ? 'https' : 'http';
+#
+# It never consults X-Forwarded-Proto. So a frontend reached over plain http
+# believes it is on http://, Astro's own CSRF middleware compares that with
+# === against the browser's https:// Origin, and every form post the site
+# makes of itself is refused - sign-in, approval, withdrawal, source
+# registration. `caddy validate` cannot see any of that: it is a property of
+# the connection, not of the syntax.
+#
+# What used to be here instead was a probe of the Origin REWRITE, which
+# compensated by editing the browser's header down to http://. That rewrite
+# is gone: it needed the hostname at parse time and so could never cover the
+# wildcard preview host, and it made the CSRF property depend on three
+# proxies each getting a find-and-replace exactly right.
+#
+# So the real snippet is loaded, its upstream is a TLS site in the same
+# Caddy process, and it is asked what the container would actually receive.
+# Both halves are asserted: the hop MUST be encrypted, and the browser's
+# Origin MUST now arrive untouched.
 # ---------------------------------------------------------------------------
 REWRITE="$TMP/rewrite"
 mkdir -p "$REWRITE"
 cp "$CADDY_DIR/snippets.caddy" "$REWRITE/snippets.caddy"
+# The upstream's certificate: self-signed, one day, exactly as throwaway as
+# the one provision.sh writes is long-lived. The proxy does not verify it.
+openssl req -new -x509 -days 1 -nodes \
+    -out "$REWRITE/up.crt" -keyout "$REWRITE/up.key" \
+    -subj "/CN=apivo-validate-web" 2>/dev/null
+chmod 0644 "$REWRITE/up.key"
 cat > "$REWRITE/Caddyfile" <<'EOF'
 {
 	auto_https off
@@ -328,12 +347,15 @@ import /rw/snippets.caddy
 	respond "api"
 }
 
+# TLS, like the real frontend container, so the scheme this reports is the
+# scheme @astrojs/node would derive from its own socket.
 :4321 {
-	respond "origin={http.request.header.Origin}|referer={http.request.header.Referer}"
+	tls /rw/up.crt /rw/up.key
+	respond "scheme={http.request.scheme}|origin={http.request.header.Origin}|referer={http.request.header.Referer}"
 }
 
 :9081 {
-	import apivo-routes 127.0.0.1 127.0.0.1 site.validate.invalid
+	import apivo-routes 127.0.0.1 127.0.0.1
 }
 EOF
 
@@ -351,27 +373,30 @@ rewrite_probe() {
 
 got=$(rewrite_probe "Origin: https://site.validate.invalid")
 case "$got" in
-"origin=http://site.validate.invalid"*)
-    echo "ok: this site's own https origin is rewritten (editorial form posts work)"
+"scheme=https|origin=https://site.validate.invalid"*)
+    echo "ok: the frontend is reached over TLS and sees the browser's own origin unaltered"
     ;;
-"origin=https://site.validate.invalid"*)
-    fail "the same-origin rewrite does NOT fire: the web container still sees 'https://', so csrf.ts compares it against its own 'http://' origin and refuses every editorial form post — sign-in, approval, withdrawal, source registration"
+"scheme=http|"*)
+    fail "the frontend is reached over PLAIN HTTP, so Astro.url would say http:// while the browser says https:// — Astro's origin check refuses every form post on the site, sign-in included"
+    ;;
+"scheme=https|origin=http://"*)
+    fail "something is still rewriting Origin down to http:// ($got); with a TLS upstream that turns a same-origin post into a cross-origin one and refuses it"
     ;;
 *)
-    fail "could not probe the same-origin rewrite (got: ${got:-nothing}); the Caddy image may be unavailable"
+    fail "could not probe the frontend hop (got: ${got:-nothing}); the Caddy image may be unavailable"
     ;;
 esac
 
 got=$(rewrite_probe "Origin: https://evil.validate.invalid")
 case "$got" in
-"origin=https://evil.validate.invalid"*)
-    echo "ok: a foreign origin is left alone (the CSRF check still refuses it)"
+"scheme=https|origin=https://evil.validate.invalid"*)
+    echo "ok: a foreign origin arrives as itself, so the origin check refuses it"
     ;;
 "")
-    fail "could not probe the same-origin rewrite with a foreign origin"
+    fail "could not probe the frontend hop with a foreign origin"
     ;;
 *)
-    fail "a FOREIGN origin was rewritten to '$got' — the rewrite is not host-exact and the CSRF check can be defeated"
+    fail "a FOREIGN origin arrived as '$got' — anything that edits it here can defeat the origin check"
     ;;
 esac
 
@@ -394,6 +419,11 @@ esac
 PREVIEW="$TMP/preview"
 mkdir -p "$PREVIEW"
 cp "$CADDY_DIR/snippets.caddy" "$PREVIEW/snippets.caddy"
+# The preview frontend is reached over TLS too (see the scheme probe above),
+# so the echo standing in for it has to speak TLS or every assertion below
+# fails as a 502 and says nothing about routing.
+cp "$REWRITE/up.crt" "$PREVIEW/up.crt"
+cp "$REWRITE/up.key" "$PREVIEW/up.key"
 
 # Matched on `https://*.` rather than on the variable name: the site address
 # is the only wildcard site in the file, and naming the variable here would
@@ -429,6 +459,7 @@ import /pv/snippets.caddy
 }
 
 :4321 {
+	tls /pv/up.crt /pv/up.key
 	respond "web-upstream"
 }
 

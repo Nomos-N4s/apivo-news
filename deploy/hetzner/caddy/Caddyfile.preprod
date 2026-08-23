@@ -31,7 +31,7 @@ https://{$APIVO_QA_HOST} {
 	import origin-tls origin
 	import hardening
 	import crawler-fence
-	import apivo-routes apivo-qa-api apivo-qa-web {$APIVO_QA_HOST}
+	import apivo-routes apivo-qa-api apivo-qa-web
 }
 
 # ---------------------------------------------------------------------------
@@ -41,7 +41,7 @@ https://{$APIVO_STAGING_HOST} {
 	import origin-tls origin-staging
 	import hardening
 	import crawler-fence
-	import apivo-routes apivo-staging-api apivo-staging-web {$APIVO_STAGING_HOST}
+	import apivo-routes apivo-staging-api apivo-staging-web
 }
 
 # ---------------------------------------------------------------------------

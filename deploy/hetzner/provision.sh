@@ -285,6 +285,54 @@ if [ "$APIVO_HOST_ROLE" = preprod ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 3a. Web origin certificates, so that Astro.url carries the right scheme.
+#
+# EVERY environment, on every host role, unlike the Postgres certificates
+# above: production serves the frontend too, and this is what makes its form
+# posts work.
+#
+# @astrojs/node builds the request URL from the socket and the Host header
+# (astro/dist/core/app/node.js):
+#
+#     const isEncrypted = 'encrypted' in req.socket && req.socket.encrypted;
+#     const protocol = isEncrypted ? 'https' : 'http';
+#
+# No x-forwarded-proto, in either adapter mode. Behind a TLS terminator the
+# frontend therefore believes it is on http://, and Astro's own CSRF
+# middleware compares that against the browser's https:// Origin with === -
+# so it refuses every form post the site makes of itself. Caddy used to
+# rewrite the header back to http:// to compensate, which needs the hostname
+# at PARSE time and so could never work for the wildcard preview host.
+#
+# A certificate makes the socket genuinely encrypted, and then nothing has
+# to lie. It is self-signed and the only client that sees it - Caddy, one
+# hop away on a private network - does not verify it; the same trade this
+# deployment already makes for Postgres.
+# ---------------------------------------------------------------------------
+say "Web origin certificates"
+web_uid=""
+for env_name in $ENVS; do
+    certs="$ETC/$env_name/web-certs"
+    if [ -e "$certs/web.key" ]; then
+        note "$env_name: already present, left alone"
+        continue
+    fi
+    mkdir -p "$certs"
+    openssl req -new -x509 -days 3650 -nodes \
+        -out "$certs/web.crt" -keyout "$certs/web.key" \
+        -subj "/CN=apivo-$env_name-web" 2>/dev/null
+    # Read from the image rather than assumed, for the same reason the
+    # Postgres uid is: a base image that renumbers its unprivileged user
+    # would otherwise leave a key the server cannot read, and the symptom
+    # would be a container that will not start rather than one that says so.
+    [ -n "$web_uid" ] || web_uid=$(docker run --rm node:24-slim id -u node)
+    chown "$web_uid:$web_uid" "$certs/web.key" "$certs/web.crt"
+    chmod 0600 "$certs/web.key"
+    chmod 0644 "$certs/web.crt"
+    note "$env_name: generated, owned by uid $web_uid (read from the node image)"
+done
+
+# ---------------------------------------------------------------------------
 # 3b. Previews - one environment per open pull request.
 #
 # Pre-production only. Production does not run other people's branches.
@@ -292,6 +340,24 @@ fi
 if [ "$APIVO_HOST_ROLE" = preprod ]; then
     say "Previews"
     mkdir -p "$ETC/preview/pg-certs"
+
+    # One web certificate for every preview on this host. Self-signed and
+    # never verified, so a name per pull request would buy nothing: what it
+    # buys is a socket that reports itself encrypted (see 3a).
+    if [ -e "$ETC/preview/web-certs/web.key" ]; then
+        note "preview web certificate already present"
+    else
+        mkdir -p "$ETC/preview/web-certs"
+        openssl req -new -x509 -days 3650 -nodes \
+            -out "$ETC/preview/web-certs/web.crt" \
+            -keyout "$ETC/preview/web-certs/web.key" \
+            -subj "/CN=apivo-preview-web" 2>/dev/null
+        [ -n "$web_uid" ] || web_uid=$(docker run --rm node:24-slim id -u node)
+        chown "$web_uid:$web_uid" "$ETC/preview/web-certs/web.key" "$ETC/preview/web-certs/web.crt"
+        chmod 0600 "$ETC/preview/web-certs/web.key"
+        chmod 0644 "$ETC/preview/web-certs/web.crt"
+        note "generated the preview web certificate"
+    fi
 
     if [ -e "$ETC/preview/stack.env" ]; then
         note "stack.env exists, left alone"

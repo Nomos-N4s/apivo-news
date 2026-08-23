@@ -23,6 +23,18 @@ USER node
 EXPOSE 4321
 # curl is absent from the slim image; Node's built-in fetch probes the
 # standalone server instead. Exec form, so no shell is required either.
+#
+# The SCHEME follows the server rather than assuming: @astrojs/node's
+# standalone entry serves https when SERVER_CERT_PATH and SERVER_KEY_PATH
+# are both set (dist/standalone.js), and this deployment sets them so that
+# Astro.url carries the scheme the browser used. A probe hardcoded to http
+# would fail against that server, and a failing HEALTHCHECK is not a warning
+# - compose --wait refuses to finish, so every deploy and every preview
+# would hang on a container that was serving perfectly.
+#
+# The certificate is self-signed and presented to a client one hop away on a
+# private network, so the probe does not verify it. It is checking that this
+# process answers, not who it is.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["node", "-e", "fetch('http://localhost:' + (process.env.PORT || 4321) + '/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+  CMD ["node", "-e", "const tls = process.env.SERVER_CERT_PATH && process.env.SERVER_KEY_PATH; const url = (tls ? 'https' : 'http') + '://localhost:' + (process.env.PORT || 4321) + '/'; if (tls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; fetch(url).then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
 CMD ["node", "dist/server/entry.mjs"]
