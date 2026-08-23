@@ -297,7 +297,14 @@ const defaultAttribution = (item: (typeof items)[number]): string =>
         )}
       </div>
 
-      <div class="review" data-tour="review-pane">
+      {/* The anchor is conditional because the CONTENT is. With no row
+          selected this pane holds an empty state, and an unconditional
+          anchor made the tour narrate "opening a row shows it here for
+          review" over it — then skip the original, translation and
+          approval steps, whose anchors live inside the selected branch and
+          were genuinely absent. The review half of the tour disappeared
+          silently for anyone who pressed Next instead of picking a row. */}
+      <div class="review" data-tour={selected === undefined ? undefined : 'review-pane'}>
         {/* The notice carries the typed attribution whenever no form will:
             the queue unreadable without a token, or the posted item gone
             from it — another editor approved it meanwhile — leaving a

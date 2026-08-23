@@ -164,15 +164,39 @@ const serverCursor = progress[tour] ?? '';
             description: copy.steps[step.key].body,
           },
         })),
-        onHighlighted: () => {
+        onHighlighted: (element) => {
           const at = placed[instance.getActiveIndex() ?? 0];
-          if (at !== undefined) {
-            shown = at.index;
-            // Written as they go, not at the end: the visitor may follow a
-            // link out of a highlighted element mid-tour, and that is the
-            // tour working rather than a tour being abandoned.
-            write(serialise(at.index));
+          if (at === undefined) {
+            return;
           }
+          shown = at.index;
+          // Written as they go, not at the end: the visitor may follow a
+          // link out of a highlighted element mid-tour, and that is the
+          // tour working rather than a tour being abandoned.
+          write(serialise(at.index));
+
+          // ACTIVATING the highlighted thing completes this step.
+          //
+          // Several steps point at a control whose whole purpose is to
+          // navigate: the sign-in form, a queue row (a link back to
+          // /editor?item=…), the Sources rail entry. Following one unloads
+          // the page, so driver.js never fires a destroy and the cursor
+          // stayed on the step just acted on. The destination then
+          // resolved that cursor against a different route and parked in
+          // `wait` — permanently, for the Sources step. The tour ended
+          // exactly where it was most useful.
+          //
+          // So the cursor advances on the way out. Not on Next, which
+          // driver.js already handles, and not on close, which stays a
+          // decline; only on activating the element this step is about.
+          if (element === undefined) {
+            return;
+          }
+          const done = (): void => {
+            write(serialise(advance(tour, at.index)));
+          };
+          element.addEventListener('click', done, { once: true });
+          element.addEventListener('submit', done, { once: true });
         },
         onDestroyStarted: () => {
           // Reaching the end of this page's run is progress; closing on a
