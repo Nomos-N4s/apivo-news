@@ -1,4 +1,8 @@
 ---
+import { API_BASE_URL } from 'astro:env/server';
+
+import { readTourProgress } from '../lib/account/tours';
+import type { EditorSession } from '../lib/editorial/session';
 import type { ReadingLanguage } from '../lib/reader/axes';
 import { tourStrings } from '../lib/tour/strings';
 import type { TourId } from '../lib/tour/tours';
@@ -26,13 +30,38 @@ import type { TourId } from '../lib/tour/tours';
 // The whole product treats language as an axis, and the tour is read by
 // the people least able to forgive an English-only surface — the editorial
 // staff whose own screens are in el and de.
+//
+// ---------------------------------------------------------------------------
+// Where the cursor comes from, and why it is not fetched by the browser
+//
+// The bearer token never reaches the browser in this product: every
+// editorial screen builds its API client in frontmatter and renders the
+// result. So the starting cursor is read HERE, on the server, and arrives
+// in the document as an attribute; writes go to /api/tour/{id}, a
+// same-origin endpoint that holds the session on the server side. A guided
+// tour is not a reason to hand a page script a credential that approves
+// articles.
+//
+// localStorage stays, and is not a leftover. The first steps of the
+// editorial tour are on the sign-in screen, where there is no account to
+// record against; and a write that fails still has to leave the tour
+// usable for the rest of the session. The account is authoritative when it
+// has an answer, the browser's copy when it does not.
 interface Props {
   lang: ReadingLanguage;
   tour: TourId;
+  /** Whose progress to load; anonymous sessions simply have none. */
+  session: EditorSession;
 }
 
-const { lang, tour } = Astro.props;
+const { lang, tour, session } = Astro.props;
 const s = tourStrings(lang);
+
+// Never throws: no API configured, no token, a non-2xx and a network
+// failure all mean "no progress recorded", and a tour must not be the
+// reason an editorial screen fails to render.
+const progress = await readTourProgress(API_BASE_URL, session.token);
+const serverCursor = progress[tour] ?? '';
 ---
 
 <button
@@ -40,6 +69,7 @@ const s = tourStrings(lang);
   class="tour-launch"
   data-tour-launch={tour}
   data-tour-restart={s.restart}
+  data-tour-cursor={serverCursor}
   aria-label={s.startLabel}
   hidden>{s.start}</button
 >
@@ -89,6 +119,23 @@ const s = tourStrings(lang);
       } catch {
         /* A tour that cannot remember where it got to is still a tour. */
       }
+      // keepalive, because the most interesting write happens as somebody
+      // follows a link out of a highlighted element: without it the
+      // request is cancelled by the navigation it is recording.
+      //
+      // Unawaited and unchecked on purpose. The endpoint answers 204
+      // whether or not the record was made, there is nothing this step
+      // could usefully do about a failure, and a retry would interrupt the
+      // thing the tour is explaining. The browser's own copy is already
+      // written above.
+      void fetch(`/api/tour/${encodeURIComponent(tour.id)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cursor: value }),
+        keepalive: true,
+      }).catch(() => {
+        /* Offline, or signed out. The tour continues from localStorage. */
+      });
     };
 
     const hasAnchor = (anchor: string): boolean =>
@@ -162,7 +209,13 @@ const s = tourStrings(lang);
 
     syncLauncher();
 
-    const decision = resolve(tour, readCursor(read(), tour), path, lang, hasAnchor);
+    // The account wins when it has an answer: somebody who took half the
+    // tour on a laptop should not start again on a phone. Falling back to
+    // the browser covers the sign-in steps, where there is no account yet.
+    const stored = launcher.dataset['tourCursor'];
+    const cursor = readCursor(stored !== undefined && stored !== '' ? stored : read(), tour);
+
+    const decision = resolve(tour, cursor, path, lang, hasAnchor);
     if (decision.kind === 'show') {
       run(decision.step);
     } else if (decision.kind === 'done') {
