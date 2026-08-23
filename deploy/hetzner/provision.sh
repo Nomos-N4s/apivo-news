@@ -129,7 +129,12 @@ install -m 0755 "$HERE/bin/apivo-reconcile" "$PREFIX/bin/apivo-reconcile"
 install -m 0755 "$HERE/bin/apivo-previews" "$PREFIX/bin/apivo-previews"
 install -m 0755 "$HERE/bin/apivoctl" "$PREFIX/bin/apivoctl"
 install -m 0755 "$HERE/bin/apivo-seed-editors" "$PREFIX/bin/apivo-seed-editors"
+# Both of the programs a person runs by hand go on PATH. apivo-reconcile and
+# apivo-previews do not: they are started by systemd with an absolute path,
+# and a host where somebody runs the reconciler by hand is a host where the
+# timer and the hand are fighting over the same environment.
 ln -sf "$PREFIX/bin/apivoctl" /usr/local/bin/apivoctl
+ln -sf "$PREFIX/bin/apivo-seed-editors" /usr/local/bin/apivo-seed-editors
 cp "$HERE/compose/"*.yml "$PREFIX/compose/"
 cp "$HERE/caddy/"* "$PREFIX/caddy/"
 note "installed apivo-reconcile, apivoctl, apivo-seed-editors (on PATH), compose files, Caddy config"
