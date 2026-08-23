@@ -129,7 +129,20 @@ command -v jq >/dev/null 2>&1 ||
 # ---------------------------------------------------------------------------
 field() {
     # field <file> <key> - the value of KEY=..., or empty.
-    sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1
+    #
+    # The LAST occurrence, not the first, because these files are meant to be
+    # appended to. provision.sh writes api.env and web.env with every key
+    # present and empty (a placeholder would be worse than empty - the binary
+    # treats it as real), and docs/RUNBOOK.md step 5 then says to `>>` the
+    # real values on. So the shape this actually meets on a wired host is the
+    # key twice: empty, then real.
+    #
+    # Docker resolves an env_file the same way - later wins - which is why
+    # the containers were serving correctly while this read the placeholder
+    # and reported that QA had no auth project. Reading a file in a shape the
+    # program never meets is how the parser ends up disagreeing with the
+    # daemon about what the operator configured.
+    sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -n 1
 }
 
 SUPABASE_URL=$(field "$WEB_ENV" PUBLIC_SUPABASE_URL)
