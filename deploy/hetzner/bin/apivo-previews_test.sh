@@ -24,6 +24,11 @@ mkdir -p "$STUB_DIR"
 # ---------------------------------------------------------------------------
 cat > "$TMP/curl" <<'STUB'
 #!/bin/sh
+# Every invocation is recorded, headers included. Without this the stub
+# answers a token request whether or not a credential reached it, and no
+# assertion can tell a parsed credential from an unparsed one - which is
+# exactly how the pretty-printed config.json bug survived a green suite.
+printf '%s\n' "$*" >> "$STUB_DIR/curl_calls"
 url=""
 for a in "$@"; do
     case "$a" in https://*) url="$a" ;; esac
@@ -92,8 +97,27 @@ APIVO_PREVIEW_PG_USER=apivo
 APIVO_PREVIEW_MAX=${1:-5}
 COMPOSE_FILE=/opt/apivo/compose/docker-compose.preview.yml
 EOF
-    # What `docker login ghcr.io` leaves behind.
-    printf '{"auths":{"ghcr.io":{"auth":"c3R1YjpzdHVi"}}}' > "$DOCKER_CONFIG/config.json"
+    # What `docker login ghcr.io` leaves behind - PRETTY-PRINTED, with tabs,
+    # exactly as docker writes it.
+    #
+    # This fixture used to be a single line, and that is the only reason the
+    # suite stayed green while previews could not work on any host: sed
+    # matches one line at a time, so registry_auth's pattern - which needs
+    # `"ghcr.io"` and `"auth"` together - matched the fixture and never the
+    # real file. The credential was present, valid and invisible, and the
+    # operator was told the registry was unreachable.
+    #
+    # A fixture in a shape the program will never meet proves nothing. If
+    # this is ever "tidied" back onto one line, it stops testing anything.
+    cat > "$DOCKER_CONFIG/config.json" <<'EOF'
+{
+	"auths": {
+		"ghcr.io": {
+			"auth": "c3R1YjpzdHVi"
+		}
+	}
+}
+EOF
     printf '%s' '"qa","staging","pr-1","pr-2"' > "$STUB_DIR/api_tags"
     printf '%s' '"qa","staging","pr-1","pr-2"' > "$STUB_DIR/web_tags"
 }
@@ -158,6 +182,19 @@ check_live() {
 reset
 run
 check "open pull requests get previews" 0 '"event":"created"'
+
+# The credential has to REACH THE WIRE, not merely exist in the file.
+#
+# This is the assertion the suite was missing. Everything else here passes
+# whether or not registry_auth found anything, because the stub answers a
+# token request regardless - which is how a parser that could not read a
+# pretty-printed config.json shipped green and left previews broken on every
+# host, reported as "the registry is unreachable".
+#
+# c3R1YjpzdHVi is the fixture's value. Asserting on the header proves the
+# whole path: file on disk -> registry_auth -> Authorization.
+check_file "the stored credential reaches the registry as a Basic header" \
+    curl_calls "Basic c3R1YjpzdHVi"
 check_live "pr-1 is up" pr-1 yes
 check_live "pr-2 is up" pr-2 yes
 check_file "each gets its own database" sql "CREATE DATABASE apivo_pr_1"
