@@ -74,11 +74,24 @@ note() { printf '  %s\n' "$1"; }
 ENV_NAME="$1"
 COUNT="${2:-$DEFAULT_COUNT}"
 
+# The NAME is validated before it is compared, because it goes on to build
+# paths: $ETC/$ENV_NAME/stack.env. Refusing only the literal string "prod"
+# left `prod/` to walk straight through the guard and resolve to the very
+# same directory, POSIX treating /etc/apivo/prod//stack.env and
+# /etc/apivo/prod/stack.env as one file. A refusal that a trailing slash
+# defeats is decoration.
+case "$ENV_NAME" in
+'' | -*) usage ;;
+esac
+case "$ENV_NAME" in
+*[!a-z0-9-]* | -* | *-)
+    die "'$ENV_NAME' is not an environment name. Names are lower-case letters, digits and hyphens - anything else is either a typo or an attempt to reach a directory this refuses to touch." 2
+    ;;
+esac
 case "$ENV_NAME" in
 prod)
     die "refusing to seed 'prod'. Editors there are real people, and article.approved_by is a named human by design (I-1). If you need an editor in production, create the Supabase user and the account row deliberately, by hand." 2
     ;;
-'' | -*) usage ;;
 esac
 
 case "$COUNT" in
@@ -138,7 +151,19 @@ run_sql() {
         _pg_db=$(field "$STACK" APIVO_PG_DB)
         _pg_user=${_pg_user:-apivo}
         _pg_db=${_pg_db:-apivo}
-        COMPOSE_FILE="$COMPOSE_FILE" $DOCKER compose exec -T postgres \
+        # `docker exec` on the container, NOT `docker compose exec`.
+        #
+        # Compose would have to render the whole configuration first, and
+        # docker-compose.yml hard-requires APIVO_API_IMAGE and
+        # APIVO_WEB_IMAGE while the local-db overlay requires
+        # APIVO_PG_PASSWORD - all with `:?`, so an unset one is a hard error.
+        # apivoctl gets away with `docker compose` because require_env sources
+        # stack.env AND the reconciler's images.env first; this had only
+        # COMPOSE_FILE set, so it would have failed on QA before ever reaching
+        # psql. Addressing the container by its name needs none of that, and
+        # the name is not a guess: docker-compose.yml sets container_name to
+        # apivo-${APIVO_ENV}-postgres.
+        $DOCKER exec -i "apivo-$ENV_NAME-postgres" \
             psql -v ON_ERROR_STOP=1 -q \
             -U "$_pg_user" -d "$_pg_db"
         ;;
@@ -185,9 +210,31 @@ sb() {
 # with, and a re-run has to reach the SAME id or the account row it wrote
 # last time is orphaned.
 find_user_id() {
-    sb GET "/auth/v1/admin/users?per_page=1000" |
-        jq -r --arg e "$1" '(.users // [])[] | select((.email // "" | ascii_downcase) == ($e | ascii_downcase)) | .id' |
-        head -n 1
+    # PAGINATED. GoTrue's /admin/users returns a page at a time, and a single
+    # request finding nothing is indistinguishable from the address not
+    # existing. Getting that wrong is not a missed optimisation: the create
+    # that follows fails with "email exists" and does NOT return the id it
+    # collided with, so the run dies on an account this script created itself
+    # the week before.
+    _page=1
+    while [ "$_page" -le 50 ]; do
+        _body=$(sb GET "/auth/v1/admin/users?page=$_page&per_page=1000")
+        _hit=$(printf '%s' "$_body" |
+            jq -r --arg e "$1" '(.users // [])[] | select((.email // "" | ascii_downcase) == ($e | ascii_downcase)) | .id' |
+            head -n 1)
+        if [ -n "$_hit" ]; then
+            printf '%s\n' "$_hit"
+            return 0
+        fi
+        # An empty page is the end of the list. Anything else and we have not
+        # looked everywhere yet.
+        [ "$(printf '%s' "$_body" | jq -r '(.users // []) | length')" -gt 0 ] || return 0
+        _page=$((_page + 1))
+    done
+    # 50 pages of 1000 is 50,000 users in an environment seeded with
+    # @example.com addresses. Something is wrong, and silently reporting "not
+    # found" would create a duplicate.
+    die "gave up looking for $1 after 50 pages of Supabase users; that is not a shape this environment should have"
 }
 
 new_password() {

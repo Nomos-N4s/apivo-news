@@ -40,8 +40,19 @@ method=$(printf '%s' "$cfg" | sed -n 's/^request = "\(.*\)"$/\1/p')
 
 case "$url" in
 */auth/v1/admin/users\?*)
-    # The listing the script uses to find an existing user.
-    cat "$STUB_DIR/users_list" 2>/dev/null || echo '{"users":[]}'
+    # The listing the script uses to find an existing user, PAGINATED the way
+    # GoTrue's is. A stub that answered the same body to every page could
+    # never fail an unpaginated lookup: the bug is that a user past page 1 is
+    # invisible, so only a stub willing to put one there can see it.
+    page=$(printf '%s' "$url" | sed -n 's/.*[?&]page=\([0-9][0-9]*\).*/\1/p')
+    [ -n "$page" ] || page=1
+    if [ -e "$STUB_DIR/users_page_$page" ]; then
+        cat "$STUB_DIR/users_page_$page"
+    elif [ -e "$STUB_DIR/users_list" ] && [ "$page" -eq 1 ]; then
+        cat "$STUB_DIR/users_list"
+    else
+        echo '{"users":[]}'
+    fi
     ;;
 */auth/v1/admin/users)
     [ -e "$STUB_DIR/create_fails" ] && { echo '{"code":422,"msg":"email exists"}'; exit 0; }
@@ -77,7 +88,21 @@ FAILS=0
 
 reset() {
     rm -rf "$APIVO_ETC" "$STUB_DIR"
-    mkdir -p "$APIVO_ETC/qa" "$APIVO_ETC/staging" "$STUB_DIR"
+    mkdir -p "$APIVO_ETC/qa" "$APIVO_ETC/staging" "$APIVO_ETC/prod" "$STUB_DIR"
+
+    # A production environment that WOULD seed. Without it the prod refusals
+    # below pass for the wrong reason - the run dying on a missing stack.env
+    # rather than on the guard - and a bypass would look refused here while
+    # sailing through on a real host, which is the only host that has this
+    # directory.
+    cat > "$APIVO_ETC/prod/stack.env" <<'EOF'
+APIVO_ENV=prod
+APIVO_PG_USER=apivo
+APIVO_PG_DB=apivo
+COMPOSE_FILE=/opt/apivo/compose/docker-compose.yml:/opt/apivo/compose/docker-compose.local-db.yml
+EOF
+    printf 'PUBLIC_SUPABASE_URL=https://prod.supabase.co\n' > "$APIVO_ETC/prod/web.env"
+    printf 'DATABASE_URL=postgres://apivo:x@postgres:5432/apivo?sslmode=require\n' > "$APIVO_ETC/prod/api.env"
 
     cat > "$APIVO_ETC/qa/stack.env" <<'EOF'
 APIVO_ENV=qa
@@ -144,8 +169,25 @@ check_absent() {
     fi
 }
 
+check_count() {
+    # check_count <description> <file> <fragment> <expected-lines>
+    got=$(grep -c -F -e "$3" "$STUB_DIR/$2" 2>/dev/null || true)
+    got=${got:-0}
+    if [ "$got" -eq "$4" ]; then
+        echo "ok: $1"
+    else
+        echo "FAIL: $1 - expected $4 lines matching '$3' in $2, got $got"
+        FAILS=1
+    fi
+}
+
 # ===========================================================================
 # Production is refused. First, because nothing else matters if this fails.
+#
+# The name is refused before it is used, not merely compared: it goes on to
+# build $ETC/$ENV_NAME/stack.env, and POSIX resolves /etc/apivo/prod//stack.env
+# and /etc/apivo/prod/stack.env to one file. A guard a trailing slash walks
+# through is decoration.
 # ===========================================================================
 
 reset
@@ -153,6 +195,19 @@ run prod
 check "prod is refused outright" 2 "refusing to seed 'prod'"
 check_absent "and nothing was sent to any auth project" curl_calls "admin/users"
 check_absent "and no SQL was run" sql "insert into account"
+
+reset
+run prod/
+check "and so is 'prod/', which resolves to the same directory" 2 \
+    "is not an environment name"
+check_absent "with nothing sent to any auth project" curl_calls "admin/users"
+check_absent "and no SQL run" sql "insert into account"
+
+reset
+run ../prod
+check "a traversal in the environment name is refused" 2 \
+    "is not an environment name"
+check_absent "before reading anything" curl_calls "admin/users"
 
 # ===========================================================================
 # The happy path.
@@ -170,7 +225,14 @@ check_file "the account row uses the id Supabase issued" sql \
     "'22222222-2222-2222-2222-222222222222'"
 check_file "and marks the account an editor" sql "'editor'"
 check_file "and addresses it @example.com" sql "'editor1@example.com'"
-check_file "written to QA's own Postgres" docker_calls "compose exec -T postgres"
+# `docker exec` on the container by name, NOT `docker compose exec`: compose
+# renders the whole configuration first, and docker-compose.yml hard-requires
+# APIVO_API_IMAGE and APIVO_WEB_IMAGE (and the local-db overlay
+# APIVO_PG_PASSWORD) with `:?`. This script sets only COMPOSE_FILE, so compose
+# would have died before psql ever ran - on QA, the environment it exists for.
+check_file "written to QA's own Postgres" docker_calls "exec -i apivo-qa-postgres"
+check_absent "not through compose, which would demand image digests this has none of" \
+    docker_calls "compose exec"
 
 # ===========================================================================
 # The service-role key never reaches argv.
@@ -209,6 +271,34 @@ run qa 1
 check "an address differing only in case is the same editor" 0 "password reset"
 check_file "and reuses its id" sql "'44444444-4444-4444-4444-444444444444'"
 
+# An existing user is found however deep in the listing it sits. GoTrue's
+# /admin/users returns one page at a time, and a create that collides reports
+# "email exists" WITHOUT the id it collided with - so a lookup that gives up
+# after page 1 does not degrade, it dies, on an account this script created
+# itself the week before.
+reset
+cat > "$STUB_DIR/users_page_1" <<'EOF'
+{"users":[{"id":"aaaaaaaa-0000-0000-0000-000000000000","email":"someone@example.com"}]}
+EOF
+cat > "$STUB_DIR/users_page_2" <<'EOF'
+{"users":[{"id":"66666666-6666-6666-6666-666666666666","email":"editor1@example.com"}]}
+EOF
+run qa 1
+check "an editor on the second page is found, not created again" 0 "password reset"
+check_file "and the account row carries the id from that page" sql \
+    "'66666666-6666-6666-6666-666666666666'"
+check_absent "no duplicate user was created" curl_calls 'request = "POST"'
+check_count "and the walk stopped at the page that had the answer" curl_calls \
+    "/auth/v1/admin/users?page=" 2
+
+# The end of the list is an empty page, and reaching it must end the walk
+# rather than start a second lap.
+reset
+run qa 1
+check "an address that is nowhere in the listing is created" 0 "created"
+check_count "after one page, because an empty page is the end of the list" curl_calls \
+    "/auth/v1/admin/users?page=" 1
+
 # ===========================================================================
 # Staging has no Postgres of its own.
 # ===========================================================================
@@ -218,8 +308,8 @@ printf '%s' '55555555-5555-5555-5555-555555555555' > "$STUB_DIR/next_id"
 run staging 1
 check "staging seeds too" 0 "created"
 check_file "over a throwaway client, since it has no local Postgres" docker_calls "run --rm -i"
-check_absent "and not through compose exec, which staging has no postgres service for" \
-    docker_calls "compose exec"
+check_absent "and not by execing a Postgres container, which staging has none of" \
+    docker_calls "exec -i apivo-"
 
 # ===========================================================================
 # Refusals that save an operator from a confusing environment.
