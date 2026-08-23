@@ -110,8 +110,15 @@ APIVO_PG_USER=apivo
 APIVO_PG_DB=apivo
 COMPOSE_FILE=/opt/apivo/compose/docker-compose.yml:/opt/apivo/compose/docker-compose.local-db.yml
 EOF
-    printf 'PUBLIC_SUPABASE_URL=https://stub.supabase.co\n' > "$APIVO_ETC/qa/web.env"
-    printf 'DATABASE_URL=postgres://apivo:x@postgres:5432/apivo?sslmode=require\n' > "$APIVO_ETC/qa/api.env"
+    # The shape a WIRED host actually has. provision.sh writes every key
+    # present and empty, and RUNBOOK step 5 appends the real value, so the key
+    # appears twice - empty, then real. Docker resolves an env_file
+    # last-wins; a fixture with one occurrence per key cannot tell whether
+    # this script agrees with Docker or not.
+    printf 'PUBLIC_SUPABASE_URL=\nPUBLIC_SUPABASE_ANON_KEY=\nPUBLIC_SUPABASE_URL=https://stub.supabase.co\n' \
+        > "$APIVO_ETC/qa/web.env"
+    printf 'DATABASE_URL=\nDATABASE_URL=postgres://apivo:x@postgres:5432/apivo?sslmode=require\n' \
+        > "$APIVO_ETC/qa/api.env"
 
     # Staging: no local database, so the SQL has to go over a throwaway client.
     cat > "$APIVO_ETC/staging/stack.env" <<'EOF'
@@ -320,6 +327,16 @@ reset
 run qa 1
 check "an environment with no auth configured is refused" 2 "PUBLIC_SUPABASE_URL is empty"
 check_absent "before creating anything" curl_calls "admin/users"
+
+# Reading the LAST occurrence must not turn into reading any non-empty one:
+# a key appended back to empty is an operator switching auth OFF, and the
+# refusal is the correct answer.
+reset
+printf 'PUBLIC_SUPABASE_URL=https://stub.supabase.co\nPUBLIC_SUPABASE_URL=\n' \
+    > "$APIVO_ETC/qa/web.env"
+run qa 1
+check "a key appended back to empty is empty, as Docker would read it" 2 \
+    "PUBLIC_SUPABASE_URL is empty"
 
 reset
 KEY="" run qa 1
