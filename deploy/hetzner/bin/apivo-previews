@@ -270,6 +270,61 @@ fi
 
 FAILED=0
 
+# Writes the two env files a preview's containers read, for a preview that
+# is being created AND for one that already exists.
+#
+# Both, because the second case is the one that was missed. A preview is
+# created once and converged every sixty seconds for the life of the pull
+# request, so anything written only on creation is written only for previews
+# that did not exist yet when the change shipped. Installing the auth work on
+# a host with pr-146 already running left that preview with no web.env at
+# all, and an api.env from before JWKS_URL existed. Compose refuses to start
+# a service whose env_file is absent, the converge branch discarded that
+# failure, and the preview went on serving what it had - the exact
+# nothing-reported staleness this script was changed to end.
+#
+# Rewritten every tick rather than only when absent, so a rotated QA anon key
+# or a newly wired JWKS endpoint reaches previews already running instead of
+# only the next one somebody opens.
+write_preview_env() {
+    _wp="$1"
+    _wdb="$2"
+
+    mkdir -p "$PREVIEW_STATE/$_wp"
+    # sslmode=require, like QA: the server is a container one hop away with a
+    # self-signed certificate, so encrypt without claiming to verify.
+    umask 077
+    cat > "$PREVIEW_STATE/$_wp/api.env" <<EOF
+DATABASE_URL=postgres://$PG_USER:$APIVO_PREVIEW_PG_PASSWORD@apivo-preview-postgres:5432/$_wdb?sslmode=require
+EOF
+
+    # Auth, borrowed from QA's nonprod project.
+    #
+    # Only public values cross: the anon key ships to every browser that
+    # loads QA, and the JWKS endpoint is published. The service-role key is
+    # not here and never has been.
+    #
+    # Empty when QA has none, which is the documented state that unmounts
+    # the editorial routes and leaves the screens on fixtures - the same
+    # thing every preview did before this, now because the host genuinely
+    # has no auth rather than because previews were excluded from it.
+    if [ "$PREVIEW_AUTH" = yes ]; then
+        cat >> "$PREVIEW_STATE/$_wp/api.env" <<EOF
+JWKS_URL=$QA_JWKS_URL
+EOF
+        cat > "$PREVIEW_STATE/$_wp/web.env" <<EOF
+PUBLIC_SUPABASE_URL=$QA_SUPABASE_URL
+PUBLIC_SUPABASE_ANON_KEY=$QA_ANON_KEY
+EOF
+    else
+        log warn no_auth "QA has no auth configured, so $_wp cannot sign anybody in; its editorial screens stay on fixtures (docs/RUNBOOK.md step 5)" "$_wp"
+        cat > "$PREVIEW_STATE/$_wp/web.env" <<EOF
+PUBLIC_SUPABASE_URL=
+PUBLIC_SUPABASE_ANON_KEY=
+EOF
+    fi
+}
+
 create_preview() {
     _p="$1"
     _db=$(db_name_for "$_p")
@@ -286,39 +341,7 @@ create_preview() {
             }
     fi
 
-    mkdir -p "$PREVIEW_STATE/$_p"
-    # sslmode=require, like QA: the server is a container one hop away with a
-    # self-signed certificate, so encrypt without claiming to verify.
-    umask 077
-    cat > "$PREVIEW_STATE/$_p/api.env" <<EOF
-DATABASE_URL=postgres://$PG_USER:$APIVO_PREVIEW_PG_PASSWORD@apivo-preview-postgres:5432/$_db?sslmode=require
-EOF
-
-    # Auth, borrowed from QA's nonprod project.
-    #
-    # Only public values cross: the anon key ships to every browser that
-    # loads QA, and the JWKS endpoint is published. The service-role key is
-    # not here and never has been.
-    #
-    # Empty when QA has none, which is the documented state that unmounts
-    # the editorial routes and leaves the screens on fixtures — the same
-    # thing every preview did before this, now because the host genuinely
-    # has no auth rather than because previews were excluded from it.
-    if [ "$PREVIEW_AUTH" = yes ]; then
-        cat >> "$PREVIEW_STATE/$_p/api.env" <<EOF
-JWKS_URL=$QA_JWKS_URL
-EOF
-        cat > "$PREVIEW_STATE/$_p/web.env" <<EOF
-PUBLIC_SUPABASE_URL=$QA_SUPABASE_URL
-PUBLIC_SUPABASE_ANON_KEY=$QA_ANON_KEY
-EOF
-    else
-        log warn no_auth "QA has no auth configured, so $_p cannot sign anybody in; its editorial screens stay on fixtures (docs/RUNBOOK.md step 5)" "$_p"
-        cat > "$PREVIEW_STATE/$_p/web.env" <<EOF
-PUBLIC_SUPABASE_URL=
-PUBLIC_SUPABASE_ANON_KEY=
-EOF
-    fi
+    write_preview_env "$_p" "$_db"
 
     APIVO_PREVIEW_API_IMAGE="$APIVO_REGISTRY/api:$_p"
     APIVO_PREVIEW_WEB_IMAGE="$APIVO_REGISTRY/web:$_p"
@@ -363,13 +386,51 @@ copy_qa_editors() {
     _db="$2"
     [ "$PREVIEW_AUTH" = yes ] || return 0
 
-    if $DOCKER exec -e PGPASSWORD="$QA_PG_PASSWORD" apivo-qa-postgres \
-        psql -U "$QA_PG_USER" -d "$QA_PG_DB" -At \
-        -c "copy (select id, email, display_name, role from account where role = 'editor') to stdout" 2>/dev/null |
-        $DOCKER exec -i -e PGPASSWORD="$APIVO_PREVIEW_PG_PASSWORD" apivo-preview-postgres \
-            psql -U "$PG_USER" -d "$_db" -v ON_ERROR_STOP=1 -q \
-            -c "copy account (id, email, display_name, role) from stdin" >/dev/null 2>&1; then
-        log info editors "copied QA's editors into $_p, so its sign-in resolves to somebody this database knows" "$_p"
+    # Once per preview, marked on disk.
+    #
+    # Converge runs every sixty seconds for the life of the pull request, and
+    # a docker exec into two databases a minute to re-copy rows that are
+    # already there is a cost with no reader. It also made a tick with
+    # nothing to do issue SQL, which the suite is right to refuse: a quiet
+    # tick has to stay quiet, or the log stops distinguishing a host doing
+    # work from a host idling.
+    #
+    # The trade is that editors seeded into QA AFTER a preview was copied do
+    # not appear in it. That is the rarer event by a wide margin, and the
+    # remedy is one line the log names: delete this marker and wait a minute.
+    [ -e "$PREVIEW_STATE/$_p/editors-copied" ] && return 0
+
+    # Through a temporary table and ON CONFLICT DO NOTHING rather than
+    # straight into account, because this runs on every converge tick now,
+    # not once at creation. A second plain COPY would collide on the id
+    # primary key - or on the unique index over lower(email) - and fail the
+    # whole statement, so a preview whose editors were already copied would
+    # warn every sixty seconds forever. No conflict target is named: either
+    # collision means this editor is already here, which is success.
+    #
+    # The temporary table is derived from account itself (WITH NO DATA), so
+    # the column types stay whatever the migrations say they are rather than
+    # whatever this script guessed on the day it was written.
+    if _copied=$( {
+        printf 'create temporary table _qa_editors as select id, email, display_name, role from account with no data;\n'
+        printf 'copy _qa_editors (id, email, display_name, role) from stdin;\n'
+        $DOCKER exec -e PGPASSWORD="$QA_PG_PASSWORD" apivo-qa-postgres \
+            psql -U "$QA_PG_USER" -d "$QA_PG_DB" -At \
+            -c "copy (select id, email, display_name, role from account where role = 'editor') to stdout" 2>/dev/null
+        printf '\\.\n'
+        printf 'insert into account (id, email, display_name, role) select id, email, display_name, role from _qa_editors on conflict do nothing;\n'
+    } | $DOCKER exec -i -e PGPASSWORD="$APIVO_PREVIEW_PG_PASSWORD" apivo-preview-postgres \
+        psql -U "$PG_USER" -d "$_db" -v ON_ERROR_STOP=1 -f - 2>/dev/null); then
+        # Reported only when it actually copied somebody. Every tick calls
+        # this, and a line a minute saying nothing changed is a log nobody
+        # reads - which is how the stale preview went unnoticed in the first
+        # place. The count comes from the INSERT tag, so a run that inserts
+        # nothing because every editor is already here stays silent.
+        _n=$(printf '%s\n' "$_copied" | sed -n 's/^INSERT 0 //p' | tail -n 1)
+        : > "$PREVIEW_STATE/$_p/editors-copied"
+        if [ "${_n:-0}" -gt 0 ] 2>/dev/null; then
+            log info editors "copied $_n of QA's editors into $_p, so its sign-in resolves to somebody this database knows; to pick up editors seeded into QA later, rm $PREVIEW_STATE/$_p/editors-copied" "$_p"
+        fi
         return 0
     fi
 
@@ -429,10 +490,24 @@ for want in $KEEP; do
             APIVO_PREVIEW_VERSION="$want" \
             compose_for "$want" pull -q >/dev/null 2>&1 ||
             log warn pull_failed "could not refresh the images for $want; it keeps serving the version it already has" "$want"
-        APIVO_PREVIEW_API_IMAGE="$APIVO_REGISTRY/api:$want" \
+        # The env files are rewritten before `up`, not only at creation:
+        # see write_preview_env. Without this an existing preview keeps
+        # whatever it was created with, which is how the auth work reached
+        # every preview except the one it was written to be tested on.
+        write_preview_env "$want" "$(db_name_for "$want")"
+        if APIVO_PREVIEW_API_IMAGE="$APIVO_REGISTRY/api:$want" \
             APIVO_PREVIEW_WEB_IMAGE="$APIVO_REGISTRY/web:$want" \
             APIVO_PREVIEW_VERSION="$want" \
-            compose_for "$want" up -d --remove-orphans >/dev/null 2>&1 || true
+            compose_for "$want" up -d --remove-orphans >/dev/null 2>&1; then
+            copy_qa_editors "$want" "$(db_name_for "$want")"
+        else
+            # NOT `|| true`. This swallowed a compose that refused to start
+            # at all - an env_file the reconciler had never written - and
+            # turned it into a tick that reported success and changed
+            # nothing, which is indistinguishable from a preview that is
+            # simply up to date. A converge that cannot converge says so.
+            log warn converge_failed "could not bring $want up to date; it keeps serving the version it already has" "$want"
+        fi
         continue
     fi
     create_preview "$want" || true

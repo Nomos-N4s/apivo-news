@@ -73,9 +73,22 @@ compose)
     esac
     ;;
 exec)
-    # psql against a Postgres container. The statement is the last arg, and
-    # the container name tells QA's database from the preview's.
+    # psql against a Postgres container. The container name tells QA's
+    # database from the preview's.
     for a in "$@"; do last="$a"; done
+    if [ "$last" = "-" ]; then
+        # `psql -f -`: the statements arrive on STDIN, not in argv. Recorded
+        # from there, because a stub that only ever looked at the last
+        # argument would record a bare "-" and let any SQL through unseen.
+        last=$(cat)
+        # Answered like psql, because the caller counts the rows it actually
+        # inserted rather than assuming the copy did something.
+        if [ -e "$STUB_DIR/insert_zero" ]; then
+            echo "INSERT 0 0"
+        else
+            echo "INSERT 0 2"
+        fi
+    fi
     echo "$last" >> "$STUB_DIR/sql"
     case " $* " in
     *apivo-qa-postgres*) echo "$last" >> "$STUB_DIR/qa_sql" ;;
@@ -171,6 +184,23 @@ check() {
         return
     fi
     echo "ok: $1"
+}
+
+# The env files a preview's containers read live under the state directory,
+# not under the stub directory check_file looks in.
+check_env() {
+    # check_env <description> <path> <expected-fragment>
+    if [ ! -f "$2" ]; then
+        echo "FAIL: $1 - $2 does not exist"
+        FAILS=1
+        return
+    fi
+    if grep -q -F -e "$3" "$2"; then
+        echo "ok: $1"
+    else
+        echo "FAIL: $1 - $2 never says '$3': $(cat "$2")"
+        FAILS=1
+    fi
 }
 
 check_absent_file() {
@@ -300,7 +330,9 @@ fi
 check_file "QA's editors are read out of QA's own database" qa_sql \
     "from account where role = 'editor'"
 check_file "and loaded into the preview's" sql \
-    "copy account (id, email, display_name, role) from stdin"
+    "copy _qa_editors (id, email, display_name, role) from stdin"
+check_file "through a conflict-tolerant insert, because every tick runs this" sql \
+    "on conflict do nothing"
 
 # A host whose QA has no auth yet gets the documented empty state, and is
 # told why rather than left to wonder.
@@ -468,6 +500,74 @@ if [ "$dropped" = "pr-1 pr-2 " ]; then
     echo "ok: pull requests are ordered numerically, so pr-11 outranks pr-7"
 else
     echo "FAIL: expected exactly pr-1 and pr-2 to be dropped, got: ${dropped:-<none>} (from: $capped)"
+    FAILS=1
+fi
+
+# ===========================================================================
+# A preview that already exists gets the current configuration.
+#
+# The auth work wrote api.env and web.env in create_preview only. A preview
+# is created ONCE and converged every sixty seconds for the rest of the pull
+# request's life, so "only on creation" means "only for previews that did not
+# exist yet when the change shipped" - which is every preview except the ones
+# still being opened, and in particular not the one the change was written to
+# be tested on.
+#
+# On the host, pr-146 had been running since before the change. Installing it
+# left that preview with no web.env at all and an api.env from before
+# JWKS_URL existed; compose refuses to start a service whose env_file is
+# missing; and the converge branch ended in `|| true`, so the failure was
+# discarded. Every tick reported success and changed nothing. The operator
+# installed the fix, waited, and saw the same page.
+#
+# So this simulates exactly that: create a preview, delete its env files the
+# way a host that predates them would have none, and tick again.
+# ===========================================================================
+
+reset
+run
+check "the preview is created" 0 '"event":"created"'
+
+# A host from before the auth change: no web.env, and an api.env with no
+# JWKS_URL in it.
+rm -f "$APIVO_STATE/previews/pr-1/web.env"
+cat > "$APIVO_STATE/previews/pr-1/api.env" <<'EOF'
+DATABASE_URL=postgres://apivo:stub-password@apivo-preview-postgres:5432/apivo_pr_1?sslmode=require
+EOF
+: > "$STUB_DIR/ups"
+
+run
+if [ -f "$APIVO_STATE/previews/pr-1/web.env" ]; then
+    echo "ok: converging an existing preview writes the web env it was missing"
+else
+    echo "FAIL: an existing preview was converged without ever being given a web.env: $OUT"
+    FAILS=1
+fi
+check_env "with QA's project, so its sign-in reaches a real one" \
+    "$APIVO_STATE/previews/pr-1/web.env" "https://qaproject.supabase.co"
+check_env "and its anon key" \
+    "$APIVO_STATE/previews/pr-1/web.env" "sb_publishable_stub"
+check_env "and the api is given the JWKS endpoint it had no way to learn" \
+    "$APIVO_STATE/previews/pr-1/api.env" "jwks.json"
+check_file "and only then is the stack converged" ups "up pr-1"
+
+# ===========================================================================
+# A converge that cannot converge says so.
+#
+# `|| true` on the up branch turned a compose that refused to start into a
+# tick indistinguishable from one that had nothing to do. That is the same
+# silence this file was written to end for stale images, one branch over.
+# ===========================================================================
+
+reset
+run
+: > "$STUB_DIR/ups"
+: > "$STUB_DIR/up_fails"
+run
+if printf '%s' "$OUT" | grep -q '"event":"converge_failed"'; then
+    echo "ok: a converge that fails is reported rather than discarded"
+else
+    echo "FAIL: a failing converge was silent: $OUT"
     FAILS=1
 fi
 
