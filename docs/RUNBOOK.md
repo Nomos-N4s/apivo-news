@@ -418,6 +418,65 @@ of an outside contribution pushes the branch to this repository.
 
 ---
 
+## Updating a box that already exists
+
+The reconciler updates **images** on its own, every sixty seconds. It does
+not update anything else. The host scripts, the compose files, the Caddy
+configuration and the systemd units all come from the checkout made in step
+4, and they change only when you go and get them.
+
+```sh
+cd ~/apivo-news && git pull
+```
+
+That alone changes nothing on the host — the files under `/opt/apivo`,
+`/etc/apivo` and `/etc/systemd/system` are copies. To install what you just
+pulled, either re-run `provision.sh` with the same environment block as step
+4, or, when one script is all that changed, install that one:
+
+```sh
+install -m 0755 deploy/hetzner/bin/apivo-seed-editors /opt/apivo/bin/apivo-seed-editors
+ln -sf /opt/apivo/bin/apivo-seed-editors /usr/local/bin/apivo-seed-editors
+```
+
+Prefer the single install when you know what changed. `provision.sh` is
+re-runnable and never overwrites an existing `stack.env`, but it wants every
+variable step 4 gave it — the certificate paths, the GHCR credentials, the
+firewall flag — and running it with some of them missing produces a partial
+host rather than an error.
+
+`apivo-seed-editors` also needs `jq`, which a box provisioned before it
+existed will not have:
+
+```sh
+apt-get install -y jq
+```
+
+### Seeding editors into QA
+
+```sh
+read -rs SUPABASE_SERVICE_ROLE_KEY && export SUPABASE_SERVICE_ROLE_KEY
+apivo-seed-editors qa 3
+unset SUPABASE_SERVICE_ROLE_KEY
+```
+
+`read -rs` does not echo, so the key never appears on a command line, in
+`ps`, or in the shell history. **Do not** put it in the command itself, and
+do not write it into any file on the host: the service-role key bypasses
+row-level security entirely and is the one credential in this system that
+can read and write every table as the owner. The anon key in `web.env` is a
+different thing and is safe there.
+
+The command prints three `editor<n>@example.com` addresses and their
+passwords **once**. Re-running it issues new passwords for the same
+accounts rather than recovering the old ones.
+
+It refuses `prod`, and refuses any environment whose `web.env` has no
+`PUBLIC_SUPABASE_URL` — an editor with nothing to sign in to is not worth
+creating.
+
+---
+
 ## Later: production
 
 Not in this pass, and nothing above touches it. When there is something to
