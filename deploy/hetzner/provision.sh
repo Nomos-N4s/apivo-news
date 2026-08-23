@@ -128,10 +128,16 @@ mkdir -p "$PREFIX/bin" "$PREFIX/compose" "$PREFIX/caddy" "$STATE"
 install -m 0755 "$HERE/bin/apivo-reconcile" "$PREFIX/bin/apivo-reconcile"
 install -m 0755 "$HERE/bin/apivo-previews" "$PREFIX/bin/apivo-previews"
 install -m 0755 "$HERE/bin/apivoctl" "$PREFIX/bin/apivoctl"
+install -m 0755 "$HERE/bin/apivo-seed-editors" "$PREFIX/bin/apivo-seed-editors"
+# Both of the programs a person runs by hand go on PATH. apivo-reconcile and
+# apivo-previews do not: they are started by systemd with an absolute path,
+# and a host where somebody runs the reconciler by hand is a host where the
+# timer and the hand are fighting over the same environment.
 ln -sf "$PREFIX/bin/apivoctl" /usr/local/bin/apivoctl
+ln -sf "$PREFIX/bin/apivo-seed-editors" /usr/local/bin/apivo-seed-editors
 cp "$HERE/compose/"*.yml "$PREFIX/compose/"
 cp "$HERE/caddy/"* "$PREFIX/caddy/"
-note "installed apivo-reconcile, apivoctl (on PATH), compose files, Caddy config"
+note "installed apivo-reconcile, apivoctl, apivo-seed-editors (on PATH), compose files, Caddy config"
 
 # ---------------------------------------------------------------------------
 # 2. Per-environment configuration
@@ -145,13 +151,18 @@ say "Configuring environments"
 for env_name in $ENVS; do
     mkdir -p "$ETC/$env_name"
 
-    # QA and Staging both run a Postgres container; only production reaches
-    # Supabase. That is an economic constraint rather than a design
-    # preference: the Supabase free tier is one project, and the one project
-    # has to be production. The alternative — pointing Staging at the
-    # production project — would have release candidates running migrations
-    # against production data, which is worse than the parity gap this
-    # accepts. See docs/ENVIRONMENTS.md.
+    # Both QA and Staging are given a Postgres container HERE, and staging is
+    # then pointed at the nonprod Supabase project by hand (docs/RUNBOOK.md
+    # step 5). That is deliberate: a container is the shape that works on a
+    # box whose operator has no Supabase project yet, so provisioning never
+    # depends on an account existing, and the switch is two edits that survive
+    # a re-run because this script never rewrites an existing stack.env.
+    #
+    # This comment used to justify the container by saying the Supabase free
+    # tier was a single project which had to be production. That was wrong -
+    # it allows two per organisation - and the model built on it has changed.
+    # See docs/ENVIRONMENTS.md for what staging gains by being on a real
+    # Supabase project, and why QA keeps its container regardless.
     case "$env_name" in
     qa | staging)
         compose_files="$PREFIX/compose/docker-compose.yml:$PREFIX/compose/docker-compose.local-db.yml"

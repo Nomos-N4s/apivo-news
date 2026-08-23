@@ -3,16 +3,21 @@
 # Used by QA and Staging, by listing this file in COMPOSE_FILE (provision.sh
 # writes it). Production reaches Supabase and never loads this file.
 #
-# Staging is on this list for an economic reason, not a technical one: the
-# Supabase free tier is a single project, and the single project has to be
-# production. Pointing Staging at the production project instead would put
-# release-candidate migrations on production data, so a container is the
-# lesser cost. What it costs is real and worth naming — Staging no longer
-# rehearses the database production will actually use, so connection
-# limits, extension availability and Supabase-side policy are NOT exercised
-# before a final release. When a paid tier arrives, Staging moves back by
-# dropping this file from its COMPOSE_FILE and setting DATABASE_URL; no code
-# changes.
+# Staging is given this file by provision.sh and then TAKES IT BACK OUT: the
+# documented model points staging at the nonprod Supabase project, which it
+# reaches by dropping this file from COMPOSE_FILE and setting DATABASE_URL
+# (docs/RUNBOOK.md step 5). No code changes either way, which is the whole
+# reason the difference lives in a file list.
+#
+# Provisioning still starts staging here because a container is the shape
+# that works on a box whose operator has no Supabase project yet.
+#
+# This comment used to say staging stayed on a container permanently because
+# the Supabase free tier was a single project which had to be production.
+# That was wrong — it allows two per organisation — and the parity gap it
+# accepted was therefore never necessary. Staging on a real Supabase project
+# exercises connection limits, pooler behaviour and extension availability
+# that a container cannot reproduce.
 #
 # ---------------------------------------------------------------------------
 # Why this container speaks TLS
