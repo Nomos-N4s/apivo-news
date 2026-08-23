@@ -1,7 +1,8 @@
 #!/bin/sh
 # Seed an environment with editors that can actually sign in.
 #
-#   SUPABASE_SERVICE_ROLE_KEY=... apivo-seed-editors <env> [count]
+#   read -rs SUPABASE_SERVICE_ROLE_KEY && export SUPABASE_SERVICE_ROLE_KEY
+#   apivo-seed-editors <env> [count]
 #
 # An editor is TWO things, and seeding either alone gets you nothing:
 #
@@ -46,7 +47,7 @@ DEFAULT_COUNT=3
 
 usage() {
     cat >&2 <<'EOF'
-usage: SUPABASE_SERVICE_ROLE_KEY=<key> apivo-seed-editors <env> [count]
+usage: apivo-seed-editors <env> [count]
 
   env     qa | staging  (never prod)
   count   how many editors, default 3
@@ -57,8 +58,16 @@ existing user keeps its id and gets a fresh password, so the credentials
 printed are always the ones that work.
 
 The Supabase URL is read from the environment's own web.env. The
-service-role key is not stored anywhere and is never written to a log; find
-it in the Supabase dashboard under Settings -> API.
+service-role key comes from the environment, and this is how to put it
+there without leaving it in your shell history:
+
+  read -rs SUPABASE_SERVICE_ROLE_KEY && export SUPABASE_SERVICE_ROLE_KEY
+  apivo-seed-editors qa 3
+  unset SUPABASE_SERVICE_ROLE_KEY
+
+read -rs does not echo, so the key never reaches a command line. Find it in
+the Supabase dashboard under Settings -> API; it is not the anon key, and it
+is not stored anywhere by this script.
 EOF
     exit 2
 }
@@ -129,7 +138,7 @@ SUPABASE_URL=$(field "$WEB_ENV" PUBLIC_SUPABASE_URL)
 SUPABASE_URL=${SUPABASE_URL%/}
 
 [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ] ||
-    die "SUPABASE_SERVICE_ROLE_KEY is not set. It is the only credential this needs, it is not the anon key, and it must not be written into any env file on this host - pass it for one run: SUPABASE_SERVICE_ROLE_KEY=... apivo-seed-editors $ENV_NAME" 2
+    die "SUPABASE_SERVICE_ROLE_KEY is not set. It is the only credential this needs, it is not the anon key, and it must not be written into any env file on this host. Put it in the environment without leaving it in your shell history: read -rs SUPABASE_SERVICE_ROLE_KEY && export SUPABASE_SERVICE_ROLE_KEY" 2
 
 COMPOSE_FILE=$(field "$STACK" COMPOSE_FILE)
 DATABASE_URL=$(field "$API_ENV" DATABASE_URL)
