@@ -229,50 +229,37 @@ export function pageSteps(
 }
 
 /**
- * The URL of a step's page, or null when the path carries a value this
- * cannot invent.
+ * The first step of this tour that can run on the page currently open, or
+ * null when none can.
  *
- * Used by the LAUNCHER, which is a different question from resolving a
- * cursor. Resolving asks "does this step belong to the page I am on"; the
- * launcher asks "where would I have to be for this tour to start". A step
- * on `/{lang}/{place}` answers the first and cannot answer the second —
- * there is no way to choose a place on somebody's behalf — so it gets null
- * and the launcher stays hidden rather than becoming a button that does
- * nothing.
- */
-export function stepHref(step: TourStep, lang: string): string | null {
-  const out: string[] = [];
-  for (const segment of step.path.split('/')) {
-    if (segment === '{lang}') {
-      out.push(lang);
-      continue;
-    }
-    if (segment.startsWith('{') && segment.endsWith('}')) {
-      return null;
-    }
-    out.push(segment);
-  }
-  return out.join('/');
-}
-
-/**
- * Whether the launcher can do anything at all from this page: either the
- * tour has a runnable step here, or its first step is somewhere reachable.
+ * This is the LAUNCHER's question, and it is not the cursor's. The cursor
+ * asks "where was I"; the launcher asks "what is there to show here".
  *
- * The launcher is hidden when neither holds. A control that responds to a
- * click by doing nothing is worse than an absent one — it reads as broken
- * software, and it was: `run(0)` from any page other than a tour's first
- * one produced an empty run and returned in silence.
+ * It used to call run(0), which meant the tour's own first step — so from
+ * the queue screen, whose steps start at index 2, the click produced an
+ * empty run and did nothing. The first attempt at a fix had the launcher
+ * NAVIGATE to the tour's beginning, which traded a dead button for a
+ * confusing one: a control on this page that takes you off it, with no
+ * warning, is worse than one that is simply absent.
+ *
+ * So the launcher shows only where it has something to say, and says it
+ * here. A page a tour genuinely does not cover — a front page with no
+ * articles, so neither of its anchors exists — gets no button at all.
  */
-export function canLaunch(
+export function firstRunnableStep(
   tour: Tour,
   currentPath: string,
   lang: string,
   hasAnchor: (anchor: string) => boolean,
-): boolean {
-  if (pageSteps(tour, 0, currentPath, lang, hasAnchor).length > 0) {
-    return true;
+): number | null {
+  for (let index = 0; index < tour.steps.length; index += 1) {
+    const step = tour.steps[index];
+    if (step === undefined || !matchesPath(step, currentPath, lang, tour)) {
+      continue;
+    }
+    if (step.anchor === null || hasAnchor(step.anchor)) {
+      return index;
+    }
   }
-  const first = tour.steps[0];
-  return first !== undefined && stepHref(first, lang) !== null;
+  return null;
 }
