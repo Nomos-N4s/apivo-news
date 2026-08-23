@@ -1,0 +1,270 @@
+#!/bin/sh
+# Seed an environment with editors that can actually sign in.
+#
+#   SUPABASE_SERVICE_ROLE_KEY=... apivo-seed-editors <env> [count]
+#
+# An editor is TWO things, and seeding either alone gets you nothing:
+#
+#   1. a user in the environment's Supabase Auth project, which is what
+#      issues the token; and
+#   2. a row in that environment's `account` table whose id EQUALS the auth
+#      user's id, carrying role='editor'.
+#
+# The api verifies the bearer token against JWKS_URL and then looks the
+# subject up in `account` (internal/identity/role.go). A token with no
+# matching row is ErrUnknownAccount - authenticated and unauthorised - so a
+# Supabase user without an account row can sign in and do nothing, and an
+# account row without a Supabase user cannot sign in at all.
+#
+# Addresses are @example.com, which RFC 2606 reserves precisely so that test
+# fixtures cannot reach a real person. Nothing here ever mails anybody:
+# users are created with email_confirm already true.
+#
+# ---------------------------------------------------------------------------
+# What this does NOT do
+#
+# It does not touch production, and refuses if asked. Fabricated editors in
+# the environment that serves real readers is not a mistake worth leaving
+# available - an approver is a named human (I-1), and the approval trail is
+# the one thing this product may not invent.
+#
+# It does not store the service-role key, log it, or pass it in argv where
+# `ps` would show it: every credential reaches curl through a config read on
+# stdin. The key is yours for the length of one run.
+#
+# Overridable for the test suite, exactly as apivo-previews does:
+#   APIVO_DOCKER, APIVO_ETC, APIVO_CURL, APIVO_PSQL_IMAGE
+# ---------------------------------------------------------------------------
+set -eu
+
+DOCKER="${APIVO_DOCKER:-docker}"
+CURL="${APIVO_CURL:-curl}"
+ETC="${APIVO_ETC:-/etc/apivo}"
+PSQL_IMAGE="${APIVO_PSQL_IMAGE:-postgres:17-alpine}"
+
+DEFAULT_COUNT=3
+
+usage() {
+    cat >&2 <<'EOF'
+usage: SUPABASE_SERVICE_ROLE_KEY=<key> apivo-seed-editors <env> [count]
+
+  env     qa | staging  (never prod)
+  count   how many editors, default 3
+
+Creates editor<n>@example.com in the environment's Supabase Auth project,
+and the matching account row with role='editor'. Re-running is safe: an
+existing user keeps its id and gets a fresh password, so the credentials
+printed are always the ones that work.
+
+The Supabase URL is read from the environment's own web.env. The
+service-role key is not stored anywhere and is never written to a log; find
+it in the Supabase dashboard under Settings -> API.
+EOF
+    exit 2
+}
+
+die() {
+    printf 'apivo-seed-editors: %s\n' "$1" >&2
+    exit "${2:-1}"
+}
+
+note() { printf '  %s\n' "$1"; }
+
+[ "$#" -ge 1 ] || usage
+ENV_NAME="$1"
+COUNT="${2:-$DEFAULT_COUNT}"
+
+case "$ENV_NAME" in
+prod)
+    die "refusing to seed 'prod'. Editors there are real people, and article.approved_by is a named human by design (I-1). If you need an editor in production, create the Supabase user and the account row deliberately, by hand." 2
+    ;;
+'' | -*) usage ;;
+esac
+
+case "$COUNT" in
+'' | *[!0-9]*) die "count must be a whole number, not '$COUNT'" 2 ;;
+esac
+[ "$COUNT" -ge 1 ] || die "count must be at least 1" 2
+
+STACK="$ETC/$ENV_NAME/stack.env"
+WEB_ENV="$ETC/$ENV_NAME/web.env"
+API_ENV="$ETC/$ENV_NAME/api.env"
+
+[ -r "$STACK" ] || die "no readable $STACK; '$ENV_NAME' is not an environment on this host" 2
+
+# jq, not a hand-rolled parser.
+#
+# This script reads the id out of Supabase's response and has to find a user
+# in a JSON array. A sed expression over multi-line JSON is exactly the bug
+# that made registry_auth unable to read a pretty-printed config.json - the
+# credential was present, valid and invisible, and previews were broken on
+# every host for it. Once is enough.
+command -v jq >/dev/null 2>&1 ||
+    die "jq is required to read Supabase's responses safely (apt-get install -y jq)" 2
+
+# ---------------------------------------------------------------------------
+# Where this environment's auth lives, and where its database is.
+# ---------------------------------------------------------------------------
+field() {
+    # field <file> <key> - the value of KEY=..., or empty.
+    sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1
+}
+
+SUPABASE_URL=$(field "$WEB_ENV" PUBLIC_SUPABASE_URL)
+[ -n "$SUPABASE_URL" ] ||
+    die "PUBLIC_SUPABASE_URL is empty in $WEB_ENV, so '$ENV_NAME' has no auth project to create users in. Wire auth first (docs/RUNBOOK.md step 5); until then every editorial route answers 404 and an editor would have nothing to sign in to." 2
+SUPABASE_URL=${SUPABASE_URL%/}
+
+[ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ] ||
+    die "SUPABASE_SERVICE_ROLE_KEY is not set. It is the only credential this needs, it is not the anon key, and it must not be written into any env file on this host - pass it for one run: SUPABASE_SERVICE_ROLE_KEY=... apivo-seed-editors $ENV_NAME" 2
+
+COMPOSE_FILE=$(field "$STACK" COMPOSE_FILE)
+DATABASE_URL=$(field "$API_ENV" DATABASE_URL)
+
+# ---------------------------------------------------------------------------
+# psql, against whichever database this environment actually has.
+#
+# The same split apivoctl makes, and for the same reason: whether an
+# environment has a Postgres of its own is decided by the compose file list,
+# not by what variables happen to be set.
+# ---------------------------------------------------------------------------
+run_sql() {
+    # run_sql <<'SQL' ... SQL   - statements on stdin, errors are fatal.
+    case "$COMPOSE_FILE" in
+    *docker-compose.local-db.yml*)
+        # Defaults applied here, not with `|| echo`: `field` is a sed that
+        # exits 0 whether or not it matched, so the fallback would never run.
+        _pg_user=$(field "$STACK" APIVO_PG_USER)
+        _pg_db=$(field "$STACK" APIVO_PG_DB)
+        _pg_user=${_pg_user:-apivo}
+        _pg_db=${_pg_db:-apivo}
+        COMPOSE_FILE="$COMPOSE_FILE" $DOCKER compose exec -T postgres \
+            psql -v ON_ERROR_STOP=1 -q \
+            -U "$_pg_user" -d "$_pg_db"
+        ;;
+    *)
+        [ -n "$DATABASE_URL" ] ||
+            die "DATABASE_URL is empty in $API_ENV and '$ENV_NAME' has no local Postgres, so there is nowhere to write the account rows" 2
+        # A throwaway client on the default bridge: this environment's
+        # database is Supabase, which is reachable over the internet and NOT
+        # over the internal data network.
+        $DOCKER run --rm -i "$PSQL_IMAGE" \
+            psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL"
+        ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Supabase Auth, admin API.
+#
+# Every call takes its credentials from a curl config on STDIN rather than
+# from argv, so the service-role key never appears in `ps` output or in a
+# shell history.
+# ---------------------------------------------------------------------------
+sb() {
+    # sb <method> <path> [json-body]
+    _method="$1"
+    _path="$2"
+    _body="${3:-}"
+    if [ -n "$_body" ]; then
+        printf 'header = "apikey: %s"\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\nrequest = "%s"\ndata = "%s"\nurl = "%s%s"\n' \
+            "$SUPABASE_SERVICE_ROLE_KEY" "$SUPABASE_SERVICE_ROLE_KEY" \
+            "$_method" "$(printf '%s' "$_body" | sed 's/\\/\\\\/g; s/"/\\"/g')" \
+            "$SUPABASE_URL" "$_path" |
+            $CURL -sS --max-time 30 -K -
+    else
+        printf 'header = "apikey: %s"\nheader = "Authorization: Bearer %s"\nrequest = "%s"\nurl = "%s%s"\n' \
+            "$SUPABASE_SERVICE_ROLE_KEY" "$SUPABASE_SERVICE_ROLE_KEY" \
+            "$_method" "$SUPABASE_URL" "$_path" |
+            $CURL -sS --max-time 30 -K -
+    fi
+}
+
+# The auth user id for an address, or empty. Listed rather than guessed: the
+# create call reports a duplicate without telling you which id it collided
+# with, and a re-run has to reach the SAME id or the account row it wrote
+# last time is orphaned.
+find_user_id() {
+    sb GET "/auth/v1/admin/users?per_page=1000" |
+        jq -r --arg e "$1" '(.users // [])[] | select((.email // "" | ascii_downcase) == ($e | ascii_downcase)) | .id' |
+        head -n 1
+}
+
+new_password() {
+    # Printable, no shell metacharacters, no ambiguity between l/1/O/0 when
+    # somebody reads one out loud to a co-founder.
+    LC_ALL=C tr -dc 'A-HJ-NP-Za-hj-np-z2-9' < /dev/urandom | head -c 20
+    echo
+}
+
+sql_lit() {
+    # A single-quoted SQL literal, with embedded quotes doubled.
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
+}
+
+# ---------------------------------------------------------------------------
+# Seed.
+# ---------------------------------------------------------------------------
+printf '\n=== Seeding %s editors into %s ===\n' "$COUNT" "$ENV_NAME"
+note "auth project: $SUPABASE_URL"
+
+CREDENTIALS=""
+i=1
+while [ "$i" -le "$COUNT" ]; do
+    email="editor$i@example.com"
+    display="$ENV_NAME editor $i"
+    password=$(new_password)
+
+    uid=$(find_user_id "$email")
+    if [ -n "$uid" ]; then
+        # Reset rather than skip. A run that prints credentials which do not
+        # work is worse than no run at all, and these are throwaway accounts
+        # whose only purpose is to be signed in to.
+        resp=$(sb PUT "/auth/v1/admin/users/$uid" \
+            "{\"password\":\"$password\",\"email_confirm\":true}")
+        [ "$(printf '%s' "$resp" | jq -r '.id // empty')" = "$uid" ] ||
+            die "could not reset the password for $email (id $uid): $(printf '%s' "$resp" | jq -c '.' 2>/dev/null || printf '%s' "$resp")"
+        note "$email: existing user, password reset"
+    else
+        resp=$(sb POST "/auth/v1/admin/users" \
+            "{\"email\":\"$email\",\"password\":\"$password\",\"email_confirm\":true}")
+        uid=$(printf '%s' "$resp" | jq -r '.id // empty')
+        [ -n "$uid" ] ||
+            die "could not create $email: $(printf '%s' "$resp" | jq -c '.' 2>/dev/null || printf '%s' "$resp")"
+        note "$email: created"
+    fi
+
+    # ON CONFLICT (id), because the id is the thing that has to agree with
+    # Supabase. A collision on the email index instead means an account row
+    # already exists under a DIFFERENT id - the auth user was deleted and
+    # recreated at some point - and that is reported rather than papered
+    # over: silently repointing it would strand whatever article.approved_by
+    # already references.
+    run_sql <<SQL
+insert into account (id, email, display_name, role)
+values ($(sql_lit "$uid"), $(sql_lit "$email"), $(sql_lit "$display"), 'editor')
+on conflict (id) do update
+    set email = excluded.email,
+        display_name = excluded.display_name,
+        role = 'editor';
+SQL
+
+    CREDENTIALS="$CREDENTIALS$email	$password
+"
+    i=$((i + 1))
+done
+
+# ---------------------------------------------------------------------------
+# The credentials, once.
+# ---------------------------------------------------------------------------
+cat <<EOF
+
+=== Editors for $ENV_NAME ===
+
+$(printf '%s' "$CREDENTIALS" | while IFS='	' read -r e p; do
+    [ -n "$e" ] && printf '  %-28s %s\n' "$e" "$p"
+done)
+
+Printed once, and stored nowhere. Copy them now; re-running this command
+issues new passwords for the same accounts rather than recovering these.
+EOF

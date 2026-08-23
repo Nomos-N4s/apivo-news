@@ -128,10 +128,11 @@ mkdir -p "$PREFIX/bin" "$PREFIX/compose" "$PREFIX/caddy" "$STATE"
 install -m 0755 "$HERE/bin/apivo-reconcile" "$PREFIX/bin/apivo-reconcile"
 install -m 0755 "$HERE/bin/apivo-previews" "$PREFIX/bin/apivo-previews"
 install -m 0755 "$HERE/bin/apivoctl" "$PREFIX/bin/apivoctl"
+install -m 0755 "$HERE/bin/apivo-seed-editors" "$PREFIX/bin/apivo-seed-editors"
 ln -sf "$PREFIX/bin/apivoctl" /usr/local/bin/apivoctl
 cp "$HERE/compose/"*.yml "$PREFIX/compose/"
 cp "$HERE/caddy/"* "$PREFIX/caddy/"
-note "installed apivo-reconcile, apivoctl (on PATH), compose files, Caddy config"
+note "installed apivo-reconcile, apivoctl, apivo-seed-editors (on PATH), compose files, Caddy config"
 
 # ---------------------------------------------------------------------------
 # 2. Per-environment configuration

@@ -205,6 +205,12 @@ jobs:
         # a lie (an unreachable registry, an expired credential) are the ones
         # this suite exists for.
         run: sh deploy/hetzner/bin/apivo-previews_test.sh
+      - name: Prove the editor seeder's decisions
+        # It writes to a database and creates users in an auth project. The
+        # assertions that matter are that the account row carries the id
+        # Supabase issued, that a re-run reaches the same id rather than
+        # orphaning the row, and that production is refused.
+        run: sh deploy/hetzner/bin/apivo-seed-editors_test.sh
       - name: Lint every shell script that runs on a deployment host
         # A syntax error in any of these is only discoverable on the box
         # otherwise, and two of them run as root there.
@@ -215,6 +221,8 @@ jobs:
             deploy/hetzner/bin/apivo-previews \
             deploy/hetzner/bin/apivo-previews_test.sh \
             deploy/hetzner/bin/apivoctl \
+            deploy/hetzner/bin/apivo-seed-editors \
+            deploy/hetzner/bin/apivo-seed-editors_test.sh \
             deploy/hetzner/provision.sh \
             deploy/hetzner/validate.sh \
             scripts/env_status.sh
