@@ -146,13 +146,18 @@ say "Configuring environments"
 for env_name in $ENVS; do
     mkdir -p "$ETC/$env_name"
 
-    # QA and Staging both run a Postgres container; only production reaches
-    # Supabase. That is an economic constraint rather than a design
-    # preference: the Supabase free tier is one project, and the one project
-    # has to be production. The alternative — pointing Staging at the
-    # production project — would have release candidates running migrations
-    # against production data, which is worse than the parity gap this
-    # accepts. See docs/ENVIRONMENTS.md.
+    # Both QA and Staging are given a Postgres container HERE, and staging is
+    # then pointed at the nonprod Supabase project by hand (docs/RUNBOOK.md
+    # step 5). That is deliberate: a container is the shape that works on a
+    # box whose operator has no Supabase project yet, so provisioning never
+    # depends on an account existing, and the switch is two edits that survive
+    # a re-run because this script never rewrites an existing stack.env.
+    #
+    # This comment used to justify the container by saying the Supabase free
+    # tier was a single project which had to be production. That was wrong -
+    # it allows two per organisation - and the model built on it has changed.
+    # See docs/ENVIRONMENTS.md for what staging gains by being on a real
+    # Supabase project, and why QA keeps its container regardless.
     case "$env_name" in
     qa | staging)
         compose_files="$PREFIX/compose/docker-compose.yml:$PREFIX/compose/docker-compose.local-db.yml"
