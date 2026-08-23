@@ -106,12 +106,18 @@ check_env() {
     fi
 }
 
-# QA and Staging layer the local Postgres on; production does not, and that
-# single difference is the whole difference between them. Staging is here
-# because the Supabase free tier is one project and it has to be production
-# — see docs/ENVIRONMENTS.md for what that costs.
+# QA layers the local Postgres on; production does not.
+#
+# Staging is checked in BOTH shapes, because it has both. provision.sh still
+# composes it with the local database — the safe default for a box whose
+# operator has no Supabase project yet — while the documented model drops that
+# file and points staging at the nonprod project (docs/ENVIRONMENTS.md).
+# Whichever shape a given host is running, its configuration has to parse, and
+# checking only one leaves the other to be discovered by a host that will not
+# start.
 check_env qa docker-compose.yml docker-compose.local-db.yml
 check_env staging docker-compose.yml docker-compose.local-db.yml
+check_env staging docker-compose.yml
 check_env prod docker-compose.yml
 
 # ---------------------------------------------------------------------------
