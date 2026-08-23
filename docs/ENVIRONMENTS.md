@@ -10,6 +10,7 @@ asking anyone.
 | **Gate** | none — automatic | none — automatic | one human approval |
 | **Host** | pre-production VPS | pre-production VPS | its own VPS |
 | **Database** | Postgres container on the host | nonprod Supabase EU project | its own Supabase EU project |
+| **Auth** | nonprod Supabase project | nonprod Supabase project | its own Supabase project |
 | **Data** | throwaway, resettable | production-shaped | real |
 | **`APP_ENV`** | `prod` | `prod` | `prod` |
 | **Channel** | `:qa` | `:staging` | `:prod` |
@@ -114,6 +115,59 @@ container one hop away on a network marked `internal: true`, and a
 self-signed certificate cannot prove an identity. Encrypting without claiming
 to verify is honest. Production reaches Supabase across the public internet
 and uses `verify-full`.
+
+## Auth: nonprod and production, never one issuer
+
+Every environment verifies bearer tokens against a **JWKS endpoint**, named
+per environment by `JWKS_URL`. QA and Staging point at the *nonprod* Supabase
+project; production points at its own. Previews point at nothing at all.
+
+**The boundary that matters is nonprod ↔ production, and it is a real one.** A
+token is valid wherever its issuer is trusted, so a single shared project would
+make a token minted for a QA test editor cryptographically valid against
+production's API. What stands in its way today is only that production's
+`account` table has no matching row — `ErrUnknownAccount` from
+[role.go](../internal/identity/role.go). That is a genuine backstop, but it is
+one row away from being the entire authorisation boundary, and seeding rows is
+a routine thing to do in a test environment. Two issuers, and the question
+never arises.
+
+**QA and Staging sharing the nonprod issuer is deliberate, and a much weaker
+concern.** Both are throwaway, and their `account` tables live in different
+databases, so an editor seeded into QA has no account in staging and gets
+`ErrUnknownAccount` there. Splitting them further would buy an isolation
+nobody is relying on, at the cost of a third project.
+
+`JWKS_URL` empty is a supported, documented state rather than a broken one:
+the composition root logs one line and leaves **every** `/api/v1/editorial/`
+route unmounted, so an environment without auth configured exposes nothing
+that would have needed it. Reader endpoints are unaffected.
+`/api/v1/editorial/queue` answering **404 rather than 401** is the signal that
+a host has no `JWKS_URL`.
+
+`JWT_AUDIENCE` additionally requires the `aud` claim to carry a given value
+(Supabase issues `authenticated`). It is optional, and
+[config.go](../internal/platform/config/config.go) treats setting it *without*
+`JWKS_URL` as a configuration error rather than as a no-op. Add it after
+sign-in is known to work, so a rejected token has one possible cause instead
+of two.
+
+### The nonprod project pauses
+
+Free Supabase projects pause after about a week of inactivity, and a paused
+project answers neither its database nor its JWKS endpoint. The failure is
+asymmetric, and worth knowing before it happens rather than during:
+
+- **A running api keeps working.** The JWKS is cached in-process.
+- **The next rollout fails to boot.** `NewVerifier` fetches the JWKS at
+  startup and *fails construction* when it cannot — deliberately, so a
+  container never starts half-authenticated. The reconciler then rolls the
+  environment back to the digest that was serving.
+- **Staging additionally loses its database**, which is in the same project.
+  QA does not, which is one more reason its container stays.
+
+A deploy failing with a JWKS error on an environment that was fine yesterday
+is this, until proven otherwise.
 
 ## How a deploy actually happens
 
