@@ -9,7 +9,7 @@ asking anyone.
 | **Deploys on** | every push to `main` | a `-rc` tag | a final semver tag |
 | **Gate** | none — automatic | none — automatic | one human approval |
 | **Host** | pre-production VPS | pre-production VPS | its own VPS |
-| **Database** | Postgres container on the host | Postgres container on the host | its own Supabase EU project |
+| **Database** | Postgres container on the host | nonprod Supabase EU project | its own Supabase EU project |
 | **Data** | throwaway, resettable | production-shaped | real |
 | **`APP_ENV`** | `prod` | `prod` | `prod` |
 | **Channel** | `:qa` | `:staging` | `:prod` |
@@ -50,19 +50,42 @@ shape. Nothing is manual here that is not manual in production. Its job is to
 make the first production release boring — the first time that pipeline runs
 to a *new host*, not the first time it runs at all.
 
-**One part of that rehearsal is missing, and it is worth being blunt about
-which.** Staging runs a Postgres container, not its own Supabase project,
-because the Supabase free tier is a single project and that project has to be
-production. The alternative — pointing Staging at the production project —
-would have release-candidate migrations running against production data, and
-no parity argument is worth that. So what Staging still rehearses is the
-pipeline, the images, the proxy, the approval gate and the migrations; what it
-does **not** rehearse is Supabase itself: connection limits, pooler
-behaviour, extension availability, and anything enforced Supabase-side. A
-release can therefore still fail on first contact with production's database
-in a way staging could not have shown. When a paid tier arrives this closes by
-dropping `docker-compose.local-db.yml` from staging's `COMPOSE_FILE` and
-setting its `DATABASE_URL` — no code change.
+**Staging runs on a real Supabase project, and that is the point.** It uses
+the *nonprod* project — not production's — so release-candidate migrations
+never touch production data, while everything Supabase enforces is in the
+path: connection limits, pooler behaviour, extension availability, and the
+managed-service failure modes a container cannot reproduce. A release that
+would fail on first contact with production's database now has somewhere to
+fail first.
+
+This was previously written here as an accepted gap, on the belief that the
+free tier allowed a single project which had to be production. **That was
+wrong: the free tier allows two active projects per organisation.** One is
+production's; the other is nonprod, and staging uses it. The gap was never
+necessary — only unexamined.
+
+**QA deliberately keeps its container.** That is not a lesser version of
+staging, it is a different job: reset without a conversation, no egress on
+every query, no 500 MB ceiling, and no dependency on a free project that
+[pauses after about a week idle](#the-nonprod-project-pauses).
+
+Sharing one database between QA and staging is the tempting shortcut and the
+one thing to avoid. **The api migrates on boot**; QA deploys on every merge to
+`main` and staging deploys on `-rc` tags. A shared schema would therefore have
+QA migrating the database staging is running against, leaving staging's older
+binary talking to a schema from the future — the exact failure this split
+exists to prevent.
+
+Mechanically staging is now production's shape: `docker-compose.local-db.yml`
+is absent from its `COMPOSE_FILE` and its `DATABASE_URL` points at Supabase.
+Those are the same two facts that will be true of production, and neither is
+a code change.
+
+**Use the session-mode connection string, not transaction mode.**
+`golang-migrate` takes a Postgres advisory lock around the migration run, and
+transaction pooling does not hold session state, so that lock is unreliable
+there — migrations can fail or strand it. The pooler on `5432` is session mode
+and is correct; `6543` is not.
 
 If those two descriptions ever collapse into one, collapse the environments
 too and save the money.
