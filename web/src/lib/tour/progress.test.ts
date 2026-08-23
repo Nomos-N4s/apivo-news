@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   advance,
+  canLaunch,
   matchesPath,
   normalisePath,
   pageSteps,
   readCursor,
   resolve,
   serialise,
+  stepHref,
   storageKey,
 } from './progress';
 import { tourById, type Tour } from './tours';
@@ -248,5 +250,84 @@ describe('matchesPath', () => {
       steps: [step('/{lang}/{place}')],
     };
     expect(resolve(readerTour, 0, '/el/athina', 'el', everything)).toEqual({ kind: 'show', step: 0 });
+  });
+});
+
+// The launcher asks a different question from `resolve`. Resolve asks "does
+// this step belong to the page I am on"; the launcher asks "where would I
+// have to be for this tour to start at all".
+//
+// It used to call run(0) and nothing else, so from any page other than a
+// tour's first one the click produced an empty run and did nothing —
+// silently, on most pages of both tours.
+describe('stepHref', () => {
+  const step = (path: string) => ({ path, anchor: null, key: 'signInIntro' as const });
+
+  it('fills in the language', () => {
+    expect(stepHref(step('/{lang}/setup'), 'el')).toBe('/el/setup');
+    expect(stepHref(step('/{lang}/editor/signin'), 'de')).toBe('/de/editor/signin');
+  });
+
+  // There is no way to choose a place, or an article, on somebody's behalf.
+  it('is null for a path carrying a value it cannot invent', () => {
+    expect(stepHref(step('/{lang}/{place}'), 'el')).toBeNull();
+    expect(stepHref(step('/{lang}/{place}/a/{id}'), 'el')).toBeNull();
+  });
+});
+
+describe('canLaunch', () => {
+  const tour: Tour = {
+    id: 'editor',
+    steps: [
+      { path: '/{lang}/setup', anchor: 'setup-language', key: 'setupLanguage' },
+      { path: '/{lang}/{place}', anchor: 'front-lead', key: 'frontLead' },
+    ],
+  };
+
+  it('is true on the tour’s own first page', () => {
+    expect(canLaunch(tour, '/el/setup', 'el', everything)).toBe(true);
+  });
+
+  // The case reported from the preview: a front page with no articles, so
+  // neither of its anchors exists. The launcher can still take somebody to
+  // the beginning, which is what it now does.
+  it('is true elsewhere, because the first step is reachable', () => {
+    expect(canLaunch(tour, '/el/munich+greece', 'el', nothing)).toBe(true);
+  });
+
+  // A tour whose first step is on a value-carrying route cannot be started
+  // from somewhere else, and the launcher hides rather than going dead.
+  const unreachable: Tour = {
+    id: 'reader',
+    steps: [{ path: '/{lang}/{place}', anchor: 'front-lead', key: 'frontLead' }],
+  };
+
+  it('is false when nothing runs here and the beginning cannot be addressed', () => {
+    expect(canLaunch(unreachable, '/el/athina', 'el', nothing)).toBe(false);
+  });
+
+  it('is true on a value-carrying route when a step there can run', () => {
+    expect(canLaunch(unreachable, '/el/athina', 'el', everything)).toBe(true);
+  });
+
+  // A value segment must not swallow a word the SAME tour uses literally at
+  // that depth: `/{lang}/{place}` and `/{lang}/setup` are one shape, and
+  // Astro resolves /el/setup to setup.astro, never [place]/index.astro. A
+  // tour that disagreed with the router about which page it was on skipped
+  // its front-page steps there in silence.
+  //
+  // The matcher can only know this from the tour's own paths, so the tour
+  // above — which never declares `setup` — genuinely can run on /el/setup.
+  // The real reader tour does declare it, which is where this bites.
+  it('does not match a literal route the tour declares elsewhere', () => {
+    const both: Tour = {
+      id: 'reader',
+      steps: [
+        { path: '/{lang}/setup', anchor: 'setup-language', key: 'setupLanguage' },
+        { path: '/{lang}/{place}', anchor: 'front-lead', key: 'frontLead' },
+      ],
+    };
+    expect(resolve(both, 1, '/el/setup', 'el', everything)).toEqual({ kind: 'wait' });
+    expect(resolve(both, 1, '/el/athina', 'el', everything)).toEqual({ kind: 'show', step: 1 });
   });
 });

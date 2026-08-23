@@ -121,7 +121,7 @@ const EL: TourStrings = {
   done: 'Τέλος',
   start: 'Ξενάγηση',
   restart: 'Ξανά από την αρχή',
-  startLabel: 'Ξεκινήστε την ξενάγηση αυτής της οθόνης',
+  startLabel: 'Ξεκινήστε την ξενάγηση',
 };
 
 const DE: TourStrings = {
@@ -212,7 +212,7 @@ const DE: TourStrings = {
   done: 'Fertig',
   start: 'Führung',
   restart: 'Von vorn',
-  startLabel: 'Führung durch diese Ansicht starten',
+  startLabel: 'Führung starten',
 };
 
 const STRINGS: Readonly<Record<ReadingLanguage, TourStrings>> = { el: EL, de: DE };

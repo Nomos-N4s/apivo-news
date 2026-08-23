@@ -39,7 +39,12 @@ import { type Tour, type TourStep } from './tours';
  * is an axis (FR-009) and a tour running in Greek must not resume on the
  * German copy of the same screen.
  */
-export function matchesPath(step: TourStep, currentPath: string, lang: string): boolean {
+export function matchesPath(
+  step: TourStep,
+  currentPath: string,
+  lang: string,
+  tour?: Tour,
+): boolean {
   const want = step.path.split('/');
   const got = currentPath.split('/');
   if (want.length !== got.length) {
@@ -54,10 +59,30 @@ export function matchesPath(step: TourStep, currentPath: string, lang: string): 
       return actual === lang;
     }
     if (segment.startsWith('{') && segment.endsWith('}')) {
-      // A value segment: anything non-empty is this page.
-      return actual !== '';
+      // A value segment matches anything non-empty EXCEPT a word this tour
+      // uses literally at the same depth.
+      //
+      // `/{lang}/{place}` and `/{lang}/setup` are the same shape, so without
+      // this the front page's steps also matched the setup screen — where
+      // their anchors do not exist, so they were skipped, so it degraded
+      // quietly rather than visibly. Astro does not resolve it that way:
+      // a static segment beats a dynamic one, and `/el/setup` is setup.astro
+      // and never [place]/index.astro. A tour that disagrees with the router
+      // about which page it is on is wrong even while the symptom is mild.
+      return actual !== '' && !literalAt(tour, i, actual);
     }
     return segment === actual;
+  });
+}
+
+/** Whether any step of `tour` uses `word` as a literal segment at `depth`. */
+function literalAt(tour: Tour | undefined, depth: number, word: string): boolean {
+  if (tour === undefined) {
+    return false;
+  }
+  return tour.steps.some((step) => {
+    const segment = step.path.split('/')[depth];
+    return segment !== undefined && segment === word;
   });
 }
 
@@ -121,7 +146,7 @@ export function resolve(
     if (step === undefined) {
       break;
     }
-    if (!matchesPath(step, currentPath, lang)) {
+    if (!matchesPath(step, currentPath, lang, tour)) {
       // The next thing to say belongs on a page the visitor is not on.
       // Parking is right: they may be on their way there, and dragging
       // them somewhere they did not ask to go is what makes product tours
@@ -192,7 +217,7 @@ export function pageSteps(
   const out: PlacedStep[] = [];
   for (let index = from < 0 ? 0 : from; index < tour.steps.length; index += 1) {
     const step = tour.steps[index];
-    if (step === undefined || !matchesPath(step, currentPath, lang)) {
+    if (step === undefined || !matchesPath(step, currentPath, lang, tour)) {
       break;
     }
     if (step.anchor !== null && !hasAnchor(step.anchor)) {
@@ -201,4 +226,53 @@ export function pageSteps(
     out.push({ index, step });
   }
   return out;
+}
+
+/**
+ * The URL of a step's page, or null when the path carries a value this
+ * cannot invent.
+ *
+ * Used by the LAUNCHER, which is a different question from resolving a
+ * cursor. Resolving asks "does this step belong to the page I am on"; the
+ * launcher asks "where would I have to be for this tour to start". A step
+ * on `/{lang}/{place}` answers the first and cannot answer the second —
+ * there is no way to choose a place on somebody's behalf — so it gets null
+ * and the launcher stays hidden rather than becoming a button that does
+ * nothing.
+ */
+export function stepHref(step: TourStep, lang: string): string | null {
+  const out: string[] = [];
+  for (const segment of step.path.split('/')) {
+    if (segment === '{lang}') {
+      out.push(lang);
+      continue;
+    }
+    if (segment.startsWith('{') && segment.endsWith('}')) {
+      return null;
+    }
+    out.push(segment);
+  }
+  return out.join('/');
+}
+
+/**
+ * Whether the launcher can do anything at all from this page: either the
+ * tour has a runnable step here, or its first step is somewhere reachable.
+ *
+ * The launcher is hidden when neither holds. A control that responds to a
+ * click by doing nothing is worse than an absent one — it reads as broken
+ * software, and it was: `run(0)` from any page other than a tour's first
+ * one produced an empty run and returned in silence.
+ */
+export function canLaunch(
+  tour: Tour,
+  currentPath: string,
+  lang: string,
+  hasAnchor: (anchor: string) => boolean,
+): boolean {
+  if (pageSteps(tour, 0, currentPath, lang, hasAnchor).length > 0) {
+    return true;
+  }
+  const first = tour.steps[0];
+  return first !== undefined && stepHref(first, lang) !== null;
 }

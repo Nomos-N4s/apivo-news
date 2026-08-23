@@ -90,8 +90,10 @@ const serverCursor = progress[tour] ?? '';
     normalisePath,
     pageSteps,
     readCursor,
+    canLaunch,
     resolve,
     serialise,
+    stepHref,
     storageKey,
   } from '../lib/tour/progress';
   import { tourStrings } from '../lib/tour/strings';
@@ -221,19 +223,46 @@ const serverCursor = progress[tour] ?? '';
     };
 
     function syncLauncher(): void {
-      if (launcher === null) {
+      if (launcher === null || tour === null) {
         return;
       }
-      const finished = read() === DONE;
-      launcher.textContent = finished
-        ? (launcher.dataset['tourRestart'] ?? launcher.textContent)
-        : launcher.textContent;
+      // Shown only when a click would DO something. A control that answers
+      // a click with nothing reads as broken software, and for most of this
+      // tour's pages it was.
+      if (!canLaunch(tour, path, lang, hasAnchor)) {
+        launcher.hidden = true;
+        return;
+      }
+      if (read() === DONE) {
+        launcher.textContent = launcher.dataset['tourRestart'] ?? launcher.textContent;
+      }
       launcher.hidden = false;
     }
 
+    // A click is somebody ASKING for the tour, so it may navigate.
+    //
+    // It used to call run(0) and nothing else. Step 0 of either tour lives
+    // on that tour's first page, so from anywhere else pageSteps returned an
+    // empty run and the button did nothing at all — silently, on most pages
+    // of both tours. Mounting the component on the sign-in screen fixed
+    // AUTO-START and left this untouched.
+    //
+    // Navigating here does not contradict `resolve` refusing to: that rule
+    // is about a cursor advancing on its own while somebody reads. Being
+    // taken to the beginning of a tour you just clicked for is the thing you
+    // asked for.
     launcher.addEventListener('click', () => {
       write(serialise(0));
-      run(0);
+      if (pageSteps(tour, 0, path, lang, hasAnchor).length > 0) {
+        run(0);
+        return;
+      }
+      const first = tour.steps[0];
+      const href = first === undefined ? null : stepHref(first, lang);
+      if (href !== null) {
+        // The cursor is already written, so the tour starts on arrival.
+        window.location.assign(href);
+      }
     });
 
     syncLauncher();
