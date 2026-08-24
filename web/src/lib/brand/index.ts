@@ -261,17 +261,35 @@ function checkInterface(path: string, name: string, value: unknown, problems: st
     return;
   }
   for (const [field, expected] of Object.entries(fields)) {
-    if (!(field in value)) {
+    if (!hasOwn(value, field)) {
       problems.push(`${join(path, field)} is missing`);
       continue;
     }
     checkValue(join(path, field), expected, value[field], problems);
   }
   for (const key of Object.keys(value)) {
-    if (!(key in fields)) {
+    if (!hasOwn(fields, key)) {
       problems.push(`${join(path, key)} is not part of the brand schema`);
     }
   }
+}
+
+/**
+ * Whether an object carries a key ITSELF, rather than inheriting it.
+ *
+ * `in` would be shorter and wrong in both directions here. On the value
+ * side it reads an inherited property as a field that is present, so a
+ * brand built in code — which this module supports, not only parsed
+ * JSON — could satisfy a required field it does not have. On the schema
+ * side every object inherits `toString`, `constructor` and the rest, so
+ * a brand carrying one of those as a key would not be reported as
+ * carrying something the schema has never heard of.
+ *
+ * Called through `Object.prototype` rather than as a method, because a
+ * value made with `Object.create(null)` has no method to call.
+ */
+function hasOwn(target: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(target, key);
 }
 
 /** How a wrong value is named in a problem report. */

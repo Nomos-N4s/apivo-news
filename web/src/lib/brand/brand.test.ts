@@ -237,6 +237,44 @@ describe('assertBrand', () => {
     expect(message.indexOf('name is')).toBeLessThan(message.indexOf('payout is'));
   });
 
+  // `in` walks the prototype chain. These two cases are what that costs,
+  // and they are reachable because this module validates values built in
+  // code, not only objects that came out of JSON.parse.
+  it('does not read an inherited property as a field that is present', () => {
+    const complete = fixtureObject();
+    const payout = complete['payout'];
+    delete complete['payout'];
+
+    const inherited = Object.create({ payout }) as Record<string, unknown>;
+    for (const [key, value] of Object.entries(complete)) {
+      inherited[key] = value;
+    }
+
+    expect(() => {
+      assertBrand(inherited);
+    }).toThrow(/payout is missing/);
+  });
+
+  it('flags a key that only looks like a schema member because everything inherits it', () => {
+    for (const key of ['toString', 'constructor', 'valueOf']) {
+      const brand = fixtureObject();
+      brand[key] = 'not part of the schema';
+      expect(() => {
+        assertBrand(brand);
+      }).toThrow(new RegExp(`${key} is not part of the brand schema`));
+    }
+  });
+
+  it('accepts a brand with no prototype at all', () => {
+    const bare = Object.create(null) as Record<string, unknown>;
+    for (const [key, value] of Object.entries(fixtureObject())) {
+      bare[key] = value;
+    }
+    expect(() => {
+      assertBrand(bare);
+    }).not.toThrow();
+  });
+
   // JSON carries no NaN, so this can only arrive from a value built in
   // code — which the loader is also used for.
   it('refuses a number that is not finite', () => {
