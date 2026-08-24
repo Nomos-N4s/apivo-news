@@ -32,7 +32,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/bits"
 	"strconv"
 )
 
@@ -334,9 +333,9 @@ type BasisPoints int32
 // by, and the largest rate this package accepts.
 const BasisPointsScale BasisPoints = 10000
 
-// basisPointsScaleMagnitude is BasisPointsScale as an unsigned divisor, folded
-// at compile time so no runtime conversion of a signed constant is needed.
-const basisPointsScaleMagnitude = uint64(BasisPointsScale)
+// basisPointsScaleMinor is BasisPointsScale as a divisor of minor units,
+// converted once at compile time.
+const basisPointsScaleMinor = int64(BasisPointsScale)
 
 // Valid reports whether the rate is between zero and [BasisPointsScale]
 // inclusive. Rates above the whole are rejected rather than allowed to produce
@@ -413,45 +412,16 @@ func (r Rounding) String() string {
 	}
 }
 
-// magnitude returns the absolute value of v as an unsigned count.
+// roundsAway reports whether a share of units minor units, carrying a further
+// fraction of fraction parts in [BasisPointsScale], moves one step further
+// from zero under mode.
 //
-// Negating v directly would overflow for the smallest representable int64,
-// whose magnitude has no positive counterpart in the signed range, so it is
-// built one step short of the boundary and completed unsigned.
-func magnitude(v int64) uint64 {
-	if v < 0 {
-		return uint64(-(v + 1)) + 1
-	}
-	return uint64(v)
-}
-
-// signedMagnitude reassembles a signed count of minor units from a magnitude
-// and a sign.
-//
-// The caller guarantees the magnitude is representable: [Amount.Split] only
-// ever passes back a magnitude no larger than the one it took apart, and the
-// one magnitude with no negative-side counterpart problem - two to the
-// sixty-third - is exactly the smallest representable int64.
-func signedMagnitude(mag uint64, negative bool) int64 {
-	if !negative {
-		return int64(mag)
-	}
-	if mag == 1<<63 {
-		return math.MinInt64
-	}
-	return -int64(mag)
-}
-
-// roundsAway reports whether a magnitude of units minor units, carrying a
-// further fraction of fraction parts in [BasisPointsScale], grows by one under
-// mode.
-//
-// The question is asked about the magnitude rather than the signed value, so
-// each mode reduces to "does this get further from zero", and the sign is
-// reapplied afterwards. That is also why the sign is a parameter: floor and
-// ceil are the two modes whose answer depends on which side of zero the amount
-// sits.
-func roundsAway(units, fraction uint64, negative bool, mode Rounding) bool {
+// fraction is a magnitude - always at or above zero - and negative says which
+// side of zero the amount being split sits on. Framing every mode as "does
+// this move away from zero" is what lets one answer serve both signs; floor
+// and ceil are the two whose answer depends on the sign, which is why it is a
+// parameter rather than an assumption.
+func roundsAway(units, fraction int64, negative bool, mode Rounding) bool {
 	if fraction == 0 {
 		return false
 	}
@@ -463,17 +433,18 @@ func roundsAway(units, fraction uint64, negative bool, mode Rounding) bool {
 	case RoundCeil:
 		return !negative
 	case RoundHalfAwayFromZero:
-		return 2*fraction >= basisPointsScaleMagnitude
+		return 2*fraction >= basisPointsScaleMinor
 	case RoundHalfEven:
 		switch {
-		case 2*fraction > basisPointsScaleMagnitude:
+		case 2*fraction > basisPointsScaleMinor:
 			return true
-		case 2*fraction < basisPointsScaleMagnitude:
+		case 2*fraction < basisPointsScaleMinor:
 			return false
 		default:
-			// Exactly half: grow only when the units are odd, which is what
-			// leaves an even number behind.
-			return units%2 == 1
+			// Exactly half: move only when the units are odd, which is what
+			// leaves an even number behind. Parity reads the same on either
+			// side of zero, so no sign handling is needed here.
+			return units%2 != 0
 		}
 	}
 	// RoundTowardZero drops the fraction, and so does any mode Split has
@@ -503,11 +474,12 @@ func roundsAway(units, fraction uint64, negative bool, mode Rounding) bool {
 // direction as configuration, so the constant lives with the caller and this
 // package supplies the modes it can be spelled in.
 //
-// The arithmetic is exact at every step. The product is formed in 128 bits and
-// divided back down, so a rate applied to an amount near the int64 limit is
-// neither approximated nor overflowed, and no intermediate value is ever a
-// float. Rates outside zero to [BasisPointsScale] are rejected, matching the
-// schema's check on rate_bps.
+// The arithmetic is exact at every step and never leaves int64. The amount is
+// taken apart into whole ten-thousandths and what is left over before the rate
+// is applied to either, which keeps every intermediate value inside the range
+// even for an amount at the int64 limit - no wider type, no approximation and
+// no float anywhere. Rates outside zero to [BasisPointsScale] are rejected,
+// matching the schema's check on rate_bps.
 func (a Amount) Split(rate BasisPoints, mode Rounding) (share, remainder Amount, err error) {
 	if err = a.Validate(); err != nil {
 		return Amount{}, Amount{}, err
@@ -519,18 +491,38 @@ func (a Amount) Split(rate BasisPoints, mode Rounding) (share, remainder Amount,
 		return Amount{}, Amount{}, fmt.Errorf("%w: %s", ErrInvalidRounding, mode)
 	}
 
+	// a.Minor x rate / scale, computed as (whole x rate) + (part x rate /
+	// scale) so that nothing overflows. Multiplying first would need 128 bits;
+	// splitting the amount first bounds every term. whole x rate is at most
+	// the amount itself, because rate is at most scale; part x rate is at most
+	// 9999 x 10000; and the total is the exact quotient, which cannot exceed
+	// the amount it came from. Go truncates division toward zero and leaves a
+	// remainder carrying the dividend's sign, so both halves stay on the same
+	// side of zero as the amount and the identity holds for debits as it does
+	// for credits.
+	multiplier := int64(rate)
+	whole := a.Minor / basisPointsScaleMinor
+	part := (a.Minor % basisPointsScaleMinor) * multiplier
+	units := whole*multiplier + part/basisPointsScaleMinor
+
+	// The leftover ten-thousandths, as a magnitude: it is below scale, so
+	// negating it is always in range.
+	fraction := part % basisPointsScaleMinor
 	negative := a.Minor < 0
-	// rate is non-negative by the check above, so widening it keeps its value.
-	hi, lo := bits.Mul64(magnitude(a.Minor), uint64(rate))
-	// bits.Div64 panics if the quotient will not fit in 64 bits. It cannot
-	// here: rate is at most BasisPointsScale, so hi is at most
-	// (2^63 * 10^4) >> 64, which is 5000, and 5000 is below the divisor.
-	units, fraction := bits.Div64(hi, lo, basisPointsScaleMagnitude)
+	if fraction < 0 {
+		fraction = -fraction
+	}
 	if roundsAway(units, fraction, negative, mode) {
-		units++
+		// A fraction was dropped, so the units are strictly short of the
+		// amount and this step cannot pass it.
+		if negative {
+			units--
+		} else {
+			units++
+		}
 	}
 
-	share = Amount{Minor: signedMagnitude(units, negative), Currency: a.Currency}
+	share = Amount{Minor: units, Currency: a.Currency}
 	// The share never exceeds a in magnitude and never differs from it in
 	// sign, because the rate is at most the whole, so this cannot overflow.
 	if remainder, err = a.Sub(share); err != nil {
