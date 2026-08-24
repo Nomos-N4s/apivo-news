@@ -223,30 +223,6 @@ check_cashback() {
     printf '%s' "$rendered" | grep -q -F "apivo-$env_name-blnk-migrate" ||
         fail "$env_name cashback: there is no blnk-migrate container; the ledger would be migrating with whatever role it serves with"
 
-    # The migration container reads the OWNER's file and the runtime
-    # containers read blnk_app's. Same variable inside, different file: that
-    # difference IS the split.
-    printf '%s' "$rendered" | grep -q -F "/$env_name/blnk-migrate.env" ||
-        fail "$env_name cashback: blnk-migrate does not read blnk-migrate.env, so it is not running as the database owner"
-    printf '%s' "$rendered" | grep -q -F "/$env_name/blnk.env" ||
-        fail "$env_name cashback: nothing reads blnk.env, so the runtime role is not configured"
-    echo "ok: $env_name gives the migration and the runtime their own env files"
-
-    # The owner's credential must be ABSENT from the long-lived processes, not
-    # merely unused by them. If blnk or blnk-worker ever gained the migration
-    # file, a compromised ledger could read the owner DSN out of its own
-    # environment and the split would buy nothing.
-    _runtime_files=$(printf '%s' "$rendered" | awk '
-        /^  (blnk|blnk-worker):$/ { svc = 1; next }
-        /^  [a-z]/ { svc = 0 }
-        svc && /blnk-migrate\.env/ { print "LEAK" }
-    ')
-    if [ -n "$_runtime_files" ]; then
-        fail "$env_name cashback: the ledger server or worker reads blnk-migrate.env; the owner's credential must not be present in a long-lived container, only absent from it"
-    else
-        echo "ok: $env_name keeps the owner credential out of the running ledger"
-    fi
-
     # `blnk start` does not migrate, so the ordering has to be real rather
     # than hopeful - a server answering before its tables exist fails per
     # request instead of refusing to start.
@@ -277,6 +253,56 @@ check_cashback() {
 # prod covered one shape each and left staging's pair unvalidated entirely —
 # which is precisely the environment a release candidate meets first, and the
 # only one that exists in two shapes for a breakage to hide in.
+# ---------------------------------------------------------------------------
+# Which env_file each ledger service reads - asserted against the SOURCE file
+# rather than the rendered configuration.
+#
+# Not a stylistic choice, and the first version of this check got it wrong.
+# `docker compose config` NORMALISES env_file away: it resolves each file and
+# folds the result into `environment`, so no path survives into the render.
+# Two assertions written against the render failed outright - and the third,
+# the one guarding against the owner's credential reaching a long-lived
+# container, PASSED for the worst possible reason. It searched a document that
+# can never contain the string it looked for, so it could not have failed.
+#
+# Which file a service reads is a property of the compose file, so the compose
+# file is what to read. Once rather than per environment: the service
+# definitions do not vary by environment, only the interpolated paths do, and
+# the render above covers those.
+# ---------------------------------------------------------------------------
+env_files_of() {
+    # env_files_of <service> - the .env entries that service declares.
+    awk -v svc="$1" '
+        $0 == "  " svc ":" { inside = 1; next }
+        # Any two-space-indented line ends the range, COMMENTS INCLUDED. With
+        # /^  [a-z]/ the range ran on through the comment block introducing
+        # the next service, so prose there counted as configuration.
+        /^  [^ ]/ { inside = 0 }
+        # And only real list entries, never prose: a sentence naming a file is
+        # documentation, not an env_file.
+        inside && /^      - .*\.env/ { print }
+    ' "$COMPOSE_DIR/docker-compose.cashback.yml"
+}
+
+if env_files_of blnk-migrate | grep -q 'blnk-migrate\.env'; then
+    echo "ok: blnk-migrate reads the owner's env file"
+else
+    fail "blnk-migrate does not declare blnk-migrate.env, so the migration would run as whatever role the server uses - and one role doing both jobs needs CREATE on the database permanently"
+fi
+
+for svc in blnk blnk-worker; do
+    if env_files_of "$svc" | grep -q 'blnk\.env'; then
+        echo "ok: $svc reads the runtime env file"
+    else
+        fail "$svc does not declare blnk.env, so the runtime role is not configured"
+    fi
+    if env_files_of "$svc" | grep -q 'blnk-migrate\.env'; then
+        fail "$svc reads blnk-migrate.env; the owner's credential must not be present in a long-lived container at all, only absent from it"
+    else
+        echo "ok: $svc never sees the owner's env file"
+    fi
+done
+
 check_cashback qa docker-compose.yml docker-compose.local-db.yml docker-compose.cashback.yml
 check_cashback staging docker-compose.yml docker-compose.local-db.yml docker-compose.cashback.yml
 check_cashback staging docker-compose.yml docker-compose.cashback.yml
