@@ -108,6 +108,11 @@ write "web/src/styles/cashback.css" '.wallet { color: #abc; }'
 commit_all
 expect_caught "a short hex colour inside a stylesheet is caught" "colour"
 
+fixture
+write "web/src/components/Badge.astro" '<style>.badge { color: #ec3013ff; }</style>'
+commit_all
+expect_caught "an eight-digit #rrggbbaa colour is caught" "colour"
+
 # ---------------------------------------------------------------------------
 # The look-alikes. Each of these was a real false positive at some point,
 # and each would have cost the lint its credibility.
@@ -127,6 +132,12 @@ fixture
 write "web/src/lib/cashback/api.ts" 'const issue = "#134";'
 commit_all
 expect_clean "three-digit hex outside a stylesheet is not a colour"
+
+fixture
+write "internal/cashback/network.go" 'const partner = "apivo.community"'
+write "web/src/lib/cashback/hex.ts" 'const sha = "#abcdef0";'
+commit_all
+expect_clean "a longer word that merely starts like a brand literal is not one"
 
 # ---------------------------------------------------------------------------
 # What is deliberately out of scope

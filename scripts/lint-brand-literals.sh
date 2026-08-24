@@ -60,12 +60,20 @@ hits="$work/hits"
 # The brand's proper nouns, domains, addresses and colours. Every pattern is
 # matched case-insensitively: an upper-case hex colour is still a colour, and
 # a product name is still the product name however it is capitalised.
+#
+# Word boundaries are written out as POSIX ERE - "followed by something that
+# is not more of the same, or by the end of the line" - rather than with \b.
+# \b is a GNU extension that git's regex engine may or may not provide
+# depending on how it was built, and a lint whose verdict depends on the
+# contributor's machine is a lint nobody can act on.
 NAME_PATTERN='epiloyes'
-HOST_PATTERN='[a-z0-9._%+-]*@?(apivo|epiloyes)\.(com|net|org|news|app|io|eu|de|gr|example)\b'
-COLOUR_PATTERN='#[0-9a-f]{6}\b'
+HOST_PATTERN='[a-z0-9._%+-]*@?(apivo|epiloyes)\.(com|net|org|news|app|io|eu|de|gr|example)([^a-z0-9]|$)'
+# Six hex digits, or eight for the #rrggbbaa form. Seven is neither, and
+# stays unmatched.
+COLOUR_PATTERN='#[0-9a-f]{6}([0-9a-f]{2})?([^0-9a-f]|$)'
 # Three-digit hex is only read as a colour inside a stylesheet. Everywhere
 # else "#134" is an issue reference, and this repository is full of them.
-SHORT_COLOUR_PATTERN='#[0-9a-f]{3}\b'
+SHORT_COLOUR_PATTERN='#[0-9a-f]{3}([^0-9a-f]|$)'
 
 # scan RULE PATTERN [PATHSPEC...] — record every hit, tagged with the rule
 # that found it.
