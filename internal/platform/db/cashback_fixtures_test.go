@@ -32,7 +32,18 @@ type cashbackFixtures struct {
 
 	// Set by seedCashbackEntry only.
 	entryID string
+
+	// Set by seedCashbackWithdrawal only.
+	approverID    string
+	destinationID string
+	requestID     string
 }
+
+// cashbackApproverRole is the role a payout approver holds in the fixtures.
+// Migration 0014 requires only a named human (C-4, a NOT NULL column);
+// 0019 tightens that to the operator role, checked by payout_insert_guard
+// with a locking read. This constant is the single place that moves.
+const cashbackApproverRole = "reader"
 
 func seedCashback(t *testing.T, tx pgx.Tx) cashbackFixtures {
 	t.Helper()
@@ -198,6 +209,46 @@ func seedCashbackEntry(t *testing.T, tx pgx.Tx) cashbackFixtures {
 		 values ($1, $2, $3)`, transitionID, f.entryID, "transfer-"+f.suffix)
 	if err != nil {
 		t.Fatalf("seed ledger_link: %v", err)
+	}
+
+	return f
+}
+
+// seedCashbackWithdrawal extends the earnings chain with an approver, a
+// verified destination and a withdrawal request whose reservation transfer
+// already exists (D9). What it deliberately does NOT create is the payout:
+// every payout test writes that itself, because the write is the invariant.
+func seedCashbackWithdrawal(t *testing.T, tx pgx.Tx) cashbackFixtures {
+	t.Helper()
+	ctx := context.Background()
+	f := seedCashbackEntry(t, tx)
+
+	err := tx.QueryRow(ctx,
+		`insert into account (email, display_name, role) values ($1, $2, $3) returning id`,
+		"approver-"+f.suffix+"@example.test", "Test Approver "+f.suffix, cashbackApproverRole,
+	).Scan(&f.approverID)
+	if err != nil {
+		t.Fatalf("seed approver: %v", err)
+	}
+
+	err = tx.QueryRow(ctx,
+		`insert into cashback.payout_destination
+		     (account_id, kind, details_ref, verified_at, verified_method)
+		 values ($1, 'manual', $2, now(), 'micro_deposit') returning id`,
+		f.accountID, "vault/destination/"+f.suffix,
+	).Scan(&f.destinationID)
+	if err != nil {
+		t.Fatalf("seed payout_destination: %v", err)
+	}
+
+	err = tx.QueryRow(ctx,
+		`insert into cashback.withdrawal_request
+		     (account_id, destination_id, amount_minor, currency, reserved_transfer_ref)
+		 values ($1, $2, 250, 'EUR', $3) returning id`,
+		f.accountID, f.destinationID, "reserve-"+f.suffix,
+	).Scan(&f.requestID)
+	if err != nil {
+		t.Fatalf("seed withdrawal_request: %v", err)
 	}
 
 	return f
