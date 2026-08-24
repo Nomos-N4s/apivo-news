@@ -29,6 +29,9 @@ type cashbackFixtures struct {
 	clickRef   string
 	externalID string
 	networkTxn string
+
+	// Set by seedCashbackEntry only.
+	entryID string
 }
 
 func seedCashback(t *testing.T, tx pgx.Tx) cashbackFixtures {
@@ -157,6 +160,44 @@ func seedCashbackEvidence(t *testing.T, tx pgx.Tx) cashbackFixtures {
 	).Scan(&f.networkTxn)
 	if err != nil {
 		t.Fatalf("seed network_transaction: %v", err)
+	}
+
+	return f
+}
+
+// seedCashbackEntry extends the evidence chain with a confirmed credit and
+// the transition and ledger posting that made it real. It is the shape
+// every wallet and payout test starts from.
+func seedCashbackEntry(t *testing.T, tx pgx.Tx) cashbackFixtures {
+	t.Helper()
+	ctx := context.Background()
+	f := seedCashbackEvidence(t, tx)
+
+	err := tx.QueryRow(ctx,
+		`insert into cashback.entry
+		     (brand_id, account_id, network_transaction_id, click_id, state, amount_minor, currency)
+		 values ('fixture', $1, $2, $3, 'confirmed', 250, 'EUR') returning id`,
+		f.accountID, f.networkTxn, f.clickID,
+	).Scan(&f.entryID)
+	if err != nil {
+		t.Fatalf("seed entry: %v", err)
+	}
+
+	var transitionID string
+	err = tx.QueryRow(ctx,
+		`insert into cashback.entry_transition (entry_id, from_state, to_state, ledger_transfer_ref)
+		 values ($1, null, 'confirmed', $2) returning id`,
+		f.entryID, "transfer-"+f.suffix,
+	).Scan(&transitionID)
+	if err != nil {
+		t.Fatalf("seed entry_transition: %v", err)
+	}
+
+	_, err = tx.Exec(ctx,
+		`insert into cashback.ledger_link (transition_id, entry_id, ledger_transfer_ref)
+		 values ($1, $2, $3)`, transitionID, f.entryID, "transfer-"+f.suffix)
+	if err != nil {
+		t.Fatalf("seed ledger_link: %v", err)
 	}
 
 	return f
