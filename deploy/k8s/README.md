@@ -102,8 +102,9 @@ Then the Secret and the manifests:
 
 ```sh
 # TWO ledger DSNs, one per role — see "The ledger runs as two roles" below.
-# One shared value for the two secret-key halves: the ledger demands it, the
-# api presents it, and they must be equal.
+# One shared value for the two secret-key halves: the ledger accepts it, the
+# api presents it, and they must be equal. What makes the ledger CHECK is
+# BLNK_SERVER_SECURE in cashback/blnk-configmap.yaml, not either key.
 kubectl -n apivo create secret generic apivo-secrets \
   --from-literal=DATABASE_URL='<real connection string>' \
   --from-literal=BLNK_MIGRATE_DSN='<the database OWNER>' \
@@ -115,6 +116,15 @@ kubectl -n apivo apply -f deploy/k8s/
 kubectl -n apivo apply -f deploy/k8s/cashback/
 kubectl -n apivo rollout restart deployment/api   # picks up the ConfigMap
 ```
+
+**A secret key is not an authentication switch.** Blnk only checks
+credentials when `BLNK_SERVER_SECURE` is true; with it false the middleware
+returns before it looks at a key (`api/middleware/auth.go` in v0.15.2), the
+field is never defaulted, and Blnk logs *"SECURITY: server.secure is false —
+API authentication is DISABLED"* at every start. It is set in
+`cashback/blnk-configmap.yaml`, and `validate.sh` asserts it. `/health` is
+skipped *before* that check, so the probes work either way — which is exactly
+why the difference is invisible without an assertion.
 
 The cashback Deployments map the ledger keys as **required** `secretKeyRef`s:
 applying the ledger without adding them gives pods that refuse to start and

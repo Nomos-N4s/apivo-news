@@ -166,12 +166,16 @@ spec:
                 secretKeyRef:
                   name: apivo-secrets
                   key: BLNK_DATA_SOURCE_DNS
-            # What the ledger requires on every call. Its half of a pair: the
-            # api presents BLNK_SECRET_KEY, and the two must be equal. Not
-            # optional - a cluster runs APP_ENV=prod, where the api refuses to
-            # start with cashback enabled and no key, because a ledger
-            # reachable without a credential is a ledger anybody on that
-            # network can post to.
+            # The credential the ledger ACCEPTS - it is not what makes the
+            # ledger check. That is BLNK_SERVER_SECURE in blnk-configmap.yaml,
+            # without which blnk skips authentication entirely and this key is
+            # inert (api/middleware/auth.go). The two belong together.
+            #
+            # Its half of a pair: the api presents BLNK_SECRET_KEY and the two
+            # must be equal. Not optional - a cluster runs APP_ENV=prod, where
+            # the api refuses to start with cashback enabled and no key,
+            # because a ledger reachable without a credential is a ledger
+            # anybody on that network can post to.
             - name: BLNK_SERVER_SECRET_KEY
               valueFrom:
                 secretKeyRef:
