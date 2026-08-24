@@ -259,6 +259,39 @@ type CashbackOffer struct {
 	DeeplinkTemplate string
 }
 
+// One outbound money movement. C-4: approved_by is NOT NULL, so an unapproved payout is unrepresentable. C-5: the idempotency key is generated from the request, so a retry cannot mint a new one and the unique constraint turns a double submit into a 23505.
+type CashbackPayout struct {
+	ID pgtype.UUID
+	// Which brand paid this money out (ADR-0004). The payout descriptor, the legal entity and the rail account are all brand-scoped, and the column is frozen once the row exists.
+	BrandID   string
+	RequestID pgtype.UUID
+	// C-4. The named human who approved this payout. Enforced by the database, not by application code - the row IS the approval.
+	ApprovedBy pgtype.UUID
+	// C-5. Generated from request_id and passed unchanged to the ledger and the payout rail (D8). A caller cannot supply it: derivation is what makes a retry safe, and a caller-chosen key is exactly how a retry stops being one.
+	IdempotencyKey string
+	AmountMinor    int64
+	Currency       string
+	// Which payout rail carried this money. The alpha ships a manual rail alongside any real one, and both enforce C-4 and C-5 identically (FR-052).
+	Rail          string
+	RailReference pgtype.Text
+	State         string
+	SubmittedAt   pgtype.Timestamptz
+	SettledAt     pgtype.Timestamptz
+}
+
+// Where a member may be paid. Never holds raw bank details - only a reference to them. An unverified destination cannot be named by a withdrawal request (FR-051).
+type CashbackPayoutDestination struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	Kind      string
+	// A reference into the store holding the actual payout details. Deliberately NOT the details: the money schema should never be the thing that leaks an IBAN.
+	DetailsRef string
+	// When the member proved this destination is theirs (FR-051). One-way: a verification is never withdrawn or re-dated, so a request that passed the check cannot later be reasoned about as if it had not.
+	VerifiedAt     pgtype.Timestamptz
+	VerifiedMethod pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+}
+
 // A network report with no matching click (FR-034). It is queued for an operator and NEVER auto-credited: the row exists so the money is visible, not so it is paid.
 type CashbackUnattributedTransaction struct {
 	ID                   pgtype.UUID
@@ -267,6 +300,23 @@ type CashbackUnattributedTransaction struct {
 	ResolvedBy           pgtype.UUID
 	ResolvedReason       pgtype.Text
 	ResolvedAt           pgtype.Timestamptz
+}
+
+// A member asking to be paid. The reservation transfer already exists when the row is written (D9): the double-spend window is between request and approval, and it is closed with the ledger rather than with a lock.
+type CashbackWithdrawalRequest struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	DestinationID pgtype.UUID
+	AmountMinor   int64
+	Currency      string
+	State         string
+	RequestedAt   pgtype.Timestamptz
+	// The ledger transfer that moved this amount from confirmed to reserved at request time (D9). NOT NULL: a request that reserved nothing could be approved twice over the same balance.
+	ReservedTransferRef string
+	// The named human who approved or rejected this request. The payout row carries the approval that releases money (C-4); this records the decision on the request itself.
+	DecidedBy      pgtype.UUID
+	DecidedAt      pgtype.Timestamptz
+	DecisionReason pgtype.Text
 }
 
 // Per-purpose consent rows, never a boolean column. Revocation closes a row; a new grant opens a new row, preserving the full consent history.
