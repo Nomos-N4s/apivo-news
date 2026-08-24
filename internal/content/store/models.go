@@ -292,6 +292,37 @@ type CashbackPayoutDestination struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+// One disagreement between what a network reported and what it paid (US6). Mutable on purpose: the row exists to be worked through, and the resolution records who decided what, when, and why.
+type CashbackReconciliationDifference struct {
+	ID                   pgtype.UUID
+	RunID                pgtype.UUID
+	NetworkAccountID     pgtype.UUID
+	Kind                 string
+	NetworkTransactionID pgtype.UUID
+	// What the reported transactions add up to, in minor units (C-6). Null only for money on the statement that matches no report.
+	ExpectedMinor pgtype.Int8
+	// What the statement actually paid, in minor units (C-6). Null only for a reported transaction the statement never paid.
+	ActualMinor    pgtype.Int8
+	Currency       string
+	DetectedAt     pgtype.Timestamptz
+	ResolvedBy     pgtype.UUID
+	ResolvedReason pgtype.Text
+	ResolvedAt     pgtype.Timestamptz
+}
+
+// IMMUTABLE (C-3). One import of a network's payment statement: which publisher account, which period, by whom, and the statement verbatim. It is the counterparty's own account of the money, and an editable one would be worth nothing in a dispute.
+type CashbackReconciliationRun struct {
+	ID                   pgtype.UUID
+	NetworkAccountID     pgtype.UUID
+	StatementPeriodStart pgtype.Timestamptz
+	StatementPeriodEnd   pgtype.Timestamptz
+	ImportedAt           pgtype.Timestamptz
+	// The named human who imported this statement (US6). Reconciliation is an accounting act with a person behind it, not a background job with nobody's name on it.
+	ImportedBy pgtype.UUID
+	// The statement exactly as the network supplied it. Differences are derived from this; the derivation can be re-run, the statement cannot be re-fetched.
+	RawStatement []byte
+}
+
 // A network report with no matching click (FR-034). It is queued for an operator and NEVER auto-credited: the row exists so the money is visible, not so it is paid.
 type CashbackUnattributedTransaction struct {
 	ID                   pgtype.UUID
