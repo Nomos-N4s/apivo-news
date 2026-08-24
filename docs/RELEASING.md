@@ -259,10 +259,22 @@ The cashback product runs an adopted open-source ledger, **Blnk**
 ([ADR-0002](adr/0002-cashback-money-substrate.md)), as a sidecar. Two versions
 are pinned for it, and they are pinned together:
 
-| What | Where | Version |
+| What | Where | Pinned as |
 | --- | --- | --- |
 | Blnk Go SDK | `go.mod` | `github.com/blnkfinance/blnk-go v1.3.0` |
-| Blnk server image | `docker-compose.yml`, the `cashback` CI job, `deploy/` | `jerryenebeli/blnk:0.15.2` |
+| Blnk server image | `docker-compose.yml`, `.github/workflows/ci.yml` (`BLNK_IMAGE`), `deploy/hetzner/compose/docker-compose.cashback.yml`, `deploy/k8s/cashback/blnk-deployment.yaml` | `jerryenebeli/blnk:0.15.2@sha256:796518b1…` |
+| Redis image | the same four files | `redis:7.2.4-alpine@sha256:c8bb255c…` |
+
+**The container images are pinned by DIGEST, not by tag** — the form is
+`repo:tag@sha256:…`, which Docker resolves by digest and a reviewer reads by
+version. The tag is documentation; the digest is the contract. A tag is
+mutable, and the ledger is the one component in this system where a silent
+retag would change the binary that moves members' money, with no diff and no
+review.
+
+The Redis version tracks what Blnk's own compose file runs (7.2.x) rather than
+the newest release, so no environment discovers a version skew the others do
+not have.
 
 **Why the SDK is pinned to an exact version, and not to a range.** The ledger
 is the only component in this repository that can silently produce a wrong
@@ -279,17 +291,14 @@ a mismatch nothing in the build would notice until a transfer failed. So the
 compose file, the CI job and `go.mod` name their versions explicitly and a
 bump touches all of them in one commit.
 
-**What is not pinned by digest.** Tags, not digests, matching how
-`postgres:17-alpine` is pinned in the same files. The digest pins in CI
-(`kubeconform`) exist because that image is a *verifier* whose ruleset must not
-change under a green build; the ledger's own correctness is proved by the
-suites that run against it.
-
 **Bumping either version:**
 
 1. Change `go.mod` (`go get github.com/blnkfinance/blnk-go@vX.Y.Z`) and the
-   image tag in `docker-compose.yml`, `.github/workflows/ci.yml`, and the
-   `deploy/` stacks, in one commit.
+   image reference — **tag and digest together** — in all four files listed
+   above, in one commit. Read the new digest from the registry
+   (`docker buildx imagetools inspect jerryenebeli/blnk:<tag>`) rather than
+   from a local pull, so the pin is the multi-architecture index and does not
+   quietly commit a deployment to one architecture.
 2. `scripts/spikes/ledger_sdk/` fails at compile time if the SDK dropped or
    renamed something the ledger port depends on — including `Reference`, the
    field the exactly-once payout guarantee (C-5) rests on.
