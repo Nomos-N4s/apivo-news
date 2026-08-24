@@ -50,15 +50,25 @@ type fakeLocker struct {
 	// stands in for a connection that has stopped answering.
 	releaseBlocks chan struct{}
 
-	// The state of the context Release was handed, sampled at the moment of
-	// the call. The scheduler promises two things about it that nothing
-	// else here can see: that it is detached from the cancelled context, so
-	// a shutdown still sends the unlock, and that it carries a deadline of
-	// its own, so an unresponsive connection cannot hold shutdown open.
-	releaseCtxErr      error
-	releaseDeadline    time.Time
-	releaseHadDeadline bool
-	releaseSampled     bool
+	// last is the state of the context the most recent Release was handed.
+	last releaseCall
+}
+
+// releaseCall is what Release was given, sampled at the moment of the call.
+// The scheduler promises two things about that context which nothing else here
+// can see: that it is detached from the cancelled context, so a shutdown still
+// sends the unlock, and that it carries a deadline of its own, so an
+// unresponsive connection cannot hold shutdown open.
+type releaseCall struct {
+	// happened is false until Release has been called at all.
+	happened bool
+	// ctxErr is the context's Err() at the moment of the call: nil is the
+	// promise, and context.Canceled means the release inherited the
+	// cancellation it is meant to clean up after.
+	ctxErr error
+	// deadline and hadDeadline are the context's Deadline().
+	deadline    time.Time
+	hadDeadline bool
 }
 
 // TryLock records and answers one attempt.
@@ -98,11 +108,12 @@ type fakeLock struct {
 // the assertions need is its state at the moment of the call, and a context
 // read later would have moved on.
 func (l *fakeLock) Release(ctx context.Context) error {
+	sample := releaseCall{happened: true, ctxErr: ctx.Err()}
+	sample.deadline, sample.hadDeadline = ctx.Deadline()
+
 	l.locker.mu.Lock()
 	l.locker.released = append(l.locker.released, l.name)
-	l.locker.releaseCtxErr = ctx.Err()
-	l.locker.releaseDeadline, l.locker.releaseHadDeadline = ctx.Deadline()
-	l.locker.releaseSampled = true
+	l.locker.last = sample
 	err := l.locker.releaseErr
 	blocks := l.locker.releaseBlocks
 	l.locker.mu.Unlock()
@@ -116,13 +127,44 @@ func (l *fakeLock) Release(ctx context.Context) error {
 	return err
 }
 
-// releaseContext reports what Release was handed, and whether it was called at
-// all.
-func (l *fakeLocker) releaseContext() (ctxErr error, deadline time.Time, hadDeadline, sampled bool) {
+// lastRelease reports what the most recent Release was handed.
+func (l *fakeLocker) lastRelease() releaseCall {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.releaseCtxErr, l.releaseDeadline, l.releaseHadDeadline, l.releaseSampled
+	return l.last
 }
+
+// ConcurrencyPeak records the highest number of things in flight at once.
+//
+// It exists because the obvious way to do that is wrong: reading the peak and
+// then storing a larger value is a read-modify-write, and two goroutines
+// racing through it can leave the smaller number behind. That loses precisely
+// the overlap the counter is watching for - A enters as 1 and B as 2, both
+// read 0, B stores 2, A stores 1, and a genuine double-run is recorded as a
+// peak of one. A compare-and-swap loop cannot lose it.
+//
+// Exported so the tests in the external test package share this one
+// implementation rather than growing a second, differently wrong copy.
+type ConcurrencyPeak struct {
+	inFlight atomic.Int64
+	peak     atomic.Int64
+}
+
+// Enter marks one thing as started and returns the function that marks it
+// finished. Use it as `defer peak.Enter()()`.
+func (p *ConcurrencyPeak) Enter() func() {
+	n := p.inFlight.Add(1)
+	for {
+		was := p.peak.Load()
+		if n <= was || p.peak.CompareAndSwap(was, n) {
+			break
+		}
+	}
+	return func() { p.inFlight.Add(-1) }
+}
+
+// Peak reports the highest number seen in flight at once.
+func (p *ConcurrencyPeak) Peak() int64 { return p.peak.Load() }
 
 // errCapacity is the refusal a locker under test reports at startup.
 var errCapacity = errors.New("the pool cannot seat these jobs")
@@ -194,6 +236,43 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+// TestConcurrencyPeakRecordsARealOverlap checks the instrument before trusting
+// what it measures. Two goroutines are held inside at once, deterministically,
+// and the peak must be two - the read-then-store this replaced could report
+// one, which would turn the overlap tests green on exactly the defect they
+// exist to catch.
+func TestConcurrencyPeakRecordsARealOverlap(t *testing.T) {
+	t.Parallel()
+
+	var peak ConcurrencyPeak
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer peak.Enter()()
+			arrived <- struct{}{}
+			<-release
+		}()
+	}
+
+	for range 2 {
+		select {
+		case <-arrived:
+		case <-time.After(30 * time.Second):
+			t.Fatal("both goroutines never got inside")
+		}
+	}
+	close(release)
+	wg.Wait()
+
+	if got := peak.Peak(); got != 2 {
+		t.Errorf("Peak() = %d after two overlapping entries, want 2", got)
+	}
 }
 
 func TestJitteredIntervalStaysWithinItsBounds(t *testing.T) {
@@ -838,18 +917,18 @@ func TestReleaseRunsOnAContextDetachedFromTheCancelledOne(t *testing.T) {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	ctxErr, deadline, hadDeadline, sampled := locker.releaseContext()
-	if !sampled {
+	got := locker.lastRelease()
+	if !got.happened {
 		t.Fatal("Release was never called; a cancelled run must still release its lock")
 	}
-	if ctxErr != nil {
-		t.Errorf("Release was handed a context already ended with %v, want a live one: the release must not inherit the cancellation it is cleaning up after", ctxErr)
+	if got.ctxErr != nil {
+		t.Errorf("Release was handed a context already ended with %v, want a live one: the release must not inherit the cancellation it is cleaning up after", got.ctxErr)
 	}
-	if !hadDeadline {
+	if !got.hadDeadline {
 		t.Fatal("Release was handed a context with no deadline: an unresponsive connection would then hold shutdown open until the grace expired")
 	}
-	if got := deadline.Sub(before); got <= 0 || got > releaseTimeout+time.Second {
-		t.Errorf("Release's deadline is %v away, want it inside the configured %v", got, releaseTimeout)
+	if away := got.deadline.Sub(before); away <= 0 || away > releaseTimeout+time.Second {
+		t.Errorf("Release's deadline is %v away, want it inside the configured %v", away, releaseTimeout)
 	}
 }
 
@@ -919,20 +998,16 @@ func TestAnOverrunningJobSkipsItsNextRunAndNeverQueues(t *testing.T) {
 	)
 
 	var (
-		mu        sync.Mutex
-		starts    []time.Time
-		inFlight  atomic.Int64
-		maxFlight atomic.Int64
+		mu     sync.Mutex
+		starts []time.Time
+		peak   ConcurrencyPeak
 	)
 	s := newTestScheduler(&fakeLocker{}, Config{})
 	if err := s.Register(Job{
 		Name:     "slow-poll",
 		Interval: interval,
 		Run: func(context.Context) error {
-			if n := inFlight.Add(1); n > maxFlight.Load() {
-				maxFlight.Store(n)
-			}
-			defer inFlight.Add(-1)
+			defer peak.Enter()()
 
 			mu.Lock()
 			starts = append(starts, time.Now())
@@ -955,7 +1030,7 @@ func TestAnOverrunningJobSkipsItsNextRunAndNeverQueues(t *testing.T) {
 		t.Errorf("Run() error: %v", err)
 	}
 
-	if got := maxFlight.Load(); got != 1 {
+	if got := peak.Peak(); got != 1 {
 		t.Errorf("maximum concurrent runs = %d, want 1: a job must never overlap itself", got)
 	}
 

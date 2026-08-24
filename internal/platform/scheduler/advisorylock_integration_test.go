@@ -422,19 +422,11 @@ func TestTwoRunningInstancesNeverOverlapAJob(t *testing.T) {
 	name := jobName("overlap")
 
 	var (
-		inFlight  atomic.Int64
-		maxFlight atomic.Int64
-		runs      atomic.Int64
+		peak scheduler.ConcurrencyPeak
+		runs atomic.Int64
 	)
 	job := func(context.Context) error {
-		n := inFlight.Add(1)
-		defer inFlight.Add(-1)
-		for {
-			was := maxFlight.Load()
-			if n <= was || maxFlight.CompareAndSwap(was, n) {
-				break
-			}
-		}
+		defer peak.Enter()()
 		runs.Add(1)
 		time.Sleep(20 * time.Millisecond)
 		return nil
@@ -469,7 +461,7 @@ func TestTwoRunningInstancesNeverOverlapAJob(t *testing.T) {
 	if got := runs.Load(); got < 4 {
 		t.Fatalf("the job ran %d times across both instances, want at least 4", got)
 	}
-	if got := maxFlight.Load(); got != 1 {
+	if got := peak.Peak(); got != 1 {
 		t.Errorf("maximum concurrent runs across two instances = %d, want 1", got)
 	}
 }
