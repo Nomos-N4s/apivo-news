@@ -94,12 +94,23 @@ services:
     ports:
       - "127.0.0.1:5001:5001"
     healthcheck:
-      # Blnk exposes no dedicated health route, so the probe is a real read
-      # through the router and the database connection. `wget` is present in
-      # the image (its Dockerfile installs it and does not remove it);
-      # `--spider` is not used because it sends HEAD, which the router has
-      # no handler for.
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --timeout=3 -O /dev/null http://127.0.0.1:5001/ledgers"]
+      # Blnk serves an unauthenticated `GET /health` (added upstream in
+      # v0.10.3; this image is 0.15.2). An earlier revision of this file
+      # probed `/ledgers` and claimed there was no health route — wrong on
+      # both counts, and dangerous on the first: `/ledgers` is auth-gated, so
+      # the moment BLNK_SERVER_SECRET_KEY is set it answers 401 and the
+      # container stays permanently unhealthy, blocking every `depends_on`
+      # that waits for it.
+      #
+      # A compose healthcheck runs INSIDE the container, so it can only use a
+      # client the image ships. `wget` qualifies: the upstream Dockerfile
+      # installs it to fetch a signing key and removes only the apt lists
+      # afterwards. `--spider` is avoided deliberately — it sends HEAD, and a
+      # route that answers GET is not obliged to answer HEAD.
+      #
+      # Same probe as deploy/hetzner and deploy/k8s, on purpose: one answer
+      # in the repository, not two.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5001/health"]
       interval: 5s
       timeout: 5s
       retries: 20
