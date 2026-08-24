@@ -208,18 +208,30 @@ jobs:
       DATABASE_URL: postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
       # Blnk runs on the host network, so it reaches the service containers
       # through their published ports rather than by service name.
-      BLNK_DATA_SOURCE_DNS: postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
+      #
+      # It connects as `blnk_app`, the restricted role spike S1 creates and
+      # proves — not as `apivo`. The whole job therefore runs the posture the
+      # deployment runs, rather than a permissive stand-in for it.
+      BLNK_DATA_SOURCE_DNS: postgres://blnk_app:blnk_app@localhost:5432/apivo?sslmode=disable
       BLNK_REDIS_DNS: localhost:6379
       BLNK_SERVER_PORT: "5001"
+      SPIKE_ADMIN_DATABASE_URL: postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
+      SPIKE_BLNK_ROLE_DSN: postgres://blnk_app:blnk_app@localhost:5432/apivo?sslmode=disable
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Lint the cashback shell scripts
-        # Two of these decide whether a spike passed. A syntax error in one
-        # would otherwise surface as the spike's verdict.
-        run: shellcheck -s sh scripts/blnk_up.sh
+        # These decide whether a spike passed. A syntax error in one would
+        # otherwise surface as the spike's verdict.
+        run: shellcheck -s sh scripts/blnk_up.sh scripts/spikes/ledger_schema/run.sh
+      - name: Spike S1 — the ledger is confined to its own schema
+        # Runs BEFORE the ledger is brought up, because it is the thing that
+        # migrates: it creates the restricted role, snapshots `public`,
+        # migrates as that role, and asserts nothing outside the `blnk`
+        # schema moved. Every later step then uses the role it created.
+        run: sh scripts/spikes/ledger_schema/run.sh
       - name: Bring up the ledger
         run: sh scripts/blnk_up.sh
       - name: Test with cashback enabled against the real ledger
