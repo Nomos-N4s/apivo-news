@@ -250,6 +250,18 @@ jobs:
         run: sh scripts/spikes/ledger_schema/run.sh
       - name: Bring up the ledger
         run: sh scripts/blnk_up.sh
+      - name: Spike S2 — a commit and a ledger transfer survive a crash between them
+        # Verbose on purpose. The spike kills a real process in each of the
+        # two windows a crash can land in, and what it saw the ledger do is
+        # the evidence the decision rests on - a passing non-verbose run
+        # would swallow every t.Logf that carries it.
+        run: go test -count=1 -v ./scripts/spikes/outbox_crash/
+        env:
+          CASHBACK_ENABLED: "true"
+          LEDGER_DRIVER: blnk
+          NETWORK_DRIVER: fixture
+          BLNK_URL: http://127.0.0.1:5001
+          REDIS_URL: redis://127.0.0.1:6379
       - name: Test with cashback enabled against the real ledger
         # The whole suite, not a subset: the point of this job is that the
         # binary behaves with the product mounted and money pointed at a
