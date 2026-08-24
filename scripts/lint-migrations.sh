@@ -75,6 +75,7 @@ BEGIN {
     fails = 0
     files = 0
     checked = 0
+    statements = 0
     buf = ""
     curfile = ""
 }
@@ -82,9 +83,12 @@ BEGIN {
 # Per-file reset. State never leaks across files: an unterminated string in
 # one migration must not blind the next.
 FNR == 1 {
-    flushbuf()
+    endfile()
     curfile = FILENAME
     files++
+    filestatements = 0
+    filesemis = 0
+    openline = 0
     state = "sql"
     depth = 0
     tag = ""
@@ -94,6 +98,7 @@ FNR == 1 {
 }
 
 {
+    filesemis += gsub(/;/, ";")
     line = strip($0)
     if (buf == "") bufstart = FNR
     buf = buf line "\n"
@@ -106,10 +111,14 @@ FNR == 1 {
 }
 
 END {
-    flushbuf()
+    endfile()
     if (files == 0) exit 2
+    # Always, pass or fail: the summary states how much was READ, not only
+    # what was concluded. A reader that saw nothing concludes nothing, and
+    # "found nothing wrong" and "looked at nothing" are otherwise the same
+    # sentence and the same exit status.
+    printf "migration lint: read %d statement(s) and %d foreign key(s) across %d migration file(s); %d crossing a product schema boundary\n", statements, checked, files, fails
     if (fails > 0) exit 1
-    printf "migration lint: %d foreign key(s) across %d migration file(s), none crossing a product schema boundary\n", checked, files
 }
 
 # strip blanks out everything the SQL grammar says is not code - line
@@ -126,13 +135,14 @@ function strip(text,   out, i, n, c, two, rest) {
         two = substr(text, i, 2)
         if (state == "sql") {
             if (two == "--") { break }
-            if (two == "/*") { state = "block"; depth = 1; i += 2; continue }
-            if (c == "'") { state = "string"; i++; continue }
+            if (two == "/*") { state = "block"; depth = 1; openline = FNR; i += 2; continue }
+            if (c == "'") { state = "string"; openline = FNR; i++; continue }
             if (c == "$") {
                 rest = substr(text, i)
                 if (match(rest, /^\$[A-Za-z_0-9]*\$/)) {
                     tag = substr(rest, 1, RLENGTH)
                     state = "dollar"
+                    openline = FNR
                     i += RLENGTH
                     continue
                 }
@@ -154,13 +164,38 @@ function strip(text,   out, i, n, c, two, rest) {
     return out
 }
 
-# flushbuf judges a trailing statement that never met its semicolon, so a
-# missing terminator cannot hide a foreign key.
-function flushbuf(   rest) {
+# endfile judges a trailing statement that never met its semicolon - so a
+# missing terminator cannot hide a foreign key - and then asks the only two
+# questions that tell a clean file apart from a reader that went blind on it.
+#
+# Both are failures rather than silence. A reader that loses track of a quote
+# blanks the file from that point on, finds nothing, and says so in exactly
+# the words it uses for a file that is genuinely clean.
+function endfile(   rest) {
+    if (curfile == "") return
+
     rest = buf
     gsub(/[ \t\n]/, "", rest)
     if (rest != "") statement(buf, bufstart)
     buf = ""
+
+    if (state != "sql") {
+        report(openline, sprintf("the reader reached the end of this file still inside %s, so everything after it was blanked and never checked. Either the file has an unterminated literal or comment, or this lint has a hole in it - both mean nothing below that point was read.", inside()))
+    }
+    # A file carrying statement terminators that yielded no statement was not
+    # read, whatever the reason. Conditioning on the semicolon is what keeps a
+    # deliberately empty down migration - "-- irreversible", no SQL at all -
+    # from being called a failure.
+    if (filestatements == 0 && filesemis > 0) {
+        report(1, sprintf("this file contains %d statement terminator(s) but produced no SQL statement, so nothing in it was checked; either the file is not what it looks like or this lint could not read it.", filesemis))
+    }
+}
+
+function inside() {
+    if (state == "string") return "a string literal"
+    if (state == "block") return "a block comment"
+    if (state == "dollar") return "a " tag " quoted body"
+    return state
 }
 
 # statement judges one SQL statement. Newlines become spaces for matching -
@@ -173,6 +208,9 @@ function statement(stmt, startline,   flat, head, words, count, i, at, src, srcs
 
     head = flat
     sub(/^[ \t]+/, "", head)
+    if (head == "") return
+    statements++
+    filestatements++
 
     # search_path decides what an unqualified name means from here on, so a
     # migration written entirely inside its own schema is read correctly

@@ -237,8 +237,24 @@ fi
 # The schema that actually exists.
 ################################################################################
 
+# The count is asserted, not just the exit status, and as a floor rather than
+# an equality: migrations only accumulate, so this can never be satisfied by a
+# reader that stopped reading, and it does not break when 0010 lands.
+#
+# Without this, the whole suite scores green against a reader mutated to never
+# close a string literal - which blanks every file from its first apostrophe
+# onward - while the real migrations report zero foreign keys and exit 0.
 if out=$(sh "$LINT" "$MIGRATIONS" 2>&1); then
-    echo "ok: the repository's own migrations"
+    read=$(printf '%s' "$out" | sed -n 's/.*and \([0-9]*\) foreign key(s).*/\1/p')
+    if [ -z "$read" ]; then
+        echo "FAIL: the repository's own migrations - the summary states no count: $out"
+        FAILS=1
+    elif [ "$read" -lt 14 ]; then
+        echo "FAIL: the repository's own migrations - read only $read foreign key(s), and there were 14 before 0010 existed: $out"
+        FAILS=1
+    else
+        echo "ok: the repository's own migrations ($read foreign keys read)"
+    fi
 else
     echo "FAIL: the repository's own migrations were refused: $out"
     FAILS=1
