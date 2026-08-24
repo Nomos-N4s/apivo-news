@@ -98,6 +98,49 @@ type CashbackClick struct {
 	ContextDigest pgtype.Text
 }
 
+// A member's unit of earning. C-2 lives on network_transaction_id: a credit with no evidence cannot be inserted. Reversal never edits an entry - a reversing entry is inserted beside it (SC-010).
+type CashbackEntry struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	// Which brand owes this earning (ADR-0004). A tenant boundary would fall here, and entry_guard freezes it: an already paid or reversed entry cannot be moved across one.
+	BrandID string
+	// C-2. The single network report this credit rests on, and through its click_ref the click that earned it. NOT NULL, so a credit with no evidence is unrepresentable.
+	NetworkTransactionID pgtype.UUID
+	// The click that earned this credit. Null only for an entry an operator attributed by hand from the unattributed queue; the composite foreign key guarantees that when it is set, the click belongs to this member.
+	ClickID pgtype.UUID
+	State   string
+	// The member's share in minor units, always positive and always with an explicit currency (C-6). A reversal is a separate entry, not a negative amount, so the sign never has to be interpreted.
+	AmountMinor int64
+	Currency    string
+	// Which rule held this entry back from crediting (US7). Set exactly while the entry is held; the transition history keeps the record after release.
+	HoldRule pgtype.Text
+	// The entry this one reverses (SC-010). The original is left exactly as it was, so the auditable pair survives.
+	ReversalOfID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
+// APPEND ONLY. One row per state change, each carrying the ledger transfer that made it real (D7). The history of how a member's money moved is evidence, not a log.
+type CashbackEntryTransition struct {
+	ID        pgtype.UUID
+	EntryID   pgtype.UUID
+	FromState pgtype.Text
+	ToState   string
+	// The ledger transfer this transition wrote. NOT NULL by design (D7): no state is ever recorded without its posting, and no posting without its state.
+	LedgerTransferRef string
+	Reason            pgtype.Text
+	ActorID           pgtype.UUID
+	OccurredAt        pgtype.Timestamptz
+}
+
+// The join between an entry transition and the ledger transfer that carried it (ADR-0002). Balances live in the ledger; this table is the seam that makes C-7 one query and keeps the ledger swappable.
+type CashbackLedgerLink struct {
+	TransitionID pgtype.UUID
+	EntryID      pgtype.UUID
+	// The ledger's own transfer reference, unique here so one transfer can never be claimed by two transitions.
+	LedgerTransferRef string
+	PostedAt          pgtype.Timestamptz
+}
+
 // A retailer, as a business fact: who they are, where they trade, whether we publish them. Deliberately carries NOTHING per-network - the same retailer is reachable through several networks at once, and each of those routes is a merchant_network row.
 type CashbackMerchant struct {
 	ID      pgtype.UUID
@@ -214,6 +257,16 @@ type CashbackOffer struct {
 	ValidTo        pgtype.Timestamptz
 	// The template the click-out redirect is built from. The click reference is substituted into the network's own click-reference parameter (FR-021).
 	DeeplinkTemplate string
+}
+
+// A network report with no matching click (FR-034). It is queued for an operator and NEVER auto-credited: the row exists so the money is visible, not so it is paid.
+type CashbackUnattributedTransaction struct {
+	ID                   pgtype.UUID
+	NetworkTransactionID pgtype.UUID
+	DetectedAt           pgtype.Timestamptz
+	ResolvedBy           pgtype.UUID
+	ResolvedReason       pgtype.Text
+	ResolvedAt           pgtype.Timestamptz
 }
 
 // Per-purpose consent rows, never a boolean column. Revocation closes a row; a new grant opens a new row, preserving the full consent history.
