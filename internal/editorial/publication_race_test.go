@@ -61,21 +61,34 @@ const seedAttempts = 4
 // seedRaceWorld builds one race world, rebuilding it if the seed loses a
 // deadlock.
 //
-// The seed is not what this test asserts. It writes its rows for real
-// while the rest of the suite writes its own against the same database,
-// and the article insert takes two locks on the way in: a FOR SHARE on
-// the approver's account row (article_insert_guard, 0002) and a
-// foreign-key lock on the shared `munich` place row. A cycle with some
-// other transaction in the suite is therefore possible, and Postgres
-// resolves it the way it must - by aborting one side with 40P01 and
-// leaving the retry to the application. A seed that dies on that abort
-// reports a suite-wide lock cycle as a failure of the very serialisation
-// this test exists to prove, which is the loudest possible way of saying
-// the wrong thing.
+// The seed is not what this test asserts, but it writes its rows for real
+// against the database the whole suite shares, and `go test ./...` runs
+// every other package alongside this one. Its own row locks are harmless:
+// each is on a row this attempt created moments earlier - the FOR SHARE
+// article_insert_guard takes on the approver's account row (0002), the
+// key-share the foreign keys take on its own source_item. The one shared
+// row it touches, place 'munich', it holds in key-share, and key-share
+// conflicts with nothing here: no migration, query or test ever updates
+// or deletes a place row.
 //
-// Only the seed retries. The race below it - the two blocked statements
-// and every assertion about them - runs exactly once, against the world
-// this returns, so nothing here can soften what the test proves.
+// What can actually cycle is a table lock. TestImmutableTablesRejectTruncate
+// in internal/platform/db runs `truncate article cascade` and `truncate
+// source_item cascade` inside an open transaction, which takes ACCESS
+// EXCLUSIVE on article and, through the cascade, on article_place. That
+// test declines t.Parallel() for exactly this reason - but declining it
+// serialises the subtests in its own package, not this one. Meanwhile the
+// foreign key allows this transaction no order but article first, its
+// place row second, so it can be holding article and asking for
+// article_place at the moment the truncate holds article_place and asks
+// for article. Postgres resolves that the way it must: it aborts one side
+// with 40P01 and leaves the retry to the application.
+//
+// A seed that dies on that abort reports a suite-wide lock cycle as a
+// failure of the very serialisation this test exists to prove, which is
+// the loudest possible way of saying the wrong thing. So it retries - and
+// only it. The race below, the two blocked statements and every assertion
+// about them, runs exactly once against the world this returns, so
+// nothing here can soften what the test proves.
 func seedRaceWorld(ctx context.Context, t *testing.T, conn *pgx.Conn) raceWorld {
 	t.Helper()
 	for attempt := 1; ; attempt++ {
@@ -89,6 +102,13 @@ func seedRaceWorld(ctx context.Context, t *testing.T, conn *pgx.Conn) raceWorld 
 			t.Fatalf("seeding the race world (attempt %d of %d): %v%s",
 				attempt, seedAttempts, err, pgDetail(err))
 		}
+		// A seed that loses a deadlock and then succeeds says nothing in
+		// CI: `go test` without -v discards a passing test's output whole,
+		// t.Log buffer and stderr alike. This line is for a local run, and
+		// for the failing case, where the testing package flushes the
+		// earlier attempts alongside the fatal one. The record that
+		// survives a green run is Postgres's own deadlock report, which
+		// the workflow prints from the service container after the suite.
 		t.Logf("seed attempt %d of %d lost a deadlock, rebuilding: %v%s",
 			attempt, seedAttempts, err, pgDetail(err))
 	}
