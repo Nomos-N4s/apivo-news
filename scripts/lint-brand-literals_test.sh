@@ -114,7 +114,7 @@ expect_caught "a short hex colour inside a stylesheet is caught" "colour"
 
 fixture
 write "internal/ingestion/poll.go" 'const lockName = "apivo.poll"'
-write "web/src/lib/tour/progress.ts" 'const key = `apivo.tour.${id}`;'
+write "web/src/lib/tour/progress.ts" 'const key = "apivo.tour." + id;'
 commit_all
 expect_clean "a namespaced identifier is not a domain"
 
