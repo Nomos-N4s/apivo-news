@@ -141,6 +141,12 @@ type CashbackLedgerLink struct {
 	PostedAt          pgtype.Timestamptz
 }
 
+// C-1: every row must have net_minor = 0. A non-zero row means money was created or destroyed inside the ledger and is treated as an incident, not as a metric (SC-003). No rows means the ledger is not co-located in this database - the same assertion then runs as a periodic job against wherever it lives.
+type CashbackLedgerZeroSum struct {
+	Currency string
+	NetMinor int64
+}
+
 // A retailer, as a business fact: who they are, where they trade, whether we publish them. Deliberately carries NOTHING per-network - the same retailer is reachable through several networks at once, and each of those routes is a merchant_network row.
 type CashbackMerchant struct {
 	ID      pgtype.UUID
@@ -290,6 +296,61 @@ type CashbackPayoutDestination struct {
 	VerifiedAt     pgtype.Timestamptz
 	VerifiedMethod pgtype.Text
 	CreatedAt      pgtype.Timestamptz
+}
+
+// C-7: for any payout - approver, request, reserved entries, ledger postings, network evidence, click and the rate that governed the credit - in a single query. The click that earned it is left-joined because an operator-attributed entry legitimately has none; the network evidence is not, because C-2 makes it mandatory.
+type CashbackProvenance struct {
+	PayoutID               pgtype.UUID
+	PayoutState            string
+	Rail                   string
+	RailReference          pgtype.Text
+	IdempotencyKey         string
+	PayoutAmountMinor      int64
+	PayoutCurrency         string
+	SubmittedAt            pgtype.Timestamptz
+	SettledAt              pgtype.Timestamptz
+	ApproverID             pgtype.UUID
+	ApproverName           string
+	ApproverEmail          string
+	RequestID              pgtype.UUID
+	MemberID               pgtype.UUID
+	RequestedAt            pgtype.Timestamptz
+	ReservedTransferRef    string
+	DecidedBy              pgtype.UUID
+	DecidedAt              pgtype.Timestamptz
+	TransitionID           pgtype.UUID
+	EntryFromState         pgtype.Text
+	EntryToState           string
+	LedgerTransferRef      string
+	TransitionAt           pgtype.Timestamptz
+	LedgerPostedAt         pgtype.Timestamptz
+	EntryID                pgtype.UUID
+	EntryState             string
+	EntryAmountMinor       int64
+	EntryCurrency          string
+	NetworkTransactionID   pgtype.UUID
+	NetworkID              string
+	ExternalID             string
+	NetworkStatus          string
+	NetworkStatusRaw       string
+	CommissionMinor        int64
+	CommissionCurrency     string
+	TransactedAt           pgtype.Timestamptz
+	EvidenceRetrievedAt    pgtype.Timestamptz
+	ContentDigest          string
+	ClickID                pgtype.UUID
+	ClickRef               pgtype.Text
+	ClickedAt              pgtype.Timestamptz
+	RateSnapshot           []byte
+	MemberShareBpsSnapshot pgtype.Int4
+	OfferID                pgtype.UUID
+	RateKind               pgtype.Text
+	OfferRateBpsCurrent    pgtype.Int4
+	MerchantNetworkID      pgtype.UUID
+	OfferNetworkID         pgtype.Text
+	ExternalMerchantID     pgtype.Text
+	MerchantID             pgtype.UUID
+	MerchantSlug           pgtype.Text
 }
 
 // One disagreement between what a network reported and what it paid (US6). Mutable on purpose: the row exists to be worked through, and the resolution records who decided what, when, and why.
