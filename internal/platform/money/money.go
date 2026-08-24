@@ -32,6 +32,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/bits"
 	"strconv"
 )
 
@@ -53,6 +54,13 @@ var (
 	// return: a total of nothing would be a number with no currency, and C-6
 	// says no such thing exists.
 	ErrNoAmounts = errors.New("money: sum of no amounts has no currency")
+	// ErrRateOutOfRange reports a rate outside zero to [BasisPointsScale],
+	// matching the rate_bps between 0 and 10000 check the schema carries.
+	ErrRateOutOfRange = errors.New("money: rate must be between 0 and 10000 basis points")
+	// ErrInvalidRounding reports a rounding mode that was never named,
+	// including the zero value of [Rounding]. There is no default mode: the
+	// direction money rounds in is a policy decision, not a language default.
+	ErrInvalidRounding = errors.New("money: rounding mode not specified")
 )
 
 // currencyCodeLen is the length of an ISO-4217 alphabetic code, and of the
@@ -311,6 +319,224 @@ func Sum(amounts ...Amount) (Amount, error) {
 		}
 	}
 	return total, nil
+}
+
+// BasisPoints is a rate in hundredths of a percent: 250 basis points is 2.5%,
+// and [BasisPointsScale] is the whole.
+//
+// Rates are expressed this way rather than as a fraction for the same reason
+// amounts are minor units - a percentage held as a float is a rounding error
+// with a plausible name - and the width matches the int column the schema
+// stores rate_bps and member_share_bps in.
+type BasisPoints int32
+
+// BasisPointsScale is one hundred percent: the denominator every rate divides
+// by, and the largest rate this package accepts.
+const BasisPointsScale BasisPoints = 10000
+
+// basisPointsScaleMagnitude is BasisPointsScale as an unsigned divisor, folded
+// at compile time so no runtime conversion of a signed constant is needed.
+const basisPointsScaleMagnitude = uint64(BasisPointsScale)
+
+// Valid reports whether the rate is between zero and [BasisPointsScale]
+// inclusive. Rates above the whole are rejected rather than allowed to produce
+// a share larger than what was split.
+func (b BasisPoints) Valid() bool { return b >= 0 && b <= BasisPointsScale }
+
+// Rounding names the direction a split rounds in when a rate does not divide
+// an amount into whole minor units.
+//
+// Every mode is explicit and the zero value is none of them, so a caller that
+// forgets to choose gets an error rather than whatever integer division
+// happened to do. Which mode a given split uses is a policy decision belonging
+// to the code that owns the rate - for cashback, the plan's Q4 answer is to
+// round to the member's favour and post the remainder to the house.
+type Rounding uint8
+
+const (
+	// roundUnspecified is the zero value of Rounding and is deliberately not a
+	// mode. Its existence is what makes a forgotten argument an error.
+	roundUnspecified Rounding = iota
+	// RoundTowardZero truncates: the fraction is dropped and the magnitude
+	// never grows. This is what Go's integer division does, named so that
+	// choosing it is a decision rather than an accident.
+	RoundTowardZero
+	// RoundAwayFromZero takes any fraction up to the next whole minor unit,
+	// increasing the magnitude.
+	RoundAwayFromZero
+	// RoundFloor rounds toward negative infinity: down for positive amounts,
+	// away from zero for negative ones.
+	RoundFloor
+	// RoundCeil rounds toward positive infinity: up for positive amounts,
+	// toward zero for negative ones. Applied to a credit, this is the mode
+	// that rounds to the member's favour.
+	RoundCeil
+	// RoundHalfAwayFromZero is commercial rounding: half a minor unit or more
+	// goes up in magnitude, less stays.
+	RoundHalfAwayFromZero
+	// RoundHalfEven is banker's rounding: exactly half goes to the even number
+	// of minor units, so a long run of splits does not drift in one direction
+	// the way half-away-from-zero does.
+	RoundHalfEven
+)
+
+// Valid reports whether r is one of the named modes. The zero value is not.
+func (r Rounding) Valid() bool {
+	switch r {
+	case RoundTowardZero, RoundAwayFromZero, RoundFloor, RoundCeil, RoundHalfAwayFromZero, RoundHalfEven:
+		return true
+	default:
+		return false
+	}
+}
+
+// String names the mode, so an error about rounding says which one rather than
+// printing a number.
+func (r Rounding) String() string {
+	switch r {
+	case RoundTowardZero:
+		return "toward zero"
+	case RoundAwayFromZero:
+		return "away from zero"
+	case RoundFloor:
+		return "floor"
+	case RoundCeil:
+		return "ceil"
+	case RoundHalfAwayFromZero:
+		return "half away from zero"
+	case RoundHalfEven:
+		return "half even"
+	case roundUnspecified:
+		return "unspecified"
+	default:
+		return "unknown rounding mode " + strconv.FormatUint(uint64(r), 10)
+	}
+}
+
+// magnitude returns the absolute value of v as an unsigned count.
+//
+// Negating v directly would overflow for the smallest representable int64,
+// whose magnitude has no positive counterpart in the signed range, so it is
+// built one step short of the boundary and completed unsigned.
+func magnitude(v int64) uint64 {
+	if v < 0 {
+		return uint64(-(v + 1)) + 1
+	}
+	return uint64(v)
+}
+
+// signedMagnitude reassembles a signed count of minor units from a magnitude
+// and a sign.
+//
+// The caller guarantees the magnitude is representable: [Amount.Split] only
+// ever passes back a magnitude no larger than the one it took apart, and the
+// one magnitude with no negative-side counterpart problem - two to the
+// sixty-third - is exactly the smallest representable int64.
+func signedMagnitude(mag uint64, negative bool) int64 {
+	if !negative {
+		return int64(mag)
+	}
+	if mag == 1<<63 {
+		return math.MinInt64
+	}
+	return -int64(mag)
+}
+
+// roundsAway reports whether a magnitude of units minor units, carrying a
+// further fraction of fraction parts in [BasisPointsScale], grows by one under
+// mode.
+//
+// The question is asked about the magnitude rather than the signed value, so
+// each mode reduces to "does this get further from zero", and the sign is
+// reapplied afterwards. That is also why the sign is a parameter: floor and
+// ceil are the two modes whose answer depends on which side of zero the amount
+// sits.
+func roundsAway(units, fraction uint64, negative bool, mode Rounding) bool {
+	if fraction == 0 {
+		return false
+	}
+	switch mode {
+	case RoundAwayFromZero:
+		return true
+	case RoundFloor:
+		return negative
+	case RoundCeil:
+		return !negative
+	case RoundHalfAwayFromZero:
+		return 2*fraction >= basisPointsScaleMagnitude
+	case RoundHalfEven:
+		switch {
+		case 2*fraction > basisPointsScaleMagnitude:
+			return true
+		case 2*fraction < basisPointsScaleMagnitude:
+			return false
+		default:
+			// Exactly half: grow only when the units are odd, which is what
+			// leaves an even number behind.
+			return units%2 == 1
+		}
+	}
+	// RoundTowardZero drops the fraction, and so does any mode Split has
+	// already rejected: the whole units stand as they are.
+	return false
+}
+
+// Split divides a at a basis-point rate, returning the share that rate buys
+// and the remainder that is left.
+//
+// It is the operation behind research D6's "member share = commission_minor x
+// rate_bps / 10000", and its contract is one line:
+//
+//	share plus remainder equals a, exactly, for every rate and every mode.
+//
+// That is why the remainder is returned rather than discarded. Post the share
+// to the member and the remainder to the house account, and the transfer sums
+// to zero by construction - C-1 held by arithmetic rather than by luck.
+// Rounding that quietly disappears is the classic way a ledger stops
+// balancing, so there is no way to call this and not be handed what was
+// rounded off. The remainder is the whole of what is not the share: the
+// house's own cut as well as any sub-minor-unit fraction the rounding
+// produced.
+//
+// mode must be named. There is no default, because "whatever integer division
+// happens to do" is not a policy anyone chose; the plan's Q4 leaves the
+// direction as configuration, so the constant lives with the caller and this
+// package supplies the modes it can be spelled in.
+//
+// The arithmetic is exact at every step. The product is formed in 128 bits and
+// divided back down, so a rate applied to an amount near the int64 limit is
+// neither approximated nor overflowed, and no intermediate value is ever a
+// float. Rates outside zero to [BasisPointsScale] are rejected, matching the
+// schema's check on rate_bps.
+func (a Amount) Split(rate BasisPoints, mode Rounding) (share, remainder Amount, err error) {
+	if err = a.Validate(); err != nil {
+		return Amount{}, Amount{}, err
+	}
+	if !rate.Valid() {
+		return Amount{}, Amount{}, fmt.Errorf("%w: %d", ErrRateOutOfRange, int32(rate))
+	}
+	if !mode.Valid() {
+		return Amount{}, Amount{}, fmt.Errorf("%w: %s", ErrInvalidRounding, mode)
+	}
+
+	negative := a.Minor < 0
+	// rate is non-negative by the check above, so widening it keeps its value.
+	hi, lo := bits.Mul64(magnitude(a.Minor), uint64(rate))
+	// bits.Div64 panics if the quotient will not fit in 64 bits. It cannot
+	// here: rate is at most BasisPointsScale, so hi is at most
+	// (2^63 * 10^4) >> 64, which is 5000, and 5000 is below the divisor.
+	units, fraction := bits.Div64(hi, lo, basisPointsScaleMagnitude)
+	if roundsAway(units, fraction, negative, mode) {
+		units++
+	}
+
+	share = Amount{Minor: signedMagnitude(units, negative), Currency: a.Currency}
+	// The share never exceeds a in magnitude and never differs from it in
+	// sign, because the rate is at most the whole, so this cannot overflow.
+	if remainder, err = a.Sub(share); err != nil {
+		return Amount{}, Amount{}, err
+	}
+	return share, remainder, nil
 }
 
 // String renders the amount for logs, errors and test failures as minor units

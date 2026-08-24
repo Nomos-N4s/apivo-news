@@ -3,6 +3,7 @@ package money_test
 import (
 	"errors"
 	"math"
+	"math/big"
 	"strings"
 	"testing"
 
@@ -16,6 +17,19 @@ const (
 	eur = money.Currency("EUR")
 	gbp = money.Currency("GBP")
 )
+
+// allModes is every rounding mode the package names. Tests that assert a
+// property of splitting - that the share and the remainder complete the
+// original amount, above all - run over all of them, so a mode added later
+// inherits the guarantees rather than quietly opting out of them.
+var allModes = []money.Rounding{
+	money.RoundTowardZero,
+	money.RoundAwayFromZero,
+	money.RoundFloor,
+	money.RoundCeil,
+	money.RoundHalfAwayFromZero,
+	money.RoundHalfEven,
+}
 
 func TestCurrencyValid(t *testing.T) {
 	t.Parallel()
@@ -714,5 +728,386 @@ func TestString(t *testing.T) {
 				t.Errorf("String() = %q, which reads as a formatted decimal", got)
 			}
 		})
+	}
+}
+
+func TestBasisPointsValid(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		rate money.BasisPoints
+		want bool
+	}{
+		{rate: 0, want: true},
+		{rate: 1, want: true},
+		{rate: 250, want: true},
+		{rate: money.BasisPointsScale, want: true},
+		{rate: money.BasisPointsScale + 1},
+		{rate: -1},
+		{rate: math.MinInt32},
+		{rate: math.MaxInt32},
+	}
+
+	for _, tc := range tests {
+		if got := tc.rate.Valid(); got != tc.want {
+			t.Errorf("BasisPoints(%d).Valid() = %v, want %v", int32(tc.rate), got, tc.want)
+		}
+	}
+}
+
+func TestRoundingValid(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range allModes {
+		if !mode.Valid() {
+			t.Errorf("%s is a named mode but reports invalid", mode)
+		}
+	}
+	// The zero value is what a caller who forgot the argument passes, and it
+	// is deliberately not a mode.
+	var unset money.Rounding
+	if unset.Valid() {
+		t.Error("the zero Rounding reports valid; a forgotten mode must be an error, not truncation")
+	}
+	if money.Rounding(99).Valid() {
+		t.Error("an unnamed Rounding reports valid")
+	}
+}
+
+func TestRoundingString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		mode money.Rounding
+		want string
+	}{
+		{mode: money.RoundTowardZero, want: "toward zero"},
+		{mode: money.RoundAwayFromZero, want: "away from zero"},
+		{mode: money.RoundFloor, want: "floor"},
+		{mode: money.RoundCeil, want: "ceil"},
+		{mode: money.RoundHalfAwayFromZero, want: "half away from zero"},
+		{mode: money.RoundHalfEven, want: "half even"},
+		{mode: money.Rounding(0), want: "unspecified"},
+		{mode: money.Rounding(99), want: "unknown rounding mode 99"},
+	}
+
+	for _, tc := range tests {
+		if got := tc.mode.String(); got != tc.want {
+			t.Errorf("Rounding(%d).String() = %q, want %q", uint8(tc.mode), got, tc.want)
+		}
+	}
+}
+
+// splitCase is one amount split at one rate under one mode, with the share the
+// mode is required to produce. The remainder is never stated: it is always
+// what completes the amount, and every case asserts that rather than a number
+// somebody typed.
+type splitCase struct {
+	name      string
+	minor     int64
+	rate      money.BasisPoints
+	mode      money.Rounding
+	wantShare int64
+}
+
+func TestSplitRoundingAtTheMinorUnit(t *testing.T) {
+	t.Parallel()
+
+	tests := []splitCase{
+		// Half of 1001 minor units is 500.5: the case every mode answers
+		// differently, and the one a ledger loses money in.
+		{name: "exactly half, toward zero", minor: 1001, rate: 5000, mode: money.RoundTowardZero, wantShare: 500},
+		{name: "exactly half, away from zero", minor: 1001, rate: 5000, mode: money.RoundAwayFromZero, wantShare: 501},
+		{name: "exactly half, floor", minor: 1001, rate: 5000, mode: money.RoundFloor, wantShare: 500},
+		{name: "exactly half, ceil", minor: 1001, rate: 5000, mode: money.RoundCeil, wantShare: 501},
+		{name: "exactly half, half away from zero", minor: 1001, rate: 5000, mode: money.RoundHalfAwayFromZero, wantShare: 501},
+		{name: "exactly half, half even lands on the even units", minor: 1001, rate: 5000, mode: money.RoundHalfEven, wantShare: 500},
+		// 501.5, where half-even goes the other way: 501 is odd, so the even
+		// neighbour is above.
+		{name: "exactly half, half even from odd units", minor: 1003, rate: 5000, mode: money.RoundHalfEven, wantShare: 502},
+		{name: "exactly half, half away from zero from odd units", minor: 1003, rate: 5000, mode: money.RoundHalfAwayFromZero, wantShare: 502},
+
+		// Below half: 0.1001 of a minor unit.
+		{name: "below half, toward zero", minor: 1001, rate: 1, mode: money.RoundTowardZero, wantShare: 0},
+		{name: "below half, away from zero", minor: 1001, rate: 1, mode: money.RoundAwayFromZero, wantShare: 1},
+		{name: "below half, ceil", minor: 1001, rate: 1, mode: money.RoundCeil, wantShare: 1},
+		{name: "below half, floor", minor: 1001, rate: 1, mode: money.RoundFloor, wantShare: 0},
+		{name: "below half, half away from zero", minor: 1001, rate: 1, mode: money.RoundHalfAwayFromZero, wantShare: 0},
+		{name: "below half, half even", minor: 1001, rate: 1, mode: money.RoundHalfEven, wantShare: 0},
+
+		// Above half: 0.9009 of a minor unit.
+		{name: "above half, half away from zero", minor: 1001, rate: 9, mode: money.RoundHalfAwayFromZero, wantShare: 1},
+		{name: "above half, half even", minor: 1001, rate: 9, mode: money.RoundHalfEven, wantShare: 1},
+		{name: "above half, toward zero", minor: 1001, rate: 9, mode: money.RoundTowardZero, wantShare: 0},
+
+		// The same fractions on a negative amount. Floor and ceil are the two
+		// modes that change sides; the rest are symmetric about zero.
+		{name: "negative, exactly half, toward zero", minor: -1001, rate: 5000, mode: money.RoundTowardZero, wantShare: -500},
+		{name: "negative, exactly half, away from zero", minor: -1001, rate: 5000, mode: money.RoundAwayFromZero, wantShare: -501},
+		{name: "negative, exactly half, floor goes down", minor: -1001, rate: 5000, mode: money.RoundFloor, wantShare: -501},
+		{name: "negative, exactly half, ceil goes up", minor: -1001, rate: 5000, mode: money.RoundCeil, wantShare: -500},
+		{name: "negative, exactly half, half away from zero", minor: -1001, rate: 5000, mode: money.RoundHalfAwayFromZero, wantShare: -501},
+		{name: "negative, exactly half, half even", minor: -1001, rate: 5000, mode: money.RoundHalfEven, wantShare: -500},
+		{name: "negative, below half, ceil truncates toward zero", minor: -1001, rate: 1, mode: money.RoundCeil, wantShare: 0},
+		{name: "negative, below half, floor", minor: -1001, rate: 1, mode: money.RoundFloor, wantShare: -1},
+
+		// Nothing to round: the fraction is zero, so no mode moves the share.
+		{name: "divides exactly, toward zero", minor: 1000, rate: 5000, mode: money.RoundTowardZero, wantShare: 500},
+		{name: "divides exactly, away from zero", minor: 1000, rate: 5000, mode: money.RoundAwayFromZero, wantShare: 500},
+		{name: "divides exactly, ceil", minor: 1000, rate: 5000, mode: money.RoundCeil, wantShare: 500},
+		{name: "divides exactly, half even leaves odd units alone", minor: 2000, rate: 5000, mode: money.RoundHalfEven, wantShare: 1000},
+
+		// Zero splits to zero in every direction; there is no fraction to
+		// round and no remainder to place.
+		{name: "zero, away from zero", minor: 0, rate: 5000, mode: money.RoundAwayFromZero, wantShare: 0},
+		{name: "zero, ceil", minor: 0, rate: 1, mode: money.RoundCeil, wantShare: 0},
+
+		// The boundary rates.
+		{name: "the whole rate hands over everything", minor: 1001, rate: money.BasisPointsScale, mode: money.RoundTowardZero, wantShare: 1001},
+		{name: "the whole rate on a negative amount", minor: -1001, rate: money.BasisPointsScale, mode: money.RoundAwayFromZero, wantShare: -1001},
+		{name: "a zero rate hands over nothing", minor: 1001, rate: 0, mode: money.RoundAwayFromZero, wantShare: 0},
+		{name: "a zero rate on a negative amount", minor: -1001, rate: 0, mode: money.RoundFloor, wantShare: 0},
+		{name: "one basis point of one minor unit, away from zero", minor: 1, rate: 1, mode: money.RoundAwayFromZero, wantShare: 1},
+		{name: "one basis point of one minor unit, toward zero", minor: 1, rate: 1, mode: money.RoundTowardZero, wantShare: 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			a := money.Amount{Minor: tc.minor, Currency: eur}
+			share, remainder, err := a.Split(tc.rate, tc.mode)
+			if err != nil {
+				t.Fatalf("(%v).Split(%d, %s) returned error: %v", a, int32(tc.rate), tc.mode, err)
+			}
+			if share.Minor != tc.wantShare {
+				t.Errorf("(%v).Split(%d, %s) share = %d, want %d", a, int32(tc.rate), tc.mode, share.Minor, tc.wantShare)
+			}
+			assertCompletes(t, a, share, remainder)
+		})
+	}
+}
+
+// assertCompletes is the invariant the whole package turns on: what came out
+// of a split adds back up to what went in, in the same currency. If this ever
+// fails, a transfer built from the two postings does not sum to zero and C-1
+// is broken.
+func assertCompletes(t *testing.T, a, share, remainder money.Amount) {
+	t.Helper()
+
+	if share.Currency != a.Currency || remainder.Currency != a.Currency {
+		t.Fatalf("split of %v produced %v and %v; a share or remainder changed currency", a, share, remainder)
+	}
+	back, err := share.Add(remainder)
+	if err != nil {
+		t.Fatalf("split of %v produced %v and %v, which do not add: %v", a, share, remainder, err)
+	}
+	if back != a {
+		t.Fatalf("split of %v produced %v and %v, which total %v; the difference is money that left the ledger", a, share, remainder, back)
+	}
+}
+
+func TestSplitCompletesTheAmountAtEveryRate(t *testing.T) {
+	t.Parallel()
+
+	// The extremes are in the list because the 128-bit product is exactly
+	// where a naive implementation overflows, and zero is in it because a
+	// split of nothing must still be two postings that balance.
+	amounts := []int64{
+		0, 1, -1, 7, -7, 99, -99, 1000, -1000, 12345, -12345, 99999999,
+		math.MaxInt64, math.MinInt64, math.MaxInt64 - 1, math.MinInt64 + 1,
+	}
+
+	for _, mode := range allModes {
+		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
+
+			for _, minor := range amounts {
+				a := money.Amount{Minor: minor, Currency: eur}
+				for rate := money.BasisPoints(0); rate <= money.BasisPointsScale; rate++ {
+					share, remainder, err := a.Split(rate, mode)
+					if err != nil {
+						t.Fatalf("(%v).Split(%d, %s) returned error: %v", a, int32(rate), mode, err)
+					}
+					assertCompletes(t, a, share, remainder)
+					assertShareWithinAmount(t, a, share, rate, mode)
+				}
+			}
+		})
+	}
+}
+
+// assertShareWithinAmount checks that a share of at most the whole is at most
+// the whole: it never overshoots the amount and never crosses zero to the
+// other side of it. Stated without an absolute value, because the smallest
+// representable amount has none.
+func assertShareWithinAmount(t *testing.T, a, share money.Amount, rate money.BasisPoints, mode money.Rounding) {
+	t.Helper()
+
+	switch {
+	case a.Minor >= 0 && (share.Minor < 0 || share.Minor > a.Minor):
+		t.Fatalf("(%v).Split(%d, %s) share = %v, outside 0..%d", a, int32(rate), mode, share, a.Minor)
+	case a.Minor < 0 && (share.Minor > 0 || share.Minor < a.Minor):
+		t.Fatalf("(%v).Split(%d, %s) share = %v, outside %d..0", a, int32(rate), mode, share, a.Minor)
+	}
+}
+
+func TestSplitMatchesExactIntegerArithmetic(t *testing.T) {
+	t.Parallel()
+
+	// An independent oracle in arbitrary precision, so the 128-bit product and
+	// division are checked against arithmetic that has no width to overflow.
+	// Only the four unambiguous modes are oracled here: big.Int's Quo
+	// truncates toward zero and its Div floors, which are two of them
+	// outright, and the other two follow without restating this package's
+	// rounding rules in the test.
+	amounts := []int64{
+		math.MaxInt64, math.MinInt64, math.MaxInt64 - 1, math.MinInt64 + 1,
+		999999999999999999, -999999999999999999, 12345678901234567, -1,
+	}
+	rates := []money.BasisPoints{1, 3, 7, 9, 1234, 4999, 5000, 5001, 9999, money.BasisPointsScale}
+
+	scale := big.NewInt(int64(money.BasisPointsScale))
+	one := big.NewInt(1)
+
+	for _, minor := range amounts {
+		a := money.Amount{Minor: minor, Currency: eur}
+		for _, rate := range rates {
+			product := new(big.Int).Mul(big.NewInt(minor), big.NewInt(int64(rate)))
+
+			truncated, truncRem := new(big.Int).QuoRem(product, scale, new(big.Int))
+			away := new(big.Int).Set(truncated)
+			if truncRem.Sign() != 0 {
+				if minor < 0 {
+					away.Sub(away, one)
+				} else {
+					away.Add(away, one)
+				}
+			}
+			// Div is Euclidean and the divisor is positive, so it floors.
+			floor := new(big.Int).Div(product, scale)
+			ceil := new(big.Int).Set(floor)
+			if new(big.Int).Mod(product, scale).Sign() != 0 {
+				ceil.Add(ceil, one)
+			}
+
+			for _, want := range []struct {
+				mode money.Rounding
+				want *big.Int
+			}{
+				{mode: money.RoundTowardZero, want: truncated},
+				{mode: money.RoundAwayFromZero, want: away},
+				{mode: money.RoundFloor, want: floor},
+				{mode: money.RoundCeil, want: ceil},
+			} {
+				share, remainder, err := a.Split(rate, want.mode)
+				if err != nil {
+					t.Fatalf("(%v).Split(%d, %s) returned error: %v", a, int32(rate), want.mode, err)
+				}
+				if !want.want.IsInt64() || share.Minor != want.want.Int64() {
+					t.Errorf("(%v).Split(%d, %s) share = %d, want %s", a, int32(rate), want.mode, share.Minor, want.want)
+				}
+				assertCompletes(t, a, share, remainder)
+			}
+		}
+	}
+}
+
+func TestSplitRejects(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		a       money.Amount
+		rate    money.BasisPoints
+		mode    money.Rounding
+		wantErr error
+	}{
+		{
+			name:    "an amount with no currency",
+			a:       money.Amount{Minor: 1000},
+			rate:    5000,
+			mode:    money.RoundCeil,
+			wantErr: money.ErrInvalidCurrency,
+		},
+		{
+			name:    "a negative rate",
+			a:       money.Amount{Minor: 1000, Currency: eur},
+			rate:    -1,
+			mode:    money.RoundCeil,
+			wantErr: money.ErrRateOutOfRange,
+		},
+		{
+			name:    "a rate above the whole",
+			a:       money.Amount{Minor: 1000, Currency: eur},
+			rate:    money.BasisPointsScale + 1,
+			mode:    money.RoundCeil,
+			wantErr: money.ErrRateOutOfRange,
+		},
+		{
+			name:    "a forgotten rounding mode",
+			a:       money.Amount{Minor: 1000, Currency: eur},
+			rate:    5000,
+			mode:    money.Rounding(0),
+			wantErr: money.ErrInvalidRounding,
+		},
+		{
+			name:    "a rounding mode that was never named",
+			a:       money.Amount{Minor: 1000, Currency: eur},
+			rate:    5000,
+			mode:    money.Rounding(99),
+			wantErr: money.ErrInvalidRounding,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			share, remainder, err := tc.a.Split(tc.rate, tc.mode)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("(%v).Split(%d, %s) error = %v, want %v", tc.a, int32(tc.rate), tc.mode, err, tc.wantErr)
+			}
+			if share != (money.Amount{}) || remainder != (money.Amount{}) {
+				t.Errorf("(%v).Split(%d, %s) = %v, %v, want two zero Amounts on failure", tc.a, int32(tc.rate), tc.mode, share, remainder)
+			}
+		})
+	}
+}
+
+func TestSplitPostsTheRemainderToTheHouse(t *testing.T) {
+	t.Parallel()
+
+	// The worked example from research D6: a commission arrives, the member's
+	// configured share of it is credited rounded to the member's favour, and
+	// what is left - the house's own cut plus the fraction of a cent the
+	// rounding created - is the other posting. The two postings and the
+	// commission are a transfer that sums to zero, which is C-1.
+	commission := money.Amount{Minor: 12345, Currency: eur}
+	const memberShare = money.BasisPoints(6500)
+
+	member, house, err := commission.Split(memberShare, money.RoundCeil)
+	if err != nil {
+		t.Fatalf("Split returned error: %v", err)
+	}
+
+	// 12345 x 6500 / 10000 is 8024.25, and the member's favour rounds up.
+	if member.Minor != 8025 {
+		t.Errorf("member share = %v, want 8025 EUR", member)
+	}
+	if house.Minor != 4320 {
+		t.Errorf("house remainder = %v, want 4320 EUR", house)
+	}
+
+	debit, err := commission.Neg()
+	if err != nil {
+		t.Fatalf("Neg returned error: %v", err)
+	}
+	transfer, err := money.Sum(debit, member, house)
+	if err != nil {
+		t.Fatalf("Sum of the transfer's postings returned error: %v", err)
+	}
+	if !transfer.IsZero() {
+		t.Errorf("the transfer's postings total %v, want zero; a transfer that does not balance is not postable", transfer)
 	}
 }
