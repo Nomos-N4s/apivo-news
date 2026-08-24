@@ -40,6 +40,12 @@ const (
 	// convention rather than the adapters means a network added tomorrow is
 	// sealed the moment its directory exists, with nothing here to update.
 	networksDir = "networks"
+	// archModule is this package: enforcement, not a product. It is bound by
+	// every rule like any other module, but it must never be counted as one
+	// of the domains that make the cross-domain rule meaningful - a tree
+	// holding arch and one real domain has nothing to forbid, and counting
+	// arch would let it claim otherwise.
+	archModule = "arch"
 )
 
 // violation is one import that breaks a boundary rule: the file that holds
@@ -300,6 +306,15 @@ func TestBoundaryScanRefusesToPassVacuously(t *testing.T) {
 			dirs: []string{"platform", "identity", "content"},
 			want: "needs two domains",
 		},
+		{
+			name: "arch standing in for the second domain",
+			dirs: []string{"platform", "identity", "arch", "content"},
+			want: "needs two domains",
+		},
+		{
+			name: "arch alongside two real domains",
+			dirs: []string{"platform", "identity", "arch", "content", "cashback"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -406,7 +421,11 @@ func checkLayers(fsys fs.FS) error {
 			continue
 		}
 		present[e.Name()] = true
-		if e.Name() != platformModule && e.Name() != identityModule {
+		switch e.Name() {
+		case platformModule, identityModule, archModule:
+			// Layers and enforcement. None of them is a product domain, so
+			// none of them can stand in for one in the count below.
+		default:
 			domains = append(domains, e.Name())
 		}
 	}
@@ -417,7 +436,7 @@ func checkLayers(fsys fs.FS) error {
 		}
 	}
 	if len(domains) < 2 {
-		return fmt.Errorf("found %d module(s) beside platform and identity (%v); the cross-domain rule needs two domains before it forbids anything", len(domains), domains)
+		return fmt.Errorf("found %d product domain(s) beside platform, identity and arch (%v); the cross-domain rule needs two domains before it forbids anything", len(domains), domains)
 	}
 	return nil
 }
