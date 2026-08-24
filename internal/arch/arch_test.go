@@ -23,6 +23,12 @@ const (
 	// platformModule is the shared bottom layer: any module may import it,
 	// and it may import no sibling.
 	platformModule = "platform"
+	// identityModule is the shared account layer above platform: any
+	// product domain may import it, and it imports only platform
+	// (ADR-0001). Accounts are the one thing both products genuinely share,
+	// so the alternative to this exception is every domain carrying its own
+	// notion of who a member is.
+	identityModule = "identity"
 )
 
 // violation is one import that breaks a boundary rule: the file that holds
@@ -92,6 +98,22 @@ func TestModuleBoundaryRules(t *testing.T) {
 			file:    "content/feed.go",
 			imports: []string{internalPrefix + "contentious/store"},
 			want:    `module "content" must not import module "contentious"`,
+		},
+		{
+			name:    "identity importing a product domain",
+			file:    "identity/service.go",
+			imports: []string{internalPrefix + "content/store"},
+			want:    `identity must not import module "content"`,
+		},
+		{
+			name:    "identity importing platform",
+			file:    "identity/verifier.go",
+			imports: []string{internalPrefix + "platform/config"},
+		},
+		{
+			name:    "a product domain importing identity",
+			file:    "cashback/payout/approve.go",
+			imports: []string{internalPrefix + "identity"},
 		},
 		{
 			name:    "any module importing platform",
@@ -204,16 +226,20 @@ func violates(ownerPkg, importPath string) (string, bool) {
 
 	ownerModule := moduleOf(ownerPkg)
 	targetModule := moduleOf(strings.TrimPrefix(importPath, internalPrefix))
-	if targetModule == ownerModule {
+	switch {
+	case targetModule == ownerModule:
 		return "", false
-	}
-	if ownerModule == platformModule {
-		return fmt.Sprintf("platform must not import sibling module %q (import %q)", targetModule, importPath), true
-	}
-	if targetModule != platformModule {
+	case ownerModule == platformModule:
+		return fmt.Sprintf("platform must not import sibling module %q (import %q); platform is the bottom layer and imports no domain", targetModule, importPath), true
+	case targetModule == platformModule:
+		return "", false
+	case ownerModule == identityModule:
+		return fmt.Sprintf("identity must not import module %q (import %q); identity sits directly above platform and imports nothing else", targetModule, importPath), true
+	case targetModule == identityModule:
+		return "", false
+	default:
 		return fmt.Sprintf("module %q must not import module %q internals (import %q); communicate through consumer-defined interfaces wired in cmd", ownerModule, targetModule, importPath), true
 	}
-	return "", false
 }
 
 // assertModulePath guards against a module rename silently blinding this
