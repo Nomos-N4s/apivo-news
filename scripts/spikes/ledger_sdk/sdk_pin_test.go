@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"testing"
+	"time"
 
 	blnkgo "github.com/blnkfinance/blnk-go"
 )
@@ -27,6 +28,12 @@ import (
 // pinnedBaseURL is any syntactically valid endpoint: the offline half of
 // this test builds a client and never calls it.
 const pinnedBaseURL = "http://ledger.invalid:5001"
+
+// reachabilityTimeout caps the one test here that makes a real request. It
+// is short on purpose: the ledger is on loopback in every environment where
+// this test does not skip, so anything slower than this is a hang, not a
+// slow answer.
+const reachabilityTimeout = 5 * time.Second
 
 // TestPinnedSDKBuildsAClient is the compile-and-construct proof. It needs no
 // network, no Docker and no ledger, so it runs on every machine and in every
@@ -99,13 +106,32 @@ func TestPinnedSDKReachesARunningLedger(t *testing.T) {
 		t.Fatalf("BLNK_URL is not a URL: %v", err)
 	}
 	key := os.Getenv("BLNK_SECRET_KEY")
-	client := blnkgo.NewClient(base, &key)
+
+	// Bounded explicitly rather than left to the SDK's defaults.
+	//
+	// The pinned SDK is not unbounded - NewClient sets an http.Client with a
+	// 10s timeout even when no option is passed - but two things make that
+	// the wrong thing to depend on here. It is a default the SDK is free to
+	// change on a version bump, which is precisely what this package exists
+	// to catch rather than inherit; and CallWithRetry multiplies it, so the
+	// real ceiling is the timeout times the retry count plus the delays
+	// between them.
+	//
+	// This test runs inside the cashback job, where BLNK_URL is set and
+	// `go test ./...` has no per-package deadline short enough to save it.
+	// A blackholed endpoint would therefore stall the job to the global
+	// timeout instead of failing in seconds with a legible message.
+	client := blnkgo.NewClient(base, &key,
+		blnkgo.WithTimeout(reachabilityTimeout),
+		blnkgo.WithRetry(1),
+	)
 
 	// Listing ledgers is the cheapest real round-trip: it proves the
 	// transport, the base-URL handling and the response decoding, and it
 	// creates nothing. An empty list is a pass - the assertion is that the
 	// call succeeded, not that anything has been posted yet.
+	start := time.Now()
 	if _, _, err := client.Ledger.List(); err != nil {
-		t.Fatalf("listing ledgers through the pinned SDK: %v", err)
+		t.Fatalf("listing ledgers through the pinned SDK after %s: %v", time.Since(start).Round(time.Millisecond), err)
 	}
 }
