@@ -254,6 +254,437 @@ func TestEqual(t *testing.T) {
 	}
 }
 
+// binaryCase drives Add, Sub and Cmp alike: the same operand pairs have to be
+// rejected by all three, and writing the mixed-currency and unset-currency
+// cases once is what stops one of them quietly acquiring an exception.
+type binaryCase struct {
+	name    string
+	a, b    money.Amount
+	want    int64 // for Add and Sub, the expected minor units
+	wantCmp int
+	wantErr error
+}
+
+func mixedAndMalformedCases() []binaryCase {
+	return []binaryCase{
+		{
+			name:    "mixed currencies are rejected, never converted",
+			a:       money.Amount{Minor: 100, Currency: eur},
+			b:       money.Amount{Minor: 100, Currency: gbp},
+			wantErr: money.ErrCurrencyMismatch,
+		},
+		{
+			name:    "left operand carries no currency",
+			a:       money.Amount{Minor: 100},
+			b:       money.Amount{Minor: 100, Currency: eur},
+			wantErr: money.ErrInvalidCurrency,
+		},
+		{
+			name:    "right operand carries no currency",
+			a:       money.Amount{Minor: 100, Currency: eur},
+			b:       money.Amount{Minor: 100},
+			wantErr: money.ErrInvalidCurrency,
+		},
+		{
+			name:    "two currency-less amounts are still not one currency",
+			a:       money.Amount{Minor: 1},
+			b:       money.Amount{Minor: 1},
+			wantErr: money.ErrInvalidCurrency,
+		},
+	}
+}
+
+func TestAdd(t *testing.T) {
+	t.Parallel()
+
+	tests := append([]binaryCase{
+		{
+			name: "two positives",
+			a:    money.Amount{Minor: 1234, Currency: eur},
+			b:    money.Amount{Minor: 766, Currency: eur},
+			want: 2000,
+		},
+		{
+			name: "a credit and a debit",
+			a:    money.Amount{Minor: 1234, Currency: eur},
+			b:    money.Amount{Minor: -1234, Currency: eur},
+			want: 0,
+		},
+		{
+			name: "two negatives",
+			a:    money.Amount{Minor: -5, Currency: gbp},
+			b:    money.Amount{Minor: -7, Currency: gbp},
+			want: -12,
+		},
+		{
+			name: "adding zero",
+			a:    money.Amount{Minor: 99, Currency: eur},
+			b:    money.Amount{Minor: 0, Currency: eur},
+			want: 99,
+		},
+		{
+			name: "up to the largest representable amount, but not past it",
+			a:    money.Amount{Minor: math.MaxInt64 - 1, Currency: eur},
+			b:    money.Amount{Minor: 1, Currency: eur},
+			want: math.MaxInt64,
+		},
+		{
+			name: "down to the smallest representable amount",
+			a:    money.Amount{Minor: math.MinInt64 + 1, Currency: eur},
+			b:    money.Amount{Minor: -1, Currency: eur},
+			want: math.MinInt64,
+		},
+		{
+			name:    "positive overflow is detected, not wrapped",
+			a:       money.Amount{Minor: math.MaxInt64, Currency: eur},
+			b:       money.Amount{Minor: 1, Currency: eur},
+			wantErr: money.ErrOverflow,
+		},
+		{
+			name:    "negative overflow is detected, not wrapped",
+			a:       money.Amount{Minor: math.MinInt64, Currency: eur},
+			b:       money.Amount{Minor: -1, Currency: eur},
+			wantErr: money.ErrOverflow,
+		},
+		{
+			name:    "the two extremes together overflow in the positive direction",
+			a:       money.Amount{Minor: math.MaxInt64, Currency: eur},
+			b:       money.Amount{Minor: math.MaxInt64, Currency: eur},
+			wantErr: money.ErrOverflow,
+		},
+	}, mixedAndMalformedCases()...)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tc.a.Add(tc.b)
+			assertAmount(t, "Add", tc.a, tc.b, got, err, tc.want, tc.wantErr)
+		})
+	}
+}
+
+func TestSub(t *testing.T) {
+	t.Parallel()
+
+	tests := append([]binaryCase{
+		{
+			name: "ordinary difference",
+			a:    money.Amount{Minor: 2000, Currency: eur},
+			b:    money.Amount{Minor: 766, Currency: eur},
+			want: 1234,
+		},
+		{
+			name: "difference crossing zero",
+			a:    money.Amount{Minor: 5, Currency: eur},
+			b:    money.Amount{Minor: 12, Currency: eur},
+			want: -7,
+		},
+		{
+			name: "subtracting a negative",
+			a:    money.Amount{Minor: 5, Currency: gbp},
+			b:    money.Amount{Minor: -7, Currency: gbp},
+			want: 12,
+		},
+		{
+			name: "an amount less itself is zero",
+			a:    money.Amount{Minor: math.MinInt64, Currency: eur},
+			b:    money.Amount{Minor: math.MinInt64, Currency: eur},
+			want: 0,
+		},
+		{
+			name: "up to the largest representable amount",
+			a:    money.Amount{Minor: math.MaxInt64 - 1, Currency: eur},
+			b:    money.Amount{Minor: -1, Currency: eur},
+			want: math.MaxInt64,
+		},
+		{
+			name:    "positive overflow is detected",
+			a:       money.Amount{Minor: math.MaxInt64, Currency: eur},
+			b:       money.Amount{Minor: -1, Currency: eur},
+			wantErr: money.ErrOverflow,
+		},
+		{
+			name:    "negative overflow is detected",
+			a:       money.Amount{Minor: math.MinInt64, Currency: eur},
+			b:       money.Amount{Minor: 1, Currency: eur},
+			wantErr: money.ErrOverflow,
+		},
+		{
+			name:    "subtracting the smallest representable amount from a positive one",
+			a:       money.Amount{Minor: 1, Currency: eur},
+			b:       money.Amount{Minor: math.MinInt64, Currency: eur},
+			wantErr: money.ErrOverflow,
+		},
+	}, mixedAndMalformedCases()...)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tc.a.Sub(tc.b)
+			assertAmount(t, "Sub", tc.a, tc.b, got, err, tc.want, tc.wantErr)
+		})
+	}
+}
+
+// assertAmount checks one binary result: the error kind when a failure is
+// expected, and both the units and the currency when it is not.
+func assertAmount(t *testing.T, op string, a, b, got money.Amount, err error, want int64, wantErr error) {
+	t.Helper()
+
+	if wantErr != nil {
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("(%v).%s(%v) error = %v, want %v", a, op, b, err, wantErr)
+		}
+		if got != (money.Amount{}) {
+			t.Errorf("(%v).%s(%v) = %v, want the zero Amount on failure", a, op, b, got)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("(%v).%s(%v) returned error: %v", a, op, b, err)
+	}
+	if got.Minor != want {
+		t.Errorf("(%v).%s(%v) = %d minor units, want %d", a, op, b, got.Minor, want)
+	}
+	if got.Currency != a.Currency {
+		t.Errorf("(%v).%s(%v) currency = %q, want %q", a, op, b, got.Currency, a.Currency)
+	}
+}
+
+func TestNeg(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		a       money.Amount
+		want    int64
+		wantErr error
+	}{
+		{name: "positive becomes negative", a: money.Amount{Minor: 1234, Currency: eur}, want: -1234},
+		{name: "negative becomes positive", a: money.Amount{Minor: -1234, Currency: eur}, want: 1234},
+		{name: "zero stays zero", a: money.Amount{Minor: 0, Currency: gbp}, want: 0},
+		{name: "largest representable negates", a: money.Amount{Minor: math.MaxInt64, Currency: eur}, want: math.MinInt64 + 1},
+		{
+			name:    "the smallest representable amount has no positive counterpart",
+			a:       money.Amount{Minor: math.MinInt64, Currency: eur},
+			wantErr: money.ErrOverflow,
+		},
+		{name: "no currency", a: money.Amount{Minor: 1}, wantErr: money.ErrInvalidCurrency},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tc.a.Neg()
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("(%v).Neg() error = %v, want %v", tc.a, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("(%v).Neg() returned error: %v", tc.a, err)
+			}
+			if got.Minor != tc.want || got.Currency != tc.a.Currency {
+				t.Errorf("(%v).Neg() = %v, want %d %s", tc.a, got, tc.want, tc.a.Currency)
+			}
+		})
+	}
+}
+
+func TestAbs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		a       money.Amount
+		want    int64
+		wantErr error
+	}{
+		{name: "positive is unchanged", a: money.Amount{Minor: 1234, Currency: eur}, want: 1234},
+		{name: "negative is flipped", a: money.Amount{Minor: -1234, Currency: eur}, want: 1234},
+		{name: "zero", a: money.Amount{Minor: 0, Currency: eur}, want: 0},
+		{
+			name:    "the smallest representable amount has no magnitude in range",
+			a:       money.Amount{Minor: math.MinInt64, Currency: eur},
+			wantErr: money.ErrOverflow,
+		},
+		{name: "no currency", a: money.Amount{Minor: -1}, wantErr: money.ErrInvalidCurrency},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tc.a.Abs()
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("(%v).Abs() error = %v, want %v", tc.a, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("(%v).Abs() returned error: %v", tc.a, err)
+			}
+			if got.Minor != tc.want || got.Currency != tc.a.Currency {
+				t.Errorf("(%v).Abs() = %v, want %d %s", tc.a, got, tc.want, tc.a.Currency)
+			}
+		})
+	}
+}
+
+func TestCmp(t *testing.T) {
+	t.Parallel()
+
+	tests := append([]binaryCase{
+		{
+			name:    "smaller",
+			a:       money.Amount{Minor: 1, Currency: eur},
+			b:       money.Amount{Minor: 2, Currency: eur},
+			wantCmp: -1,
+		},
+		{
+			name:    "larger",
+			a:       money.Amount{Minor: 2, Currency: eur},
+			b:       money.Amount{Minor: 1, Currency: eur},
+			wantCmp: 1,
+		},
+		{
+			name:    "equal",
+			a:       money.Amount{Minor: 2, Currency: eur},
+			b:       money.Amount{Minor: 2, Currency: eur},
+			wantCmp: 0,
+		},
+		{
+			name:    "negative is below zero",
+			a:       money.Amount{Minor: -1, Currency: gbp},
+			b:       money.Amount{Minor: 0, Currency: gbp},
+			wantCmp: -1,
+		},
+		{
+			// A subtraction-based comparison would overflow here and report
+			// the wrong order.
+			name:    "the two extremes compare without overflowing",
+			a:       money.Amount{Minor: math.MinInt64, Currency: eur},
+			b:       money.Amount{Minor: math.MaxInt64, Currency: eur},
+			wantCmp: -1,
+		},
+		{
+			name:    "and in the other direction",
+			a:       money.Amount{Minor: math.MaxInt64, Currency: eur},
+			b:       money.Amount{Minor: math.MinInt64, Currency: eur},
+			wantCmp: 1,
+		},
+	}, mixedAndMalformedCases()...)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tc.a.Cmp(tc.b)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("(%v).Cmp(%v) error = %v, want %v", tc.a, tc.b, err, tc.wantErr)
+				}
+				if got != 0 {
+					t.Errorf("(%v).Cmp(%v) = %d, want 0 on failure", tc.a, tc.b, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("(%v).Cmp(%v) returned error: %v", tc.a, tc.b, err)
+			}
+			if got != tc.wantCmp {
+				t.Errorf("(%v).Cmp(%v) = %d, want %d", tc.a, tc.b, got, tc.wantCmp)
+			}
+		})
+	}
+}
+
+func TestSum(t *testing.T) {
+	t.Parallel()
+
+	t.Run("totals a run of amounts", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := money.Sum(
+			money.Amount{Minor: 1000, Currency: eur},
+			money.Amount{Minor: -250, Currency: eur},
+			money.Amount{Minor: -750, Currency: eur},
+		)
+		if err != nil {
+			t.Fatalf("Sum returned error: %v", err)
+		}
+		// This is the shape C-1 is checked in: the postings of a transfer
+		// total zero, in one currency.
+		if !got.IsZero() || got.Currency != eur {
+			t.Errorf("Sum of a balanced transfer = %v, want 0 EUR", got)
+		}
+	})
+
+	t.Run("a single amount is its own total", func(t *testing.T) {
+		t.Parallel()
+
+		one := money.Amount{Minor: 42, Currency: gbp}
+		got, err := money.Sum(one)
+		if err != nil || got != one {
+			t.Errorf("Sum(%v) = %v, %v, want %v, <nil>", one, got, err, one)
+		}
+	})
+
+	t.Run("no amounts has no currency and so no answer", func(t *testing.T) {
+		t.Parallel()
+
+		if _, err := money.Sum(); !errors.Is(err, money.ErrNoAmounts) {
+			t.Errorf("Sum() error = %v, want ErrNoAmounts", err)
+		}
+	})
+
+	t.Run("rejects a mixed-currency run", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := money.Sum(
+			money.Amount{Minor: 1, Currency: eur},
+			money.Amount{Minor: 1, Currency: gbp},
+		)
+		if !errors.Is(err, money.ErrCurrencyMismatch) {
+			t.Errorf("Sum across currencies error = %v, want ErrCurrencyMismatch", err)
+		}
+	})
+
+	t.Run("rejects a currency-less first amount", func(t *testing.T) {
+		t.Parallel()
+
+		if _, err := money.Sum(money.Amount{Minor: 1}); !errors.Is(err, money.ErrInvalidCurrency) {
+			t.Errorf("Sum of an unset amount error = %v, want ErrInvalidCurrency", err)
+		}
+	})
+
+	t.Run("rejects a currency-less later amount", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := money.Sum(money.Amount{Minor: 1, Currency: eur}, money.Amount{Minor: 1})
+		if !errors.Is(err, money.ErrInvalidCurrency) {
+			t.Errorf("Sum with an unset amount error = %v, want ErrInvalidCurrency", err)
+		}
+	})
+
+	t.Run("reports overflow rather than wrapping a total", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := money.Sum(
+			money.Amount{Minor: math.MaxInt64, Currency: eur},
+			money.Amount{Minor: 1, Currency: eur},
+		)
+		if !errors.Is(err, money.ErrOverflow) {
+			t.Errorf("Sum past the int64 range error = %v, want ErrOverflow", err)
+		}
+	})
+}
+
 func TestString(t *testing.T) {
 	t.Parallel()
 

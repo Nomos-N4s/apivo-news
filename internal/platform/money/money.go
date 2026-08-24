@@ -31,6 +31,7 @@ package money
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 )
 
@@ -48,6 +49,10 @@ var (
 	// ErrOverflow reports an arithmetic result outside the int64 range. The
 	// operation is abandoned; no wrapped value is ever returned.
 	ErrOverflow = errors.New("money: arithmetic overflow")
+	// ErrNoAmounts reports a [Sum] with no operands. There is no answer to
+	// return: a total of nothing would be a number with no currency, and C-6
+	// says no such thing exists.
+	ErrNoAmounts = errors.New("money: sum of no amounts has no currency")
 )
 
 // currencyCodeLen is the length of an ISO-4217 alphabetic code, and of the
@@ -162,6 +167,151 @@ func (a Amount) IsNegative() bool { return a.Minor < 0 }
 // treating them as one is how a mixed-currency transfer starts to look
 // balanced.
 func (a Amount) Equal(b Amount) bool { return a == b }
+
+// pairwise validates both operands and confirms they share a currency. Every
+// binary operation starts here, so there is exactly one place where the rule
+// against implicit conversion lives.
+func pairwise(a, b Amount) error {
+	if err := a.Validate(); err != nil {
+		return err
+	}
+	if err := b.Validate(); err != nil {
+		return err
+	}
+	if a.Currency != b.Currency {
+		return fmt.Errorf("%w: %s and %s", ErrCurrencyMismatch, a.Currency, b.Currency)
+	}
+	return nil
+}
+
+// addMinor adds two counts of minor units, reporting false rather than
+// wrapping. The bounds are tested before the addition rather than after it:
+// the overflowing value is never computed, so there is nothing to leak into a
+// result by mistake.
+func addMinor(x, y int64) (int64, bool) {
+	if y > 0 && x > math.MaxInt64-y {
+		return 0, false
+	}
+	if y < 0 && x < math.MinInt64-y {
+		return 0, false
+	}
+	return x + y, true
+}
+
+// subMinor subtracts two counts of minor units under the same rule as
+// [addMinor]. It is not addMinor of a negation: negating math.MinInt64 is
+// itself an overflow, so subtraction has to be checked in its own terms.
+func subMinor(x, y int64) (int64, bool) {
+	if y < 0 && x > math.MaxInt64+y {
+		return 0, false
+	}
+	if y > 0 && x < math.MinInt64+y {
+		return 0, false
+	}
+	return x - y, true
+}
+
+// Add returns a + b.
+//
+// It returns an error wrapping [ErrCurrencyMismatch] when the currencies
+// differ - there is no exchange rate here and none will be invented - and an
+// error wrapping [ErrOverflow] when the total leaves the int64 range. An
+// overflowing sum is never returned wrapped: a balance that silently reads as
+// its own negation is worse than a failed posting.
+func (a Amount) Add(b Amount) (Amount, error) {
+	if err := pairwise(a, b); err != nil {
+		return Amount{}, err
+	}
+	sum, ok := addMinor(a.Minor, b.Minor)
+	if !ok {
+		return Amount{}, fmt.Errorf("%w: %s + %s", ErrOverflow, a, b)
+	}
+	return Amount{Minor: sum, Currency: a.Currency}, nil
+}
+
+// Sub returns a - b, under the same currency and overflow rules as [Amount.Add].
+func (a Amount) Sub(b Amount) (Amount, error) {
+	if err := pairwise(a, b); err != nil {
+		return Amount{}, err
+	}
+	diff, ok := subMinor(a.Minor, b.Minor)
+	if !ok {
+		return Amount{}, fmt.Errorf("%w: %s - %s", ErrOverflow, a, b)
+	}
+	return Amount{Minor: diff, Currency: a.Currency}, nil
+}
+
+// Neg returns -a: the same amount on the other side of a transfer.
+//
+// The one amount it cannot negate is the smallest representable int64, whose
+// magnitude has no positive counterpart. That returns an error wrapping
+// [ErrOverflow] rather than the same negative number back, which is what an
+// unchecked negation would hand over.
+func (a Amount) Neg() (Amount, error) {
+	if err := a.Validate(); err != nil {
+		return Amount{}, err
+	}
+	neg, ok := subMinor(0, a.Minor)
+	if !ok {
+		return Amount{}, fmt.Errorf("%w: -(%s)", ErrOverflow, a)
+	}
+	return Amount{Minor: neg, Currency: a.Currency}, nil
+}
+
+// Abs returns the magnitude of a, with the same overflow case as [Amount.Neg].
+func (a Amount) Abs() (Amount, error) {
+	if err := a.Validate(); err != nil {
+		return Amount{}, err
+	}
+	if a.Minor >= 0 {
+		return a, nil
+	}
+	return a.Neg()
+}
+
+// Cmp compares a and b, returning -1 if a is the smaller, 0 if they are the
+// same amount and +1 if a is the larger.
+//
+// The comparison is made directly rather than by subtracting, so two amounts
+// far apart in the int64 range compare correctly instead of overflowing.
+func (a Amount) Cmp(b Amount) (int, error) {
+	if err := pairwise(a, b); err != nil {
+		return 0, err
+	}
+	switch {
+	case a.Minor < b.Minor:
+		return -1, nil
+	case a.Minor > b.Minor:
+		return 1, nil
+	default:
+		return 0, nil
+	}
+}
+
+// Sum totals amounts, which must all share one currency.
+//
+// It is the shape C-1 is checked in: the postings of a transfer sum to zero,
+// so a caller sums them and asks whether the result [Amount.IsZero]. Summing
+// no amounts is an error rather than a zero, because the currency of that zero
+// is unknowable. Currencies are not netted against each other here; a transfer
+// spanning several currencies balances within each one, which is the caller's
+// grouping to make.
+func Sum(amounts ...Amount) (Amount, error) {
+	if len(amounts) == 0 {
+		return Amount{}, ErrNoAmounts
+	}
+	total := amounts[0]
+	if err := total.Validate(); err != nil {
+		return Amount{}, err
+	}
+	for _, next := range amounts[1:] {
+		var err error
+		if total, err = total.Add(next); err != nil {
+			return Amount{}, err
+		}
+	}
+	return total, nil
+}
 
 // String renders the amount for logs, errors and test failures as minor units
 // followed by the currency code - "1234 EUR", not "12.34 EUR".
