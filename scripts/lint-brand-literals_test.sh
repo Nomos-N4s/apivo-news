@@ -45,9 +45,19 @@ write() {
     done
 }
 
+# write_raw <path> <line> - the same, but through %b, so a case can plant
+# a carriage return or another control character on purpose.
+write_raw() {
+    path="$REPO/$1"
+    mkdir -p "$(dirname "$path")"
+    printf '%b\n' "$2" > "$path"
+}
+
 commit_all() {
     (cd "$REPO" && git add -A && git commit -q -m "chore: fixture content")
 }
+
+CR=$(printf '\r')
 
 # expect_clean <description>
 expect_clean() {
@@ -194,6 +204,32 @@ elif ! printf '%s' "$out" | grep -q -F -e "git grep failed"; then
     FAILS=1
 else
     echo "ok: a search that cannot run fails the lint rather than passing it"
+fi
+
+# ---------------------------------------------------------------------------
+# Matched lines are written by whoever opened the pull request. GitHub
+# Actions reads workflow commands off a step's stdout, and a carriage
+# return is enough to have the tail of a quoted line read as a new one.
+
+fixture
+write_raw "web/src/pages/wallet.astro" 'epiloYES\r::stop-commands::deadbeef'
+commit_all
+if out=$(cd "$REPO" && sh "$LINT" 2>&1); then
+    echo "FAIL: the injected fixture was not even caught as a brand literal"
+    FAILS=1
+elif ! printf '%s' "$out" | grep -q -F -e "stop-commands"; then
+    echo "FAIL: the offending line was not quoted back at all:"
+    printf '%s\n' "$out" | sed 's/^/    /'
+    FAILS=1
+elif printf '%s' "$out" | grep -q -F -e "::stop-commands::"; then
+    echo "FAIL: a workflow command survived into the lint's output:"
+    printf '%s\n' "$out" | sed 's/^/    /'
+    FAILS=1
+elif printf '%s' "$out" | grep -q -e "$CR"; then
+    echo "FAIL: a carriage return survived into the lint's output"
+    FAILS=1
+else
+    echo "ok: a quoted line cannot forge a workflow command"
 fi
 
 if [ "$FAILS" -ne 0 ]; then

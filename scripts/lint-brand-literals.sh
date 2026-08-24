@@ -116,6 +116,21 @@ scan() {
     sed "s/^/$rule|/" "$work/raw" >> "$hits"
 }
 
+# Anything echoed back out of the tree goes through here first.
+#
+# This lint runs on pull requests, so the lines it quotes were written by
+# whoever opened one. GitHub Actions parses workflow commands out of a step's
+# stdout, and a carriage return inside a quoted line is enough to have the
+# rest of it read as the beginning of a new one - which forges an annotation,
+# or switches command parsing off for the remainder of the job with
+# ::stop-commands::. Control characters are dropped (tab and newline
+# excepted, the second being the record separator) and the :: introducer is
+# broken up. The only workflow commands this script emits are the ones it
+# writes itself.
+quote_from_tree() {
+    tr -d '\000-\010\013-\037\177' | sed 's/::/: :/g'
+}
+
 scan "product name" "$NAME_PATTERN" '*'
 scan "brand domain or address" "$HOST_PATTERN" '*'
 scan "colour" "$COLOUR_PATTERN" '*'
@@ -218,11 +233,23 @@ awk -F'\t' '
 status=0
 while IFS="$(printf '\t')" read -r verdict path count budget; do
     if [ "$verdict" = "FAIL" ]; then
+        # Set before a single line is printed, so nothing that happens
+        # while reporting can turn the verdict green again.
         status=1
-        echo "FAIL $path: $count brand literals, $budget accounted for"
-        grep -F "|$path:" "$hits" | sed 's/^\([^|]*\)|\(.*\)$/    \2   <- \1/' || true
+
+        matched=0
+        grep -F "|$path:" "$hits" > "$work/matched" || matched=$?
+        if [ "$matched" -gt 1 ]; then
+            echo "brand lint: could not re-read the recorded hits" >&2
+            exit 2
+        fi
+
+        {
+            echo "FAIL $path: $count brand literals, $budget accounted for"
+            sed 's/^\([^|]*\)|\(.*\)$/    \2   <- \1/' "$work/matched"
+        } | quote_from_tree
     else
-        echo "note $path: $count of the $budget budgeted brand literals remain — lower the budget in $0"
+        echo "note $path: $count of the $budget budgeted brand literals remain — lower the budget in $0" | quote_from_tree
     fi
 done < "$work/verdict"
 
