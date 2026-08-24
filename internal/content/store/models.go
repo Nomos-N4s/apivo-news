@@ -14,7 +14,7 @@ type Account struct {
 	Email       string
 	DisplayName string
 	CreatedAt   pgtype.Timestamptz
-	// What this person may do: readers read, editors approve. Approval authority is checked by the database (article_insert_guard, is_entitled), never by application code alone.
+	// What this person may do: readers read, editors approve articles, operators release money. Every authority is checked by the database (article_insert_guard, payout_insert_guard, is_entitled), never by application code alone.
 	Role string
 	// Where this person got to in each guided tour, as {tour_id: cursor}. The cursor is a step index as text, or 'done'. Written by the front end and not interpreted here beyond being an object: the tours are defined in the web app, and a cursor that no longer addresses a step is discarded on read rather than migrated.
 	TourProgress []byte
