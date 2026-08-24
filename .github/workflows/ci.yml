@@ -282,6 +282,26 @@ jobs:
         if: always()
         run: docker logs blnk || true
 
+  # Spike S3 (ADR-0002): the other half of the cashback story — the path with
+  # NO containers at all.
+  #
+  # Note what this job does not declare: no `services`. That absence is the
+  # test. It reproduces the founder's machine deliberately, so a suite that
+  # quietly grew a dependency on a database or a ledger fails here rather
+  # than on the day the stack is unavailable. The spike unsets every key that
+  # could reach a container before it runs anything.
+  cashback-no-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Lint the spike script
+        run: shellcheck -s sh scripts/spikes/no_docker/run.sh
+      - name: Spike S3 — the repository is green with no Docker
+        run: sh scripts/spikes/no_docker/run.sh
+
   # Proves the Dockerfile builds; the image is never pushed from CI.
   docker:
     runs-on: ubuntu-latest
