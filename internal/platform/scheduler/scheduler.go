@@ -7,9 +7,9 @@
 // instance runs this scheduler, so a job guarded only by a mutex would run
 // once per instance. It is instead a property of the database: every run
 // takes a lock named for the job, and an instance that does not get it skips
-// that run rather than waiting for it. Locker is the seam that lock sits
-// behind: the composition root wires in the database-backed implementation,
-// and the scheduling logic stays testable without one.
+// that run rather than waiting for it. AdvisoryLocker is the implementation
+// the composition root wires in; Locker is the seam that keeps the scheduling
+// logic testable without one.
 //
 // # An overrunning job skips, it never queues
 //
@@ -99,9 +99,9 @@ type Lock interface {
 }
 
 // Locker hands out the fleet-wide locks that keep two instances from running
-// the same job at once. It is the consumer-defined seam over the database,
-// so that tests can substitute their own and exercise the scheduling logic
-// without one.
+// the same job at once. It is the consumer-defined seam over the database:
+// AdvisoryLocker is the Postgres implementation, and tests substitute their
+// own so the scheduling logic is exercised without one.
 type Locker interface {
 	// TryLock attempts to take the lock named name without waiting. It
 	// reports the held lock and true when it was taken, and nil and false

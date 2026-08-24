@@ -7,8 +7,8 @@ package scheduler
 //
 // None of it touches a database. The lock is a Locker the tests supply, which
 // is the point of that seam: the only thing that needs a real Postgres is
-// whether the lock itself excludes a second instance, and that is asserted
-// separately. Everything here runs everywhere.
+// whether the advisory lock excludes a second instance, and that is asserted
+// in advisorylock_integration_test.go. Everything here runs everywhere.
 //
 // In-package because the jitter functions and the pinned random source are
 // deliberately private - they are pacing details, not API.
