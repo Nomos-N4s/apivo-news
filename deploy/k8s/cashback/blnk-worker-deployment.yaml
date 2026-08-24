@@ -6,8 +6,10 @@
 #
 #   - It runs `blnk workers` and NOT `blnk migrate up`. One process owns the
 #     ledger's schema migration, and it is the server.
-#   - It has no Service. Nothing calls a worker; it pulls from Redis. Its port
-#     is declared for observability and for nothing else.
+#   - It has no Service. Nothing calls a worker; it pulls from Redis. Port
+#     5004 is its own monitoring listener, which is what the probes below use
+#     and what a `kubectl port-forward` would reach — not a route into the
+#     ledger.
 #
 # One replica for the alpha. Blnk's queue is the coordination point, so more
 # workers is a throughput change rather than a design change — raise it when
@@ -63,20 +65,33 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
-          # NO probe, deliberately, and this is the one place in the manifest
-          # set where that is the right answer.
+          # The worker serves its OWN `GET /health` on 5004, and an earlier
+          # revision of this file wrongly said it had none.
           #
-          # `/health` is the ledger SERVER's route; upstream documents it for
-          # the process started by `blnk start`, not for `blnk workers`. The
-          # worker's 5004 is declared below because upstream's own compose
-          # file publishes it, and that is the whole of what is known about
-          # it. A liveness probe against a port that may never be listened on
-          # does not detect a broken worker — it crash-loops a working one,
-          # forever, and the queue it was draining stops.
+          # In blnk v0.15.2, `cmd/workers.go` `runWorkers` calls
+          # `startMonitoringServer(conf)` unconditionally, and that registers
+          # `/health` returning 200 with `{"status": "UP", "service":
+          # "worker"}` — the body names the worker, so it is the worker's own
+          # route rather than the server's. Only `/monitoring/` and `/metrics`
+          # are wrapped in `MetricsAuthHandler`, so `/health` needs no
+          # credential. The port is `conf.Queue.MonitoringPort`, whose default
+          # is `DEFAULT_MONITORING_PORT = "5004"` in `config/config.go`.
           #
-          # What actually says a worker is unwell is queue depth, which is a
-          # measurement rather than a ping. Until that is wired, the restart
-          # policy is the honest amount of supervision to claim.
+          # A worker that died on its first Redis call would otherwise sit
+          # Running with transactions piling up behind it — money not moving,
+          # and nothing anywhere saying so. No startup probe: the worker runs
+          # no migration, so there is no boot window for liveness to race.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

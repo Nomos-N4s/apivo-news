@@ -117,16 +117,19 @@ neither is an oversight:
   than protecting anything, so there is none. The cost is a short ledger outage
   on every rollout, which credits (created by a poller on a cycle) and
   withdrawals (idempotent, C-5) both survive.
-- **The ledger is probed on `GET /health`; the worker is not probed at all.**
-  Blnk has served an unauthenticated `/health` since v0.10.3 and this image is
-  0.15.2. Nothing needs installing into the image for it: an `httpGet` probe is
+- **Both the ledger and its worker are probed on `GET /health`.** Blnk has
+  served an unauthenticated `/health` since v0.10.3 and this image is 0.15.2.
+  Nothing needs installing into the image for it: an `httpGet` probe is
   performed by the kubelet from outside the container, unlike a compose
-  healthcheck, which runs inside one. The worker gets no probe because
-  `/health` belongs to the process `blnk start` runs, not to `blnk workers` —
-  a probe against a port that may never be listened on would not detect a
-  broken worker, it would crash-loop a working one and stop the queue it was
-  draining. What proves the ledger's *numbers* are right is neither: that is
-  the continuous C-1 zero-sum check, a query over real rows.
+  healthcheck, which runs inside one. The **worker has its own** `/health`, on
+  port 5004 — in `cmd/workers.go`, `runWorkers` calls
+  `startMonitoringServer(conf)` unconditionally and that route answers
+  `{"status": "UP", "service": "worker"}`, with only `/monitoring/` and
+  `/metrics` behind `MetricsAuthHandler`. Worth probing rather than trusting:
+  a worker dead on its first Redis call would otherwise sit `Running` with
+  transactions piling up behind it. What proves the ledger's *numbers* are
+  right is neither probe — that is the continuous C-1 zero-sum check, a query
+  over real rows.
 
 ## Config/env parity with compose and `.env.example`
 

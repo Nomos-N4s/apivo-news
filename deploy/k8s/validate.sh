@@ -176,6 +176,15 @@ else
     fail "blnk-deployment.yaml does not probe /health; a TCP probe passes on a ledger that answers its socket and fails every query, which is the state that takes traffic"
 fi
 
+# The WORKER too, on its own monitoring listener. The server answering says
+# nothing about the process that drains the queue: a worker dead on its first
+# Redis call sits Running while transactions pile up behind it.
+if grep -q 'path: /health' "$CASHBACK/blnk-worker-deployment.yaml" </dev/null; then
+    echo "ok: the worker is probed on its own /health as well"
+else
+    fail "blnk-worker-deployment.yaml does not probe /health; blnk workers serves its own health route on 5004 (cmd/workers.go startMonitoringServer), and without a probe a dead worker sits Running while transactions queue up behind it"
+fi
+
 # Every ledger image carries a digest. A tag is mutable, and this is the one
 # place in the repository where that matters most: a silent retag would change
 # the binary that moves members' money, with no diff and no review. The base
