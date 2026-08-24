@@ -34,6 +34,9 @@ export default getViteConfig({
         'src/lib/account/consent.ts',
         'src/lib/account/tours.ts',
         'src/lib/app-env.ts',
+        // The brand loader. brand.types.ts beside it is generated from
+        // the Go types and carries no logic to measure.
+        'src/lib/brand/index.ts',
         'src/lib/csrf.ts',
         'src/lib/secure-request.ts',
         'src/lib/editorial/api.ts',
