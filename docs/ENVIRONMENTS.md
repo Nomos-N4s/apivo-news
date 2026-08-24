@@ -250,11 +250,23 @@ orchestration all run. What does **not** run: the Blnk conformance suite, the
 cross-schema zero-sum check, and every `DATABASE_URL`-keyed invariant test.
 Those are expected skips — do not chase them locally.
 
-With Docker, `make cashback-up` starts Postgres, Redis and Blnk, and each
-migrates itself on boot exactly as the deployed environments do. Every
-`make cashback-*` target that depends on work which has not merged yet fails
-with a message naming the task and the issue, rather than exiting 0 and
-reporting a scenario nobody ran.
+**The Docker path does not exist yet, and this is the only local path that
+works today.** `docker-compose.yml` on `main` defines neither `blnk` nor
+`redis`; both arrive with **#149**. Until that merges, `make cashback-up`
+fails with a message saying exactly that and naming the issue — deliberately,
+because a target that quietly exited 0 would report a ledger nobody started.
+`LEDGER_DRIVER=blnk` has nothing to point at in the meantime, which is why
+`.env.example` ships `memory`.
+
+Once #149 has landed, `make cashback-up` starts Postgres, Redis and Blnk, and
+each migrates itself on boot exactly as the deployed environments do. That is
+the intended end state, and it is described here so the shape is known — not
+because it is available now.
+
+The same rule holds for every other `make cashback-*` target: each one whose
+dependency has not merged fails with a message naming the file, the task and
+the issue, rather than exiting 0 and reporting a scenario nobody ran. Running
+one is the quickest way to find out what is actually available today.
 
 **CI is the verification of record**, and every pull request says plainly
 which checks ran locally and which ran in CI. That is not a formality here:
