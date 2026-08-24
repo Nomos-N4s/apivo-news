@@ -40,10 +40,10 @@ type cashbackFixtures struct {
 }
 
 // cashbackApproverRole is the role a payout approver holds in the fixtures.
-// Migration 0014 requires only a named human (C-4, a NOT NULL column);
-// 0019 tightens that to the operator role, checked by payout_insert_guard
-// with a locking read. This constant is the single place that moves.
-const cashbackApproverRole = "reader"
+// Migration 0014 required only a named human (C-4, a NOT NULL column);
+// 0019 tightened that to the operator role, checked by payout_insert_guard
+// with a locking read. This constant is the single place that moved.
+const cashbackApproverRole = "operator"
 
 func seedCashback(t *testing.T, tx pgx.Tx) cashbackFixtures {
 	t.Helper()
