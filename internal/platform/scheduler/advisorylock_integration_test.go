@@ -9,8 +9,9 @@ package scheduler_test
 // in scheduler_test.go. What is left here is the claim the lock exists for,
 // and it cannot be faked: two instances, two connection pools, one job name.
 //
-// These tests are keyed on DATABASE_URL. In CI it is a service container and
-// they always run; locally they skip unless one is configured.
+// These tests are keyed on DATABASE_URL, with one exception noted where it
+// stands. In CI the database is a service container and they always run;
+// locally they skip unless one is configured.
 //
 // No migration is applied. Advisory locks live outside the schema entirely -
 // they are keys in a lock table, not rows - which is what lets a job take one
@@ -71,6 +72,29 @@ func newInstance(t *testing.T, pool *pgxpool.Pool, name string, run func(context
 		t.Fatalf("Register() error: %v", err)
 	}
 	return s
+}
+
+// TestTryLockReportsAPoolItCannotDrawFrom needs no database: a closed pool
+// refuses to hand out a connection without going near one. It is the shutdown
+// case - the pool closing under a loop that is still ticking - and the
+// scheduler must be told, so that it skips the run and logs, rather than
+// running the job unguarded.
+func TestTryLockReportsAPoolItCannotDrawFrom(t *testing.T) {
+	t.Parallel()
+
+	pool, err := pgxpool.New(context.Background(), "postgres://u:p@192.0.2.1:5432/x?connect_timeout=1")
+	if err != nil {
+		t.Fatalf("building a pool: %v", err)
+	}
+	pool.Close()
+
+	lock, held, err := scheduler.NewAdvisoryLocker(pool).TryLock(context.Background(), "unreachable")
+	if err == nil {
+		t.Fatal("TryLock() on a closed pool: want an error, got nil")
+	}
+	if held || lock != nil {
+		t.Errorf("TryLock() on a closed pool = lock %v, held %v; want no lock at all", lock, held)
+	}
 }
 
 func TestAdvisoryLockIsGrantedThenGivenBack(t *testing.T) {
