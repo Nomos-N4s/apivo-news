@@ -44,14 +44,25 @@ mounting, not just navigation.
 
 ### Without Docker
 
+**The server does not start without Docker, and this guide used to imply it
+did.** `LEDGER_DRIVER=memory` removes the ledger and Redis from the loop —
+it does **not** remove Postgres. `internal/platform/config/config.go:182`
+requires `DATABASE_URL`, and without Docker there is no local Postgres to
+point it at. What runs Docker-free is the **suite**, not the server:
+
 ```bash
-CASHBACK_ENABLED=true LEDGER_DRIVER=memory NETWORK_DRIVER=fixture go run ./cmd/apivo
+go build ./... && go vet ./... && go test ./...
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run
 ```
 
-Catalogue, click-out, entry state machine, wallet and payout orchestration
-all work. What does **not** run: the Blnk conformance suite, the
-cross-schema zero-sum check, and every `DATABASE_URL`-keyed invariant test.
-Those are expected skips; do not chase them locally.
+Every `DATABASE_URL`-keyed test skips and **names the key it is waiting
+for**; none fails. That is the expected outcome, not a broken checkout, and
+spike S3 asserts it in CI so it cannot quietly stop being true.
+
+To run the server itself you need a Postgres — Docker locally, or a
+`DATABASE_URL` pointing at a reachable database. With one, `LEDGER_DRIVER=memory
+NETWORK_DRIVER=fixture` then exercises catalogue, click-out, the entry state
+machine, wallet and payout orchestration without Blnk or Redis.
 
 ## Seed a member and a catalogue
 
