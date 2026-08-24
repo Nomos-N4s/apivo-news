@@ -854,6 +854,26 @@ func TestSplitRoundingAtTheMinorUnit(t *testing.T) {
 		{name: "negative, exactly half, ceil goes up", minor: -1001, rate: 5000, mode: money.RoundCeil, wantShare: -500},
 		{name: "negative, exactly half, half away from zero", minor: -1001, rate: 5000, mode: money.RoundHalfAwayFromZero, wantShare: -501},
 		{name: "negative, exactly half, half even", minor: -1001, rate: 5000, mode: money.RoundHalfEven, wantShare: -500},
+
+		// The same tie one minor unit along, where the truncated units are
+		// ODD. Every case above lands on -500, which is even, so half-even and
+		// plain truncation agree there and no test tells them apart on the
+		// debit side. That matters here specifically: reversals and clawbacks
+		// are the negative path, and a reversal that rounds differently from
+		// the credit it reverses leaves a residue in the ledger.
+		{name: "negative, odd units tie, toward zero", minor: -1003, rate: 5000, mode: money.RoundTowardZero, wantShare: -501},
+		{name: "negative, odd units tie, away from zero", minor: -1003, rate: 5000, mode: money.RoundAwayFromZero, wantShare: -502},
+		{name: "negative, odd units tie, floor goes down", minor: -1003, rate: 5000, mode: money.RoundFloor, wantShare: -502},
+		{name: "negative, odd units tie, ceil goes up", minor: -1003, rate: 5000, mode: money.RoundCeil, wantShare: -501},
+		{name: "negative, odd units tie, half away from zero", minor: -1003, rate: 5000, mode: money.RoundHalfAwayFromZero, wantShare: -502},
+		{name: "negative, odd units tie, half even leaves the even neighbour", minor: -1003, rate: 5000, mode: money.RoundHalfEven, wantShare: -502},
+
+		// And the credit side of the same tie, so the pair is complete and the
+		// symmetry is visible in the table rather than only in a property.
+		{name: "odd units tie, toward zero", minor: 1003, rate: 5000, mode: money.RoundTowardZero, wantShare: 501},
+		{name: "odd units tie, away from zero", minor: 1003, rate: 5000, mode: money.RoundAwayFromZero, wantShare: 502},
+		{name: "odd units tie, floor", minor: 1003, rate: 5000, mode: money.RoundFloor, wantShare: 501},
+		{name: "odd units tie, ceil", minor: 1003, rate: 5000, mode: money.RoundCeil, wantShare: 502},
 		{name: "negative, below half, ceil truncates toward zero", minor: -1001, rate: 1, mode: money.RoundCeil, wantShare: 0},
 		{name: "negative, below half, floor", minor: -1001, rate: 1, mode: money.RoundFloor, wantShare: -1},
 
@@ -955,6 +975,75 @@ func assertShareWithinAmount(t *testing.T, a, share money.Amount, rate money.Bas
 		t.Fatalf("(%v).Split(%d, %s) share = %v, outside 0..%d", a, int32(rate), mode, share, a.Minor)
 	case a.Minor < 0 && (share.Minor > 0 || share.Minor < a.Minor):
 		t.Fatalf("(%v).Split(%d, %s) share = %v, outside %d..0", a, int32(rate), mode, share, a.Minor)
+	}
+}
+
+func TestSplitReversesACreditExactly(t *testing.T) {
+	t.Parallel()
+
+	// A reversal splits the negation of what the credit split. Unless the two
+	// round to exactly mirrored shares, reversing an entry leaves a residue
+	// behind in the ledger, so this is the property clawbacks rest on.
+	//
+	// Four modes are symmetric about zero and must mirror exactly. Floor and
+	// ceil are deliberately not - they are defined by direction on the number
+	// line, not by distance from zero - and they mirror into each other
+	// instead, which is asserted rather than left as a surprise.
+	symmetric := []money.Rounding{
+		money.RoundTowardZero,
+		money.RoundAwayFromZero,
+		money.RoundHalfAwayFromZero,
+		money.RoundHalfEven,
+	}
+	// Ties, near-ties and ordinary values, all negatable.
+	amounts := []int64{1, 7, 1001, 1002, 1003, 12345, 99999999, math.MaxInt64}
+	rates := []money.BasisPoints{1, 3, 2500, 4999, 5000, 5001, 6500, 9999, money.BasisPointsScale}
+
+	for _, minor := range amounts {
+		credit := money.Amount{Minor: minor, Currency: eur}
+		debit, err := credit.Neg()
+		if err != nil {
+			t.Fatalf("(%v).Neg() returned error: %v", credit, err)
+		}
+
+		for _, rate := range rates {
+			for _, mode := range symmetric {
+				assertMirrored(t, credit, debit, rate, mode, mode)
+			}
+			// floor(-x) is -ceil(x): the two swap roles across zero.
+			assertMirrored(t, credit, debit, rate, money.RoundCeil, money.RoundFloor)
+			assertMirrored(t, credit, debit, rate, money.RoundFloor, money.RoundCeil)
+		}
+	}
+}
+
+// assertMirrored checks that splitting debit under debitMode produces exactly
+// the negation of splitting credit under creditMode, in both the share and the
+// remainder.
+func assertMirrored(t *testing.T, credit, debit money.Amount, rate money.BasisPoints, creditMode, debitMode money.Rounding) {
+	t.Helper()
+
+	creditShare, creditRest, err := credit.Split(rate, creditMode)
+	if err != nil {
+		t.Fatalf("(%v).Split(%d, %s) returned error: %v", credit, int32(rate), creditMode, err)
+	}
+	debitShare, debitRest, err := debit.Split(rate, debitMode)
+	if err != nil {
+		t.Fatalf("(%v).Split(%d, %s) returned error: %v", debit, int32(rate), debitMode, err)
+	}
+
+	wantShare, err := creditShare.Neg()
+	if err != nil {
+		t.Fatalf("(%v).Neg() returned error: %v", creditShare, err)
+	}
+	wantRest, err := creditRest.Neg()
+	if err != nil {
+		t.Fatalf("(%v).Neg() returned error: %v", creditRest, err)
+	}
+
+	if debitShare != wantShare || debitRest != wantRest {
+		t.Errorf("splitting %v at %d %s gave %v and %v; reversing %v at %s gave %v and %v, which does not mirror it",
+			credit, int32(rate), creditMode, creditShare, creditRest, debit, debitMode, debitShare, debitRest)
 	}
 }
 
