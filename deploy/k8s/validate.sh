@@ -155,6 +155,16 @@ else
     fail "a ledger Deployment does not map BLNK_DATA_SOURCE_DNS from the Secret; the ledger's role must not be the api's"
 fi
 
+# The ledger is probed with a real request rather than a port knock. A
+# listening socket says nothing about whether Blnk reached its database, and a
+# ledger that answers TCP while failing every query is the worst of both
+# states: it passes readiness and takes traffic.
+if grep -q 'path: /health' "$CASHBACK/blnk-deployment.yaml"; then
+    echo "ok: the ledger's probes ask /health rather than knocking on the port"
+else
+    fail "blnk-deployment.yaml does not probe /health; a TCP probe passes on a ledger that answers its socket and fails every query, which is the state that takes traffic"
+fi
+
 if grep -q 'DATABASE_URL' "$CASHBACK/blnk-deployment.yaml"; then
     fail "the ledger Deployment references DATABASE_URL — that is the api's role, and using it would let Blnk's migrations touch the public schema"
 else

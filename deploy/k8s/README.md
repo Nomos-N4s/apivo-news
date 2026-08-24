@@ -102,12 +102,16 @@ neither is an oversight:
   than protecting anything, so there is none. The cost is a short ledger outage
   on every rollout, which credits (created by a poller on a cycle) and
   withdrawals (idempotent, C-5) both survive.
-- **TCP probes, not HTTP.** Blnk serves `/health`, but its image ships no curl
-  and no wget in the final layer, so an HTTP probe cannot be expressed without
-  installing a package into a pinned upstream image. A TCP probe says what this
-  deployment needs and says it honestly; what proves the ledger is actually
-  answering is the api's own `/readyz` and the continuous C-1 zero-sum check,
-  which are real queries rather than a liveness ping.
+- **The ledger is probed on `GET /health`; the worker is not probed at all.**
+  Blnk has served an unauthenticated `/health` since v0.10.3 and this image is
+  0.15.2. Nothing needs installing into the image for it: an `httpGet` probe is
+  performed by the kubelet from outside the container, unlike a compose
+  healthcheck, which runs inside one. The worker gets no probe because
+  `/health` belongs to the process `blnk start` runs, not to `blnk workers` —
+  a probe against a port that may never be listened on would not detect a
+  broken worker, it would crash-loop a working one and stop the queue it was
+  draining. What proves the ledger's *numbers* are right is neither: that is
+  the continuous C-1 zero-sum check, a query over real rows.
 
 ## Config/env parity with compose and `.env.example`
 

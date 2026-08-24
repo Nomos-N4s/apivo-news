@@ -63,10 +63,20 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
-          livenessProbe:
-            tcpSocket:
-              port: http
-            periodSeconds: 10
+          # NO probe, deliberately, and this is the one place in the manifest
+          # set where that is the right answer.
+          #
+          # `/health` is the ledger SERVER's route; upstream documents it for
+          # the process started by `blnk start`, not for `blnk workers`. The
+          # worker's 5004 is declared below because upstream's own compose
+          # file publishes it, and that is the whole of what is known about
+          # it. A liveness probe against a port that may never be listened on
+          # does not detect a broken worker — it crash-loops a working one,
+          # forever, and the queue it was draining stops.
+          #
+          # What actually says a worker is unwell is queue depth, which is a
+          # measurement rather than a ping. Until that is wired, the restart
+          # policy is the honest amount of supervision to claim.
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

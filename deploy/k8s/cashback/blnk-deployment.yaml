@@ -92,22 +92,34 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
-          # No HTTP probe. The image ships no curl and no wget in its final
-          # layer, so /health cannot be reached from inside the container
-          # without installing a package into a pinned upstream image. A TCP
-          # probe on the port it listens on says the same thing this
-          # deployment needs and says it honestly.
+          # Blnk serves an unauthenticated `GET /health` (added upstream in
+          # v0.10.3; this image is 0.15.2). A real request, not a port knock:
+          # a listening socket says nothing about whether the ledger reached
+          # its database, and a ledger that answers TCP while failing every
+          # query is the worst of both states — it takes traffic.
+          #
+          # Nothing needs to be installed into the image for this. Unlike a
+          # compose healthcheck, an httpGet probe is performed by the KUBELET
+          # from outside the container, so what the image ships is irrelevant
+          # here.
+          #
+          # The startup probe owns the boot window: this container runs
+          # `blnk migrate up` before it listens, so liveness must not race the
+          # migration. Same shape, and the same reason, as the api's.
           startupProbe:
-            tcpSocket:
+            httpGet:
+              path: /health
               port: http
             periodSeconds: 2
             failureThreshold: 60
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health
               port: http
             periodSeconds: 10
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health
               port: http
             periodSeconds: 10
             failureThreshold: 3
