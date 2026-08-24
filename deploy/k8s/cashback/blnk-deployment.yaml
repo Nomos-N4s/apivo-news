@@ -57,6 +57,73 @@ spec:
         runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
+      # The schema migration, AS THE DATABASE OWNER, before the server starts.
+      #
+      # This is the founder's split posture (2026-08-24), and it is the same
+      # shape docker-compose.yml, the CI job and deploy/hetzner all run - one
+      # answer in the repository, not one per environment:
+      #
+      #   the database owner   runs `blnk migrate up`. Migrations are DDL,
+      #                        they happen on a deploy, and they are reviewed.
+      #   blnk_app             runs the SERVER below and the worker, every
+      #                        second of every day, with USAGE on one schema
+      #                        and DML on its tables. No DDL, no CREATE on the
+      #                        database, no reach into `public`.
+      #
+      # Spike S1 established why the split is required rather than tidy.
+      # Blnk's first migration issues `CREATE SCHEMA IF NOT EXISTS blnk`, and
+      # PostgreSQL checks the database-level CREATE privilege BEFORE it takes
+      # the IF NOT EXISTS shortcut - so pre-creating the schema does not avoid
+      # the grant, and a single role would need CREATE on the database
+      # permanently for one statement on one deploy.
+      #
+      # An initContainer rather than a Job, deliberately. A Job is immutable,
+      # so `kubectl apply` over an existing one fails and every rollout would
+      # need a generated name or a Helm hook - and these are plain manifests
+      # by design. An initContainer runs to completion before the app
+      # container starts, in the same pod, which is exactly compose's
+      # `service_completed_successfully` expressed in what Kubernetes has.
+      # Being a separate container is what matters: it takes the owner's DSN
+      # from a DIFFERENT Secret key, so the credential is ABSENT from the
+      # long-lived server's environment rather than merely unused by it.
+      #
+      # `replicas: 1` with `strategy: Recreate` above is what keeps two of
+      # these from racing the same migration.
+      #
+      # The role is created once by an operator with
+      # scripts/spikes/ledger_schema/bootstrap.sql, which is the production
+      # recipe rather than a fixture.
+      initContainers:
+        - name: migrate
+          image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
+          command: ["blnk", "migrate", "up"]
+          envFrom:
+            - configMapRef:
+                name: blnk-config
+          env:
+            # The OWNER's DSN, under Blnk's own variable name. The Secret key
+            # differs from the server's below, and that difference IS the
+            # split.
+            - name: BLNK_DATA_SOURCE_DNS
+              valueFrom:
+                secretKeyRef:
+                  name: apivo-secrets
+                  key: BLNK_MIGRATE_DSN
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
       containers:
         - name: blnk
           # Pinned to the version ADR-0002 was written against, BY DIGEST.
@@ -75,8 +142,10 @@ spec:
           # linux/arm64, so pinning it does not commit a cluster to one
           # architecture.
           image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
-          command: ["/bin/sh", "-c"]
-          args: ["blnk migrate up && blnk start"]
+          # `blnk start` ONLY. The migration is the initContainer above, as
+          # the owner; this process runs as blnk_app and has no DDL rights to
+          # migrate with even if it tried.
+          command: ["blnk", "start"]
           ports:
             - name: http
               containerPort: 5001
@@ -97,6 +166,17 @@ spec:
                 secretKeyRef:
                   name: apivo-secrets
                   key: BLNK_DATA_SOURCE_DNS
+            # What the ledger requires on every call. Its half of a pair: the
+            # api presents BLNK_SECRET_KEY, and the two must be equal. Not
+            # optional - a cluster runs APP_ENV=prod, where the api refuses to
+            # start with cashback enabled and no key, because a ledger
+            # reachable without a credential is a ledger anybody on that
+            # network can post to.
+            - name: BLNK_SERVER_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: apivo-secrets
+                  key: BLNK_SERVER_SECRET_KEY
           resources:
             requests:
               cpu: 100m

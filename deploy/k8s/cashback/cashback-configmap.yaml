@@ -63,3 +63,8 @@ data:
   # configuration error the api reports at startup, rather than a poller that
   # silently fetches nothing.
   NETWORK_DRIVER: ""
+  # The publisher account the adapter reports for. NOT a credential - the
+  # config package logs it in clear, and its two companions
+  # (NETWORK_API_KEY, NETWORK_API_SECRET) are Secrets precisely because this
+  # one is not. Empty with the fixture adapter, which has no account.
+  NETWORK_ACCOUNT_ID: ""
