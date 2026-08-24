@@ -45,13 +45,39 @@
 # documented in docker-compose.local-db.yml, which is why the api's dependency
 # on Postgres lives there and not in the base file.
 
+# ---------------------------------------------------------------------------
+# Why these images carry digests
+# ---------------------------------------------------------------------------
+#
+# A tag is mutable. `jerryenebeli/blnk:0.15.2` is whatever that name points at
+# on the day a container is pulled, and the base compose file already refuses
+# to run the api or the web on anything less than a digest
+# (`${APIVO_API_IMAGE:?the reconciler must pin an api image digest}`). Running
+# the LEDGER on a mutable tag would have been the one place in the deployment
+# where a silent retag could change the binary that moves members' money, with
+# no diff and no review.
+#
+# The form is `repo:tag@sha256:...`, which Docker resolves by digest and a
+# reviewer reads by version — the tag is documentation, the digest is the
+# contract.
+#
+# These are pinned HERE rather than resolved at runtime like the api and web
+# images, and the difference is the point. A channel tag MOVES, which is why
+# the reconciler has to resolve `:qa` to a digest on every tick. A third-party
+# version does not move: bumping it is a deliberate decision, so it belongs in
+# a file where it shows up as a diff somebody approves.
+#
+# Both digests are multi-architecture indexes covering linux/amd64 and
+# linux/arm64, so the pin does not quietly commit this deployment to one
+# architecture.
+
 services:
   # The ledger API. Cluster-internal in every sense that matters: no `ports`,
   # so nothing outside the compose networks reaches it, and Caddy has no site
   # block naming it. The only client is the api, over the `data` network by
   # container name.
   blnk:
-    image: jerryenebeli/blnk:0.15.2
+    image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
     container_name: apivo-${APIVO_ENV}-blnk
     restart: unless-stopped
     # `blnk migrate up && blnk start`, exactly as upstream's own compose file
@@ -123,7 +149,7 @@ services:
   # server accepts transactions onto the queue and this drains it. Same image,
   # same configuration, no migration.
   blnk-worker:
-    image: jerryenebeli/blnk:0.15.2
+    image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
     container_name: apivo-${APIVO_ENV}-blnk-worker
     restart: unless-stopped
     entrypoint: ["blnk", "workers"]
@@ -154,7 +180,7 @@ services:
   # Blnk's queue and cache. On the internal network only: it needs nothing
   # from the internet and nothing from the internet needs it.
   redis:
-    image: redis:7.2.4-alpine
+    image: redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a
     container_name: apivo-${APIVO_ENV}-redis
     restart: unless-stopped
     command:
