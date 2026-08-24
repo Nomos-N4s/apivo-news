@@ -263,6 +263,44 @@ for _f in "$CASHBACK"/blnk-deployment.yaml "$CASHBACK"/blnk-worker-deployment.ya
     esac
 done
 
+# The ledger actually CHECKS credentials.
+#
+# BLNK_SERVER_SECRET_KEY does nothing on its own: in blnk v0.15.2 the auth
+# middleware short-circuits before it looks at a key
+# (api/middleware/auth.go: `if !conf.Server.Secure { c.Next(); return }`), and
+# Server.Secure is never defaulted. A manifest set carrying only the secret
+# ships a ledger that accepts anything reaching its Service while every
+# document says otherwise, which is precisely the drift this file exists to
+# catch.
+if grep -q 'BLNK_SERVER_SECURE: *"\{0,1\}true' "$CASHBACK/blnk-configmap.yaml" </dev/null; then
+    echo "ok: the ledger runs with authentication actually enabled"
+else
+    fail "BLNK_SERVER_SECURE is not true in blnk-configmap.yaml, so Blnk skips authentication entirely and the ledger accepts any request that reaches it - a secret key alone gates nothing"
+fi
+
+# The wait probe can write where it needs to.
+#
+# `readOnlyRootFilesystem: true` with no writable mount is how a probe that
+# works everywhere else fails in a cluster: GNU wget writes an HSTS database
+# under $HOME on exit. If that write fails the worker never starts, and the
+# queue backs up behind an initContainer that was watching a perfectly healthy
+# ledger.
+if awk '
+    # The range MUST close, and an earlier version of this did not: it set
+    # inside=2 at the resources key, which is still truthy, so scanning ran on
+    # into the MAIN container and its /tmp mount satisfied the check. Removing
+    # the initContainer mount entirely still passed. Closing on the containers
+    # key is what makes this about the initContainer at all.
+    /^        - name: wait-for-ledger$/ { inside = 1; next }
+    /^      containers:/ { inside = 0 }
+    inside && /mountPath: \/tmp/ { found = 1 }
+    END { exit(found ? 0 : 1) }
+' "$CASHBACK/blnk-worker-deployment.yaml"; then
+    echo "ok: the wait probe has somewhere writable"
+else
+    fail "the wait-for-ledger initContainer has no writable /tmp; with readOnlyRootFilesystem, wget's HSTS write fails and the worker never starts"
+fi
+
 if grep -q 'DATABASE_URL' "$CASHBACK/blnk-deployment.yaml" </dev/null; then
     fail "the ledger Deployment references DATABASE_URL — that is the api's role, and using it would let Blnk's migrations touch the public schema"
 else

@@ -44,4 +44,28 @@ data:
   # which never touches Redis - still needs the address above.
   BLNK_PROJECT_NAME: "apivo-cashback"
   BLNK_SERVER_PORT: "5001"
+  # THE switch that makes Blnk check credentials at all.
+  #
+  # BLNK_SERVER_SECRET_KEY is inert without it. In blnk v0.15.2 the auth
+  # middleware short-circuits before it looks at a key:
+  #
+  #   api/middleware/auth.go, Authenticate():
+  #       if err == nil && conf != nil && !conf.Server.Secure {
+  #           // Skip authentication when secure mode is disabled
+  #           c.Next(); return
+  #       }
+  #
+  # `Server.Secure` is never defaulted, so it is false unless set, and Blnk
+  # logs "SECURITY: server.secure is false - API authentication is DISABLED"
+  # at every start. Without this the ledger accepts anything that can reach
+  # its Service, key or no key.
+  #
+  # /health is unaffected: auth.go skips it BEFORE this check, so the probes
+  # in both Deployments keep working with authentication on.
+  #
+  # On the worker it also closes the asynq dashboard at /monitoring, which
+  # MetricsAuthHandler leaves open when secure is false and refuses outright
+  # when secure is true with no bearer token - the state we want, since
+  # nothing here uses that dashboard.
+  BLNK_SERVER_SECURE: "true"
   TZ: "Etc/UTC"
