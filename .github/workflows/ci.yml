@@ -153,6 +153,88 @@ jobs:
       - name: Coverage gate (90%)
         run: sh scripts/coverage_gate.sh 90 coverage.out
 
+  # The cashback stack, proved where it can be proved.
+  #
+  # Docker Desktop is unavailable on the founder's machine, so the ledger,
+  # Redis and every test that needs them cannot run locally at all. This job
+  # IS the verification of record for cashback (ADR-0002, quickstart.md):
+  # Postgres and Redis as service containers, Blnk brought up beside them,
+  # and the whole Go suite run with the product enabled and pointed at a
+  # real ledger.
+  #
+  # It is deliberately a separate job from `go` rather than more steps
+  # inside it. `go` is the gate on the news product and its coverage number;
+  # a ledger that will not start must not be reported as the news suite
+  # failing, and the two read very differently in a run summary.
+  cashback:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: apivo
+          POSTGRES_USER: apivo
+          POSTGRES_PASSWORD: apivo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apivo -d apivo"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      # Blnk's queue and cache. It holds no source of truth (ADR-0002), so
+      # nothing here persists and nothing needs to.
+      redis:
+        image: redis:8.10.1-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # Pinned exactly, and pinned in one place. The compose file pins the
+      # same version; the two drifting would mean the stack proved here is
+      # not the stack anyone runs.
+      BLNK_IMAGE: jerryenebeli/blnk:0.15.2
+      DATABASE_URL: postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
+      # Blnk runs on the host network, so it reaches the service containers
+      # through their published ports rather than by service name.
+      BLNK_DATA_SOURCE_DNS: postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
+      BLNK_REDIS_DNS: localhost:6379
+      BLNK_SERVER_PORT: "5001"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Lint the cashback shell scripts
+        # Two of these decide whether a spike passed. A syntax error in one
+        # would otherwise surface as the spike's verdict.
+        run: shellcheck -s sh scripts/blnk_up.sh
+      - name: Bring up the ledger
+        run: sh scripts/blnk_up.sh
+      - name: Test with cashback enabled against the real ledger
+        # The whole suite, not a subset: the point of this job is that the
+        # binary behaves with the product mounted and money pointed at a
+        # running ledger, and a package that only breaks in that
+        # configuration is exactly what it exists to catch. No -race here —
+        # the `go` job already pays for that pass, and this one is about
+        # the stack rather than about the code.
+        run: go test -count=1 ./...
+        env:
+          CASHBACK_ENABLED: "true"
+          LEDGER_DRIVER: blnk
+          NETWORK_DRIVER: fixture
+          BLNK_URL: http://127.0.0.1:5001
+          REDIS_URL: redis://127.0.0.1:6379
+      - name: Ledger logs (for the record)
+        # Always, not on failure only: when a money test passes, what the
+        # ledger did while it passed is part of the evidence.
+        if: always()
+        run: docker logs blnk || true
+
   # Proves the Dockerfile builds; the image is never pushed from CI.
   docker:
     runs-on: ubuntu-latest
