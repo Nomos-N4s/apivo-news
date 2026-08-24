@@ -5,6 +5,15 @@
 # service is the only published HTTP surface (http://localhost:4321);
 # Postgres is also published, on loopback, for local tooling and tests.
 # Host bindings are loopback-only so the dev stack never listens on the LAN.
+#
+# The cashback product adds two more services, Blnk and Redis (ADR-0002).
+# Both are published on loopback for the same reason Postgres is: the
+# documented local workflow runs the Go binary on the host against the
+# compose services (specs/002-apivo-cashback-alpha/quickstart.md).
+#
+# Every image is pinned to an exact version. A floating tag means the stack
+# a bug reproduces on is not the stack it was reported on, and for the
+# ledger it would mean a schema migrating itself on a docker pull.
 services:
   postgres:
     image: postgres:17-alpine
@@ -21,6 +30,87 @@ services:
       retries: 10
     volumes:
       - pgdata:/var/lib/postgresql/data
+
+  # Redis backs Blnk's queueing and caching. It holds NO source of truth
+  # (ADR-0002): losing it loses throughput, not money — which is why there
+  # is no volume here and losing the container is not an incident.
+  redis:
+    image: redis:8.10.1-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Blnk's schema, migrated once before the server starts.
+  #
+  # It is a separate one-shot service rather than a wrapped entrypoint on
+  # the server because `blnk start` does not migrate, and a server that
+  # answers before its tables exist would fail per request instead of
+  # refusing to start. `service_completed_successfully` below is what makes
+  # the ordering real rather than hopeful.
+  #
+  # Blnk confines itself to a `blnk` schema: its first migration creates it
+  # and every object is schema-qualified, and the server issues
+  # `SET search_path TO blnk` on every connection. It shares Apivo's
+  # database so the C-1 zero-sum check is a plain SQL query over real rows
+  # rather than a distributed reconciliation (ADR-0002). Here it connects as
+  # the `apivo` role for simplicity; the restricted `blnk` role that
+  # production uses — and the proof that the migrations never touch `public`
+  # — is spike S1.
+  blnk-migrate:
+    image: jerryenebeli/blnk:0.15.2
+    restart: "no"
+    entrypoint: ["blnk", "migrate", "up"]
+    environment:
+      TZ: Etc/UTC
+      BLNK_DATA_SOURCE_DNS: postgres://apivo:apivo@postgres:5432/apivo?sslmode=disable
+      # Unused by the migration itself, and still required: Blnk validates
+      # its whole configuration before running any command.
+      BLNK_REDIS_DNS: redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # The Blnk ledger (ADR-0002). Configuration is environment-only — the
+  # image falls back to environment variables when no blnk.json is present,
+  # which keeps the whole configuration in this file and out of a mounted
+  # JSON nobody diffs.
+  #
+  # It runs UNAUTHENTICATED here (`server.secure` defaults to false), which
+  # is why it is bound to loopback and nothing else. A deployment sets
+  # BLNK_SERVER_SECRET_KEY and the api's BLNK_SECRET_KEY together; the api
+  # refuses to start in APP_ENV=prod without one.
+  blnk:
+    image: jerryenebeli/blnk:0.15.2
+    environment:
+      TZ: Etc/UTC
+      BLNK_PROJECT_NAME: apivo-cashback
+      BLNK_DATA_SOURCE_DNS: postgres://apivo:apivo@postgres:5432/apivo?sslmode=disable
+      BLNK_REDIS_DNS: redis:6379
+      BLNK_SERVER_PORT: "5001"
+    ports:
+      - "127.0.0.1:5001:5001"
+    healthcheck:
+      # Blnk exposes no dedicated health route, so the probe is a real read
+      # through the router and the database connection. `wget` is present in
+      # the image (its Dockerfile installs it and does not remove it);
+      # `--spider` is not used because it sends HEAD, which the router has
+      # no handler for.
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --timeout=3 -O /dev/null http://127.0.0.1:5001/ledgers"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      blnk-migrate:
+        condition: service_completed_successfully
 
   # Go API. No `ports`: internal network only (contract topology). The
   # image defines its own healthcheck, which `depends_on` below relies on.
