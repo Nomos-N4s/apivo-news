@@ -66,10 +66,13 @@ const seedAttempts = 4
 // every other package alongside this one. Its own row locks are harmless:
 // each is on a row this attempt created moments earlier - the FOR SHARE
 // article_insert_guard takes on the approver's account row (0002), the
-// key-share the foreign keys take on its own source_item. The one shared
-// row it touches, place 'munich', it holds in key-share, and key-share
-// conflicts with nothing here: no migration, query or test ever updates
-// or deletes a place row.
+// key-share the foreign keys take on its own source_item. The two rows it
+// shares with the rest of the suite - language 'el', which its source
+// insert references, and place 'munich', which its article_place insert
+// does - it holds in key-share, and key-share conflicts with key-share.
+// Nothing in the tree ever updates or deletes a language or a place row,
+// so no transaction ever waits on one, and a lock nobody waits on is no
+// edge in any cycle.
 //
 // What can actually cycle is a table lock. TestImmutableTablesRejectTruncate
 // in internal/platform/db runs `truncate article cascade` and `truncate
@@ -115,11 +118,12 @@ func seedRaceWorld(ctx context.Context, t *testing.T, conn *pgx.Conn) raceWorld 
 }
 
 // pgDetail renders Postgres's DETAIL line, which the error's own text drops.
-// For a deadlock that line names both sides of the cycle, which is the one
-// thing a report of this failure needs and cannot reconstruct afterwards -
-// so it belongs on the retry log and on the final failure alike. The last
-// attempt is exactly when it matters most, and it is the report nobody gets
-// to ask a follow-up question about.
+// For a deadlock it names both sides of the cycle and the lock each was
+// waiting on - by backend pid, not by statement, since the statements stay
+// in the server log - and that is still the most a failing run carries
+// away about a cycle nobody can reproduce on demand. So it belongs on the
+// retry log and on the final failure alike: the last attempt is the report
+// nobody gets to ask a follow-up question about.
 func pgDetail(err error) string {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Detail == "" {
