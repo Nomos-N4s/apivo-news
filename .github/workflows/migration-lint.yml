@@ -18,8 +18,17 @@ on:
   # migrations that are each clean alone and cross the boundary together would
   # merge unchecked.
   merge_group:
-  # Callable, so this gate can be replayed by the publish and release
-  # pipelines the way ci.yml is, without either of them duplicating the steps.
+  # And on main itself. ci.yml can leave this out because publish.yml calls
+  # it on every merge; nothing calls this workflow, so without a push trigger
+  # the boundary would be checked on pull requests and never on the branch
+  # that is actually deployed - which is the one place a migration reaches a
+  # database. A pull request that is green alone can still merge behind
+  # another that changed the schema under it.
+  push:
+    branches: [main]
+  # Callable as well, so the publish and release pipelines can adopt this gate
+  # into their chain without duplicating the steps. Until one does, the push
+  # trigger above is what covers main.
   workflow_call:
 
 permissions:
