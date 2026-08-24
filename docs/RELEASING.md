@@ -253,6 +253,54 @@ Release and stops the run before anything ships. If the released code was
 wrong, roll back to the previous tag and cut a new version — that is what
 patch releases are for.
 
+## Pinned versions of the ledger
+
+The cashback product runs an adopted open-source ledger, **Blnk**
+([ADR-0002](adr/0002-cashback-money-substrate.md)), as a sidecar. Two versions
+are pinned for it, and they are pinned together:
+
+| What | Where | Version |
+| --- | --- | --- |
+| Blnk Go SDK | `go.mod` | `github.com/blnkfinance/blnk-go v1.3.0` |
+| Blnk server image | `docker-compose.yml`, the `cashback` CI job, `deploy/` | `jerryenebeli/blnk:0.15.2` |
+
+**Why the SDK is pinned to an exact version, and not to a range.** The ledger
+is the only component in this repository that can silently produce a wrong
+number instead of an error. A floating SDK would mean the client that posts
+money can change between a green CI run and a deploy, with no commit to point
+at. Blnk is also a modest project rather than a decade-old standard — ADR-0002
+names that adoption risk explicitly — so the version in force has to be a fact
+in the repository, not whatever resolved that morning.
+
+**Why the two are pinned together.** The SDK speaks a wire format the server
+defines. `blnk-go` v1.3.x is written against Blnk core 0.15.x — its own source
+carries the compatibility notes — and a bump on one side without the other is
+a mismatch nothing in the build would notice until a transfer failed. So the
+compose file, the CI job and `go.mod` name their versions explicitly and a
+bump touches all of them in one commit.
+
+**What is not pinned by digest.** Tags, not digests, matching how
+`postgres:17-alpine` is pinned in the same files. The digest pins in CI
+(`kubeconform`) exist because that image is a *verifier* whose ruleset must not
+change under a green build; the ledger's own correctness is proved by the
+suites that run against it.
+
+**Bumping either version:**
+
+1. Change `go.mod` (`go get github.com/blnkfinance/blnk-go@vX.Y.Z`) and the
+   image tag in `docker-compose.yml`, `.github/workflows/ci.yml`, and the
+   `deploy/` stacks, in one commit.
+2. `scripts/spikes/ledger_sdk/` fails at compile time if the SDK dropped or
+   renamed something the ledger port depends on — including `Reference`, the
+   field the exactly-once payout guarantee (C-5) rests on.
+3. The `cashback` CI job must be green: it migrates the ledger schema, starts
+   the server and runs the suite against it. **That job is the verification of
+   record** — Docker Desktop is unavailable on the founder's machine, so no
+   ledger bump can be validated locally, and a PR that bumps one must say so.
+4. Read Blnk's release notes for schema migrations. `blnk migrate up` runs
+   against the same Postgres as the application; a ledger migration is a
+   schema change to the production database like any other.
+
 ## Migrations are forward-only
 
 The api container migrates the schema on boot (`internal/platform/db`). The
