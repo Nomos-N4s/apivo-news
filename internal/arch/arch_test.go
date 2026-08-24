@@ -32,6 +32,12 @@ const (
 	// so the alternative to this exception is every domain carrying its own
 	// notion of who a member is.
 	identityModule = "identity"
+	// networksDir is the directory a domain keeps its external network
+	// adapters in - internal/<domain>/networks/<name>/ (ADR-0003). Every
+	// directory below it is one adapter and a sealed unit: naming the
+	// convention rather than the adapters means a network added tomorrow is
+	// sealed the moment its directory exists, with nothing here to update.
+	networksDir = "networks"
 )
 
 // violation is one import that breaks a boundary rule: the file that holds
@@ -53,7 +59,11 @@ func (v violation) String() string { return v.file + ": " + v.reason }
 //  3. a product domain may not import another product domain, at any depth -
 //     cross-product collaboration is asynchronous, through the domain event
 //     stream, never a direct call; and
-//  4. sub-packages of one product domain may import each other freely.
+//  4. sub-packages of one product domain may import each other freely,
+//     except that a network adapter under <domain>/networks/<name>/ is
+//     sealed: nothing under internal/ imports it, so no network-specific
+//     type escapes into the domain (SC-008); and
+//  5. composition happens only in cmd.
 func TestModuleBoundaries(t *testing.T) {
 	t.Parallel()
 
@@ -132,6 +142,34 @@ func TestModuleBoundaryRules(t *testing.T) {
 			file:    "content/feed.go",
 			imports: []string{internalPrefix + "contentious/store"},
 			want:    `domain "content" must not import domain "contentious"`,
+		},
+		{
+			name:    "a domain package importing a network adapter",
+			file:    "cashback/earnings/attribute.go",
+			imports: []string{internalPrefix + "cashback/networks/awin"},
+			want:    `must not import network adapter "cashback/networks/awin"`,
+		},
+		{
+			name:    "one network adapter importing another",
+			file:    "cashback/networks/awin/client.go",
+			imports: []string{internalPrefix + "cashback/networks/tradedoubler"},
+			want:    `must not import network adapter "cashback/networks/tradedoubler"`,
+		},
+		{
+			name:    "the port importing an adapter that satisfies it",
+			file:    "cashback/networks/port.go",
+			imports: []string{internalPrefix + "cashback/networks/awin"},
+			want:    `must not import network adapter "cashback/networks/awin"`,
+		},
+		{
+			name:    "an adapter importing the port it satisfies",
+			file:    "cashback/networks/awin/client.go",
+			imports: []string{internalPrefix + "cashback/networks"},
+		},
+		{
+			name:    "an adapter's own sub-package importing the adapter",
+			file:    "cashback/networks/awin/fixtures/recorded.go",
+			imports: []string{internalPrefix + "cashback/networks/awin"},
 		},
 		{
 			name:    "a domain importing the composition root",
@@ -267,8 +305,13 @@ func violates(ownerPkg, importPath string) (string, bool) {
 		return "", false
 	}
 
+	targetPkg := strings.TrimPrefix(importPath, internalPrefix)
+	if adapter := adapterRoot(targetPkg); adapter != "" && !within(ownerPkg, adapter) {
+		return fmt.Sprintf("%s must not import network adapter %q (import %q); a network's vocabulary never leaves its own package - take the port defined in %q and let cmd choose which adapter satisfies it, so adding a second network changes only its own adapter (SC-008)", ownerPkg, adapter, importPath, path.Dir(adapter)), true
+	}
+
 	ownerModule := moduleOf(ownerPkg)
-	targetModule := moduleOf(strings.TrimPrefix(importPath, internalPrefix))
+	targetModule := moduleOf(targetPkg)
 	switch {
 	case targetModule == ownerModule:
 		return "", false
@@ -305,6 +348,27 @@ func assertModulePath(t *testing.T, root string) {
 		return
 	}
 	t.Fatal("no module line found in go.mod")
+}
+
+// adapterRoot returns the network adapter package that slashPath belongs to
+// - "<domain>/networks/<name>" - or "" when the path sits outside every
+// adapter. The parent "<domain>/networks" holds the port, not an adapter, so
+// it is deliberately not a root of itself.
+func adapterRoot(slashPath string) string {
+	segments := strings.Split(slashPath, "/")
+	// From 1: an adapter always hangs off a domain, so a top-level
+	// internal/networks/ would not be one.
+	for i := 1; i+1 < len(segments); i++ {
+		if segments[i] == networksDir {
+			return strings.Join(segments[:i+2], "/")
+		}
+	}
+	return ""
+}
+
+// within reports whether slashPath is root or sits underneath it.
+func within(slashPath, root string) bool {
+	return slashPath == root || strings.HasPrefix(slashPath, root+"/")
 }
 
 // moduleOf returns the first path segment: the owning module name.
