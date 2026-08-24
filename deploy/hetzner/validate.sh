@@ -216,7 +216,17 @@ check_cashback() {
     echo "ok: $env_name refuses writes to a full Redis rather than evicting queued work"
 }
 
+# Every environment, in every database shape it has — matching the coverage
+# the plain checks above already give. Staging is the one with two shapes and
+# it was the one left out: provision.sh composes it with the local Postgres,
+# the documented model drops that file and points it at the nonprod Supabase
+# project, and the cashback overlay is orthogonal to both. Checking qa and
+# prod covered one shape each and left staging's pair unvalidated entirely —
+# which is precisely the environment a release candidate meets first, and the
+# only one that exists in two shapes for a breakage to hide in.
 check_cashback qa docker-compose.yml docker-compose.local-db.yml docker-compose.cashback.yml
+check_cashback staging docker-compose.yml docker-compose.local-db.yml docker-compose.cashback.yml
+check_cashback staging docker-compose.yml docker-compose.cashback.yml
 check_cashback prod docker-compose.yml docker-compose.cashback.yml
 
 # ---------------------------------------------------------------------------
