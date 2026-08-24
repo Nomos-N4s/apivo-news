@@ -558,18 +558,12 @@ func (a Amount) String() string {
 	return units + " " + string(a.Currency)
 }
 
-// wireAmount is the JSON shape of an Amount.
-//
-// The minor units are kept as the raw JSON literal rather than decoded into an
-// int64, so that this package decides what a whole number is instead of
-// inheriting whatever the standard decoder happens to tolerate in a given
-// release. A quoted number, a trailing ".0" and an exponent are each a caller
-// thinking in major units, and each is rejected here by reading the literal
-// the sender actually wrote.
-type wireAmount struct {
-	Minor    json.RawMessage `json:"minor"`
-	Currency string          `json:"currency"`
-}
+// The two member names an amount is made of. They are matched exactly, so
+// they are compared against these rather than resolved through struct tags.
+const (
+	fieldMinor    = "minor"
+	fieldCurrency = "currency"
+)
 
 // MarshalJSON encodes the amount as {"minor":1234,"currency":"EUR"} - an
 // integer count of minor units and the code they are denominated in.
@@ -608,15 +602,58 @@ func (a Amount) MarshalJSON() ([]byte, error) {
 // null and trailing content fail too: an amount is exactly this object, and a
 // null money field belongs to a pointer, not to a value that would decode as
 // zero of no currency.
+//
+// The members are read one at a time rather than decoded into a struct,
+// because "exactly this object" is stricter than encoding/json is willing to
+// be. Struct decoding resolves names case-insensitively, so in
+// {"minor":1,"Minor":9999} the second key is not an unknown field but another
+// spelling of the first, and the last spelling wins silently even with
+// DisallowUnknownFields set. Here each key must match exactly and may appear
+// once: a case-varied key is an unknown field, and a repeated key is an error
+// rather than a race between two amounts that a caller never sees the result
+// of. The units are kept as the raw literal for the same reason - so that this
+// package decides what a whole number is, instead of inheriting whatever the
+// standard decoder happens to tolerate in a given release.
 func (a *Amount) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return fmt.Errorf("%w: null is not an amount", ErrMalformedJSON)
 	}
 
 	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	var wire wireAmount
-	if err := dec.Decode(&wire); err != nil {
+	if err := expectObjectStart(dec); err != nil {
+		return err
+	}
+
+	var (
+		minorRaw, currencyRaw json.RawMessage
+		sawMinor, sawCurrency bool
+	)
+	// Inside an object, More reports whether another MEMBER follows, which is
+	// exactly the question here. It is the wrong tool only for the trailing
+	// content check below, where the question is about a whole document.
+	for dec.More() {
+		key, value, err := decodeMember(dec)
+		if err != nil {
+			return err
+		}
+		switch key {
+		case fieldMinor:
+			if sawMinor {
+				return fmt.Errorf("%w: %s given twice", ErrMalformedJSON, strconv.Quote(fieldMinor))
+			}
+			minorRaw, sawMinor = value, true
+		case fieldCurrency:
+			if sawCurrency {
+				return fmt.Errorf("%w: %s given twice", ErrMalformedJSON, strconv.Quote(fieldCurrency))
+			}
+			currencyRaw, sawCurrency = value, true
+		default:
+			return fmt.Errorf("%w: unexpected field %s", ErrMalformedJSON, strconv.Quote(key))
+		}
+	}
+
+	// The closing brace, and then proof that the document ends there.
+	if _, err := dec.Token(); err != nil {
 		return fmt.Errorf("%w: %w", ErrMalformedJSON, err)
 	}
 	// Everything after the first document must be whitespace, and only a
@@ -633,12 +670,18 @@ func (a *Amount) UnmarshalJSON(data []byte) error {
 	// ParseInt in base ten accepts digits and a leading minus and nothing
 	// else, which is precisely the set of JSON literals that are a whole
 	// number of minor units.
-	literal := string(bytes.TrimSpace(wire.Minor))
+	literal := string(bytes.TrimSpace(minorRaw))
 	minor, err := strconv.ParseInt(literal, 10, 64)
 	if err != nil {
 		return fmt.Errorf("%w: %s", ErrNotMinorUnits, strconv.Quote(literal))
 	}
-	currency, err := ParseCurrency(wire.Currency)
+	var code string
+	if sawCurrency {
+		if err := json.Unmarshal(currencyRaw, &code); err != nil {
+			return fmt.Errorf("%w: %w", ErrMalformedJSON, err)
+		}
+	}
+	currency, err := ParseCurrency(code)
 	if err != nil {
 		return err
 	}
@@ -646,4 +689,34 @@ func (a *Amount) UnmarshalJSON(data []byte) error {
 	a.Minor = minor
 	a.Currency = currency
 	return nil
+}
+
+// expectObjectStart consumes the opening brace, rejecting a document that is
+// not an object at all - an array, a bare number, a quoted price.
+func expectObjectStart(dec *json.Decoder) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrMalformedJSON, err)
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("%w: an amount is a JSON object", ErrMalformedJSON)
+	}
+	return nil
+}
+
+// decodeMember reads one key and its raw value from inside an object.
+func decodeMember(dec *json.Decoder) (key string, value json.RawMessage, err error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return "", nil, fmt.Errorf("%w: %w", ErrMalformedJSON, err)
+	}
+	// Token yields object keys as strings: a key that is not one is a syntax
+	// error from the call above, never a non-string token here. If that ever
+	// stopped holding, the empty key falls through to the unknown-field
+	// rejection in the caller, which is the safe answer either way.
+	key, _ = tok.(string)
+	if err := dec.Decode(&value); err != nil {
+		return "", nil, fmt.Errorf("%w: %w", ErrMalformedJSON, err)
+	}
+	return key, value, nil
 }

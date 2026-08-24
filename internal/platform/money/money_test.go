@@ -1270,11 +1270,35 @@ func TestUnmarshalJSONRejects(t *testing.T) {
 		{name: "a lowercase currency", in: `{"minor":1234,"currency":"eur"}`, wantErr: money.ErrInvalidCurrency},
 		{name: "a currency symbol", in: `{"minor":1234,"currency":"€"}`, wantErr: money.ErrInvalidCurrency},
 		{name: "a field this type does not define", in: `{"minor":1234,"currency":"EUR","major":12}`, wantErr: money.ErrMalformedJSON},
+		// encoding/json matches struct tags case-insensitively, so a
+		// case-varied key is not an unknown field to it but a second spelling
+		// of the same one - and the last spelling wins silently, even with
+		// DisallowUnknownFields set. For a type whose contract is "exactly
+		// this object", a caller who believes they sent 1 while their payload
+		// also carries 9999 must be told, not quietly given one of them.
+		{name: "a case-varied duplicate of the units", in: `{"minor":1,"Minor":9999,"currency":"EUR"}`, wantErr: money.ErrMalformedJSON},
+		{name: "a case-varied duplicate of the currency", in: `{"minor":1,"currency":"EUR","CURRENCY":"GBP"}`, wantErr: money.ErrMalformedJSON},
+		{name: "a case-varied units key on its own", in: `{"Minor":42,"currency":"EUR"}`, wantErr: money.ErrMalformedJSON},
+		{name: "a case-varied currency key on its own", in: `{"minor":42,"Currency":"EUR"}`, wantErr: money.ErrMalformedJSON},
+		{name: "an exact duplicate of the units", in: `{"minor":1,"minor":9999,"currency":"EUR"}`, wantErr: money.ErrMalformedJSON},
+		{name: "an exact duplicate of the currency", in: `{"minor":1,"currency":"EUR","currency":"GBP"}`, wantErr: money.ErrMalformedJSON},
 		{name: "null", in: `null`, wantErr: money.ErrMalformedJSON},
 		{name: "a formatted price as a string", in: `"12.34 EUR"`, wantErr: money.ErrMalformedJSON},
 		{name: "a bare number", in: `1234`, wantErr: money.ErrMalformedJSON},
 		{name: "an array", in: `[1234,"EUR"]`, wantErr: money.ErrMalformedJSON},
 		{name: "truncated JSON", in: `{"minor":1234,`, wantErr: money.ErrMalformedJSON},
+		{name: "nothing at all", in: ``, wantErr: money.ErrMalformedJSON},
+		{name: "whitespace only", in: "  \n\t", wantErr: money.ErrMalformedJSON},
+		{name: "not JSON at all", in: `xyz`, wantErr: money.ErrMalformedJSON},
+		{name: "an object that never closes", in: `{`, wantErr: money.ErrMalformedJSON},
+		{name: "a member with no closing brace", in: `{"minor":1`, wantErr: money.ErrMalformedJSON},
+		{name: "a key with no value", in: `{"minor":`, wantErr: money.ErrMalformedJSON},
+		{name: "a currency that is not a string", in: `{"minor":1,"currency":123}`, wantErr: money.ErrMalformedJSON},
+		{name: "a currency that is an array", in: `{"minor":1,"currency":["EUR"]}`, wantErr: money.ErrMalformedJSON},
+		// A well-formed document carrying no currency: the shape is fine, the
+		// currency is not, so it is the currency error rather than the JSON
+		// one - the same answer as an empty code.
+		{name: "a currency that is null", in: `{"minor":1,"currency":null}`, wantErr: money.ErrInvalidCurrency},
 		{name: "a second amount trailing the first", in: `{"minor":1,"currency":"EUR"} {"minor":2,"currency":"EUR"}`, wantErr: money.ErrMalformedJSON},
 		{name: "a second amount with nothing between them", in: `{"minor":1,"currency":"EUR"}{"minor":2,"currency":"EUR"}`, wantErr: money.ErrMalformedJSON},
 		// A stray closing delimiter is the case a Decoder.More() check waves
