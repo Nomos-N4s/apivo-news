@@ -81,6 +81,23 @@ type ArticleProvenance struct {
 	CostMicrousd       pgtype.Int8
 }
 
+// APPEND ONLY (C-3). The tracked redirect: who clicked, which band, when, and the rate as published at that moment. Every credit that follows is evidenced by a row here.
+type CashbackClick struct {
+	ID pgtype.UUID
+	// The unguessable reference passed to the network in its own click-reference parameter (FR-020, FR-021), and the value every reported transaction is matched back on. Unique, URL-safe, and at least as long as 128 bits of entropy requires.
+	ClickRef string
+	// The member who clicked. NOT NULL by design (FR-023): an anonymous click is unrepresentable, so it can never later be credited to an account.
+	AccountID pgtype.UUID
+	OfferID   pgtype.UUID
+	ClickedAt pgtype.Timestamptz
+	// The whole rate band as published at click time (FR-013). This, not the offer row as it stands today, is what governs the credit - a rate change after the click never reaches back.
+	RateSnapshot []byte
+	// The member share in basis points at click time, snapshotted beside the band for the same reason (FR-013).
+	MemberShareBpsSnapshot int32
+	// A privacy-minimised device or context digest, sufficient for abuse rules and no more (FR-022). Never a raw fingerprint, never an address.
+	ContextDigest pgtype.Text
+}
+
 // A retailer, as a business fact: who they are, where they trade, whether we publish them. Deliberately carries NOTHING per-network - the same retailer is reachable through several networks at once, and each of those routes is a merchant_network row.
 type CashbackMerchant struct {
 	ID      pgtype.UUID
@@ -149,6 +166,33 @@ type CashbackNetworkAccount struct {
 	// How far the slower trailing re-read has walked. Validation can take up to 90 days, so status changes are found by re-reading, not by waiting (ADR-0003).
 	TrailingCursorAt pgtype.Timestamptz
 	Active           bool
+}
+
+// IMMUTABLE (C-3). Exactly what a network reported, when, and for which query window. A status or amount change is a NEW row superseding the previous one; nothing here is ever edited, because a member's money rests on it.
+type CashbackNetworkTransaction struct {
+	ID               pgtype.UUID
+	NetworkID        string
+	NetworkAccountID pgtype.UUID
+	ExternalID       string
+	ClickRef         pgtype.Text
+	// The network's own status vocabulary, verbatim. Kept beside the normalised status so a mapping bug is provable from the evidence rather than argued from memory (FR-032).
+	StatusRaw string
+	// The normalised domain status (FR-033): pending to confirmed or declined, plus reversed from either.
+	Status          string
+	SaleAmountMinor int64
+	// The commission the network reported, in minor units, with an explicit currency (C-6). The member's share is computed from THIS figure and the click-time rate, never from the published rate today.
+	CommissionMinor  int64
+	Currency         string
+	TransactedAt     pgtype.Timestamptz
+	RetrievedAt      pgtype.Timestamptz
+	QueryWindowStart pgtype.Timestamptz
+	QueryWindowEnd   pgtype.Timestamptz
+	// The network's payload verbatim (FR-032). Normalisation can be wrong; the payload is what was actually said.
+	RawPayload []byte
+	// A database-computed fingerprint of the reported facts - click reference, both statuses, both amounts, currency and transaction time. It is what makes an unchanged re-report a no-op and a changed one a new row. Written by trigger: a caller-supplied value is discarded.
+	ContentDigest string
+	// The row this report replaces. Set on the NEW row, because the old one is immutable and cannot be marked. One root per transaction plus no forks means one chain, whose tip is the current row.
+	SupersedesID pgtype.UUID
 }
 
 // A published rate band on one network's route to a retailer. Every band records its conditions and its exclusions (FR-011), and the network it is sourced from follows from the route (merchant_network) rather than being repeated here where the two could disagree. All of it is snapshotted onto the click, because the click-time rate governs the credit (FR-013).
