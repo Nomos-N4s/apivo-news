@@ -1,0 +1,198 @@
+# The cashback money substrate — Blnk and Redis — layered over
+# docker-compose.yml.
+#
+# Loaded the same way the local Postgres is: by listing this file in
+# COMPOSE_FILE (deploy/hetzner/env/stack.env.example shows both shapes). An
+# environment that does not list it has no ledger, no Redis, and no cashback
+# routes — which is the correct state for every environment until the
+# ADR-0002 spikes have passed on it.
+#
+# ---------------------------------------------------------------------------
+# Why a second runtime service at all
+# ---------------------------------------------------------------------------
+#
+# ADR-0002. The constitution permits exactly one exception to
+# one-process-per-application: a self-hosted, Apache/MIT-class open-source
+# ledger, carrying the correctness burden (double entry, idempotency,
+# reconciliation) we would otherwise write ourselves. Blnk is that ledger and
+# Redis is what Blnk requires for queueing and caching.
+#
+# Redis holds NO source of truth. Losing it loses throughput, not money: a
+# credit is only ever created from a polled, stored, verified network
+# transaction, and the outbox replays what a lost queue dropped. That is why
+# it is configured below with no persistence at all rather than with a volume
+# nobody would ever restore from.
+#
+# ---------------------------------------------------------------------------
+# Which database Blnk uses
+# ---------------------------------------------------------------------------
+#
+# The same Postgres instance as the api, in its own `blnk` schema with its own
+# role — one database, one backup, one point-in-time recovery, and the C-1
+# zero-sum check stays a plain SQL query instead of a distributed
+# reconciliation. That is subject to spike S1 (ADR-0002); if S1 fails, the
+# recorded fallback is a Blnk-owned Postgres, which is a change to
+# BLNK_DATA_SOURCE_DNS in blnk.env and a service added here, not a redesign.
+#
+# The DSN is a credential, so it lives in ${APIVO_ETC}/<env>/blnk.env and is
+# read by the Docker daemon through `env_file` — never interpolated by
+# compose, never in the reconciler's environment, never in
+# `docker compose config` output. Same rule as api.env, for the same reason.
+#
+# There is deliberately NO `depends_on: postgres` here. Staging and
+# production have no `postgres` service at all, and a depends_on naming a
+# service that does not exist fails the whole configuration — the same trap
+# documented in docker-compose.local-db.yml, which is why the api's dependency
+# on Postgres lives there and not in the base file.
+
+services:
+  # The ledger API. Cluster-internal in every sense that matters: no `ports`,
+  # so nothing outside the compose networks reaches it, and Caddy has no site
+  # block naming it. The only client is the api, over the `data` network by
+  # container name.
+  blnk:
+    image: jerryenebeli/blnk:0.15.2
+    container_name: apivo-${APIVO_ENV}-blnk
+    restart: unless-stopped
+    # `blnk migrate up && blnk start`, exactly as upstream's own compose file
+    # runs it: the ledger migrates its schema on boot, like the api does. The
+    # worker below deliberately does NOT migrate — two processes racing the
+    # same migration is a lock contention bug waiting for a slow start.
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["blnk migrate up && blnk start"]
+    env_file:
+      - ${APIVO_ETC:-/etc/apivo}/${APIVO_ENV}/blnk.env
+    environment:
+      # Blnk reads either /blnk.json or environment variables prefixed BLNK_.
+      # The environment is used here so the one credential in the set can stay
+      # in env_file above rather than being baked into a JSON file this
+      # repository would have to template.
+      BLNK_REDIS_DNS: apivo-${APIVO_ENV}-redis:6379
+      TZ: Etc/UTC
+    networks:
+      # `data` for Postgres and Redis; `edge` because staging and production
+      # reach Supabase across the public internet and `data` is
+      # `internal: true`. Exactly the api's network list, for exactly the
+      # api's reason.
+      - edge
+      - data
+    depends_on:
+      redis:
+        condition: service_healthy
+    # No healthcheck, and that is a decision rather than an omission. The
+    # image is debian-slim with no curl and no wget in the final layer, so an
+    # HTTP probe of /health cannot be expressed here without installing a
+    # package into a pinned upstream image. `docker compose up -d --wait`
+    # treats a service with no healthcheck as ready once it is running, so the
+    # rollout gate is unaffected; what proves the ledger is actually answering
+    # is the api's own /readyz and the continuous C-1 zero-sum check, both of
+    # which are real queries rather than a liveness ping.
+    logging:
+      driver: json-file
+      options:
+        max-size: ${APIVO_LOG_MAX_SIZE:-10m}
+        max-file: ${APIVO_LOG_MAX_FILE:-3}
+    deploy:
+      resources:
+        limits:
+          cpus: ${APIVO_BLNK_CPUS:-1.0}
+          memory: ${APIVO_BLNK_MEMORY:-512M}
+    security_opt:
+      - no-new-privileges:true
+
+  # Blnk's background worker. Upstream requires it as a separate process: the
+  # server accepts transactions onto the queue and this drains it. Same image,
+  # same configuration, no migration.
+  blnk-worker:
+    image: jerryenebeli/blnk:0.15.2
+    container_name: apivo-${APIVO_ENV}-blnk-worker
+    restart: unless-stopped
+    entrypoint: ["blnk", "workers"]
+    env_file:
+      - ${APIVO_ETC:-/etc/apivo}/${APIVO_ENV}/blnk.env
+    environment:
+      BLNK_REDIS_DNS: apivo-${APIVO_ENV}-redis:6379
+      TZ: Etc/UTC
+    networks:
+      - edge
+      - data
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: ${APIVO_LOG_MAX_SIZE:-10m}
+        max-file: ${APIVO_LOG_MAX_FILE:-3}
+    deploy:
+      resources:
+        limits:
+          cpus: ${APIVO_BLNK_WORKER_CPUS:-1.0}
+          memory: ${APIVO_BLNK_WORKER_MEMORY:-512M}
+    security_opt:
+      - no-new-privileges:true
+
+  # Blnk's queue and cache. On the internal network only: it needs nothing
+  # from the internet and nothing from the internet needs it.
+  redis:
+    image: redis:7.2.4-alpine
+    container_name: apivo-${APIVO_ENV}-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      # No RDB snapshots and no AOF. This is not a corner cut to save disk:
+      # persisting a queue whose contents are worth nothing after a restart
+      # would invite someone to restore from it, and a restored queue is a
+      # second, stale account of what the ledger was asked to do. The outbox
+      # is the durable record; Redis is the fast path.
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      # `noeviction` so a full Redis REFUSES a write instead of silently
+      # dropping a queued transfer. A dropped transfer is a money bug that
+      # leaves no trace; a refused one is an error the caller sees.
+      - --maxmemory
+      - ${APIVO_REDIS_MAXMEMORY:-192mb}
+      - --maxmemory-policy
+      - noeviction
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: ${APIVO_LOG_MAX_SIZE:-10m}
+        max-file: ${APIVO_LOG_MAX_FILE:-3}
+    deploy:
+      resources:
+        limits:
+          cpus: ${APIVO_REDIS_CPUS:-0.5}
+          memory: ${APIVO_REDIS_MEMORY:-256M}
+    security_opt:
+      - no-new-privileges:true
+
+  # What loading this file tells the api.
+  #
+  # These four are STRUCTURAL, not an operator's choice, so they are set here
+  # and not in api.env — the same reasoning that puts HTTP_ADDR and APP_ENV in
+  # the base compose file. Listing this overlay in COMPOSE_FILE *is* the
+  # decision to run cashback on this environment, and the ledger's address is
+  # a container name this file chose.
+  #
+  # NETWORK_DRIVER and the affiliate network credentials are the opposite:
+  # they are an operator's choice against a founder question that is still
+  # open (Q1), so they live in api.env and default to the fixture adapter.
+  api:
+    environment:
+      CASHBACK_ENABLED: "true"
+      LEDGER_DRIVER: blnk
+      BLNK_URL: http://apivo-${APIVO_ENV}-blnk:5001
+      REDIS_URL: redis://apivo-${APIVO_ENV}-redis:6379
+    depends_on:
+      blnk:
+        condition: service_started
