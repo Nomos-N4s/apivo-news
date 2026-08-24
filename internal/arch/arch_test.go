@@ -4,10 +4,12 @@
 package arch
 
 import (
+	"fmt"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,6 +24,13 @@ const (
 	platformModule = "platform"
 )
 
+// violation is one import that breaks a boundary rule: the file that holds
+// the import, and the reason the import is refused.
+type violation struct {
+	file   string
+	reason string
+}
+
 // TestModuleBoundaries walks every Go file under internal/ and asserts:
 //
 //  1. a module never imports another module's internals - modules
@@ -34,52 +43,80 @@ func TestModuleBoundaries(t *testing.T) {
 
 	root := repoRoot(t)
 	assertModulePath(t, root)
-	internalDir := filepath.Join(root, "internal")
-	fset := token.NewFileSet()
 
-	err := filepath.WalkDir(internalDir, func(path string, d fs.DirEntry, err error) error {
+	found, err := checkInternal(os.DirFS(filepath.Join(root, "internal")))
+	if err != nil {
+		t.Fatalf("scanning internal/: %v", err)
+	}
+	for _, v := range found {
+		t.Errorf("%s: %s", v.file, v.reason)
+	}
+}
+
+// checkInternal parses every Go file in fsys - a filesystem rooted at
+// internal/ - and reports each import that breaks a boundary rule.
+//
+// It is driven by the package graph it is handed rather than by a list of
+// module names, so a module added tomorrow is governed by the same rules
+// without this file being edited, and a module that does not exist yet
+// cannot make a rule pass vacuously.
+func checkInternal(fsys fs.FS) ([]violation, error) {
+	fset := token.NewFileSet()
+	var found []violation
+
+	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") {
+		if d.IsDir() || !strings.HasSuffix(p, ".go") {
 			return nil
 		}
-
-		rel, err := filepath.Rel(internalDir, path)
+		src, err := fs.ReadFile(fsys, p)
 		if err != nil {
 			return err
 		}
-		owner := moduleOf(filepath.ToSlash(rel))
-
-		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		file, err := parser.ParseFile(fset, p, src, parser.ImportsOnly)
 		if err != nil {
 			return err
 		}
+		owner := path.Dir(p)
 		for _, imp := range file.Imports {
 			target, err := strconv.Unquote(imp.Path.Value)
 			if err != nil {
 				return err
 			}
-			if !strings.HasPrefix(target, internalPrefix) {
-				continue
-			}
-			targetModule := moduleOf(strings.TrimPrefix(target, internalPrefix))
-			if targetModule == owner {
-				continue
-			}
-			if owner == platformModule {
-				t.Errorf("%s: platform must not import sibling module %q (import %q)", rel, targetModule, target)
-				continue
-			}
-			if targetModule != platformModule {
-				t.Errorf("%s: module %q must not import module %q internals (import %q); communicate through consumer-defined interfaces wired in cmd", rel, owner, targetModule, target)
+			if reason, bad := violates(owner, target); bad {
+				found = append(found, violation{file: p, reason: reason})
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("walking internal/: %v", err)
+		return nil, err
 	}
+	return found, nil
+}
+
+// violates answers whether ownerPkg - a package path relative to internal/ -
+// may import importPath, and states why not when it may not. Imports of
+// anything outside this module are never the architecture test's business.
+func violates(ownerPkg, importPath string) (string, bool) {
+	if !strings.HasPrefix(importPath, internalPrefix) {
+		return "", false
+	}
+
+	ownerModule := moduleOf(ownerPkg)
+	targetModule := moduleOf(strings.TrimPrefix(importPath, internalPrefix))
+	if targetModule == ownerModule {
+		return "", false
+	}
+	if ownerModule == platformModule {
+		return fmt.Sprintf("platform must not import sibling module %q (import %q)", targetModule, importPath), true
+	}
+	if targetModule != platformModule {
+		return fmt.Sprintf("module %q must not import module %q internals (import %q); communicate through consumer-defined interfaces wired in cmd", ownerModule, targetModule, importPath), true
+	}
+	return "", false
 }
 
 // assertModulePath guards against a module rename silently blinding this
