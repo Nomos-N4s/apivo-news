@@ -43,8 +43,24 @@ RACE ?= -race
 # Arguments must not contain commas - make splits $(call) arguments on them.
 # They may contain `#`: the arguments are used inside double quotes, so the
 # shell does not read one as a comment.
+#
+# THE EXIT LIVES INSIDE THE BRACES, and that is the whole correctness of this
+# macro. Written as `{ ...; } >&2; exit 1` it expands, after a `||`, to:
+#
+#     test -f FILE || { printf ...; } >&2; exit 1
+#
+# which the shell reads as `(A || B); C`. The `exit 1` is a separate command
+# in the list, so it runs whether or not the test passed - and every target
+# below fails forever, including once its dependency has landed. Inside the
+# braces the exit belongs to the right-hand side of the `||` and only runs
+# when the guard actually fired.
+#
+# scripts/make_targets_test.sh exists because of this bug: the negative case
+# alone could not catch it, since a target that always fails and a target that
+# correctly reports a missing dependency are indistinguishable while the
+# dependency is in fact missing.
 # ---------------------------------------------------------------------------
-missing = { printf '\n%s\n\n  missing:      %s\n  provided by:  %s\n  meanwhile:    %s\n\n%s\n\n' "make $@: a dependency of this target has not landed yet." "$(1)" "$(2)" "$(3)" "Failing on purpose. A target that quietly succeeded here would report a green result that nobody produced."; } >&2; exit 1
+missing = { printf '\n%s\n\n  missing:      %s\n  provided by:  %s\n  meanwhile:    %s\n\n%s\n\n' "make $@: a dependency of this target has not landed yet." "$(1)" "$(2)" "$(3)" "Failing on purpose. A target that quietly succeeded here would report a green result that nobody produced."; exit 1; } >&2
 
 ## setup: one-time developer setup - route git hooks through .githooks
 setup:
