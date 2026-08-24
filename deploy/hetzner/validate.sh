@@ -55,11 +55,13 @@ check_env() {
     mkdir -p "$APIVO_ETC/$env_name"
     : > "$APIVO_ETC/$env_name/api.env"
     : > "$APIVO_ETC/$env_name/web.env"
-    # The cashback overlay's env_file. Written for every environment rather
-    # than only the cashback ones: compose resolves env_file paths for the
-    # whole file list it was given, so a missing one fails the render with an
-    # error about a file instead of an error about the configuration.
+    # The cashback overlay's env_files - BOTH of them, one per database role.
+    # Written for every environment rather than only the cashback ones:
+    # compose resolves env_file paths for the whole file list it was given, so
+    # a missing one fails the render with an error about a file instead of an
+    # error about the configuration.
     : > "$APIVO_ETC/$env_name/blnk.env"
+    : > "$APIVO_ETC/$env_name/blnk-migrate.env"
 
     APIVO_ENV="$env_name"
     export APIVO_ENV
@@ -208,6 +210,55 @@ check_cashback() {
         fail "$env_name cashback: the blnk worker has no healthcheck against its /health route on 5004, so a dead worker would pass the rollout gate while transactions queued up behind it"
     echo "ok: $env_name gates the rollout on both the ledger and its worker answering /health"
 
+    # ---------------------------------------------------------------------
+    # The founder's split posture (2026-08-24): migrations as the database
+    # owner, the server and worker as blnk_app, which owns nothing.
+    #
+    # This is asserted rather than reviewed because it is invisible when it
+    # regresses. A single-role overlay works perfectly - it migrates, it
+    # serves, every container is healthy - and the only difference is that the
+    # process exposed every second of every day can reshape the tables holding
+    # members' balances. Nothing fails until something already has.
+    # ---------------------------------------------------------------------
+    printf '%s' "$rendered" | grep -q -F "apivo-$env_name-blnk-migrate" ||
+        fail "$env_name cashback: there is no blnk-migrate container; the ledger would be migrating with whatever role it serves with"
+
+    # `blnk start` does not migrate, so the ordering has to be real rather
+    # than hopeful - a server answering before its tables exist fails per
+    # request instead of refusing to start.
+    printf '%s' "$rendered" | grep -q -F 'service_completed_successfully' ||
+        fail "$env_name cashback: nothing waits for blnk-migrate to complete; the ledger would answer before its schema exists"
+    echo "ok: $env_name waits for the migration before serving"
+
+    # And the runtime containers must not migrate. `blnk start` and
+    # `blnk workers` only - a migrate slipped back into an entrypoint would
+    # run DDL as blnk_app and fail, or worse, be 'fixed' by widening the role.
+    printf '%s' "$rendered" | grep -q -F 'blnk migrate up &&' &&
+        fail "$env_name cashback: a runtime container still chains 'blnk migrate up'; migrations belong to the one-shot owner container"
+    echo "ok: $env_name migrates only in the one-shot container"
+
+    # ---------------------------------------------------------------------
+    # The ledger actually CHECKS credentials.
+    #
+    # BLNK_SERVER_SECRET_KEY does nothing on its own. In blnk v0.15.2 the auth
+    # middleware short-circuits before it ever looks at a key:
+    #
+    #   api/middleware/auth.go, Authenticate():
+    #       if err == nil && conf != nil && !conf.Server.Secure {
+    #           // Skip authentication when secure mode is disabled
+    #           c.Next(); return
+    #       }
+    #
+    # `Server.Secure` is BLNK_SERVER_SECURE and is never defaulted, so a
+    # deployment that sets only the secret key ships a ledger that accepts
+    # anything reaching it - while every template and document says otherwise.
+    # That is the exact shape of mistake this file exists to make impossible,
+    # so it is asserted rather than trusted.
+    # ---------------------------------------------------------------------
+    printf '%s' "$rendered" | grep -q 'BLNK_SERVER_SECURE: *"\{0,1\}true' ||
+        fail "$env_name cashback: BLNK_SERVER_SECURE is not true, so Blnk skips authentication entirely and the ledger accepts any request that reaches it - a secret key alone does not gate anything"
+    echo "ok: $env_name runs the ledger with authentication actually enabled"
+
     # Redis is a queue and a cache with no persistence and no source of truth.
     # `noeviction` is what makes that safe: a full Redis must REFUSE a write,
     # visibly, rather than evict a queued transfer and leave no trace.
@@ -224,6 +275,56 @@ check_cashback() {
 # prod covered one shape each and left staging's pair unvalidated entirely —
 # which is precisely the environment a release candidate meets first, and the
 # only one that exists in two shapes for a breakage to hide in.
+# ---------------------------------------------------------------------------
+# Which env_file each ledger service reads - asserted against the SOURCE file
+# rather than the rendered configuration.
+#
+# Not a stylistic choice, and the first version of this check got it wrong.
+# `docker compose config` NORMALISES env_file away: it resolves each file and
+# folds the result into `environment`, so no path survives into the render.
+# Two assertions written against the render failed outright - and the third,
+# the one guarding against the owner's credential reaching a long-lived
+# container, PASSED for the worst possible reason. It searched a document that
+# can never contain the string it looked for, so it could not have failed.
+#
+# Which file a service reads is a property of the compose file, so the compose
+# file is what to read. Once rather than per environment: the service
+# definitions do not vary by environment, only the interpolated paths do, and
+# the render above covers those.
+# ---------------------------------------------------------------------------
+env_files_of() {
+    # env_files_of <service> - the .env entries that service declares.
+    awk -v svc="$1" '
+        $0 == "  " svc ":" { inside = 1; next }
+        # Any two-space-indented line ends the range, COMMENTS INCLUDED. With
+        # /^  [a-z]/ the range ran on through the comment block introducing
+        # the next service, so prose there counted as configuration.
+        /^  [^ ]/ { inside = 0 }
+        # And only real list entries, never prose: a sentence naming a file is
+        # documentation, not an env_file.
+        inside && /^      - .*\.env/ { print }
+    ' "$COMPOSE_DIR/docker-compose.cashback.yml"
+}
+
+if env_files_of blnk-migrate | grep -q 'blnk-migrate\.env'; then
+    echo "ok: blnk-migrate reads the owner's env file"
+else
+    fail "blnk-migrate does not declare blnk-migrate.env, so the migration would run as whatever role the server uses - and one role doing both jobs needs CREATE on the database permanently"
+fi
+
+for svc in blnk blnk-worker; do
+    if env_files_of "$svc" | grep -q 'blnk\.env'; then
+        echo "ok: $svc reads the runtime env file"
+    else
+        fail "$svc does not declare blnk.env, so the runtime role is not configured"
+    fi
+    if env_files_of "$svc" | grep -q 'blnk-migrate\.env'; then
+        fail "$svc reads blnk-migrate.env; the owner's credential must not be present in a long-lived container at all, only absent from it"
+    else
+        echo "ok: $svc never sees the owner's env file"
+    fi
+done
+
 check_cashback qa docker-compose.yml docker-compose.local-db.yml docker-compose.cashback.yml
 check_cashback staging docker-compose.yml docker-compose.local-db.yml docker-compose.cashback.yml
 check_cashback staging docker-compose.yml docker-compose.cashback.yml

@@ -99,6 +99,39 @@ spec:
                   name: apivo-secrets
                   key: TRANSLATION_API_KEY
                   optional: true
+            # The api's half of the ledger credential; the ledger's half is
+            # BLNK_SERVER_SECRET_KEY in deploy/k8s/cashback, and the two must
+            # be equal. `optional: true` for the same reason the cashback
+            # ConfigMap reference is optional: a cluster that never applied
+            # deploy/k8s/cashback/ has no ledger and needs no key, and a
+            # required reference would block every api pod on such a cluster.
+            #
+            # It is NOT optional in effect once cashback is on: the cluster
+            # runs APP_ENV=prod, and the api refuses to start with
+            # CASHBACK_ENABLED=true and this unset. Optional here means "the
+            # Secret need not carry it", not "the product works without it".
+            - name: BLNK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: apivo-secrets
+                  key: BLNK_SECRET_KEY
+                  optional: true
+            # The affiliate network's credentials. Absent with
+            # NETWORK_DRIVER=fixture, which needs none; required by the api
+            # once a live adapter is selected, and it says which are missing
+            # at startup rather than polling nothing in silence.
+            - name: NETWORK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: apivo-secrets
+                  key: NETWORK_API_KEY
+                  optional: true
+            - name: NETWORK_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: apivo-secrets
+                  key: NETWORK_API_SECRET
+                  optional: true
           resources:
             requests:
               cpu: 100m

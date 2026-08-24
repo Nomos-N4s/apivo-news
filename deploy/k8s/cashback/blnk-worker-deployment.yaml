@@ -42,6 +42,72 @@ spec:
         runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
+      # Wait for the ledger before draining its queue.
+      #
+      # The worker is a RUNTIME process and runs as blnk_app, like the server
+      # - draining a queue is DML, and nothing a worker does needs DDL. It
+      # therefore does NOT migrate, and must not: the migration belongs to the
+      # server pod's initContainer, which runs as the owner, and two pods
+      # racing the same migration is the thing `replicas: 1` and `Recreate`
+      # exist to prevent over there.
+      #
+      # But it queries the ledger's tables from its first tick, so starting
+      # before the migration has run means a restart loop that looks like a
+      # Redis problem. Compose expresses this as
+      # `depends_on: blnk-migrate: service_completed_successfully`; in
+      # Kubernetes, where the migration lives in another pod, the equivalent
+      # is to wait for the thing that only exists AFTER it: the ledger
+      # answering its own health route.
+      #
+      # `wget` is used because the upstream image ships it - the Dockerfile
+      # installs it to fetch a signing key and removes only the apt lists
+      # afterwards - so this needs no second image and no shell utilities
+      # container.
+      initContainers:
+        - name: wait-for-ledger
+          image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              i=0
+              while [ "$i" -lt 60 ]; do
+                if wget -q --no-hsts -O /dev/null http://blnk:5001/health; then
+                  echo "ledger is answering; starting the worker"
+                  exit 0
+                fi
+                i=$((i + 1))
+                sleep 2
+              done
+              echo "the ledger did not answer within 120s; refusing to start the worker against a schema that may not exist" >&2
+              exit 1
+          env:
+            # GNU wget keeps an HSTS database at $HOME/.wget-hsts and writes
+            # it on exit. With readOnlyRootFilesystem below and no HOME, that
+            # write lands somewhere unwritable - so the probe could fail, or
+            # hang, on a ledger that was answering perfectly, and the worker
+            # would never start while the queue backed up behind it.
+            #
+            # Belt and braces, because this container's whole job is to be
+            # reliable: --no-hsts above turns the database off, and HOME still
+            # points at a writable emptyDir in case any other scratch write
+            # appears.
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
       containers:
         - name: blnk-worker
           image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf

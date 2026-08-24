@@ -6,9 +6,17 @@
 # document a ConfigMap would have to carry whole — mixing the two would put
 # the ledger's database password in `kubectl get configmap -o yaml` output.
 #
-# BLNK_DATA_SOURCE_DNS is therefore deliberately absent here. It is mapped
-# from the `apivo-secrets` Secret by both Deployments in this directory; its
-# structure is documented in ../examples/secret.example.yaml.
+# The DSNs are therefore deliberately absent here. There are TWO of them, one
+# per database role, both mapped from the `apivo-secrets` Secret and both
+# documented in ../examples/secret.example.yaml:
+#
+#   BLNK_MIGRATE_DSN        the database OWNER, used only by the migration
+#                           initContainer in blnk-deployment.yaml
+#   BLNK_DATA_SOURCE_DNS    blnk_app, used by the server and the worker
+#
+# Both arrive in the container under Blnk's own `BLNK_DATA_SOURCE_DNS`; the
+# difference is which Secret key each container maps, and that difference is
+# the whole split. See blnk-deployment.yaml for why it is required.
 #
 # Everything else Blnk exposes has a documented default and is left unset on
 # purpose (transaction batching and locking, queue sharding and retries,
@@ -30,4 +38,34 @@ data:
   # ever created from a polled, stored, verified network transaction and the
   # outbox replays whatever a lost queue dropped.
   BLNK_REDIS_DNS: "redis:6379"
+  # Shared by the server, the worker and the migration initContainer, which
+  # all take this ConfigMap through envFrom. Blnk validates its whole
+  # configuration before running any command, which is why the migration -
+  # which never touches Redis - still needs the address above.
+  BLNK_PROJECT_NAME: "apivo-cashback"
+  BLNK_SERVER_PORT: "5001"
+  # THE switch that makes Blnk check credentials at all.
+  #
+  # BLNK_SERVER_SECRET_KEY is inert without it. In blnk v0.15.2 the auth
+  # middleware short-circuits before it looks at a key:
+  #
+  #   api/middleware/auth.go, Authenticate():
+  #       if err == nil && conf != nil && !conf.Server.Secure {
+  #           // Skip authentication when secure mode is disabled
+  #           c.Next(); return
+  #       }
+  #
+  # `Server.Secure` is never defaulted, so it is false unless set, and Blnk
+  # logs "SECURITY: server.secure is false - API authentication is DISABLED"
+  # at every start. Without this the ledger accepts anything that can reach
+  # its Service, key or no key.
+  #
+  # /health is unaffected: auth.go skips it BEFORE this check, so the probes
+  # in both Deployments keep working with authentication on.
+  #
+  # On the worker it also closes the asynq dashboard at /monitoring, which
+  # MetricsAuthHandler leaves open when secure is false and refuses outright
+  # when secure is true with no bearer token - the state we want, since
+  # nothing here uses that dashboard.
+  BLNK_SERVER_SECURE: "true"
   TZ: "Etc/UTC"

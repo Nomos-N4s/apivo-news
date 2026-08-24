@@ -253,13 +253,23 @@ EOF
     # Empty is the safe state, exactly as it is for DATABASE_URL: Blnk with no
     # BLNK_DATA_SOURCE_DNS does not start, and an environment whose
     # COMPOSE_FILE does not name the overlay never starts it.
-    if [ -e "$ETC/$env_name/blnk.env" ]; then
-        note "$env_name: blnk.env exists, left alone (it holds the ledger's database credential)"
-    else
-        cp "$HERE/env/blnk.env.example" "$ETC/$env_name/blnk.env"
-        chmod 0600 "$ETC/$env_name/blnk.env"
-        note "$env_name: wrote blnk.env TEMPLATE — BLNK_DATA_SOURCE_DNS is empty; cashback is off until it is filled in and the overlay is added to COMPOSE_FILE"
-    fi
+    #
+    # TWO files, because the ledger runs as two roles: the database owner
+    # migrates, blnk_app serves. Blnk reads the DSN from the same variable
+    # either way, so a file per role is the only way to hand each container a
+    # different one through `env_file` - and it keeps the owner's credential
+    # out of the long-lived server's environment rather than merely unused by
+    # it.
+    for _blnk_env in blnk.env blnk-migrate.env; do
+        if [ -e "$ETC/$env_name/$_blnk_env" ]; then
+            note "$env_name: $_blnk_env exists, left alone (it holds a database credential)"
+        else
+            cp "$HERE/env/$_blnk_env.example" "$ETC/$env_name/$_blnk_env"
+            chmod 0600 "$ETC/$env_name/$_blnk_env"
+            note "$env_name: wrote $_blnk_env TEMPLATE - BLNK_DATA_SOURCE_DNS is empty"
+        fi
+    done
+    note "$env_name: cashback stays off until both blnk env files are filled in, the blnk_app role is created with scripts/spikes/ledger_schema/bootstrap.sql, and the overlay is added to COMPOSE_FILE"
 done
 
 # ---------------------------------------------------------------------------

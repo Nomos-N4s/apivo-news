@@ -27,17 +27,28 @@
 # Which database Blnk uses
 # ---------------------------------------------------------------------------
 #
-# The same Postgres instance as the api, in its own `blnk` schema with its own
-# role — one database, one backup, one point-in-time recovery, and the C-1
-# zero-sum check stays a plain SQL query instead of a distributed
-# reconciliation. That is subject to spike S1 (ADR-0002); if S1 fails, the
-# recorded fallback is a Blnk-owned Postgres, which is a change to
-# BLNK_DATA_SOURCE_DNS in blnk.env and a service added here, not a redesign.
+# The same Postgres instance as the api, in its own `blnk` schema — one
+# database, one backup, one point-in-time recovery, and the C-1 zero-sum check
+# stays a plain SQL query instead of a distributed reconciliation. Spike S1
+# has now PASSED against that shape (ADR-0002); the recorded fallback of a
+# Blnk-owned Postgres is not needed.
 #
-# The DSN is a credential, so it lives in ${APIVO_ETC}/<env>/blnk.env and is
-# read by the Docker daemon through `env_file` — never interpolated by
-# compose, never in the reconciler's environment, never in
-# `docker compose config` output. Same rule as api.env, for the same reason.
+# TWO roles, not one, and therefore TWO DSNs in TWO files:
+#
+#   ${APIVO_ETC}/<env>/blnk-migrate.env   the database OWNER, read only by
+#                                         the one-shot blnk-migrate container
+#   ${APIVO_ETC}/<env>/blnk.env           blnk_app, read by the server and
+#                                         the worker, which run continuously
+#
+# Both are credentials, so both are read by the Docker daemon through
+# `env_file` — never interpolated by compose, never in the reconciler's
+# environment, never in `docker compose config` output. Same rule as api.env,
+# for the same reason.
+#
+# The role itself is created once by an operator with
+# scripts/spikes/ledger_schema/bootstrap.sql, which is the production recipe
+# rather than a fixture. See the blnk-migrate service below for why the split
+# is required and not merely tidy.
 #
 # There is deliberately NO `depends_on: postgres` here. Staging and
 # production have no `postgres` service at all, and a depends_on naming a
@@ -72,6 +83,86 @@
 # architecture.
 
 services:
+  # The ledger's schema, migrated once per rollout AS THE DATABASE OWNER.
+  #
+  # This is the founder's split posture (2026-08-24), and it is the same shape
+  # docker-compose.yml and the CI job run — one answer in the repository, not
+  # one per environment:
+  #
+  #   the database owner   runs `blnk migrate up`. Migrations are DDL, they
+  #                        happen on a deploy, and they are reviewed.
+  #   blnk_app             runs the SERVER and the WORKER below, every second
+  #                        of every day, with USAGE on one schema and DML on
+  #                        its tables. No DDL, no CREATE on the database, no
+  #                        reach into `public`.
+  #
+  # Spike S1 established why the split is needed rather than convenient.
+  # Blnk's first migration issues `CREATE SCHEMA IF NOT EXISTS blnk`, and
+  # PostgreSQL checks the database-level CREATE privilege BEFORE it takes the
+  # IF NOT EXISTS shortcut — so pre-creating the schema does not avoid the
+  # grant, and a single role would need CREATE on the database permanently for
+  # one statement on one deploy.
+  #
+  # The two roles are two FILES, not two keys in one file: Blnk reads the DSN
+  # from `BLNK_DATA_SOURCE_DNS` whichever job it is doing, so the only way to
+  # hand each container a different one through `env_file` — and keep both out
+  # of the reconciler's environment and out of `docker compose config` output
+  # — is a file per role. That is what makes the owner credential absent from
+  # the long-lived process rather than merely unused by it.
+  #
+  # The operator creates the role once with the recipe in
+  # scripts/spikes/ledger_schema/bootstrap.sql, which is the production
+  # recipe and not a fixture.
+  #
+  # A one-shot, exactly like docker-compose.yml's: `blnk start` does not
+  # migrate, and a server answering before its tables exist would fail per
+  # request instead of refusing to start. `service_completed_successfully`
+  # below is what makes the ordering real rather than hopeful.
+  #
+  # It is ALSO what keeps the reconciler's rollout gate working, and that is
+  # worth stating because it looks like a hazard and is not. The reconciler
+  # runs `compose up -d --wait`, which normally waits for every service to be
+  # running or healthy - a container that exits would never satisfy that.
+  # Compose special-cases exactly this shape (pkg/compose/start.go):
+  #
+  #   // getDependencyCondition checks if service is depended on by other
+  #   // services with service_completed_successfully condition, and applies
+  #   // that condition instead, or --wait will never finish waiting for
+  #   // one-shot containers
+  #
+  # So because `blnk` and `blnk-worker` below depend on this service with
+  # `service_completed_successfully`, `--wait` waits for it to COMPLETE rather
+  # than to keep running. Present since compose v2.17.0. Remove that
+  # dependency and the rollout gate breaks as well as the ordering, which is
+  # the other reason validate.sh asserts it.
+  blnk-migrate:
+    image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
+    container_name: apivo-${APIVO_ENV}-blnk-migrate
+    restart: "no"
+    entrypoint: ["blnk", "migrate", "up"]
+    env_file:
+      # The OWNER's DSN. The only file on the host that carries it to a
+      # container, and the container it carries it to lives for seconds.
+      - ${APIVO_ETC:-/etc/apivo}/${APIVO_ENV}/blnk-migrate.env
+    environment:
+      # Unused by the migration itself, and still required: Blnk validates its
+      # whole configuration before running any command.
+      BLNK_REDIS_DNS: apivo-${APIVO_ENV}-redis:6379
+      TZ: Etc/UTC
+    networks:
+      - edge
+      - data
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: ${APIVO_LOG_MAX_SIZE:-10m}
+        max-file: ${APIVO_LOG_MAX_FILE:-3}
+    security_opt:
+      - no-new-privileges:true
+
   # The ledger API. Cluster-internal in every sense that matters: no `ports`,
   # so nothing outside the compose networks reaches it, and Caddy has no site
   # block naming it. The only client is the api, over the `data` network by
@@ -80,20 +171,48 @@ services:
     image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
     container_name: apivo-${APIVO_ENV}-blnk
     restart: unless-stopped
-    # `blnk migrate up && blnk start`, exactly as upstream's own compose file
-    # runs it: the ledger migrates its schema on boot, like the api does. The
-    # worker below deliberately does NOT migrate — two processes racing the
-    # same migration is a lock contention bug waiting for a slow start.
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["blnk migrate up && blnk start"]
+    # `blnk start` ONLY. The migration is blnk-migrate above, as the owner;
+    # this process runs as blnk_app and has no DDL rights to migrate with.
+    entrypoint: ["blnk", "start"]
     env_file:
+      # blnk_app's DSN. Note the file name difference from blnk-migrate above
+      # — that is the whole split, and it is the thing to check first if the
+      # ledger ever reports a permission error.
       - ${APIVO_ETC:-/etc/apivo}/${APIVO_ENV}/blnk.env
     environment:
       # Blnk reads either /blnk.json or environment variables prefixed BLNK_.
-      # The environment is used here so the one credential in the set can stay
-      # in env_file above rather than being baked into a JSON file this
+      # The environment is used here so the credentials in the set can stay in
+      # env_file above rather than being baked into a JSON file this
       # repository would have to template.
       BLNK_REDIS_DNS: apivo-${APIVO_ENV}-redis:6379
+      BLNK_PROJECT_NAME: apivo-cashback
+      BLNK_SERVER_PORT: "5001"
+      # THE switch that makes Blnk check credentials at all.
+      #
+      # An earlier revision of this file set BLNK_SERVER_SECRET_KEY and said
+      # that made the ledger "demand a credential". It does not. In blnk
+      # v0.15.2 the key is inert on its own:
+      #
+      #   api/middleware/auth.go, Authenticate():
+      #       if err == nil && conf != nil && !conf.Server.Secure {
+      #           // Skip authentication when secure mode is disabled
+      #           c.Next()
+      #           return
+      #       }
+      #
+      # `Server.Secure` is `BLNK_SERVER_SECURE` (config/config.go), it is
+      # never given a default, so it is false, and Blnk itself logs
+      # "SECURITY: server.secure is false - API authentication is DISABLED"
+      # on every start. Without this line the ledger accepts any request that
+      # reaches it, key or no key.
+      #
+      # It fails CLOSED if the key is missing: secure with an empty
+      # BLNK_SERVER_SECRET_KEY refuses every authenticated route with 401
+      # rather than letting it through, which is the right way round.
+      #
+      # `/health` is unaffected - auth.go skips it BEFORE this check, so the
+      # healthcheck below keeps working with authentication on.
+      BLNK_SERVER_SECURE: "true"
       TZ: Etc/UTC
     networks:
       # `data` for Postgres and Redis; `edge` because staging and production
@@ -105,6 +224,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      blnk-migrate:
+        condition: service_completed_successfully
     # Blnk serves an unauthenticated `GET /health` (added upstream in v0.10.3;
     # this image is 0.15.2), and the probe is a real HTTP request rather than
     # a port knock because a listening socket says nothing about whether the
@@ -117,10 +238,11 @@ services:
     # is avoided deliberately - it sends HEAD, and a route that answers GET is
     # not obliged to answer HEAD.
     #
-    # `start_period` covers the schema migration this container runs before it
-    # listens, exactly as the api's Kubernetes startup probe does. Without it
-    # the first rollout on a fresh database fails on a container that was
-    # working perfectly and simply had not finished migrating.
+    # `start_period` no longer covers a migration - blnk-migrate does that
+    # before this container is created at all - but it is kept, at a shorter
+    # value, for the connection setup and first Redis handshake. Nothing here
+    # should need thirty seconds now, and if it does, that is a finding rather
+    # than something to absorb silently.
     #
     # This is what makes the reconciler's `up -d --wait` gate real for the
     # ledger. What it still does not prove is that the ledger's numbers are
@@ -131,7 +253,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 30s
+      start_period: 10s
     logging:
       driver: json-file
       options:
@@ -146,8 +268,12 @@ services:
       - no-new-privileges:true
 
   # Blnk's background worker. Upstream requires it as a separate process: the
-  # server accepts transactions onto the queue and this drains it. Same image,
-  # same configuration, no migration.
+  # server accepts transactions onto the queue and this drains it.
+  #
+  # It is a RUNTIME process, so it takes blnk.env - the same blnk_app DSN the
+  # server uses, and not the owner's. Draining a queue is DML; nothing a
+  # worker does needs DDL, and giving it the owner's credential would put that
+  # credential in a second long-lived container for no gain.
   blnk-worker:
     image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
     container_name: apivo-${APIVO_ENV}-blnk-worker
@@ -157,6 +283,18 @@ services:
       - ${APIVO_ETC:-/etc/apivo}/${APIVO_ENV}/blnk.env
     environment:
       BLNK_REDIS_DNS: apivo-${APIVO_ENV}-redis:6379
+      BLNK_PROJECT_NAME: apivo-cashback
+      # The worker serves an asynq dashboard at /monitoring on 5004, and
+      # `MetricsAuthHandler(secure, token, ...)` lets everything through when
+      # secure is false - so without this the queue dashboard is open to
+      # anything on the data network. With secure true and no
+      # BLNK_METRICS_BEARER_TOKEN, that handler refuses outright
+      # (api/middleware/middleware.go), which is the state we want: we do not
+      # use the dashboard.
+      #
+      # The worker's own /health is registered directly on its mux and is not
+      # behind that handler, so the healthcheck below is unaffected.
+      BLNK_SERVER_SECURE: "true"
       TZ: Etc/UTC
     networks:
       - edge
@@ -164,6 +302,12 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      # The worker queries the ledger's tables from its first tick, so it
+      # waits on the same migration the server does. Without this it starts
+      # against a schema that may not exist yet and spends its early life in
+      # a restart loop that looks like a Redis problem.
+      blnk-migrate:
+        condition: service_completed_successfully
     # The worker serves its OWN `GET /health` on 5004, and this was wrong in an
     # earlier revision of this file, which claimed it had no health route.
     #

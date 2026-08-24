@@ -166,6 +166,64 @@ else
     fail "a ledger Deployment does not map BLNK_DATA_SOURCE_DNS from the Secret; the ledger's role must not be the api's"
 fi
 
+# ---------------------------------------------------------------------------
+# The founder's split posture (2026-08-24): migrations as the database owner,
+# the server and the worker as blnk_app, which owns nothing.
+#
+# Asserted rather than reviewed because a regression is invisible. A
+# single-role deployment migrates, serves, and reports every pod Ready; the
+# only difference is that the process exposed every second of every day can
+# reshape the tables holding members' balances. Nothing fails until something
+# already has.
+# ---------------------------------------------------------------------------
+if grep -q 'name: migrate' "$CASHBACK/blnk-deployment.yaml" </dev/null &&
+    grep -q 'key: BLNK_MIGRATE_DSN' "$CASHBACK/blnk-deployment.yaml" </dev/null; then
+    echo "ok: the ledger migrates in its own container, as the database owner"
+else
+    fail "blnk-deployment.yaml has no migrate initContainer taking BLNK_MIGRATE_DSN; the ledger would migrate with whatever role it serves with, which needs CREATE on the database permanently"
+fi
+
+# The owner's key must be ABSENT from the long-lived containers, not merely
+# unused by them. A server that could read BLNK_MIGRATE_DSN out of its own
+# environment makes the split buy nothing.
+_leak=$(awk '
+    /^        - name: / { in_init = ($0 ~ /name: migrate$/) }
+    /^      containers:/ { in_init = 0 }
+    # Only real secretKeyRef lines, not prose: a comment naming the key in
+    # the file header is documentation, and failing on it would train the
+    # next person to work around this check rather than read it.
+    !in_init && /key: BLNK_MIGRATE_DSN/ { print "LEAK" }
+' "$CASHBACK/blnk-deployment.yaml")
+if [ -n "$_leak" ]; then
+    fail "BLNK_MIGRATE_DSN reaches a long-lived container in blnk-deployment.yaml; the owner's credential belongs only to the migrate initContainer"
+else
+    echo "ok: the owner credential is confined to the migrate initContainer"
+fi
+
+if grep -q 'BLNK_MIGRATE_DSN' "$CASHBACK/blnk-worker-deployment.yaml" </dev/null; then
+    fail "the worker maps BLNK_MIGRATE_DSN; draining a queue is DML and needs no DDL rights, and a second long-lived holder of the owner credential is a second thing to compromise"
+else
+    echo "ok: the worker never sees the owner credential"
+fi
+
+# `blnk start` does not migrate, so nothing may chain a migration into a
+# long-lived container's command - that would run DDL as blnk_app and fail,
+# or worse, be "fixed" by widening the role.
+if grep -rq 'blnk migrate up &&' "$CASHBACK" </dev/null; then
+    fail "a ledger container still chains 'blnk migrate up' into its command; migrations belong to the migrate initContainer, as the owner"
+else
+    echo "ok: migrations run only in the initContainer"
+fi
+
+# Both halves of the ledger credential, which are useless apart: one makes the
+# ledger demand a credential, the other makes the api present it.
+if grep -q 'key: BLNK_SERVER_SECRET_KEY' "$CASHBACK/blnk-deployment.yaml" </dev/null &&
+    grep -q 'key: BLNK_SECRET_KEY' "$HERE/api-deployment.yaml" </dev/null; then
+    echo "ok: the ledger demands a credential and the api presents one"
+else
+    fail "BLNK_SERVER_SECRET_KEY or the api's BLNK_SECRET_KEY is unmapped; a cluster runs APP_ENV=prod, where the api refuses to start with cashback enabled and no ledger credential"
+fi
+
 # The ledger is probed with a real request rather than a port knock. A
 # listening socket says nothing about whether Blnk reached its database, and a
 # ledger that answers TCP while failing every query is the worst of both
@@ -204,6 +262,44 @@ for _f in "$CASHBACK"/blnk-deployment.yaml "$CASHBACK"/blnk-worker-deployment.ya
         ;;
     esac
 done
+
+# The ledger actually CHECKS credentials.
+#
+# BLNK_SERVER_SECRET_KEY does nothing on its own: in blnk v0.15.2 the auth
+# middleware short-circuits before it looks at a key
+# (api/middleware/auth.go: `if !conf.Server.Secure { c.Next(); return }`), and
+# Server.Secure is never defaulted. A manifest set carrying only the secret
+# ships a ledger that accepts anything reaching its Service while every
+# document says otherwise, which is precisely the drift this file exists to
+# catch.
+if grep -q 'BLNK_SERVER_SECURE: *"\{0,1\}true' "$CASHBACK/blnk-configmap.yaml" </dev/null; then
+    echo "ok: the ledger runs with authentication actually enabled"
+else
+    fail "BLNK_SERVER_SECURE is not true in blnk-configmap.yaml, so Blnk skips authentication entirely and the ledger accepts any request that reaches it - a secret key alone gates nothing"
+fi
+
+# The wait probe can write where it needs to.
+#
+# `readOnlyRootFilesystem: true` with no writable mount is how a probe that
+# works everywhere else fails in a cluster: GNU wget writes an HSTS database
+# under $HOME on exit. If that write fails the worker never starts, and the
+# queue backs up behind an initContainer that was watching a perfectly healthy
+# ledger.
+if awk '
+    # The range MUST close, and an earlier version of this did not: it set
+    # inside=2 at the resources key, which is still truthy, so scanning ran on
+    # into the MAIN container and its /tmp mount satisfied the check. Removing
+    # the initContainer mount entirely still passed. Closing on the containers
+    # key is what makes this about the initContainer at all.
+    /^        - name: wait-for-ledger$/ { inside = 1; next }
+    /^      containers:/ { inside = 0 }
+    inside && /mountPath: \/tmp/ { found = 1 }
+    END { exit(found ? 0 : 1) }
+' "$CASHBACK/blnk-worker-deployment.yaml"; then
+    echo "ok: the wait probe has somewhere writable"
+else
+    fail "the wait-for-ledger initContainer has no writable /tmp; with readOnlyRootFilesystem, wget's HSTS write fails and the worker never starts"
+fi
 
 if grep -q 'DATABASE_URL' "$CASHBACK/blnk-deployment.yaml" </dev/null; then
     fail "the ledger Deployment references DATABASE_URL — that is the api's role, and using it would let Blnk's migrations touch the public schema"

@@ -87,30 +87,96 @@ deployment uses, in the vocabulary Kubernetes has: there, listing
 `docker-compose.cashback.yml` in `COMPOSE_FILE` is the switch; here, applying
 the subdirectory is.
 
+First, create the ledger's runtime role. A one-off, run by an operator against
+the cluster's database with the recipe in
+[`scripts/spikes/ledger_schema/bootstrap.sql`](../../scripts/spikes/ledger_schema/bootstrap.sql)
+— the production recipe, not a fixture:
+
 ```sh
-# The ledger's own Postgres role — NOT the api's. It owns the `blnk` schema
-# and has no rights in `public`, which is what makes "Blnk's migrations never
-# touch public" enforceable rather than hoped for (ADR-0002 spike S1).
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -v blnk_password="$(openssl rand -base64 32)" \
+  -f scripts/spikes/ledger_schema/bootstrap.sql
+```
+
+Then the Secret and the manifests:
+
+```sh
+# TWO ledger DSNs, one per role — see "The ledger runs as two roles" below.
+# One shared value for the two secret-key halves: the ledger accepts it, the
+# api presents it, and they must be equal. What makes the ledger CHECK is
+# BLNK_SERVER_SECURE in cashback/blnk-configmap.yaml, not either key.
 kubectl -n apivo create secret generic apivo-secrets \
   --from-literal=DATABASE_URL='<real connection string>' \
-  --from-literal=BLNK_DATA_SOURCE_DNS='<the blnk role, search_path=blnk>'
+  --from-literal=BLNK_MIGRATE_DSN='<the database OWNER>' \
+  --from-literal=BLNK_DATA_SOURCE_DNS='<the blnk_app role>' \
+  --from-literal=BLNK_SERVER_SECRET_KEY="$LEDGER_KEY" \
+  --from-literal=BLNK_SECRET_KEY="$LEDGER_KEY"
 
 kubectl -n apivo apply -f deploy/k8s/
 kubectl -n apivo apply -f deploy/k8s/cashback/
 kubectl -n apivo rollout restart deployment/api   # picks up the ConfigMap
 ```
 
-Both cashback Deployments map `BLNK_DATA_SOURCE_DNS` as a **required**
-`secretKeyRef`: applying the ledger without adding the key gives pods that
-refuse to start and say why, which is the correct outcome for a ledger that
-cannot see its own data.
+**A secret key is not an authentication switch.** Blnk only checks
+credentials when `BLNK_SERVER_SECURE` is true; with it false the middleware
+returns before it looks at a key (`api/middleware/auth.go` in v0.15.2), the
+field is never defaulted, and Blnk logs *"SECURITY: server.secure is false —
+API authentication is DISABLED"* at every start. It is set in
+`cashback/blnk-configmap.yaml`, and `validate.sh` asserts it. `/health` is
+skipped *before* that check, so the probes work either way — which is exactly
+why the difference is invisible without an assertion.
+
+The cashback Deployments map the ledger keys as **required** `secretKeyRef`s:
+applying the ledger without adding them gives pods that refuse to start and
+say why, which is the correct outcome for a ledger that cannot see its own
+data. The api's `BLNK_SECRET_KEY` is `optional: true` instead, so a cluster
+that never applied `cashback/` is not blocked by it — but the cluster runs
+`APP_ENV=prod`, where the api refuses to start with cashback enabled and the
+key unset, because a ledger reachable without a credential is a ledger anybody
+on that network can post to.
+
+### The ledger runs as two roles
+
+The founder's split posture (2026-08-24), and the same one
+`docker-compose.yml`, the CI job and `deploy/hetzner/` run — one answer in the
+repository, not one per environment:
+
+| | Role | Runs | Reads |
+|---|---|---|---|
+| **Migration** | the database **owner** | the `migrate` initContainer in `blnk-deployment.yaml` | Secret key `BLNK_MIGRATE_DSN` |
+| **Runtime** | **`blnk_app`**, which owns nothing | the ledger server and the worker | Secret key `BLNK_DATA_SOURCE_DNS` |
+
+Spike S1 established why the split is **required** rather than tidy: Blnk's
+first migration issues `CREATE SCHEMA IF NOT EXISTS blnk`, and PostgreSQL
+checks the database-level `CREATE` privilege *before* it takes the
+`IF NOT EXISTS` shortcut — so pre-creating the schema does not avoid the
+grant, and a single role would need `CREATE` on the database permanently for
+one statement on one deploy. What `blnk_app` therefore cannot do is the point:
+no `CREATE SCHEMA`, no DDL inside `blnk`, nothing in `public`.
+
+Both DSNs arrive in their container under Blnk's own `BLNK_DATA_SOURCE_DNS`.
+The difference is **which Secret key each container maps**, and that is the
+whole mechanism — it makes the owner's credential *absent* from the long-lived
+processes rather than merely unused by them. `validate.sh` asserts it,
+including that the server and the worker never map the migration key.
+
+An `initContainer` rather than a `Job`, deliberately: a Job is immutable, so
+`kubectl apply` over an existing one fails and every rollout would need a
+generated name or a Helm hook — and these are plain manifests by design. An
+initContainer runs to completion before the app container starts, which is
+compose's `service_completed_successfully` expressed in what Kubernetes has.
+`replicas: 1` with `strategy: Recreate` is what keeps two from racing.
+
+The worker sits in a different pod, so it cannot share that initContainer. It
+gets a `wait-for-ledger` initContainer instead, which polls the ledger's
+`/health` — the thing that only answers *after* the migration has run.
 
 Two shapes here differ deliberately from the api and web Deployments, and
 neither is an oversight:
 
-- **One replica, `strategy: Recreate`, no HPA and no PDB.** The Blnk container
-  runs `blnk migrate up` before `blnk start`, exactly as upstream's own compose
-  file does, and two replicas rolling out together race that migration. Redis
+- **One replica, `strategy: Recreate`, no HPA and no PDB.** The Blnk pod runs
+  `blnk migrate up` in an initContainer before `blnk start`, and two replicas
+  rolling out together race that migration. Redis
   is single-replica for a different reason: two pods behind one Service would
   split the queue between two unrelated instances. A `PodDisruptionBudget` with
   `minAvailable: 1` on a single-replica Deployment blocks node drains rather
