@@ -166,6 +166,25 @@ fixture
 write "web/src/pages/wallet.astro" '<h1>epiloYES</h1>'
 expect_caught "an uncommitted file is scanned too" "product name"
 
+# ---------------------------------------------------------------------------
+# The gate must fail CLOSED. A lint that cannot search must not report a
+# clean tree, so the search is broken on purpose and the verdict checked.
+
+fixture
+BROKEN="$TMP/broken-lint.sh"
+sed "s/^NAME_PATTERN=.*/NAME_PATTERN='['/" "$LINT" > "$BROKEN"
+if out=$(cd "$REPO" && sh "$BROKEN" 2>&1); then
+    echo "FAIL: a lint whose search is broken reported a clean tree:"
+    printf '%s\n' "$out" | sed 's/^/    /'
+    FAILS=1
+elif ! printf '%s' "$out" | grep -q -F -e "git grep failed"; then
+    echo "FAIL: a broken search stopped the run without saying why:"
+    printf '%s\n' "$out" | sed 's/^/    /'
+    FAILS=1
+else
+    echo "ok: a search that cannot run fails the lint rather than passing it"
+fi
+
 if [ "$FAILS" -ne 0 ]; then
     echo "brand-literal lint tests FAILED"
     exit 1

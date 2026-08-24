@@ -68,12 +68,24 @@ COLOUR_PATTERN='#[0-9a-f]{6}\b'
 SHORT_COLOUR_PATTERN='#[0-9a-f]{3}\b'
 
 # scan RULE PATTERN [PATHSPEC...] — record every hit, tagged with the rule
-# that found it. git grep exits 1 when it finds nothing, which is the normal
-# case and must not end the run.
+# that found it.
+#
+# THIS FAILS CLOSED. git grep exits 1 when it finds nothing, which is the
+# normal case; any other non-zero status means a broken pattern, an
+# unsupported flag or a repository state this lint cannot read, and it stops
+# the run. A merge gate that reports "clean" because its search failed is
+# worse than no gate at all, because everyone believes it.
+#
+# The grep is deliberately NOT part of a pipeline. POSIX sh has no pipefail,
+# so the status of `git grep | sed` is sed's, and git grep's failure would be
+# invisible however carefully it was inspected afterwards. It writes to a
+# file; sed reads the file.
 scan() {
     rule="$1"
     pattern="$2"
     shift 2
+
+    found=0
     git grep --untracked -nIiE "$pattern" -- "$@" \
         ':(exclude)docs/' \
         ':(exclude)specs/' \
@@ -85,7 +97,15 @@ scan() {
         ':(exclude)web/src/lib/brand/' \
         ':(exclude)scripts/lint-brand-literals.sh' \
         ':(exclude)scripts/lint-brand-literals_test.sh' \
-        | sed "s/^/$rule|/" >> "$hits" || true
+        > "$work/raw" || found=$?
+
+    if [ "$found" -gt 1 ]; then
+        echo "brand lint: git grep failed with status $found while scanning for $rule" >&2
+        echo "::error::the brand-literal lint could not search the tree" >&2
+        exit 2
+    fi
+
+    sed "s/^/$rule|/" "$work/raw" >> "$hits"
 }
 
 scan "product name" "$NAME_PATTERN" '*'
