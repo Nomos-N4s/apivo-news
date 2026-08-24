@@ -55,11 +55,13 @@ check_env() {
     mkdir -p "$APIVO_ETC/$env_name"
     : > "$APIVO_ETC/$env_name/api.env"
     : > "$APIVO_ETC/$env_name/web.env"
-    # The cashback overlay's env_file. Written for every environment rather
-    # than only the cashback ones: compose resolves env_file paths for the
-    # whole file list it was given, so a missing one fails the render with an
-    # error about a file instead of an error about the configuration.
+    # The cashback overlay's env_files - BOTH of them, one per database role.
+    # Written for every environment rather than only the cashback ones:
+    # compose resolves env_file paths for the whole file list it was given, so
+    # a missing one fails the render with an error about a file instead of an
+    # error about the configuration.
     : > "$APIVO_ETC/$env_name/blnk.env"
+    : > "$APIVO_ETC/$env_name/blnk-migrate.env"
 
     APIVO_ENV="$env_name"
     export APIVO_ENV
@@ -207,6 +209,57 @@ check_cashback() {
     printf '%s' "$rendered" | grep -q -F ':5004/health' ||
         fail "$env_name cashback: the blnk worker has no healthcheck against its /health route on 5004, so a dead worker would pass the rollout gate while transactions queued up behind it"
     echo "ok: $env_name gates the rollout on both the ledger and its worker answering /health"
+
+    # ---------------------------------------------------------------------
+    # The founder's split posture (2026-08-24): migrations as the database
+    # owner, the server and worker as blnk_app, which owns nothing.
+    #
+    # This is asserted rather than reviewed because it is invisible when it
+    # regresses. A single-role overlay works perfectly - it migrates, it
+    # serves, every container is healthy - and the only difference is that the
+    # process exposed every second of every day can reshape the tables holding
+    # members' balances. Nothing fails until something already has.
+    # ---------------------------------------------------------------------
+    printf '%s' "$rendered" | grep -q -F "apivo-$env_name-blnk-migrate" ||
+        fail "$env_name cashback: there is no blnk-migrate container; the ledger would be migrating with whatever role it serves with"
+
+    # The migration container reads the OWNER's file and the runtime
+    # containers read blnk_app's. Same variable inside, different file: that
+    # difference IS the split.
+    printf '%s' "$rendered" | grep -q -F "/$env_name/blnk-migrate.env" ||
+        fail "$env_name cashback: blnk-migrate does not read blnk-migrate.env, so it is not running as the database owner"
+    printf '%s' "$rendered" | grep -q -F "/$env_name/blnk.env" ||
+        fail "$env_name cashback: nothing reads blnk.env, so the runtime role is not configured"
+    echo "ok: $env_name gives the migration and the runtime their own env files"
+
+    # The owner's credential must be ABSENT from the long-lived processes, not
+    # merely unused by them. If blnk or blnk-worker ever gained the migration
+    # file, a compromised ledger could read the owner DSN out of its own
+    # environment and the split would buy nothing.
+    _runtime_files=$(printf '%s' "$rendered" | awk '
+        /^  (blnk|blnk-worker):$/ { svc = 1; next }
+        /^  [a-z]/ { svc = 0 }
+        svc && /blnk-migrate\.env/ { print "LEAK" }
+    ')
+    if [ -n "$_runtime_files" ]; then
+        fail "$env_name cashback: the ledger server or worker reads blnk-migrate.env; the owner's credential must not be present in a long-lived container, only absent from it"
+    else
+        echo "ok: $env_name keeps the owner credential out of the running ledger"
+    fi
+
+    # `blnk start` does not migrate, so the ordering has to be real rather
+    # than hopeful - a server answering before its tables exist fails per
+    # request instead of refusing to start.
+    printf '%s' "$rendered" | grep -q -F 'service_completed_successfully' ||
+        fail "$env_name cashback: nothing waits for blnk-migrate to complete; the ledger would answer before its schema exists"
+    echo "ok: $env_name waits for the migration before serving"
+
+    # And the runtime containers must not migrate. `blnk start` and
+    # `blnk workers` only - a migrate slipped back into an entrypoint would
+    # run DDL as blnk_app and fail, or worse, be 'fixed' by widening the role.
+    printf '%s' "$rendered" | grep -q -F 'blnk migrate up &&' &&
+        fail "$env_name cashback: a runtime container still chains 'blnk migrate up'; migrations belong to the one-shot owner container"
+    echo "ok: $env_name migrates only in the one-shot container"
 
     # Redis is a queue and a cache with no persistence and no source of truth.
     # `noeviction` is what makes that safe: a full Redis must REFUSE a write,
