@@ -11,9 +11,19 @@
 # documented local workflow runs the Go binary on the host against the
 # compose services (specs/002-apivo-cashback-alpha/quickstart.md).
 #
-# Every image is pinned to an exact version. A floating tag means the stack
-# a bug reproduces on is not the stack it was reported on, and for the
-# ledger it would mean a schema migrating itself on a docker pull.
+# The two cashback images are pinned by DIGEST, in the form
+# `repo:tag@sha256:...` — the tag is documentation, the digest is the
+# contract. A tag is mutable: `jerryenebeli/blnk:0.15.2` is whatever that
+# name points at on the day a container is pulled, and the ledger is the one
+# place in this stack where a silent retag would change the binary that moves
+# members' money, with no diff and no review. Same digests as
+# deploy/hetzner/compose/docker-compose.cashback.yml and deploy/k8s, so the
+# stack proved in CI is the stack that runs.
+#
+# Redis is 7.2.4 rather than the newest 8.x for the same reason: it is what
+# Blnk's own compose file runs and what the deployment pins, and the local
+# stack is not the place to discover a version skew the deployment does not
+# have.
 services:
   postgres:
     image: postgres:17-alpine
@@ -35,7 +45,7 @@ services:
   # (ADR-0002): losing it loses throughput, not money — which is why there
   # is no volume here and losing the container is not an incident.
   redis:
-    image: redis:8.10.1-alpine
+    image: redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
@@ -61,7 +71,7 @@ services:
   # production uses — and the proof that the migrations never touch `public`
   # — is spike S1.
   blnk-migrate:
-    image: jerryenebeli/blnk:0.15.2
+    image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
     restart: "no"
     entrypoint: ["blnk", "migrate", "up"]
     environment:
@@ -84,7 +94,7 @@ services:
   # BLNK_SERVER_SECRET_KEY and the api's BLNK_SECRET_KEY together; the api
   # refuses to start in APP_ENV=prod without one.
   blnk:
-    image: jerryenebeli/blnk:0.15.2
+    image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
     environment:
       TZ: Etc/UTC
       BLNK_PROJECT_NAME: apivo-cashback
