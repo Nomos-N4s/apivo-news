@@ -245,6 +245,48 @@ promotion query, and asserted by an integration test.
 Operator actions append to the existing `public.domain_event` stream, which
 is already immutable (constitution IV). No second audit table.
 
+### 2.10 Deltas to existing shared tables
+
+Two things cashback needs do not exist yet in `public`. Both are additive
+migrations against shared tables, so they are called out separately from the
+`cashback` schema and land **before** any code that depends on them.
+
+**`0018_domain_event_envelope`** — `domain_event` is `(id, type, payload,
+occurred_at)` and carries none of the routing fields the event contract
+needs. Adds:
+
+| Column | Type | Notes |
+|---|---|---|
+| `version` | `int not null default 1` | |
+| `producer` | `text not null default 'news'` | correct for every pre-existing row |
+| `subject` | `uuid` | nullable; per-subject ordering is the only ordering guaranteed |
+| `idempotency_key` | `text` | nullable, partial unique index `where idempotency_key is not null` — makes redelivery a no-op |
+
+`ADD COLUMN` with a constant default neither rewrites the table nor fires
+the row-level immutability triggers, so append-only holds and the two
+existing writers (`internal/ingestion/store.go`,
+`internal/editorial/queries/approval.sql`) keep working untouched. Full
+field mapping in [contracts/events.md](contracts/events.md).
+
+**`0019_operator_role`** — migration 0002 constrains `account.role` to
+`check (role in ('reader', 'editor'))`, so an operator is currently
+unrepresentable and the `/ops/*` authority cannot be database-enforced.
+Adds:
+
+- the constraint extended to `('reader', 'editor', 'operator')`;
+- `payout_insert_guard`, a `BEFORE INSERT` trigger on `cashback.payout`
+  requiring `approved_by` to hold the `operator` role. It reads the role
+  **`FOR SHARE`**, exactly as `article_insert_guard` does, so a concurrent
+  demotion cannot slip past it;
+- `account_role_guard` extended so an operator who has approved a payout
+  cannot be silently demoted out of that authority.
+
+This **strengthens C-4** the way migration 0002 tightened I-1: the `NOT
+NULL` on `approved_by` makes an unapproved payout unrepresentable, and the
+trigger makes an *unauthorised* approver unrepresentable too. Its test
+asserts the database rejects a payout approved by a reader or an editor, by
+SQLSTATE.
+
 ## 3. State machine
 
 ```text
@@ -273,7 +315,7 @@ edits an existing entry.
 | **C-1** double entry | Blnk transfers; `ledger_zero_sum` view checked continuously | non-zero sum trips the check and fails the suite |
 | **C-2** attribution | `entry.network_transaction_id NOT NULL` FK | insert without evidence → SQLSTATE 23502/23503 |
 | **C-3** immutable evidence | `raise_immutable()` on `network_transaction`, `click`, `reconciliation_run` | UPDATE/DELETE → raised exception |
-| **C-4** named approver | `payout.approved_by NOT NULL` | insert without approver → SQLSTATE 23502 |
+| **C-4** named approver | `payout.approved_by NOT NULL` **plus** `payout_insert_guard` requiring the `operator` role (§2.10) | insert without approver → SQLSTATE 23502; insert approved by a reader or editor → raised exception |
 | **C-5** exactly once | `payout.idempotency_key` UNIQUE, `payout.request_id` UNIQUE | concurrent double submit → one row, one SQLSTATE 23505 |
 | **C-6** integer money | `bigint` + `char(3)`, `CHECK` on currency format | no `numeric`/`float` column exists — schema-wide assertion query |
 | **C-7** traceability | `cashback.provenance` view | one query returns payout → approver → postings → entries → evidence → click → offer |
@@ -294,6 +336,8 @@ as `invariants_test.go` for I-1..I-5.
 | `0015_cashback_reconciliation` | `reconciliation_run`, `reconciliation_difference` |
 | `0016_cashback_provenance_view` | `cashback.provenance`, `cashback.ledger_zero_sum` |
 | `0017_participation_brand` | `participation`; `brand_id` on the tenant-boundary tables (ADR-0004) |
+| `0018_domain_event_envelope` | **Delta to a shared table** — see §2.10 |
+| `0019_operator_role` | **Delta to a shared table** — see §2.10 |
 
 Every migration has a tested `.down.sql`, as the repository already
 requires. sqlc generates `internal/cashback/*/store` from the same schema —

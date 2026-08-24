@@ -106,6 +106,18 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T047 Implement house accounts (rounding remainder, clawback loss) resolved from configuration in `internal/cashback/wallet/house.go`
 - [ ] T048 Implement the minimal offer read used by click-out in `internal/cashback/catalogue/offer.go` + `store/` queries
 
+### Deltas to shared `public` tables
+
+> **Numbered out of sequence deliberately.** These were added after review of
+> PR #283 found that the event envelope and the operator role are not
+> representable in the current schema. The backlog was already issued, and
+> renumbering 134 tasks would invalidate 134 issues. **Execution order is
+> what matters: both land before T017–T018 and before any `/ops/*`
+> endpoint.**
+
+- [ ] T135 Write migration `internal/platform/db/migrations/0018_domain_event_envelope.{up,down}.sql` adding `version`, `producer`, `subject` and `idempotency_key` to `public.domain_event` with a partial unique index on `idempotency_key`, per [data-model.md](data-model.md) §2.10 — **blocks T017, T018**
+- [ ] T136 Write migration `internal/platform/db/migrations/0019_operator_role.{up,down}.sql` extending `account_role_known` to include `operator`, adding `payout_insert_guard` (approver must hold the operator role, read `FOR SHARE`) and extending `account_role_guard`, per [data-model.md](data-model.md) §2.10 — **blocks every `/ops/*` task and T092**
+
 **Checkpoint**: Foundation ready. The invariants exist before any row does, and the ledger is swappable and proven.
 
 ---
@@ -308,6 +320,9 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 ### Within each phase
 
 - Migrations before the stores generated from them.
+- **T135 before T017/T018** (the dispatcher needs the envelope columns) and
+  **T136 before T059, T092, T113, T119 and every other `/ops/*` task** (the
+  operator role must exist before authority can be enforced).
 - Invariant tests land in the **same PR** as the constraint they assert — never later.
 - Port definitions before adapters; the conformance suite before the second adapter.
 - Services before endpoints; endpoints before pages.
