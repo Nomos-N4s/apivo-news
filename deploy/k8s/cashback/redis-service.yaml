@@ -1,0 +1,21 @@
+# ClusterIP only. Redis is reachable by Blnk and by nothing else that matters;
+# it must never be NodePort or LoadBalancer, and no Ingress references it.
+#
+# The name is what blnk-config's BLNK_REDIS_DNS resolves to.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: apivo-news
+    app.kubernetes.io/component: cashback
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: apivo-news
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis

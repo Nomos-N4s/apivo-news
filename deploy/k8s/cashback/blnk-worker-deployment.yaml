@@ -1,0 +1,80 @@
+# Blnk's background worker. Upstream requires it as a separate process: the
+# server accepts transactions onto the queue and this drains them.
+#
+# Same image and same configuration as the server, with two differences that
+# matter:
+#
+#   - It runs `blnk workers` and NOT `blnk migrate up`. One process owns the
+#     ledger's schema migration, and it is the server.
+#   - It has no Service. Nothing calls a worker; it pulls from Redis. Its port
+#     is declared for observability and for nothing else.
+#
+# One replica for the alpha. Blnk's queue is the coordination point, so more
+# workers is a throughput change rather than a design change — raise it when
+# a queue depth says to, not before.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blnk-worker
+  labels:
+    app.kubernetes.io/name: blnk-worker
+    app.kubernetes.io/part-of: apivo-news
+    app.kubernetes.io/component: cashback
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: blnk-worker
+      app.kubernetes.io/part-of: apivo-news
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: blnk-worker
+        app.kubernetes.io/part-of: apivo-news
+        app.kubernetes.io/component: cashback
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: blnk-worker
+          image: jerryenebeli/blnk:0.15.2
+          command: ["blnk", "workers"]
+          ports:
+            - name: http
+              containerPort: 5004
+          envFrom:
+            - configMapRef:
+                name: blnk-config
+          env:
+            - name: BLNK_DATA_SOURCE_DNS
+              valueFrom:
+                secretKeyRef:
+                  name: apivo-secrets
+                  key: BLNK_DATA_SOURCE_DNS
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

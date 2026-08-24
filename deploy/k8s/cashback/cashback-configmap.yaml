@@ -1,0 +1,48 @@
+# What applying this directory tells the api.
+#
+# The api Deployment lists this ConfigMap in `envFrom` with `optional: true`,
+# so a cluster that has never applied `deploy/k8s/cashback/` runs the api with
+# none of these keys set — cashback off, no ledger, no routes — and the pod
+# starts perfectly. Applying this directory is the whole decision to run
+# cashback on a cluster.
+#
+# That is the same mechanism the Hetzner deployment uses, expressed in the
+# vocabulary Kubernetes has: there, listing docker-compose.cashback.yml in
+# COMPOSE_FILE is the switch; here, `kubectl apply -f deploy/k8s/cashback/` is.
+# `kubectl apply -f deploy/k8s/` does not recurse into subdirectories, so the
+# base set can never drag the ledger in behind an operator's back.
+#
+# The addresses below are the ClusterIP Services in this directory, by name.
+# Nothing here is a credential: BLNK_DATA_SOURCE_DNS is, and it lives in the
+# Secret (examples/secret.example.yaml at the root of deploy/k8s).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apivo-cashback-config
+  labels:
+    app.kubernetes.io/name: apivo-cashback-config
+    app.kubernetes.io/part-of: apivo-news
+    app.kubernetes.io/component: cashback
+data:
+  # The flag controls route MOUNTING, not just navigation: with it false or
+  # absent the cashback routes do not exist and answer 404, exactly as the
+  # editorial routes do without JWKS_URL.
+  CASHBACK_ENABLED: "true"
+  # `blnk` here because this directory brings a Blnk to talk to. The other
+  # two implementations of the port — `memory` and `postgres` — exist for
+  # local development without Docker and as the documented exit route
+  # (ADR-0002); neither belongs in a cluster that has a ledger running in it.
+  LEDGER_DRIVER: "blnk"
+  BLNK_URL: "http://blnk:5001"
+  REDIS_URL: "redis://redis:6379"
+  # Which affiliate network adapter the poller uses. EMPTY means `fixture`:
+  # a scripted click -> pending -> approved -> reversed lifecycle served from
+  # recorded responses, needing no credentials (ADR-0003). That is the safe
+  # default while founder question Q1 — which networks to join — is open, and
+  # it is what lets the whole money path run in a cluster before a publisher
+  # account exists.
+  #
+  # Naming a live adapter here without its credentials in the Secret is a
+  # configuration error the api reports at startup, rather than a poller that
+  # silently fetches nothing.
+  NETWORK_DRIVER: ""

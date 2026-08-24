@@ -1,0 +1,103 @@
+# Blnk's queue and cache (ADR-0002). A Deployment and not a StatefulSet,
+# because there is nothing to keep: no RDB snapshots, no AOF, no
+# PersistentVolumeClaim.
+#
+# That is a decision, not a shortcut. Redis holds NO source of truth here —
+# a credit is only ever created from a polled, stored, verified network
+# transaction, and the outbox replays whatever a lost queue dropped. Giving it
+# a volume would invite someone to restore from it one day, and a restored
+# queue is a second, stale account of what the ledger was asked to do.
+#
+# `maxmemory-policy noeviction` is the other half of that: a full Redis must
+# REFUSE a write, visibly, rather than evict a queued transfer. A dropped
+# transfer is a money bug that leaves no trace; a refused one is an error the
+# caller sees.
+#
+# One replica, `strategy: Recreate`. Two Redis pods behind one Service would
+# split the queue between two unrelated instances, and a rolling update would
+# do it briefly on every rollout — workers would drain one while the server
+# filled the other.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: apivo-news
+    app.kubernetes.io/component: cashback
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/part-of: apivo-news
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/part-of: apivo-news
+        app.kubernetes.io/component: cashback
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # 999 is the `redis` user the official image creates and runs as; it
+        # is stated here rather than inherited so that runAsNonRoot has a uid
+        # to enforce even if the image's default ever changes.
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          # The version Blnk's own compose file pins, on the alpine variant
+          # for the same reason every other supporting image here is alpine.
+          image: redis:7.2.4-alpine
+          args:
+            - "--save"
+            - ""
+            - "--appendonly"
+            - "no"
+            - "--maxmemory"
+            - "192mb"
+            - "--maxmemory-policy"
+            - "noeviction"
+          ports:
+            - name: redis
+              containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              # Comfortably above the 192mb Redis ceiling above: the container
+              # limit KILLS the process, the Redis limit returns an error, and
+              # the one that should fire first is the one somebody can read.
+              cpu: 250m
+              memory: 256Mi
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # The image's WORKDIR. Nothing is written into it with persistence
+            # off, but Redis expects it to exist and be writable, and an
+            # emptyDir is the honest way to say "scratch space that dies with
+            # the pod".
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
