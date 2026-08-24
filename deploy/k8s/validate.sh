@@ -41,23 +41,34 @@ fail() {
 # whole point of the cashback directory is that it can be applied, and the
 # whole point of examples/ is that it cannot be applied by accident.
 MANIFESTS=$(find "$HERE" -name '*.yaml' | sort)
-[ -n "$MANIFESTS" ] || fail "no manifests found under deploy/k8s"
+
+# An EMPTY list exits here rather than carrying on, and that is not tidiness.
+# `fail` only records a failure and returns, so every `grep ... $MANIFESTS`
+# below would then run with no file arguments - and a grep with no file reads
+# STDIN and blocks forever. This script is a required gate, so that is not a
+# red X, it is a job sitting on the runner until the timeout kills it, which
+# reads as an infrastructure problem and gets retried rather than fixed.
+if [ -z "$MANIFESTS" ]; then
+    echo "FAIL: no manifests found under $HERE"
+    echo "k8s topology: FAILURES"
+    exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Nothing but the frontend is publicly routable.
 # ---------------------------------------------------------------------------
 # shellcheck disable=SC2086 # deliberate word splitting: a list of file paths
-if grep -l -E '^[[:space:]]*type:[[:space:]]*(NodePort|LoadBalancer)' $MANIFESTS >/dev/null 2>&1; then
+if grep -l -E '^[[:space:]]*type:[[:space:]]*(NodePort|LoadBalancer)' $MANIFESTS </dev/null >/dev/null 2>&1; then
     # shellcheck disable=SC2086 # deliberate word splitting: a list of file paths
-    fail "a Service is typed NodePort or LoadBalancer: $(grep -l -E '^[[:space:]]*type:[[:space:]]*(NodePort|LoadBalancer)' $MANIFESTS | tr '\n' ' ')"
+    fail "a Service is typed NodePort or LoadBalancer: $(grep -l -E '^[[:space:]]*type:[[:space:]]*(NodePort|LoadBalancer)' $MANIFESTS </dev/null | tr '\n' ' ')"
 else
     echo "ok: every Service is ClusterIP"
 fi
 
 # shellcheck disable=SC2086 # deliberate word splitting: a list of file paths
-if grep -l -E '^[[:space:]]*(hostPort|hostNetwork):' $MANIFESTS >/dev/null 2>&1; then
+if grep -l -E '^[[:space:]]*(hostPort|hostNetwork):' $MANIFESTS </dev/null >/dev/null 2>&1; then
     # shellcheck disable=SC2086 # deliberate word splitting: a list of file paths
-    fail "a pod binds the node's network: $(grep -l -E '^[[:space:]]*(hostPort|hostNetwork):' $MANIFESTS | tr '\n' ' ')"
+    fail "a pod binds the node's network: $(grep -l -E '^[[:space:]]*(hostPort|hostNetwork):' $MANIFESTS </dev/null | tr '\n' ' ')"
 else
     echo "ok: no pod publishes a host port or joins the host network"
 fi
@@ -66,7 +77,7 @@ fi
 # reached the api would expose the editorial endpoints; one that reached the
 # ledger would expose the money.
 # shellcheck disable=SC2086 # deliberate word splitting: a list of file paths
-ingresses=$(grep -l '^kind: Ingress$' $MANIFESTS || true)
+ingresses=$(grep -l '^kind: Ingress$' $MANIFESTS </dev/null || true)
 ingress_count=$(printf '%s\n' "$ingresses" | grep -c . || true)
 if [ "$ingress_count" != 1 ]; then
     fail "expected exactly one Ingress in deploy/k8s, found $ingress_count"
@@ -87,7 +98,7 @@ fi
 # ---------------------------------------------------------------------------
 # 2. The cashback directory is an opt-in, not a dependency.
 # ---------------------------------------------------------------------------
-if grep -A2 'name: apivo-cashback-config' "$HERE/api-deployment.yaml" | grep -q 'optional: true'; then
+if grep -A2 'name: apivo-cashback-config' "$HERE/api-deployment.yaml" </dev/null | grep -q 'optional: true'; then
     echo "ok: the api treats the cashback ConfigMap as optional"
 else
     fail "api-deployment.yaml does not reference apivo-cashback-config with 'optional: true'; a cluster that never applied deploy/k8s/cashback/ would have every api pod blocked on a ConfigMap it does not want"
@@ -99,9 +110,9 @@ fi
 # cannot be applied on its own.
 base=$(find "$HERE" -maxdepth 1 -name '*.yaml' | sort)
 # shellcheck disable=SC2086 # deliberate word splitting: a list of file paths
-if grep -l -E 'name: (blnk-config|blnk|redis)$' $base >/dev/null 2>&1; then
+if grep -l -E 'name: (blnk-config|blnk|redis)$' $base </dev/null >/dev/null 2>&1; then
     # shellcheck disable=SC2086 # deliberate word splitting: a list of file paths
-    fail "a base manifest references a cashback resource: $(grep -l -E 'name: (blnk-config|blnk|redis)$' $base | tr '\n' ' ')"
+    fail "a base manifest references a cashback resource: $(grep -l -E 'name: (blnk-config|blnk|redis)$' $base </dev/null | tr '\n' ' ')"
 else
     echo "ok: the base manifest set stands on its own"
 fi
@@ -134,9 +145,9 @@ check_address() {
         fail "$_key names '$_host' but $_svc does not exist"
         return
     fi
-    grep -q "^  name: $_host$" "$_svc" ||
+    grep -q "^  name: $_host$" "$_svc" </dev/null ||
         fail "$_key resolves to '$_host', which is not the Service name in $_svc; the api would post to a name that does not resolve and nothing else in CI would notice"
-    grep -q "^      port: $_port$" "$_svc" ||
+    grep -q "^      port: $_port$" "$_svc" </dev/null ||
         fail "$_key uses port '$_port', which $_svc does not expose"
     echo "ok: $_key resolves to the $_host Service on port $_port"
 }
@@ -148,8 +159,8 @@ check_address BLNK_REDIS_DNS "$CASHBACK/blnk-configmap.yaml" "$CASHBACK/redis-se
 # The ledger's credential is a different Postgres role from the api's. Same
 # key in both would put Blnk's migrations in `public`, which is the one thing
 # spike S1 exists to prove does not happen.
-if grep -q 'key: BLNK_DATA_SOURCE_DNS' "$CASHBACK/blnk-deployment.yaml" &&
-    grep -q 'key: BLNK_DATA_SOURCE_DNS' "$CASHBACK/blnk-worker-deployment.yaml"; then
+if grep -q 'key: BLNK_DATA_SOURCE_DNS' "$CASHBACK/blnk-deployment.yaml" </dev/null &&
+    grep -q 'key: BLNK_DATA_SOURCE_DNS' "$CASHBACK/blnk-worker-deployment.yaml" </dev/null; then
     echo "ok: both ledger Deployments take their data source from the Secret"
 else
     fail "a ledger Deployment does not map BLNK_DATA_SOURCE_DNS from the Secret; the ledger's role must not be the api's"
@@ -159,7 +170,7 @@ fi
 # listening socket says nothing about whether Blnk reached its database, and a
 # ledger that answers TCP while failing every query is the worst of both
 # states: it passes readiness and takes traffic.
-if grep -q 'path: /health' "$CASHBACK/blnk-deployment.yaml"; then
+if grep -q 'path: /health' "$CASHBACK/blnk-deployment.yaml" </dev/null; then
     echo "ok: the ledger's probes ask /health rather than knocking on the port"
 else
     fail "blnk-deployment.yaml does not probe /health; a TCP probe passes on a ledger that answers its socket and fails every query, which is the state that takes traffic"
@@ -185,7 +196,7 @@ for _f in "$CASHBACK"/blnk-deployment.yaml "$CASHBACK"/blnk-worker-deployment.ya
     esac
 done
 
-if grep -q 'DATABASE_URL' "$CASHBACK/blnk-deployment.yaml"; then
+if grep -q 'DATABASE_URL' "$CASHBACK/blnk-deployment.yaml" </dev/null; then
     fail "the ledger Deployment references DATABASE_URL — that is the api's role, and using it would let Blnk's migrations touch the public schema"
 else
     echo "ok: the ledger never sees the api's database role"

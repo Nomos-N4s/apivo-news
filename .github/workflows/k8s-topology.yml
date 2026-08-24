@@ -45,6 +45,14 @@ jobs:
         # It is a shell script that decides whether a pull request is allowed
         # to expose a ledger to the internet. A syntax error in it would be a
         # check that passes by not running.
-        run: shellcheck -s sh deploy/k8s/validate.sh
+        run: shellcheck -s sh deploy/k8s/validate.sh deploy/k8s/validate_test.sh
+      - name: Prove the validator can fail
+        # Runs BEFORE the validator itself, deliberately. A gate is only worth
+        # having if it can both pass and fail, and this is the half that is
+        # easy to lose: it drives the validator at an empty directory and
+        # asserts it refuses fast and claims nothing, rather than reading
+        # stdin and either hanging or reporting checks passing about files
+        # that do not exist.
+        run: sh deploy/k8s/validate_test.sh
       - name: Prove the manifest topology
         run: sh deploy/k8s/validate.sh
