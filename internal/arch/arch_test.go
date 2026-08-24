@@ -40,13 +40,17 @@ type violation struct {
 
 func (v violation) String() string { return v.file + ": " + v.reason }
 
-// TestModuleBoundaries walks every Go file under internal/ and asserts:
+// TestModuleBoundaries walks every Go file under internal/ and asserts the
+// import rules of ADR-0001:
 //
-//  1. a module never imports another module's internals - modules
-//     communicate through interfaces defined by the consumer and wired in
-//     cmd; and
-//  2. platform imports no sibling module - it is the bottom layer, holding
-//     shared primitives only.
+//  1. platform may be imported by anyone and imports no domain - it is the
+//     bottom layer, holding shared primitives only;
+//  2. identity may be imported by any product domain and imports only
+//     platform;
+//  3. a product domain may not import another product domain, at any depth -
+//     cross-product collaboration is asynchronous, through the domain event
+//     stream, never a direct call; and
+//  4. sub-packages of one product domain may import each other freely.
 func TestModuleBoundaries(t *testing.T) {
 	t.Parallel()
 
@@ -82,10 +86,37 @@ func TestModuleBoundaryRules(t *testing.T) {
 
 	tests := []boundaryCase{
 		{
-			name:    "a module importing another module's internals",
+			name:    "a domain importing another domain's internals",
 			file:    "editorial/queue.go",
 			imports: []string{internalPrefix + "content/store"},
-			want:    `module "editorial" must not import module "content"`,
+			want:    `domain "editorial" must not import domain "content"`,
+		},
+		{
+			name:    "a product domain importing another product domain",
+			file:    "cashback/earnings/attribute.go",
+			imports: []string{internalPrefix + "content"},
+			want:    `domain "cashback" must not import domain "content"`,
+		},
+		{
+			name:    "a product domain reaching into another product domain from depth",
+			file:    "cashback/networks/awin/client.go",
+			imports: []string{internalPrefix + "editorial/store"},
+			want:    `domain "cashback" must not import domain "editorial"`,
+		},
+		{
+			name:    "a news domain reaching into a cashback sub-package",
+			file:    "content/store/queries.go",
+			imports: []string{internalPrefix + "cashback/wallet"},
+			want:    `domain "content" must not import domain "cashback"`,
+		},
+		{
+			name: "sub-packages of one product domain importing each other",
+			file: "cashback/earnings/ledger.go",
+			imports: []string{
+				internalPrefix + "cashback/wallet",
+				internalPrefix + "cashback/catalogue",
+				internalPrefix + "cashback/networks",
+			},
 		},
 		{
 			name:    "platform importing a sibling module",
@@ -94,10 +125,10 @@ func TestModuleBoundaryRules(t *testing.T) {
 			want:    `platform must not import sibling module "editorial"`,
 		},
 		{
-			name:    "a module name that is a prefix of another module's",
+			name:    "a domain name that is a prefix of another domain's",
 			file:    "content/feed.go",
 			imports: []string{internalPrefix + "contentious/store"},
-			want:    `module "content" must not import module "contentious"`,
+			want:    `domain "content" must not import domain "contentious"`,
 		},
 		{
 			name:    "identity importing a product domain",
@@ -238,7 +269,7 @@ func violates(ownerPkg, importPath string) (string, bool) {
 	case targetModule == identityModule:
 		return "", false
 	default:
-		return fmt.Sprintf("module %q must not import module %q internals (import %q); communicate through consumer-defined interfaces wired in cmd", ownerModule, targetModule, importPath), true
+		return fmt.Sprintf("domain %q must not import domain %q at any depth (import %q); product domains share platform and identity and nothing else, and integrate asynchronously through the domain event stream - define the interface you need inside your own domain and wire it in cmd", ownerModule, targetModule, importPath), true
 	}
 }
 
