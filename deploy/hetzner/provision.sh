@@ -242,6 +242,24 @@ EOF
         chmod 0640 "$ETC/$env_name/web.env"
         note "$env_name: wrote web.env template"
     fi
+
+    # The ledger's configuration (ADR-0002). Written for every environment,
+    # even though none of them loads docker-compose.cashback.yml yet: the
+    # overlay reads this file through `env_file`, and a missing env_file fails
+    # the whole compose render. Writing it now means enabling cashback on an
+    # environment is editing two files that already exist, rather than
+    # discovering a third from an error message on a host.
+    #
+    # Empty is the safe state, exactly as it is for DATABASE_URL: Blnk with no
+    # BLNK_DATA_SOURCE_DNS does not start, and an environment whose
+    # COMPOSE_FILE does not name the overlay never starts it.
+    if [ -e "$ETC/$env_name/blnk.env" ]; then
+        note "$env_name: blnk.env exists, left alone (it holds the ledger's database credential)"
+    else
+        cp "$HERE/env/blnk.env.example" "$ETC/$env_name/blnk.env"
+        chmod 0600 "$ETC/$env_name/blnk.env"
+        note "$env_name: wrote blnk.env TEMPLATE — BLNK_DATA_SOURCE_DNS is empty; cashback is off until it is filled in and the overlay is added to COMPOSE_FILE"
+    fi
 done
 
 # ---------------------------------------------------------------------------
