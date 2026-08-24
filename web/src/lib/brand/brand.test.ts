@@ -289,6 +289,19 @@ describe('brandCustomProperties', () => {
     });
   }
 
+  // The schema promises Record<string, string>, and a map's KEYS carry
+  // no type at all — so nothing upstream can vouch for a token name, and
+  // the name is what goes into `--color-${token}`.
+  for (const token of ['bg}', 'bg<style', 'Accent Two', '', '-leading-hyphen', 'bg;color:red']) {
+    it(`refuses the colour token name ${JSON.stringify(token)}`, () => {
+      const brand = fixtureObject();
+      (brand['theme'] as { colours: Record<string, string> }).colours[token] = '#ffbf47';
+      assertBrand(brand);
+      expect(() => brandCustomProperties(brand)).toThrow(BrandError);
+      expect(() => brandCustomProperties(brand)).toThrow(/is not a CSS token name/);
+    });
+  }
+
   it('refuses a font stack that would break out of the stylesheet', () => {
     const brand = fixtureObject();
     (brand['theme'] as { typography: Record<string, unknown> }).typography['body'] = 'serif; }';
@@ -323,5 +336,15 @@ describe('brandStyleSheet', () => {
 
   it('accepts a selector other than the document root', () => {
     expect(brandStyleSheet(fixture(), '.brand-preview')).toMatch(/^\.brand-preview \{\n/);
+    expect(brandStyleSheet(fixture(), '[data-brand="zephyra"] .card')).toMatch(/^\[data-brand="zephyra"\] \.card \{\n/);
   });
+
+  // Every caller today passes a literal, but this is exported as a
+  // general utility and its argument is an input like any other.
+  for (const selector of [':root} body { display: none', ':root</style', ':root;', ':root\n}', '', '   ']) {
+    it(`refuses the selector ${JSON.stringify(selector)}`, () => {
+      expect(() => brandStyleSheet(fixture(), selector)).toThrow(BrandError);
+      expect(() => brandStyleSheet(fixture(), selector)).toThrow(/is not a usable stylesheet selector/);
+    });
+  }
 });

@@ -124,7 +124,7 @@ export function brandCustomProperties(brand: Brand): Record<string, string> {
   // of one object are never equal, so there is no third case.
   const colours = Object.entries(brand.theme.colours).sort(([left], [right]) => (left < right ? -1 : 1));
   for (const [token, value] of colours) {
-    properties[`--color-${token}`] = cssValue(`theme.colours.${token}`, value);
+    properties[`--color-${cssToken(token)}`] = cssValue(`theme.colours.${token}`, value);
   }
   properties['--font-heading'] = cssValue('theme.typography.heading', brand.theme.typography.heading);
   properties['--font-heading-weight'] = String(brand.theme.typography.headingWeight);
@@ -137,25 +137,68 @@ export function brandCustomProperties(brand: Brand): Record<string, string> {
  * into a `<style>` element ahead of the design system.
  */
 export function brandStyleSheet(brand: Brand, selector = ':root'): string {
+  const rule = cssSelector(selector);
   const declarations = Object.entries(brandCustomProperties(brand))
     .map(([name, value]) => `  ${name}: ${value};`)
     .join('\n');
-  return `${selector} {\n${declarations}\n}\n`;
+  return `${rule} {\n${declarations}\n}\n`;
 }
+
+/**
+ * Characters that end a declaration, end a rule or end the `<style>`
+ * element they are written into. Nothing this module emits may carry
+ * one, whichever part of the stylesheet it is destined for.
+ */
+const BREAKS_OUT_OF_THE_STYLESHEET = /[;{}<>\\]|[\r\n]/;
 
 /**
  * A brand value on its way into a stylesheet.
  *
- * Anything that could end a declaration, end the rule or end the
- * `<style>` element is refused rather than escaped: a brand file is
- * authored, not submitted, so a character that has no business in a
- * colour or a font stack is a mistake worth stopping for.
+ * Anything that could break out is refused rather than escaped: a brand
+ * file is authored, not submitted, so a character that has no business
+ * in a colour or a font stack is a mistake worth stopping for.
  */
 function cssValue(path: string, value: string): string {
-  if (/[;{}<>\\]|[\r\n]/.test(value)) {
+  if (BREAKS_OUT_OF_THE_STYLESHEET.test(value)) {
     throw new BrandError(`brand: ${path} contains a character that would break out of the stylesheet`);
   }
   return value;
+}
+
+/**
+ * A colour token name on its way into a custom property NAME.
+ *
+ * The schema can promise `Record<string, string>` and no more — a map's
+ * keys carry no type, so `assertBrand` has nothing to check them
+ * against, and the Go loader's slug rule for these keys does not travel
+ * with the file. This side has to hold its own output to that rule
+ * anyway: `--color-${token}` puts the key into the stylesheet, where a
+ * `}` or a `<` ends the rule or the `<style>` element exactly as it
+ * would in a value.
+ */
+function cssToken(token: string): string {
+  if (!/^[a-z][a-z0-9-]*$/.test(token)) {
+    throw new BrandError(
+      `brand: theme.colours key ${JSON.stringify(token)} is not a CSS token name ` +
+        '(a lower-case letter, then letters, digits or hyphens)',
+    );
+  }
+  return token;
+}
+
+/**
+ * The selector a stylesheet is written under.
+ *
+ * `brandStyleSheet` is exported as a general utility, so its selector is
+ * an input like any other even though today's callers all pass a
+ * literal. An empty selector is refused too: it produces a rule that
+ * parses as something else entirely.
+ */
+function cssSelector(selector: string): string {
+  if (selector.trim() === '' || BREAKS_OUT_OF_THE_STYLESHEET.test(selector)) {
+    throw new BrandError(`brand: ${JSON.stringify(selector)} is not a usable stylesheet selector`);
+  }
+  return selector;
 }
 
 /** Whether a decoded JSON value is an object with named fields. */
