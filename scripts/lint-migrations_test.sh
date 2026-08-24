@@ -124,11 +124,14 @@ expect_fail "a foreign key added as a table constraint" 1 \
     'alter table cashback.click
     add constraint click_article_fk foreign key (article_id) references public.article (id);'
 
-expect_pass "cashback referencing the shared reference data" 3 \
+# All four shared reference tables, including domain_event: the constitution
+# ("Products") and ADR-0001 both name four.
+expect_pass "cashback referencing the shared reference data" 4 \
     'create table cashback.member (
     account_id uuid primary key references public.account (id),
     place_id uuid not null references public.place (id),
-    lang text not null references public.language (code)
+    lang text not null references public.language (code),
+    origin_event uuid not null references public.domain_event (id)
 );'
 
 expect_pass "cashback referencing its own tables" 1 \

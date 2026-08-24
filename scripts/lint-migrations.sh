@@ -8,8 +8,8 @@
 # reach across the boundary with referential integrity.
 #
 # The one exception is the shared reference data both products read:
-# public.account, public.place and public.language
-# (constitution, "Products"). Nothing else in public - and in
+# public.account, public.place, public.language and public.domain_event
+# (constitution, "Products"; ADR-0001). Nothing else in public - and in
 # particular no news table - may be the target of a cashback foreign key, and
 # no news or shared table may depend on a product schema.
 #
@@ -38,9 +38,9 @@
 set -eu
 
 # The shared reference data a product schema may point at. Deliberately NOT
-# the whole of public: these three are what both products read (constitution,
+# the whole of public: these four are what both products read (constitution,
 # "Products"), and everything else in public belongs to news.
-SHARED_TABLES="account place language"
+SHARED_TABLES="account place language domain_event"
 
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 if [ "$#" -eq 0 ]; then
@@ -497,5 +497,5 @@ IFS='
 # shellcheck disable=SC2086
 awk \
     -v allow="$SHARED_TABLES" \
-    -v allowlist="public.account, public.place, public.language" \
+    -v allowlist="public.account, public.place, public.language, public.domain_event" \
     "$PROGRAM" $FILES
