@@ -165,6 +165,26 @@ else
     fail "blnk-deployment.yaml does not probe /health; a TCP probe passes on a ledger that answers its socket and fails every query, which is the state that takes traffic"
 fi
 
+# Every ledger image carries a digest. A tag is mutable, and this is the one
+# place in the repository where that matters most: a silent retag would change
+# the binary that moves members' money, with no diff and no review. The base
+# manifests are exempt because their placeholder references are replaced by
+# the publish pipeline, which pins digests itself.
+for _f in "$CASHBACK"/blnk-deployment.yaml "$CASHBACK"/blnk-worker-deployment.yaml "$CASHBACK"/redis-deployment.yaml; do
+    _img=$(sed -n 's/^ *image: *//p' "$_f")
+    case "$_img" in
+    *@sha256:*)
+        echo "ok: $(basename "$_f") pins its image by digest"
+        ;;
+    "")
+        fail "$_f declares no image at all"
+        ;;
+    *)
+        fail "$_f pins '$_img' by tag only; a retag would replace the ledger binary with no diff and no review"
+        ;;
+    esac
+done
+
 if grep -q 'DATABASE_URL' "$CASHBACK/blnk-deployment.yaml"; then
     fail "the ledger Deployment references DATABASE_URL — that is the api's role, and using it would let Blnk's migrations touch the public schema"
 else

@@ -59,10 +59,22 @@ spec:
           type: RuntimeDefault
       containers:
         - name: blnk
-          # Pinned to the version ADR-0002 was written against. Upstream
-          # publishes under jerryenebeli/, which is the maintainer's namespace
-          # and the one its own documentation and compose file use.
-          image: jerryenebeli/blnk:0.15.2
+          # Pinned to the version ADR-0002 was written against, BY DIGEST.
+          # Upstream publishes under jerryenebeli/, which is the maintainer's
+          # namespace and the one its own documentation and compose file use.
+          #
+          # A tag is mutable, and this is the one image in the repository where
+          # that matters most: a silent retag would change the binary that
+          # moves members' money, with no diff and no review. The
+          # `repo:tag@sha256:...` form keeps the version readable to a
+          # reviewer while the digest is what the kubelet resolves — the same
+          # pin, in the same form, as the Hetzner compose overlay, so there is
+          # one way to pin rather than two.
+          #
+          # The digest is a multi-architecture index covering linux/amd64 and
+          # linux/arm64, so pinning it does not commit a cluster to one
+          # architecture.
+          image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
           command: ["/bin/sh", "-c"]
           args: ["blnk migrate up && blnk start"]
           ports:

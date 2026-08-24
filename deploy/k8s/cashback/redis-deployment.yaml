@@ -54,7 +54,7 @@ spec:
         - name: redis
           # The version Blnk's own compose file pins, on the alpine variant
           # for the same reason every other supporting image here is alpine.
-          image: redis:7.2.4-alpine
+          image: redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a
           args:
             - "--save"
             - ""

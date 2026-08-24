@@ -42,7 +42,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: blnk-worker
-          image: jerryenebeli/blnk:0.15.2
+          image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
           command: ["blnk", "workers"]
           ports:
             - name: http
