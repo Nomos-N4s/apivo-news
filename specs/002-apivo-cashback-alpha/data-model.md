@@ -207,10 +207,19 @@ Balances live in **Blnk** (ADR-0002). Apivo stores only the join:
 that makes C-7 a single query and makes the ledger swappable.
 
 **`cashback.ledger_zero_sum` (view)** — sums postings per currency across
-the `blnk` schema. An automated check asserts every row is zero (C-1,
+the ledger's schema. An automated check asserts every row is zero (C-1,
 SC-003) and alerts loudly otherwise. If spike S1 fails and Blnk gets its own
 database, this view becomes a periodic reconciliation job with the same
 assertion.
+
+Which schema that is resolves from the `cashback.ledger_schema` setting,
+`blnk` when nothing sets it — and nothing does outside the tests, so the
+deployed check reads the ledger exactly as before. The name is resolvable
+rather than hardcoded because a check that can only ever be pointed at the
+one schema the real ledger occupies cannot be proved anywhere the real
+ledger is running, which is every environment that matters. Naming a schema
+that does not exist raises; only a genuinely absent ledger reaches "no
+postings here, vacuously true" (`0020`).
 
 House accounts (rounding remainder per D6, clawback losses per Q3) are
 ledger accounts in Blnk, named in configuration, never hardcoded.
@@ -359,6 +368,7 @@ as `invariants_test.go` for I-1..I-5.
 | `0017_participation` | `participation` (ADR-0004's fourth tenant-boundary record) |
 | `0018_domain_event_envelope` | **Delta to a shared table** — see §2.10 |
 | `0019_operator_role` | **Delta to a shared table** — see §2.10 |
+| `0020_ledger_schema_setting` | `cashback.ledger_schema`, and C-1's reader stops hardcoding `blnk` — see §2.6 |
 
 **`brand_id` is created with each table that carries it**, not added by a
 later migration: `merchant_network` in `0011`, `entry` in `0013`, `payout`
