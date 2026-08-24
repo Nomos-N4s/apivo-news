@@ -1,0 +1,47 @@
+name: brand-lint
+
+# The rebrandability gate (ADR-0004, FR-070, constitution "Rebrandability"):
+# no product name, domain, support address or colour written into application
+# code, a template or a migration. A rebrand that needs a code change is not a
+# rebrand, and the only way to know that stays true is to check it on every
+# change rather than on the day somebody tries.
+#
+# It lives in its own workflow rather than as a job in ci.yml because it needs
+# nothing ci.yml sets up - no Go toolchain, no Node, no Postgres - and a check
+# that can answer in seconds should not queue behind a matrix that cannot.
+on:
+  pull_request:
+  merge_group:
+  # ci.yml deliberately has no push trigger because publish.yml calls it on
+  # every merge. Nothing calls this workflow, so it carries its own: every
+  # merge to main publishes and deploys to QA, and a brand literal that slips
+  # in at merge time would otherwise not be noticed until the next pull
+  # request happened to touch the tree.
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: brand-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  brand-literals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The lint and its tests run on this machine and on contributors'.
+      # A syntax error in either is only discoverable by running them, and
+      # one of them is the gate.
+      - name: Lint the shell
+        run: shellcheck -s sh scripts/lint-brand-literals.sh scripts/lint-brand-literals_test.sh
+      # Proved before it is trusted, for the same reason release.yml proves
+      # its guard: a lint nobody tests quietly stops finding things, and the
+      # cases that decide whether it stays switched on are the look-alikes
+      # it must NOT flag.
+      - name: Prove the lint's decisions
+        run: sh scripts/lint-brand-literals_test.sh
+      - name: Fail on brand literals outside the brand configuration
+        run: sh scripts/lint-brand-literals.sh
