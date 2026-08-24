@@ -180,14 +180,15 @@ database it will use is a ledger nobody should be able to enable in a hurry.
 
 ### What the switch is
 
-Not a variable in `api.env`. On a Hetzner host it is the presence of
-`docker-compose.cashback.yml` in that environment's `COMPOSE_FILE`; in
-Kubernetes it is whether `deploy/k8s/cashback/` was applied. **Listing the
-overlay is the whole decision**, and the four keys that follow from it —
+Not a variable in `/etc/apivo/<env>/api.env`. On a Hetzner host it is the
+presence of `deploy/hetzner/compose/docker-compose.cashback.yml` in that
+environment's `COMPOSE_FILE`; in Kubernetes it is whether
+`deploy/k8s/cashback/` was applied. **Listing the overlay is the whole
+decision**, and the four keys that follow from it —
 `CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`, `REDIS_URL` — are set there,
 from the container and Service names that same file chose.
 
-That is deliberate and it is the reason `api.env` deliberately does *not*
+That is deliberate and it is the reason `/etc/apivo/<env>/api.env` does *not*
 carry them. Two answers to "does this environment run cashback" disagree the
 first time one of them is edited in a hurry, and the disagreement is silent:
 an environment with a ledger running and the routes unmounted looks healthy
@@ -195,20 +196,26 @@ from every angle.
 
 ### The variables, and where each one is set
 
+Every repository path below is relative to the repository root, and every
+host path is the absolute path on a deployed box. The two are not the same
+file: `deploy/hetzner/env/*.example` are the templates `provision.sh` copies
+to `/etc/apivo/<env>/`, and editing the template on a host edits nothing.
+
 | Key | Local (`.env.example`) | Hetzner | Kubernetes |
 |---|---|---|---|
-| `CASHBACK_ENABLED` | `false` — flip it to try cashback | `docker-compose.cashback.yml` | `cashback/cashback-configmap.yaml` |
-| `LEDGER_DRIVER` | `memory` | `blnk` (the overlay brings one) | `blnk` |
-| `NETWORK_DRIVER` | `fixture` | **`api.env`** — an operator's choice, empty = `fixture` | `cashback/cashback-configmap.yaml`, empty |
-| `BLNK_URL` | `http://localhost:5001` | the overlay, from the container name | the `blnk` Service |
-| `REDIS_URL` | `redis://localhost:6379` | the overlay, from the container name | the `redis` Service |
-| `NETWORK_AWIN_PUBLISHER_ID`, `NETWORK_AWIN_API_TOKEN` | empty | **`api.env`** — a real credential | the `apivo-secrets` Secret |
-| `BLNK_DATA_SOURCE_DNS` | n/a — the memory driver has no database | **`blnk.env`**, 0600, read by the Docker daemon | the `apivo-secrets` Secret |
+| `CASHBACK_ENABLED` | `false` — flip it to try cashback | `deploy/hetzner/compose/docker-compose.cashback.yml` | `deploy/k8s/cashback/cashback-configmap.yaml` |
+| `LEDGER_DRIVER` | `memory` | the same overlay — `blnk`, because it brings one | `deploy/k8s/cashback/cashback-configmap.yaml` — `blnk` |
+| `NETWORK_DRIVER` | `fixture` | **`/etc/apivo/<env>/api.env`** on the host (template: `deploy/hetzner/env/api.env.example`) — an operator's choice, empty = `fixture` | `deploy/k8s/cashback/cashback-configmap.yaml`, empty |
+| `BLNK_URL` | `http://localhost:5001` | the same overlay, from the container name | the `blnk` Service — `deploy/k8s/cashback/blnk-service.yaml` |
+| `REDIS_URL` | `redis://localhost:6379` | the same overlay, from the container name | the `redis` Service — `deploy/k8s/cashback/redis-service.yaml` |
+| `NETWORK_AWIN_PUBLISHER_ID`, `NETWORK_AWIN_API_TOKEN` | empty | **`/etc/apivo/<env>/api.env`** — a real credential | the `apivo-secrets` Secret — structure in `deploy/k8s/examples/secret.example.yaml` |
+| `BLNK_DATA_SOURCE_DNS` | n/a — the memory driver has no database | **`/etc/apivo/<env>/blnk.env`**, 0600, read by the Docker daemon (template: `deploy/hetzner/env/blnk.env.example`) | the same `apivo-secrets` Secret |
 
 `NETWORK_DRIVER` and the network credentials are the exception that proves
 the rule: they are genuinely an operator's decision, against a founder
 question that is still open (**Q1 — which affiliate networks to join**), so
-they sit in `api.env` and default to the fixture adapter. Everything else
+they sit in `/etc/apivo/<env>/api.env` and default to the fixture adapter.
+Everything else
 follows mechanically from the overlay.
 
 **QA and Staging must never hold production's publisher credentials.** A poll
