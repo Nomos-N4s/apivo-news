@@ -25,12 +25,36 @@
 // affiliate-network poller and the continuous ledger zero-sum check both read
 // a window defined by where the last run got to, so two runs queued behind
 // each other would do the same work twice, and a backlog built up while a
-// network was slow would hammer it the moment it recovered. Skipping is also
-// what the lock does across instances, so the in-process rule and the
-// fleet-wide rule agree: at most one run of a job at a time, anywhere.
+// network was slow would hammer it the moment it recovered.
 //
 // The cost is that a job whose runs take longer than its interval sets its own
 // cadence. Bound that with Job.Timeout rather than by queuing.
+//
+// # The lock prevents overlap, not repetition
+//
+// Read Job.Interval as a per-instance interval, because that is all it is.
+// Every instance keeps its own timer, and this package persists no record of
+// when a job last ran. The lock is taken for the duration of a run and given
+// back at the end of it, so what it rules out is two runs at the same moment -
+// nothing more.
+//
+// It does not rule out two runs inside one interval. A five-minute job that
+// takes ten seconds runs on one instance and releases the lock; another
+// instance, whose own timer is jittered independently, can tick at any point
+// in the remaining four minutes fifty, find the lock free and run the job
+// again. That is not a skip and nothing logs it. With minReplicas: 2 and
+// maxReplicas: 4 in deploy/k8s/api-hpa.yaml, a job configured for one run per
+// interval should be expected to run up to four times per interval instead.
+//
+// So a consumer that needs a fleet-wide rate - an affiliate network with a
+// request quota, most obviously - must enforce it with state in the database
+// that every instance reads, and must not infer it from the interval it
+// registered. internal/ingestion/poll.go already draws this exact line for its
+// own lock, and enforces its rate with last_polled_at on the source row rather
+// than with the schedule; a cashback poller needs the equivalent watermark,
+// advanced only once a window is fully persisted (FR-031). What the scheduler
+// gives such a consumer is the guarantee that its watermark is never read and
+// advanced by two runs at once.
 package scheduler
 
 import (
@@ -132,6 +156,13 @@ type Job struct {
 	Name string
 	// Interval is the wait between the end of one run and the start of the
 	// next, before jitter. It must be positive.
+	//
+	// It is per-instance, not fleet-wide: every instance keeps its own
+	// timer, and the lock stops two runs overlapping, not two runs
+	// happening inside one interval. A job that must not exceed a rate
+	// across the fleet enforces that with a watermark in the database, not
+	// with this field. See the package doc, "The lock prevents overlap, not
+	// repetition".
 	Interval time.Duration
 	// Timeout bounds one run: the context passed to Run is cancelled after
 	// it, which both ends the run and frees the lock for the next tick. Zero
