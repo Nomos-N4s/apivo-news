@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 const (
@@ -30,6 +31,8 @@ type violation struct {
 	file   string
 	reason string
 }
+
+func (v violation) String() string { return v.file + ": " + v.reason }
 
 // TestModuleBoundaries walks every Go file under internal/ and asserts:
 //
@@ -51,6 +54,100 @@ func TestModuleBoundaries(t *testing.T) {
 	for _, v := range found {
 		t.Errorf("%s: %s", v.file, v.reason)
 	}
+}
+
+// boundaryCase is one fixture package graph - a single file at file,
+// importing imports - and the verdict the rules must reach on it. An empty
+// want means the imports are legal and must not be reported.
+type boundaryCase struct {
+	name    string
+	file    string
+	imports []string
+	want    string
+}
+
+// TestModuleBoundaryRules proves the rules actually fire. TestModuleBoundaries
+// above runs them against a repository that obeys them, so on its own it
+// would stay green if a rule were deleted, mistyped or made unreachable. Each
+// case below is a package graph that breaks exactly one rule - or deliberately
+// does not break any - checked against the same code the real scan uses.
+func TestModuleBoundaryRules(t *testing.T) {
+	t.Parallel()
+
+	tests := []boundaryCase{
+		{
+			name:    "a module importing another module's internals",
+			file:    "editorial/queue.go",
+			imports: []string{internalPrefix + "content/store"},
+			want:    `module "editorial" must not import module "content"`,
+		},
+		{
+			name:    "platform importing a sibling module",
+			file:    "platform/http/router.go",
+			imports: []string{internalPrefix + "editorial"},
+			want:    `platform must not import sibling module "editorial"`,
+		},
+		{
+			name:    "a module name that is a prefix of another module's",
+			file:    "content/feed.go",
+			imports: []string{internalPrefix + "contentious/store"},
+			want:    `module "content" must not import module "contentious"`,
+		},
+		{
+			name:    "any module importing platform",
+			file:    "ingestion/poller.go",
+			imports: []string{internalPrefix + "platform/db", internalPrefix + "platform/logging"},
+		},
+		{
+			name:    "a package importing its own module",
+			file:    "editorial/store/queries.go",
+			imports: []string{internalPrefix + "editorial"},
+		},
+		{
+			name:    "imports from outside this module",
+			file:    "ingestion/feed.go",
+			imports: []string{"strings", "github.com/mmcdole/gofeed"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			found, err := checkInternal(graphOf(tc.file, tc.imports))
+			if err != nil {
+				t.Fatalf("scanning the fixture graph: %v", err)
+			}
+			if tc.want == "" {
+				if len(found) != 0 {
+					t.Fatalf("imports the rules allow were refused: %v", found)
+				}
+				return
+			}
+			if len(found) != 1 {
+				t.Fatalf("want exactly one violation mentioning %q, got %d: %v", tc.want, len(found), found)
+			}
+			if !strings.Contains(found[0].reason, tc.want) {
+				t.Errorf("refused for the wrong reason:\n got: %s\nwant a reason containing: %s", found[0].reason, tc.want)
+			}
+			if found[0].file != tc.file {
+				t.Errorf("violation blamed %q, want %q", found[0].file, tc.file)
+			}
+		})
+	}
+}
+
+// graphOf builds a one-file package graph rooted where internal/ would be.
+// parser.ImportsOnly needs no more than a package clause and an import
+// block, which keeps the fixtures above readable as a table.
+func graphOf(file string, imports []string) fstest.MapFS {
+	var src strings.Builder
+	fmt.Fprintf(&src, "package %s\n\nimport (\n", path.Base(path.Dir(file)))
+	for _, imp := range imports {
+		fmt.Fprintf(&src, "\t%q\n", imp)
+	}
+	src.WriteString(")\n")
+	return fstest.MapFS{file: &fstest.MapFile{Data: []byte(src.String())}}
 }
 
 // checkInternal parses every Go file in fsys - a filesystem rooted at
