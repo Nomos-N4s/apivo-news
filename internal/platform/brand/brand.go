@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"regexp"
@@ -305,6 +306,17 @@ func Parse(data []byte) (Brand, error) {
 	var b Brand
 	if err := decoder.Decode(&b); err != nil {
 		return Brand{}, fmt.Errorf("brand: decode: %w", err)
+	}
+	// Everything after the first document must be whitespace, and only a
+	// second Decode proves it - the same check, for the same reason, as
+	// decodeJSON in internal/editorial/httputil.go and the tour payload
+	// reader in internal/account/tours.go. Decoder.More() answers a
+	// narrower question ("is another VALUE coming?"), so a stray closing
+	// delimiter after a valid object reads as "no more values" and a
+	// truncated or concatenated brand file would be accepted. Requiring
+	// io.EOF rejects both a second document and trailing syntax errors.
+	if err := decoder.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
+		return Brand{}, errors.New("brand: decode: the definition must be a single JSON document")
 	}
 	if err := b.Validate(); err != nil {
 		return Brand{}, err

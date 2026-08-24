@@ -167,6 +167,54 @@ func TestParseRejectsAWellFormedFileThatBreaksTheRules(t *testing.T) {
 	}
 }
 
+func TestParseRequiresExactlyOneDocument(t *testing.T) {
+	t.Parallel()
+
+	// Decode stops at the end of the first JSON value, so without a
+	// second Decode a brand file could carry a truncated edit, a
+	// concatenated second brand or a stray delimiter and still load -
+	// and the deployment would run on whichever half came first.
+	data, err := os.ReadFile(filepath.Join(fixtureDir, brand.FileName))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		extra string
+	}{
+		{name: "trailing garbage", extra: "\nJUNK\n"},
+		{name: "a second brand", extra: "\n{\"id\":\"other\"}\n"},
+		{name: "a stray closing delimiter", extra: "}\n"},
+		{name: "a trailing comma", extra: ",\n"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			appended := append(append([]byte{}, data...), testCase.extra...)
+			if _, err := brand.Parse(appended); err == nil {
+				t.Fatal("Parse accepted a file carrying more than one document")
+			} else if want := "single JSON document"; !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		})
+	}
+
+	// The control: whitespace after the document is not a second
+	// document, and a check that rejected it would reject every file an
+	// editor saves with a trailing newline.
+	t.Run("trailing whitespace is not a document", func(t *testing.T) {
+		t.Parallel()
+
+		appended := append(append([]byte{}, data...), "\n\n  \t\n"...)
+		if _, err := brand.Parse(appended); err != nil {
+			t.Errorf("Parse rejected a file with trailing whitespace: %v", err)
+		}
+	})
+}
+
 func TestParseAcceptsTheFixtureFile(t *testing.T) {
 	t.Parallel()
 
