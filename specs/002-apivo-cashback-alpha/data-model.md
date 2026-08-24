@@ -35,7 +35,7 @@ Rules enforced by a migration lint (ADR-0001):
 | Column | Type | Notes |
 |---|---|---|
 | `account_id` | `uuid` PK → `public.account` | one participation per account (FR-001) |
-| `brand_id` | `text not null` | ADR-0004 forward compatibility |
+| `brand_id` | `text not null` | ADR-0004 forward compatibility; created with the table in `0017` |
 | `opted_in_at` | `timestamptz not null` | |
 | `terms_version` | `text not null`, not blank | FR-002 |
 | `status` | `text not null` `check in ('active','left')` | |
@@ -62,11 +62,27 @@ secret), `cursor_at timestamptz`, `trailing_cursor_at timestamptz`,
 `active bool`. The two cursors implement FR-031 and the ~100-day trailing
 re-read (ADR-0003).
 
-**`cashback.merchant`** — a retailer.
+**`cashback.merchant`** — a retailer, as a business fact.
 
-`id uuid pk`, `brand_id`, `slug text not null unique`, `country char(2)`,
-`status`, `retrieved_from network_id`, `retrieved_at timestamptz not null`,
-`raw_payload jsonb not null` (FR-012).
+`id uuid pk`, `slug text not null unique`, `country char(2)`,
+`source_language_code → public.language`, `status`. Carries nothing
+per-network: the same retailer is commonly live on several networks at
+once, at different rates, so every per-network fact lives on the route
+below.
+
+**`cashback.merchant_network`** — one route to a retailer through one
+network, and the record ADR-0004 calls *merchant availability*.
+
+`id uuid pk`, `merchant_id → merchant`, `network_id → network`,
+`brand_id text not null` (ADR-0004), `external_merchant_id text not null`
+(unique per network), `retrieved_at timestamptz not null`,
+`raw_payload jsonb not null` (FR-012 — the provenance of a catalogue entry
+belongs to the import, not to the retailer), `status`, `preferred bool`.
+
+Arbitration lives in the schema: a partial unique index on `(merchant_id)
+where preferred` allows at most one preferred route per retailer, so
+"which route do we publish" cannot depend on whichever code path runs
+first.
 
 **`cashback.merchant_copy`** — per-language copy, language ⊥ place
 (constitution VII).
@@ -82,8 +98,7 @@ language and is **labelled**, never machine-invented (US5 scenario 2).
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `uuid` PK | |
-| `merchant_id` | → `merchant` | |
-| `network_id` | → `network` | FR-011 |
+| `merchant_network_id` | → `merchant_network` | FR-011 — a rate band is a rate on one network's route, so the network follows from the route rather than being repeated where the two could disagree |
 | `rate_kind` | `text check in ('percent','fixed')` | |
 | `rate_bps` | `int` | basis points when `percent` |
 | `rate_fixed_minor` | `bigint` | minor units when `fixed` |
@@ -156,7 +171,7 @@ reported.
 |---|---|---|
 | `id` | `uuid` PK | |
 | `account_id` | → `public.account`, not null | |
-| `brand_id` | `text not null` | |
+| `brand_id` | `text not null` | ADR-0004; created with the table in `0013` |
 | `network_transaction_id` | → `network_transaction`, **not null** | **C-2** |
 | `click_id` | → `click` | null only for operator-attributed entries |
 | `state` | `text not null check in ('held','pending','confirmed','reserved','paid','reversed')` | FR-042 |
@@ -215,6 +230,7 @@ exists before review), `decided_by → public.account`, `decided_at`,
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `uuid` PK | |
+| `brand_id` | `text not null` | ADR-0004; created with the table in `0014` |
 | `request_id` | → `withdrawal_request`, not null, **unique** | one payout per request |
 | `approved_by` | → `public.account`, **not null** | **C-4** — the row *is* the approval |
 | `idempotency_key` | `text not null unique` | **C-5**, derived from `request_id` (D8) |
@@ -329,15 +345,26 @@ as `invariants_test.go` for I-1..I-5.
 | Migration | Contents |
 |---|---|
 | `0010_cashback_schema` | `create schema cashback`; roles and grants; migration lint fixture |
-| `0011_cashback_catalogue` | `network`, `network_account`, `merchant`, `merchant_copy`, `merchant_place`, `offer` |
+| `0011_cashback_catalogue` | `network`, `network_account`, `merchant`, `merchant_network`, `merchant_copy`, `merchant_place`, `offer` |
 | `0012_cashback_clicks_evidence` | `click`, `network_transaction`, immutability triggers, unique indexes |
 | `0013_cashback_earnings` | `entry`, `entry_transition`, `unattributed_transaction`, `ledger_link` |
 | `0014_cashback_payout` | `payout_destination`, `withdrawal_request`, `payout` |
 | `0015_cashback_reconciliation` | `reconciliation_run`, `reconciliation_difference` |
 | `0016_cashback_provenance_view` | `cashback.provenance`, `cashback.ledger_zero_sum` |
-| `0017_participation_brand` | `participation`; `brand_id` on the tenant-boundary tables (ADR-0004) |
+| `0017_participation` | `participation` (ADR-0004's fourth tenant-boundary record) |
 | `0018_domain_event_envelope` | **Delta to a shared table** — see §2.10 |
 | `0019_operator_role` | **Delta to a shared table** — see §2.10 |
+
+**`brand_id` is created with each table that carries it**, not added by a
+later migration: `merchant_network` in `0011`, `entry` in `0013`, `payout`
+in `0014`, `participation` in `0017`. An earlier version of this plan
+collected all four into `0017`, which does not survive contact with a
+stacked review: each pull request runs the migrations up to its own level
+only, so a test written against the finished schema executes against a
+partial one and fails on a column that does not exist yet. Creating the
+column with its table removes that class of breakage rather than teaching
+every test which columns exist at its own level, and it is how every other
+column in this schema is handled.
 
 Every migration has a tested `.down.sql`, as the repository already
 requires. sqlc generates `internal/cashback/*/store` from the same schema —
