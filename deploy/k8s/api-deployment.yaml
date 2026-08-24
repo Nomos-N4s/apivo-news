@@ -58,6 +58,21 @@ spec:
           envFrom:
             - configMapRef:
                 name: apivo-config
+            # The cashback keys (CASHBACK_ENABLED, LEDGER_DRIVER, BLNK_URL,
+            # REDIS_URL, NETWORK_DRIVER), delivered only on a cluster that has
+            # applied deploy/k8s/cashback/. `optional: true` is what makes
+            # that directory a genuine opt-in: without it the ConfigMap does
+            # not exist, none of those keys reach the binary, the cashback
+            # routes are not mounted, and the pod starts normally. With it a
+            # missing ConfigMap would block every api pod on a cluster that
+            # never wanted a ledger.
+            #
+            # Same shape as the Hetzner deployment, in the vocabulary
+            # Kubernetes has: there, listing docker-compose.cashback.yml in
+            # COMPOSE_FILE is the switch; here, applying the subdirectory is.
+            - configMapRef:
+                name: apivo-cashback-config
+                optional: true
           env:
             - name: DATABASE_URL
               valueFrom:
