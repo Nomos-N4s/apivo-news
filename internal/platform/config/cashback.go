@@ -326,5 +326,13 @@ func validateEndpoint(key, raw string, schemes ...string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("config: %s must use one of the schemes %s, got %q", key, strings.Join(schemes, ", "), parsed.Scheme)
+	// The scheme is NOT quoted back, though it looks like the one part of
+	// the value that could not be sensitive. url.Parse takes it from the raw
+	// string, and a value that is not a URL at all still yields one:
+	// "hunter2:x" parses with Scheme "hunter2". A credential pasted into the
+	// wrong key would therefore print its own first half in a startup error,
+	// which is exactly what this function's doc comment promises will never
+	// happen.
+	return fmt.Errorf("config: %s must use one of the schemes %s (the value is not repeated here: it may carry a password)",
+		key, strings.Join(schemes, ", "))
 }

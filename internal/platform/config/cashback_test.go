@@ -396,6 +396,68 @@ func TestCashbackProductionRulesDoNotApplyInDev(t *testing.T) {
 	}
 }
 
+// TestEndpointErrorsNeverEchoTheValue holds validateEndpoint to its own doc
+// comment. Startup errors go to stderr, which on this deployment is a
+// container log somebody keeps, so a refusal that quotes the value it was
+// given puts a credential there.
+//
+// The scheme is the trap: it looks like our own vocabulary, but url.Parse
+// reads it out of the raw string, and a value that is not a URL at all still
+// yields one - "hunter2-a-real-credential:x" parses with that whole first
+// segment as the scheme.
+func TestEndpointErrorsNeverEchoTheValue(t *testing.T) {
+	t.Parallel()
+
+	const credential = "hunter2-a-real-credential"
+
+	tests := []struct {
+		name string
+		key  string
+		env  map[string]string
+	}{
+		{
+			name: "a credential pasted into BLNK_URL",
+			key:  "BLNK_URL",
+			env:  withEnv(enabledCashbackEnv(), map[string]string{"BLNK_URL": credential + ":whatever"}),
+		},
+		{
+			name: "a credential pasted into REDIS_URL",
+			key:  "REDIS_URL",
+			env:  withEnv(enabledCashbackEnv(), map[string]string{"REDIS_URL": credential + ":whatever"}),
+		},
+		{
+			name: "a password inside an otherwise valid URL of the wrong scheme",
+			key:  "REDIS_URL",
+			env: withEnv(enabledCashbackEnv(), map[string]string{
+				"REDIS_URL": "http://apivo:" + credential + "@redis:6379",
+			}),
+		},
+		{
+			name: "an unparseable value",
+			key:  "BLNK_URL",
+			env:  withEnv(enabledCashbackEnv(), map[string]string{"BLNK_URL": "http://" + credential + "/%zz"}),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := config.FromEnv(envFrom(tt.env))
+			if err == nil {
+				t.Fatal("expected a refusal, got none")
+			}
+			if strings.Contains(err.Error(), credential) {
+				t.Fatalf("the refusal echoed the value: %v", err)
+			}
+			// Still useful: it must name the key, or an operator cannot
+			// act on it.
+			if !strings.Contains(err.Error(), tt.key) {
+				t.Fatalf("the refusal does not name %s: %v", tt.key, err)
+			}
+		})
+	}
+}
+
 func TestCashbackMissing(t *testing.T) {
 	t.Parallel()
 
