@@ -74,13 +74,23 @@ docker run -d --name "$NAME" --network host \
     -e "BLNK_SERVER_SECRET_KEY=$SECRET_KEY" \
     "$BLNK_IMAGE" >/dev/null
 
-# Blnk publishes no health route, so readiness is a real read through the
-# router and the database connection. 401 counts: it means the server
-# answered and is only refusing the credential, which is what a secured
-# deployment looks like.
+# Blnk serves an unauthenticated `GET /health` (added upstream in v0.10.3;
+# this image is 0.15.2), which is what compose, deploy/hetzner and deploy/k8s
+# all probe. 401 is still accepted below, because a future secured build that
+# answered at all has demonstrably started - but /health should not produce
+# one, and an application route like /ledgers would, which is why this no
+# longer probes that.
 elapsed=0
 while [ "$elapsed" -lt "$WAIT_SECONDS" ]; do
-    code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/ledgers" || echo 000)
+    # Both bounds are load-bearing. Without --max-time a half-open socket
+    # holds curl forever, the loop never reaches its next iteration, and
+    # `elapsed` never advances - so WAIT_SECONDS expires only in theory and
+    # the whole cashback job hangs until the GitHub-level timeout kills it,
+    # an hour later, with no useful message. A readiness probe that can hang
+    # is not a timeout, it is a deadlock with a comment.
+    code=$(curl -s -o /dev/null -w '%{http_code}' \
+        --connect-timeout 3 --max-time 5 \
+        "http://127.0.0.1:$PORT/health" || echo 000)
     if [ "$code" = "200" ] || [ "$code" = "401" ]; then
         echo "blnk_up: ledger answering on port $PORT (HTTP $code) after ${elapsed}s"
         exit 0
