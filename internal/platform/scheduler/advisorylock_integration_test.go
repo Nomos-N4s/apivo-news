@@ -21,7 +21,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -45,6 +47,38 @@ func lockPool(t *testing.T) *pgxpool.Pool {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("connecting: %v", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		t.Fatalf("pinging: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// exhaustiblePool opens a pool of exactly one connection, so a test can hold
+// that connection and leave the locker with nothing to acquire - the
+// starvation this scheduler risks by holding a connection for the length of
+// every run.
+func exhaustiblePool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	raw := os.Getenv("DATABASE_URL")
+	if raw == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise the advisory lock")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parsing DATABASE_URL: %v", err)
+	}
+	query := parsed.Query()
+	query.Set("pool_max_conns", "1")
+	parsed.RawQuery = query.Encode()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, parsed.String())
 	if err != nil {
 		t.Fatalf("connecting: %v", err)
 	}
@@ -94,6 +128,42 @@ func TestTryLockReportsAPoolItCannotDrawFrom(t *testing.T) {
 	}
 	if held || lock != nil {
 		t.Errorf("TryLock() on a closed pool = lock %v, held %v; want no lock at all", lock, held)
+	}
+}
+
+func TestTryLockGivesUpWhenThePoolHasNothingFree(t *testing.T) {
+	t.Parallel()
+
+	pool := exhaustiblePool(t)
+	ctx := context.Background()
+
+	// Hold the pool's only connection, standing in for the job's own
+	// queries and the request handlers competing for the same pool.
+	busy, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquiring the pool's only connection: %v", err)
+	}
+	defer busy.Release()
+
+	locker := scheduler.NewAdvisoryLocker(pool, scheduler.LockerConfig{AcquireTimeout: 100 * time.Millisecond})
+	started := time.Now()
+	lock, held, err := locker.TryLock(ctx, jobName("starved"))
+	elapsed := time.Since(started)
+
+	if err == nil {
+		t.Fatal("TryLock() on an exhausted pool: want an error, got nil")
+	}
+	if held || lock != nil {
+		t.Errorf("TryLock() on an exhausted pool = lock %v, held %v; want no lock at all", lock, held)
+	}
+	if !strings.Contains(err.Error(), "acquire lock connection") {
+		t.Errorf("TryLock() error = %q, want it to say it could not get a connection", err)
+	}
+	// The assertion the bound exists for: without it pgxpool.Acquire waits
+	// for a connection that is never coming, and the job's loop stops
+	// ticking with nothing logged to say why.
+	if elapsed > 30*time.Second {
+		t.Errorf("TryLock() blocked for %v; the acquire must give up on its own", elapsed)
 	}
 }
 
