@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"testing"
 	"time"
 
@@ -53,7 +54,23 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, "migrating test database:", err)
 			os.Exit(1)
 		}
-		pool, err := pgxpool.New(context.Background(), url)
+		cfg, err := pgxpool.ParseConfig(url)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "parsing test database URL:", err)
+			os.Exit(1)
+		}
+		// Every subtest in these suites holds a transaction, and hence a
+		// connection, for its whole run, while `go test` runs up to
+		// -parallel (GOMAXPROCS by default) of them at once. pgx defaults
+		// MaxConns to max(4, NumCPU), which is smaller than it sounds - on a
+		// two-core runner it is 4 - so the suites can end up queueing behind
+		// their own connections and reporting a timeout that has nothing to
+		// do with the schema. Size the pool from the same knob the scheduler
+		// uses, with headroom for the fixtures' nested reads.
+		if want := int32(runtime.GOMAXPROCS(0)) + 4; cfg.MaxConns < want {
+			cfg.MaxConns = want
+		}
+		pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "connecting test database:", err)
 			os.Exit(1)
