@@ -135,6 +135,24 @@ jobs:
         run: go build ./...
       - name: Test (invariant tests run against the service Postgres)
         run: go test -race -shuffle=on -covermode=atomic -coverprofile=coverage.out -coverpkg=./... ./...
+      # Postgres is the only witness a green run keeps. `go test` without -v
+      # discards a passing package's output whole - t.Log buffer and stderr
+      # alike - so a test that loses a deadlock and then succeeds, which is
+      # what the publication race seed now does (#117), leaves nothing in the
+      # Go output to find. The server logs every deadlock it breaks, naming
+      # both sides of the cycle and the statements they were running, so read
+      # the record there instead. This never fails the job: no deadlock is
+      # the expected result, and saying so is the point.
+      - name: Postgres deadlock reports, if the suite provoked any (#117)
+        if: always()
+        run: |
+          cid=$(docker ps -a --filter ancestor=postgres:17-alpine --format '{{.ID}}' | head -n 1 || true)
+          if [ -z "$cid" ]; then
+            echo "no postgres service container found; nothing to read"
+            exit 0
+          fi
+          docker logs "$cid" 2>&1 | grep -B 2 -A 25 -i 'deadlock detected' \
+            || echo "no deadlock reports in this run"
       # The drill logs a timing per provenance chain, and those numbers are
       # the point (I-5: the audit must be demonstrably fast, not asserted
       # fast) - but a passing non-verbose `go test` swallows t.Logf. Run it
