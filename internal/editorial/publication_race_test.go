@@ -19,12 +19,15 @@ package editorial_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/db"
@@ -49,28 +52,84 @@ type raceWorld struct {
 	articleID   uuid.UUID
 }
 
+// seedAttempts bounds how many times the seed is rebuilt after Postgres
+// picks it as a deadlock victim. Small on purpose: one more go clears a
+// lost coin toss, while a seed that deadlocks four times running is a
+// finding rather than a flake and must be allowed to fail the test.
+const seedAttempts = 4
+
+// seedRaceWorld builds one race world, rebuilding it if the seed loses a
+// deadlock.
+//
+// The seed is not what this test asserts. It writes its rows for real
+// while the rest of the suite writes its own against the same database,
+// and the article insert takes two locks on the way in: a FOR SHARE on
+// the approver's account row (article_insert_guard, 0002) and a
+// foreign-key lock on the shared `munich` place row. A cycle with some
+// other transaction in the suite is therefore possible, and Postgres
+// resolves it the way it must - by aborting one side with 40P01 and
+// leaving the retry to the application. A seed that dies on that abort
+// reports a suite-wide lock cycle as a failure of the very serialisation
+// this test exists to prove, which is the loudest possible way of saying
+// the wrong thing.
+//
+// Only the seed retries. The race below it - the two blocked statements
+// and every assertion about them - runs exactly once, against the world
+// this returns, so nothing here can soften what the test proves.
 func seedRaceWorld(ctx context.Context, t *testing.T, conn *pgx.Conn) raceWorld {
 	t.Helper()
+	for attempt := 1; ; attempt++ {
+		world, err := trySeedRaceWorld(ctx, t, conn)
+		if err == nil {
+			return world
+		}
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.DeadlockDetected || attempt == seedAttempts {
+			t.Fatalf("seeding the race world (attempt %d of %d): %v", attempt, seedAttempts, err)
+		}
+		// Postgres names both sides of the cycle in DETAIL and the error's
+		// own text drops it; carrying it into the log is what makes the
+		// next occurrence evidence rather than another sighting.
+		t.Logf("seed attempt %d of %d lost a deadlock, rebuilding: %v (detail: %s)",
+			attempt, seedAttempts, err, pgErr.Detail)
+	}
+}
+
+// trySeedRaceWorld is one attempt at the seed. It returns its failures
+// instead of ending the test so the caller can tell a deadlock - the one
+// error worth another go - from everything else.
+func trySeedRaceWorld(ctx context.Context, t *testing.T, conn *pgx.Conn) (raceWorld, error) {
+	t.Helper()
+	// A fresh suffix per attempt. A lost attempt may already have
+	// committed some of its rows; re-seeding from nothing leaves them
+	// behind rather than colliding with them, which is what this test
+	// does with its rows anyway.
 	suffix := randomSuffix(t)
 
-	editor := func(name string) string {
-		t.Helper()
+	editor := func(name string) (string, error) {
 		var id string
 		if err := conn.QueryRow(ctx,
 			`insert into account (email, display_name, role) values ($1, $2, 'editor') returning id`,
 			name+"-"+suffix+"@example.test", "Publication Race "+name+" "+suffix).Scan(&id); err != nil {
-			t.Fatalf("seed %s: %v", name, err)
+			return "", fmt.Errorf("seed %s: %w", name, err)
 		}
-		return id
+		return id, nil
 	}
-	approverID, publisherID := editor("approver"), editor("publisher")
+	approverID, err := editor("approver")
+	if err != nil {
+		return raceWorld{}, err
+	}
+	publisherID, err := editor("publisher")
+	if err != nil {
+		return raceWorld{}, err
+	}
 
 	var sourceID string
 	if err := conn.QueryRow(ctx,
 		`insert into source (name, url, language_code, jurisdiction, licence_terms)
 		 values ($1, $2, 'el', 'GR', 'Extract and link permitted (race test)') returning id`,
 		"Publication Race Feed "+suffix, "https://example.test/publication-race/"+suffix).Scan(&sourceID); err != nil {
-		t.Fatalf("seed source: %v", err)
+		return raceWorld{}, fmt.Errorf("seed source: %w", err)
 	}
 	var itemID string
 	if err := conn.QueryRow(ctx,
@@ -78,7 +137,7 @@ func seedRaceWorld(ctx context.Context, t *testing.T, conn *pgx.Conn) raceWorld 
 		 values ($1, $2, $3, $4) returning id`,
 		sourceID, "https://example.test/publication-race/"+suffix+"/item",
 		"Τίτλος "+suffix, "Σώμα "+suffix).Scan(&itemID); err != nil {
-		t.Fatalf("seed source_item: %v", err)
+		return raceWorld{}, fmt.Errorf("seed source_item: %w", err)
 	}
 	// Approved, never published: exactly the state the publication endpoint
 	// acts on. The article and its place row are one transaction: this
@@ -86,7 +145,7 @@ func seedRaceWorld(ctx context.Context, t *testing.T, conn *pgx.Conn) raceWorld 
 	// COMMIT that the article names at least one place.
 	tx, err := conn.Begin(ctx)
 	if err != nil {
-		t.Fatalf("begin article seed: %v", err)
+		return raceWorld{}, fmt.Errorf("begin article seed: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var articleID string
@@ -94,20 +153,20 @@ func seedRaceWorld(ctx context.Context, t *testing.T, conn *pgx.Conn) raceWorld 
 		`insert into article (source_item_id, approved_by, attribution_block)
 		 values ($1, $2, $3) returning id`,
 		itemID, approverID, "Πηγή: Publication Race Feed "+suffix).Scan(&articleID); err != nil {
-		t.Fatalf("seed article: %v", err)
+		return raceWorld{}, fmt.Errorf("seed article: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
 		`insert into article_place (article_id, place_id)
 		 select $1, id from place where slug = 'munich'`, articleID); err != nil {
-		t.Fatalf("seed article place: %v", err)
+		return raceWorld{}, fmt.Errorf("seed article place: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit article seed: %v", err)
+		return raceWorld{}, fmt.Errorf("commit article seed: %w", err)
 	}
 	return raceWorld{
 		publisherID: uuid.MustParse(publisherID),
 		articleID:   uuid.MustParse(articleID),
-	}
+	}, nil
 }
 
 func TestPublicationRaceIsSerialized(t *testing.T) {
