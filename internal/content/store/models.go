@@ -440,6 +440,14 @@ type DomainEvent struct {
 	Type       string
 	Payload    []byte
 	OccurredAt pgtype.Timestamptz
+	// The schema version of payload for this event type. Consumers read it before the payload, so a producer can change shape without a coordinated deploy.
+	Version int32
+	// Which product domain emitted this event. Defaults to news, which is correct for every row written before this migration and for both existing writers.
+	Producer string
+	// The entity this event is about. Per-subject ordering is the ONLY ordering the stream guarantees - consumers that assume a global order are relying on something this table does not promise.
+	Subject pgtype.UUID
+	// A producer-chosen key making redelivery a no-op: a second attempt to append the same event violates the partial unique index below instead of duplicating it. Nullable, because the events written before this migration had no such key and no delivery to be idempotent about.
+	IdempotencyKey pgtype.Text
 }
 
 // BCP-47 primary language subtags only (el, de, en). Never combined with place into a single locale tag.

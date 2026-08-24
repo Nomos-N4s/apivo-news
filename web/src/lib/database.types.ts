@@ -211,21 +211,33 @@ export type Database = {
       domain_event: {
         Row: {
           id: string
+          idempotency_key: string | null
           occurred_at: string
           payload: Json
+          producer: string
+          subject: string | null
           type: string
+          version: number
         }
         Insert: {
           id?: string
+          idempotency_key?: string | null
           occurred_at?: string
           payload: Json
+          producer?: string
+          subject?: string | null
           type: string
+          version?: number
         }
         Update: {
           id?: string
+          idempotency_key?: string | null
           occurred_at?: string
           payload?: Json
+          producer?: string
+          subject?: string | null
           type?: string
+          version?: number
         }
         Relationships: []
       }
