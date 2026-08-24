@@ -81,6 +81,97 @@ type ArticleProvenance struct {
 	CostMicrousd       pgtype.Int8
 }
 
+// A retailer, as a business fact: who they are, where they trade, whether we publish them. Deliberately carries NOTHING per-network - the same retailer is reachable through several networks at once, and each of those routes is a merchant_network row.
+type CashbackMerchant struct {
+	ID      pgtype.UUID
+	Slug    string
+	Country pgtype.Text
+	// The language the retailer's copy is supplied in. When a member's language has no merchant_copy row, this is the copy that is shown AND LABELLED as a fallback (US5 scenario 2) - never a blank, never a machine-invented name.
+	SourceLanguageCode string
+	// Whether this retailer is published at all. Independent of any single route: a merchant leaving one network is a merchant_network status, not this one.
+	Status string
+}
+
+// Per-language merchant copy, keyed by BCP-47 primary language subtag (constitution VII). A missing language is a missing row, resolved by labelled fallback to the merchant's source language - never by inventing text. Copy describes the RETAILER, so it does not vary by route.
+type CashbackMerchantCopy struct {
+	MerchantID   pgtype.UUID
+	LanguageCode string
+	Name         string
+	Summary      pgtype.Text
+	Terms        pgtype.Text
+}
+
+// One route to a retailer through one network. The same retailer is commonly live on several networks at once with different rates and different reliability, so everything per-network lives here - the network's own id for them, when the catalogue entry was retrieved, and the payload it came from (FR-012).
+type CashbackMerchantNetwork struct {
+	ID         pgtype.UUID
+	MerchantID pgtype.UUID
+	NetworkID  string
+	// Which brand publishes this route (ADR-0004). One value today; the column exists so adding a tenant is scoping rather than a schema archaeology exercise.
+	BrandID string
+	// The network's own identifier for this retailer. Unique within the network: it is what an imported catalogue row and a reported transaction are matched back on.
+	ExternalMerchantID string
+	// When this route's catalogue entry was imported (FR-012). A property of the import, never of the retailer.
+	RetrievedAt pgtype.Timestamptz
+	// The network's catalogue payload verbatim (FR-012), kept beside the normalised columns so a mapping bug is diagnosable without re-fetching.
+	RawPayload []byte
+	Status     string
+	// Whether this is the route the catalogue publishes for this retailer. At most one route per merchant may be preferred, enforced by a partial unique index rather than by whichever code path happens to run first.
+	Preferred bool
+}
+
+// Which places a merchant is available to. Many-to-many, and entirely independent of merchant_copy: a Greek speaker in Munich sees Munich merchants in Greek (constitution VII).
+type CashbackMerchantPlace struct {
+	MerchantID pgtype.UUID
+	PlaceID    pgtype.UUID
+}
+
+// An affiliate network the cashback domain publishes through. Credentials are deliberately absent (ADR-0003): they are read from configuration, never stored here.
+type CashbackNetwork struct {
+	ID          string
+	DisplayName string
+	// The query parameter this network reads the click reference from (FR-021). The redirect is built from it, so a wrong value silently loses attribution for every click.
+	ClickRefParam string
+	// The network's documented maximum transaction query window. The poller never asks for a wider one (FR-031, ADR-0003).
+	MaxQueryWindowDays int32
+	RateLimitPerSecond int32
+	Active             bool
+}
+
+// A publisher account at a network. Two durable cursors: cursor_at advances only after a window is fully persisted (FR-031), trailing_cursor_at re-reads the ~100-day validation window to catch status changes (ADR-0003).
+type CashbackNetworkAccount struct {
+	ID                  pgtype.UUID
+	NetworkID           string
+	ExternalPublisherID string
+	// A KEY INTO CONFIGURATION naming where this account's credential lives - never the credential itself (ADR-0003). Network credentials never enter the database or the repository.
+	CredentialRef string
+	// How far forward transactions have been fully persisted. Advanced only after the whole window is written, so a restart re-fetches at most one window and never skips one (FR-031).
+	CursorAt pgtype.Timestamptz
+	// How far the slower trailing re-read has walked. Validation can take up to 90 days, so status changes are found by re-reading, not by waiting (ADR-0003).
+	TrailingCursorAt pgtype.Timestamptz
+	Active           bool
+}
+
+// A published rate band on one network's route to a retailer. Every band records its conditions and its exclusions (FR-011), and the network it is sourced from follows from the route (merchant_network) rather than being repeated here where the two could disagree. All of it is snapshotted onto the click, because the click-time rate governs the credit (FR-013).
+type CashbackOffer struct {
+	ID pgtype.UUID
+	// The route this rate applies to. A retailer live on two networks has a band per network, and a click issued against a band is issued through that band's network.
+	MerchantNetworkID pgtype.UUID
+	RateKind          string
+	// The network's commission rate in basis points when rate_kind is percent (4% = 400). Integer by construction: no fractional type ever enters the money path (C-6).
+	RateBps pgtype.Int4
+	// The network's commission as a fixed amount in minor units when rate_kind is fixed, always with an explicit currency (C-6).
+	RateFixedMinor pgtype.Int8
+	Currency       pgtype.Text
+	// The share of the commission the member receives, in basis points. Configuration, not a committed value - founder question Q4 is open and the schema carries no default for it.
+	MemberShareBps int32
+	Conditions     pgtype.Text
+	Exclusions     pgtype.Text
+	ValidFrom      pgtype.Timestamptz
+	ValidTo        pgtype.Timestamptz
+	// The template the click-out redirect is built from. The click reference is substituted into the network's own click-reference parameter (FR-021).
+	DeeplinkTemplate string
+}
+
 // Per-purpose consent rows, never a boolean column. Revocation closes a row; a new grant opens a new row, preserving the full consent history.
 type Consent struct {
 	ID        pgtype.UUID
