@@ -455,6 +455,86 @@ func TestSchedulerRunsAJobRepeatedlyUntilCancelled(t *testing.T) {
 	}
 }
 
+// TestTheScheduledWaitsAreJittered pins the wiring, not the arithmetic:
+// startupDelay and jittered are proved correct as functions elsewhere, and
+// this asserts that loop actually calls them. Without it, waiting for a flat
+// zero before the first run and a flat interval between runs passes every
+// other test in this file - and every replica would then reach for the lock in
+// the same instant on every tick and after every rolling restart, which is the
+// contention the jitter exists to prevent.
+//
+// The jitter is set to half the interval and the draw pinned to the top of the
+// range, which puts both waits far enough from their unjittered values to be
+// told apart on a loaded runner. Both timing assertions are lower bounds, so
+// load can only make them safer; the count of draws is exact.
+func TestTheScheduledWaitsAreJittered(t *testing.T) {
+	t.Parallel()
+
+	const (
+		interval = 300 * time.Millisecond
+		jitter   = 0.5
+		// startupDelay(300ms, 0.5, ~1) approaches 150ms, and a first run
+		// that did not wait at all lands within a millisecond or two.
+		wantStartupAtLeast = 100 * time.Millisecond
+		// jittered(300ms, 0.5, ~1) approaches 450ms, against the 300ms an
+		// unjittered wait would take.
+		wantGapAtLeast = 400 * time.Millisecond
+	)
+
+	var (
+		mu     sync.Mutex
+		starts []time.Time
+		draws  atomic.Int64
+	)
+	s := New(slog.New(slog.DiscardHandler), &fakeLocker{}, Config{Jitter: jitter})
+	s.random = func() float64 {
+		draws.Add(1)
+		return 0.9999999
+	}
+	if err := s.Register(Job{
+		Name:     "poll",
+		Interval: interval,
+		Run: func(context.Context) error {
+			mu.Lock()
+			starts = append(starts, time.Now())
+			mu.Unlock()
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("Register() error: %v", err)
+	}
+
+	began := time.Now()
+	stop := start(t, s)
+	waitFor(t, "three runs", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(starts) >= 3
+	})
+	if err := stop(); err != nil {
+		t.Errorf("Run() error: %v", err)
+	}
+
+	// One draw for the startup wait, then one per gap: by the time the
+	// third run begins that is exactly three. A loop that skipped the
+	// startup wait would have drawn twice.
+	if got := draws.Load(); got < 3 {
+		t.Errorf("the jitter was drawn %d times before the third run, want at least 3: the startup wait must be jittered too", got)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if got := starts[0].Sub(began); got < wantStartupAtLeast {
+		t.Errorf("the first run began %v after Run started, want at least %v: the startup wait must be jittered, not skipped", got, wantStartupAtLeast)
+	}
+	for i := 1; i < len(starts); i++ {
+		if gap := starts[i].Sub(starts[i-1]); gap < wantGapAtLeast {
+			t.Errorf("run %d began %v after run %d, want at least %v: the wait between runs must be jittered, not the bare interval",
+				i, gap, i-1, wantGapAtLeast)
+		}
+	}
+}
+
 func TestCancellationDuringTheStartupDelayStopsTheJobBeforeItRuns(t *testing.T) {
 	t.Parallel()
 
