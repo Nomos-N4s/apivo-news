@@ -76,10 +76,20 @@ const (
 	// that crashed where the test wanted it to.
 	crashExit = 9
 
-	// schema holds the spike's own tables. It is dropped at the end of the
-	// run: a spike that leaves furniture behind in a shared database is a
-	// spike that breaks the next one.
+	// schema holds the spike's own tables. TestMain drops it before the run
+	// and again after: a spike that leaves furniture behind in a shared
+	// database is a spike that breaks the next one, and one that reuses
+	// furniture it did not build is worse - `CREATE TABLE IF NOT EXISTS`
+	// against a table from an older revision silently tests the old shape.
 	schema = "spike_s2"
+
+	// workerTimeout bounds the crashing child. It is generous next to what
+	// the worker actually does (one commit, or one ledger call) and short
+	// next to any test framework deadline, which is the whole point.
+	workerTimeout = 60 * time.Second
+	// workerWaitDelay bounds how long the parent waits on the child's pipes
+	// after the process itself is gone.
+	workerWaitDelay = 5 * time.Second
 
 	currency = "EUR"
 	// precision is minor units per major unit. Money is integer minor units
@@ -99,7 +109,37 @@ func TestMain(m *testing.M) {
 		runWorker(mode)
 		return // unreachable: runWorker always exits
 	}
-	os.Exit(m.Run())
+	// The schema is torn down around the whole run rather than per test,
+	// because the worker subprocesses write into it too and a per-test drop
+	// would race them.
+	dropSchema("before")
+	code := m.Run()
+	dropSchema("after")
+	os.Exit(code)
+}
+
+// dropSchema removes the spike's schema and everything in it. It is best
+// effort by design: with no DATABASE_URL there is nothing to drop and every
+// test skips anyway, and a teardown that failed the run would turn a tidy-up
+// problem into a spike verdict.
+func dropSchema(when string) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "spike_s2: connecting to drop the schema (%s): %v\n", when, err)
+		return
+	}
+	defer pool.Close()
+
+	if _, err := pool.Exec(ctx, `DROP SCHEMA IF EXISTS `+schema+` CASCADE`); err != nil {
+		fmt.Fprintf(os.Stderr, "spike_s2: dropping the schema (%s): %v\n", when, err)
+	}
 }
 
 // runWorker is the child process. Every path out of it is os.Exit, and the
@@ -155,7 +195,22 @@ func runWorker(mode string) {
 func runWorkerProcess(t *testing.T, mode, key, source, destination string) {
 	t.Helper()
 
-	cmd := exec.Command(os.Args[0])
+	// Bounded, because the worker is deliberately a process that dies badly
+	// and the ways it can die are not all fast. It talks to Postgres and to
+	// the ledger before it exits, so a wedged connection - a blackholed
+	// endpoint, a lock it never gets - would leave CombinedOutput blocked
+	// with nothing to report. Unbounded, that stalls the cashback job to the
+	// package timeout; bounded, it fails here in seconds, naming the mode
+	// that hung.
+	ctx, cancel := context.WithTimeout(context.Background(), workerTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, os.Args[0])
+	// WaitDelay bounds the SECOND half of the problem. Killing the process
+	// does not close pipes an inherited grandchild may still hold, and
+	// CombinedOutput waits on the pipes, not on the process - so without
+	// this, a killed worker can still hang the parent.
+	cmd.WaitDelay = workerWaitDelay
 	cmd.Env = append(os.Environ(),
 		workerModeEnv+"="+mode,
 		workerKeyEnv+"="+key,
@@ -164,6 +219,10 @@ func runWorkerProcess(t *testing.T, mode, key, source, destination string) {
 	)
 	output, err := cmd.CombinedOutput()
 	t.Logf("worker(%s) output:\n%s", mode, output)
+
+	if ctx.Err() != nil {
+		t.Fatalf("worker(%s) did not finish within %s; it hung rather than crashing where it was told to", mode, workerTimeout)
+	}
 
 	if err == nil {
 		t.Fatalf("worker(%s) exited cleanly; it was supposed to crash", mode)
@@ -265,6 +324,10 @@ func connect(t *testing.T) *pgxpool.Pool {
 // production outbox: `public.domain_event` grows its idempotency key in
 // migration 0018, which is another task's work, and a spike that depended on
 // it could not run until that landed.
+//
+// `IF NOT EXISTS` is safe here only because TestMain drops the schema before
+// the run. Without that it would silently adopt a table from an older
+// revision of this file and test a shape nobody wrote.
 func ensureSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	statements := []string{
