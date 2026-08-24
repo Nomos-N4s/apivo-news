@@ -178,9 +178,14 @@ check_cashback() {
     # Loading the overlay IS the decision to run cashback. If that stopped
     # being true, an environment could carry a ledger and serve none of the
     # routes that use it — or, worse, the reverse.
-    printf '%s' "$rendered" | grep -q 'CASHBACK_ENABLED: *"true"' ||
+    #
+    # Matched tolerantly of quoting: `docker compose config` quotes a value
+    # that would otherwise parse as a boolean and leaves a plain word alone,
+    # so "true" arrives quoted and blnk does not. Pinning either form would
+    # make this check a hostage to a YAML emitter's style.
+    printf '%s' "$rendered" | grep -q 'CASHBACK_ENABLED: *"\{0,1\}true' ||
         fail "$env_name cashback: the overlay does not set CASHBACK_ENABLED=true, so the stack would run a ledger with the cashback routes unmounted"
-    printf '%s' "$rendered" | grep -q 'LEDGER_DRIVER: *blnk' ||
+    printf '%s' "$rendered" | grep -q 'LEDGER_DRIVER: *"\{0,1\}blnk' ||
         fail "$env_name cashback: the overlay does not select the blnk ledger driver"
     echo "ok: $env_name enables cashback against the blnk driver"
 
