@@ -47,10 +47,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="$(mktemp -d)"
 FAILURES=0
 
-cleanup() {
-    rm -rf "$WORK"
-}
-trap cleanup EXIT
+# Inline rather than a cleanup function: shellcheck cannot see that a trap
+# calls one, and reports the body as unreachable (SC2317).
+trap 'rm -rf "$WORK"' EXIT
 
 pass() {
     echo "S1 PASS  $1"
