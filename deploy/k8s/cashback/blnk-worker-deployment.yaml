@@ -71,7 +71,7 @@ spec:
             - |
               i=0
               while [ "$i" -lt 60 ]; do
-                if wget -q -O /dev/null http://blnk:5001/health; then
+                if wget -q --no-hsts -O /dev/null http://blnk:5001/health; then
                   echo "ledger is answering; starting the worker"
                   exit 0
                 fi
@@ -80,6 +80,22 @@ spec:
               done
               echo "the ledger did not answer within 120s; refusing to start the worker against a schema that may not exist" >&2
               exit 1
+          env:
+            # GNU wget keeps an HSTS database at $HOME/.wget-hsts and writes
+            # it on exit. With readOnlyRootFilesystem below and no HOME, that
+            # write lands somewhere unwritable - so the probe could fail, or
+            # hang, on a ledger that was answering perfectly, and the worker
+            # would never start while the queue backed up behind it.
+            #
+            # Belt and braces, because this container's whole job is to be
+            # reliable: --no-hsts above turns the database off, and HOME still
+            # points at a writable emptyDir in case any other scratch write
+            # appears.
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests:
               cpu: 10m
