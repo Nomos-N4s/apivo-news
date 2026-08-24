@@ -82,7 +82,19 @@ fi
 # Check 4 — green for the right reason. A suite that reached nothing because
 # it no longer exists would also be green, so the container-keyed tests must
 # be observed SKIPPING, and each skip must say which key it is waiting for.
-go test -count=1 -v ./scripts/spikes/... ./internal/platform/db/ > "$WORK/skips.out" 2>&1 || true
+#
+# The exit status is CAPTURED, not discarded. An earlier revision ended this
+# line with `|| true` and then judged the run by grepping for "--- FAIL",
+# which is a check that cannot fail: a package that does not compile, fails
+# to build or panics in init prints `FAIL <pkg> [build failed]` and `# <pkg>`
+# and never emits a single "--- FAIL" marker, so the spike declared PASS over
+# a suite that had not run at all. This is the evidence job for S3; it fails
+# closed now.
+if go test -count=1 -v ./scripts/spikes/... ./internal/platform/db/ > "$WORK/skips.out" 2>&1; then
+    VERBOSE_STATUS=0
+else
+    VERBOSE_STATUS=$?
+fi
 
 for key in DATABASE_URL BLNK_URL; do
     if grep -q -- "--- SKIP" "$WORK/skips.out" && grep -q "$key is unset" "$WORK/skips.out"; then
@@ -93,10 +105,19 @@ for key in DATABASE_URL BLNK_URL; do
     fi
 done
 
-# Check 5 — and nothing in that verbose run actually failed.
-if grep -q -- "--- FAIL" "$WORK/skips.out"; then
-    fail "check 5: a test failed without containers"
-    grep -E -- "--- FAIL" "$WORK/skips.out" >&2
+# Check 5 — and nothing in that verbose run actually failed, for any of the
+# ways a Go test run can fail.
+#
+# The exit status is the primary signal, because it is the only one that
+# covers every failure mode at once. The grep is kept as a second, narrower
+# net: it names WHICH package went wrong in the output, which a bare status
+# cannot. Both have to be clean.
+if [ "$VERBOSE_STATUS" -ne 0 ]; then
+    fail "check 5: the verbose run exited $VERBOSE_STATUS - the suite did not pass"
+    grep -E -- '^(--- FAIL|FAIL|panic:|# )' "$WORK/skips.out" >&2 || tail -20 "$WORK/skips.out" >&2
+elif grep -qE -- '^(--- FAIL|FAIL|panic:)' "$WORK/skips.out"; then
+    fail "check 5: the verbose run exited 0 but reported a failure - trust the report"
+    grep -E -- '^(--- FAIL|FAIL|panic:|# )' "$WORK/skips.out" >&2
 else
     pass "check 5: no test failed without containers"
 fi
