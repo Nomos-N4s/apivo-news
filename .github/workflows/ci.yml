@@ -294,6 +294,26 @@ jobs:
           NETWORK_DRIVER: fixture
           BLNK_URL: http://127.0.0.1:5001
           REDIS_URL: redis://127.0.0.1:6379
+      # C-1 is the one invariant ADR-0002 moved out of our schema, and the
+      # constitution's mitigation for that is a check that is "a real SQL
+      # query over real rows" and fails loudly. The drill plants an
+      # imbalance in a ledger of its own and requires the check to report
+      # it - so what a green run means is that the check was SHOWN to go red
+      # on a broken ledger, not that it returned no rows. That is the
+      # difference between an assertion and a decoration, and a
+      # non-verbose `go test` swallows the line that records it.
+      #
+      # It runs here rather than in the `go` job because this is the job
+      # with a real ledger beside it: before 0020 the drill could not run at
+      # all where one was installed, which is exactly where it matters.
+      - name: C-1 drill (verbose, for the record)
+        run: go test -count=1 -v -run 'TestLedgerZeroSum' ./internal/platform/db/
+        env:
+          CASHBACK_ENABLED: "true"
+          LEDGER_DRIVER: blnk
+          NETWORK_DRIVER: fixture
+          BLNK_URL: http://127.0.0.1:5001
+          REDIS_URL: redis://127.0.0.1:6379
       - name: Ledger logs (for the record)
         # Always, not on failure only: when a money test passes, what the
         # ledger did while it passed is part of the evidence.
