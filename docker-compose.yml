@@ -157,6 +157,33 @@ services:
       TRANSLATION_INTERVAL: ${TRANSLATION_INTERVAL:-}
       TRANSLATION_ARTICLE_CEILING_MICROUSD: ${TRANSLATION_ARTICLE_CEILING_MICROUSD:-}
       TRANSLATION_MONTHLY_CAP_MICROUSD: ${TRANSLATION_MONTHLY_CAP_MICROUSD:-}
+      # Cashback (ADR-0002, ADR-0003), passed through from the host
+      # environment (or .env) with NO defaults, for the same reason the
+      # translation keys have none: which ledger carries members' money is
+      # a decision, and a default would be one made by accident. Unset
+      # means CASHBACK_ENABLED=false and the cashback routes are not
+      # mounted at all.
+      #
+      # The two shapes that work against this file:
+      #   CASHBACK_ENABLED=true LEDGER_DRIVER=blnk \
+      #     BLNK_URL=http://blnk:5001 NETWORK_DRIVER=fixture
+      #   CASHBACK_ENABLED=true LEDGER_DRIVER=memory NETWORK_DRIVER=fixture
+      # The second needs neither of the services above and is what runs
+      # while Docker is unavailable — with the binary on the host, where
+      # BLNK_URL would instead be http://127.0.0.1:5001.
+      #
+      # BLNK_URL is deliberately not defaulted to the compose service:
+      # setting it beside LEDGER_DRIVER=memory is refused at startup, and a
+      # default would produce that refusal for someone who set neither.
+      CASHBACK_ENABLED: ${CASHBACK_ENABLED:-}
+      LEDGER_DRIVER: ${LEDGER_DRIVER:-}
+      BLNK_URL: ${BLNK_URL:-}
+      BLNK_SECRET_KEY: ${BLNK_SECRET_KEY:-}
+      REDIS_URL: ${REDIS_URL:-}
+      NETWORK_DRIVER: ${NETWORK_DRIVER:-}
+      NETWORK_ACCOUNT_ID: ${NETWORK_ACCOUNT_ID:-}
+      NETWORK_API_KEY: ${NETWORK_API_KEY:-}
+      NETWORK_API_SECRET: ${NETWORK_API_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
