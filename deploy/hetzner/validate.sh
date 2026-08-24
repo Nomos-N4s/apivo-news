@@ -237,6 +237,28 @@ check_cashback() {
         fail "$env_name cashback: a runtime container still chains 'blnk migrate up'; migrations belong to the one-shot owner container"
     echo "ok: $env_name migrates only in the one-shot container"
 
+    # ---------------------------------------------------------------------
+    # The ledger actually CHECKS credentials.
+    #
+    # BLNK_SERVER_SECRET_KEY does nothing on its own. In blnk v0.15.2 the auth
+    # middleware short-circuits before it ever looks at a key:
+    #
+    #   api/middleware/auth.go, Authenticate():
+    #       if err == nil && conf != nil && !conf.Server.Secure {
+    #           // Skip authentication when secure mode is disabled
+    #           c.Next(); return
+    #       }
+    #
+    # `Server.Secure` is BLNK_SERVER_SECURE and is never defaulted, so a
+    # deployment that sets only the secret key ships a ledger that accepts
+    # anything reaching it - while every template and document says otherwise.
+    # That is the exact shape of mistake this file exists to make impossible,
+    # so it is asserted rather than trusted.
+    # ---------------------------------------------------------------------
+    printf '%s' "$rendered" | grep -q 'BLNK_SERVER_SECURE: *"\{0,1\}true' ||
+        fail "$env_name cashback: BLNK_SERVER_SECURE is not true, so Blnk skips authentication entirely and the ledger accepts any request that reaches it - a secret key alone does not gate anything"
+    echo "ok: $env_name runs the ledger with authentication actually enabled"
+
     # Redis is a queue and a cache with no persistence and no source of truth.
     # `noeviction` is what makes that safe: a full Redis must REFUSE a write,
     # visibly, rather than evict a queued transfer and leave no trace.

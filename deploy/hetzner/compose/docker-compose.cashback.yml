@@ -170,6 +170,32 @@ services:
       BLNK_REDIS_DNS: apivo-${APIVO_ENV}-redis:6379
       BLNK_PROJECT_NAME: apivo-cashback
       BLNK_SERVER_PORT: "5001"
+      # THE switch that makes Blnk check credentials at all.
+      #
+      # An earlier revision of this file set BLNK_SERVER_SECRET_KEY and said
+      # that made the ledger "demand a credential". It does not. In blnk
+      # v0.15.2 the key is inert on its own:
+      #
+      #   api/middleware/auth.go, Authenticate():
+      #       if err == nil && conf != nil && !conf.Server.Secure {
+      #           // Skip authentication when secure mode is disabled
+      #           c.Next()
+      #           return
+      #       }
+      #
+      # `Server.Secure` is `BLNK_SERVER_SECURE` (config/config.go), it is
+      # never given a default, so it is false, and Blnk itself logs
+      # "SECURITY: server.secure is false - API authentication is DISABLED"
+      # on every start. Without this line the ledger accepts any request that
+      # reaches it, key or no key.
+      #
+      # It fails CLOSED if the key is missing: secure with an empty
+      # BLNK_SERVER_SECRET_KEY refuses every authenticated route with 401
+      # rather than letting it through, which is the right way round.
+      #
+      # `/health` is unaffected - auth.go skips it BEFORE this check, so the
+      # healthcheck below keeps working with authentication on.
+      BLNK_SERVER_SECURE: "true"
       TZ: Etc/UTC
     networks:
       # `data` for Postgres and Redis; `edge` because staging and production
@@ -241,6 +267,17 @@ services:
     environment:
       BLNK_REDIS_DNS: apivo-${APIVO_ENV}-redis:6379
       BLNK_PROJECT_NAME: apivo-cashback
+      # The worker serves an asynq dashboard at /monitoring on 5004, and
+      # `MetricsAuthHandler(secure, token, ...)` lets everything through when
+      # secure is false - so without this the queue dashboard is open to
+      # anything on the data network. With secure true and no
+      # BLNK_METRICS_BEARER_TOKEN, that handler refuses outright
+      # (api/middleware/middleware.go), which is the state we want: we do not
+      # use the dashboard.
+      #
+      # The worker's own /health is registered directly on its mux and is not
+      # behind that handler, so the healthcheck below is unaffected.
+      BLNK_SERVER_SECURE: "true"
       TZ: Etc/UTC
     networks:
       - edge
