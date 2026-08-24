@@ -46,6 +46,19 @@ type fakeLocker struct {
 	grant func(name string) (bool, error)
 	// releaseErr, when set, is what every Release reports.
 	releaseErr error
+	// releaseBlocks, when set, holds every Release until it is closed. It
+	// stands in for a connection that has stopped answering.
+	releaseBlocks chan struct{}
+
+	// The state of the context Release was handed, sampled at the moment of
+	// the call. The scheduler promises two things about it that nothing
+	// else here can see: that it is detached from the cancelled context, so
+	// a shutdown still sends the unlock, and that it carries a deadline of
+	// its own, so an unresponsive connection cannot hold shutdown open.
+	releaseCtxErr      error
+	releaseDeadline    time.Time
+	releaseHadDeadline bool
+	releaseSampled     bool
 }
 
 // TryLock records and answers one attempt.
@@ -80,13 +93,35 @@ type fakeLock struct {
 	name   string
 }
 
-// Release records the release and reports the locker's configured error.
-func (l *fakeLock) Release(context.Context) error {
+// Release records the release, samples the context it was handed, and reports
+// the locker's configured error. The context is sampled rather than kept: what
+// the assertions need is its state at the moment of the call, and a context
+// read later would have moved on.
+func (l *fakeLock) Release(ctx context.Context) error {
 	l.locker.mu.Lock()
 	l.locker.released = append(l.locker.released, l.name)
+	l.locker.releaseCtxErr = ctx.Err()
+	l.locker.releaseDeadline, l.locker.releaseHadDeadline = ctx.Deadline()
+	l.locker.releaseSampled = true
 	err := l.locker.releaseErr
+	blocks := l.locker.releaseBlocks
 	l.locker.mu.Unlock()
+
+	if blocks != nil {
+		select {
+		case <-blocks:
+		case <-ctx.Done():
+		}
+	}
 	return err
+}
+
+// releaseContext reports what Release was handed, and whether it was called at
+// all.
+func (l *fakeLocker) releaseContext() (ctxErr error, deadline time.Time, hadDeadline, sampled bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.releaseCtxErr, l.releaseDeadline, l.releaseHadDeadline, l.releaseSampled
 }
 
 // errCapacity is the refusal a locker under test reports at startup.
@@ -762,6 +797,113 @@ func TestAReleaseFailureIsSurvivedAndTheScheduleContinues(t *testing.T) {
 	waitFor(t, "the job to run despite failing releases", func() bool { return runs.Load() >= 3 })
 	if err := stop(); err != nil {
 		t.Errorf("Run() error: %v", err)
+	}
+}
+
+// TestReleaseRunsOnAContextDetachedFromTheCancelledOne asserts the promise
+// that makes a graceful shutdown safe. The release is deliberately not given
+// the scheduler's context: that context is already cancelled by the time a
+// shutdown reaches here, and a cancelled context means the unlock is never
+// sent, so the lock would be freed only when Postgres eventually reaped the
+// backend - and until then the job would be stopped fleet-wide.
+func TestReleaseRunsOnAContextDetachedFromTheCancelledOne(t *testing.T) {
+	t.Parallel()
+
+	const releaseTimeout = 250 * time.Millisecond
+
+	entered := make(chan struct{})
+	var once sync.Once
+	locker := &fakeLocker{}
+	s := newTestScheduler(locker, Config{ShutdownGrace: 30 * time.Second, ReleaseTimeout: releaseTimeout})
+	if err := s.Register(Job{
+		Name:     "poll",
+		Interval: time.Hour,
+		Run: func(ctx context.Context) error {
+			once.Do(func() { close(entered) })
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}); err != nil {
+		t.Fatalf("Register() error: %v", err)
+	}
+	stop := start(t, s)
+
+	select {
+	case <-entered:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the job never started")
+	}
+	before := time.Now()
+	if err := stop(); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	ctxErr, deadline, hadDeadline, sampled := locker.releaseContext()
+	if !sampled {
+		t.Fatal("Release was never called; a cancelled run must still release its lock")
+	}
+	if ctxErr != nil {
+		t.Errorf("Release was handed a context already ended with %v, want a live one: the release must not inherit the cancellation it is cleaning up after", ctxErr)
+	}
+	if !hadDeadline {
+		t.Fatal("Release was handed a context with no deadline: an unresponsive connection would then hold shutdown open until the grace expired")
+	}
+	if got := deadline.Sub(before); got <= 0 || got > releaseTimeout+time.Second {
+		t.Errorf("Release's deadline is %v away, want it inside the configured %v", got, releaseTimeout)
+	}
+}
+
+// TestAReleaseThatBlocksDoesNotOutlastItsDeadline is the other half: the
+// deadline has to do something. A release that never answers must cost its
+// timeout and no more, rather than wedging the job's loop until the shutdown
+// grace runs out.
+func TestAReleaseThatBlocksDoesNotOutlastItsDeadline(t *testing.T) {
+	t.Parallel()
+
+	const (
+		releaseTimeout = 100 * time.Millisecond
+		shutdownGrace  = 2 * time.Second
+	)
+
+	blocked := make(chan struct{})
+	// Any release still waiting when the test ends is let go; the deadline
+	// is what the assertions are about, not this.
+	defer close(blocked)
+
+	ran := make(chan struct{})
+	var once sync.Once
+	locker := &fakeLocker{releaseBlocks: blocked}
+	s := newTestScheduler(locker, Config{ShutdownGrace: shutdownGrace, ReleaseTimeout: releaseTimeout})
+	if err := s.Register(Job{
+		Name:     "poll",
+		Interval: time.Millisecond,
+		Run: func(context.Context) error {
+			once.Do(func() { close(ran) })
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("Register() error: %v", err)
+	}
+	stop := start(t, s)
+
+	select {
+	case <-ran:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the job never ran")
+	}
+
+	began := time.Now()
+	err := stop()
+	elapsed := time.Since(began)
+
+	if err != nil {
+		t.Errorf("Run() = %v, want nil: a release that will not answer must not fail the shutdown", err)
+	}
+	// Comfortably under the grace: without a deadline on the release
+	// context the loop would still be inside Release when the grace
+	// expired, and Run would report ErrShutdownTimeout instead.
+	if elapsed > shutdownGrace/2 {
+		t.Errorf("shutdown took %v with a blocking release, want well under the %v grace: the release deadline must bound it", elapsed, shutdownGrace)
 	}
 }
 
