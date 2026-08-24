@@ -15,9 +15,20 @@ before its implementation lands.
 - Base path `/api/v1/cashback`. JSON, UTF-8. Errors are RFC 9457
   problem+json.
 - Auth: `Authorization: Bearer <Supabase JWT>` on **every** endpoint below —
-  there is no anonymous cashback surface (FR-023). Operator endpoints
-  additionally require the operator role, enforced again by the database on
-  write.
+  there is no anonymous cashback surface (FR-023).
+- **The operator role does not exist yet.** Migration 0002 constrains
+  `account.role` to `check (role in ('reader', 'editor'))`, so the authority
+  these `/ops/*` endpoints need is currently unrepresentable. **Migration
+  `0019_operator_role`** extends that constraint to
+  `('reader', 'editor', 'operator')` and adds the database enforcement:
+  - a `BEFORE INSERT` trigger on `cashback.payout` requiring
+    `approved_by` to hold the `operator` role — the direct analogue of
+    `article_insert_guard` for editors, and it reads the role
+    **`FOR SHARE`**, exactly as 0002 does, so a concurrent demotion cannot
+    slip past it (the PR #48 lesson);
+  - an extension of `account_role_guard` so an operator who has approved a
+    payout cannot be silently demoted out of that authority.
+  The HTTP role check mirrors the database rule; it never replaces it.
 - Pagination: `limit` (default 20, max 100) + opaque `cursor`; lists return
   `{ "items": [...], "next_cursor": string|null }`.
 - **Money is always** `{ "minor": <integer>, "currency": "EUR" }`. No

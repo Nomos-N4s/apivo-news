@@ -64,8 +64,24 @@ Germany-wide), three rate bands including one with exclusions and one
 without Greek copy, and opts the given account in.
 
 Provisioning an account is unchanged from the news quickstart: the
-`account.id` must equal the Supabase Auth user id. An operator additionally
-needs the operator role — the same role mechanism the editorial gate uses.
+`account.id` must equal the Supabase Auth user id.
+
+An operator additionally needs `account.role = 'operator'`. **That value
+only exists once migration `0019_operator_role` has run** — before it,
+`account.role` is constrained to `reader|editor` and the update is rejected
+by the database, which is the correct behaviour, not a bug:
+
+```bash
+make db-up && make migrate
+```
+
+```sql
+update account set role = 'operator' where id = '<supabase-auth-user-id>';
+```
+
+A payout approved by a `reader` or an `editor` is rejected by
+`payout_insert_guard`, not merely by the HTTP layer — see
+[data-model.md](data-model.md) §2.10.
 
 ---
 
