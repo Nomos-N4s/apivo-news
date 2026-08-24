@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"strconv"
 )
@@ -618,7 +619,14 @@ func (a *Amount) UnmarshalJSON(data []byte) error {
 	if err := dec.Decode(&wire); err != nil {
 		return fmt.Errorf("%w: %w", ErrMalformedJSON, err)
 	}
-	if dec.More() {
+	// Everything after the first document must be whitespace, and only a
+	// second Decode proves it. Decoder.More() answers a narrower question -
+	// "is another VALUE coming?" - so a stray closing delimiter (`}`, `]`)
+	// after a valid object reads as "no more values" and a malformed body
+	// would be accepted. Requiring io.EOF rejects both a second document and
+	// trailing syntax errors. This is the same rule the request-body decoders
+	// in editorial and account apply, for the same reason.
+	if err := dec.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
 		return fmt.Errorf("%w: trailing content after the amount", ErrMalformedJSON)
 	}
 

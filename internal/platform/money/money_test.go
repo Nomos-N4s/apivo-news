@@ -1225,6 +1225,29 @@ func TestUnmarshalJSON(t *testing.T) {
 	}
 }
 
+func TestUnmarshalJSONAcceptsSurroundingWhitespace(t *testing.T) {
+	t.Parallel()
+
+	// Whitespace is the one thing allowed to surround the object, so the check
+	// for trailing content must not become a check for trailing bytes. Called
+	// directly, because json.Unmarshal trims the value before the method sees
+	// it and would prove nothing about the method itself.
+	for _, in := range []string{
+		"{\"minor\":7,\"currency\":\"EUR\"}\n\t  ",
+		"  \n{\"minor\":7,\"currency\":\"EUR\"}",
+		"\t {\"minor\":7,\"currency\":\"EUR\"} \n",
+	} {
+		var got money.Amount
+		if err := got.UnmarshalJSON([]byte(in)); err != nil {
+			t.Errorf("UnmarshalJSON(%q) returned error: %v", in, err)
+			continue
+		}
+		if want := (money.Amount{Minor: 7, Currency: eur}); got != want {
+			t.Errorf("UnmarshalJSON(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
 func TestUnmarshalJSONRejects(t *testing.T) {
 	t.Parallel()
 
@@ -1253,6 +1276,14 @@ func TestUnmarshalJSONRejects(t *testing.T) {
 		{name: "an array", in: `[1234,"EUR"]`, wantErr: money.ErrMalformedJSON},
 		{name: "truncated JSON", in: `{"minor":1234,`, wantErr: money.ErrMalformedJSON},
 		{name: "a second amount trailing the first", in: `{"minor":1,"currency":"EUR"} {"minor":2,"currency":"EUR"}`, wantErr: money.ErrMalformedJSON},
+		{name: "a second amount with nothing between them", in: `{"minor":1,"currency":"EUR"}{"minor":2,"currency":"EUR"}`, wantErr: money.ErrMalformedJSON},
+		// A stray closing delimiter is the case a Decoder.More() check waves
+		// through: it asks whether another VALUE is coming, and a `}` is not
+		// the start of one, so a malformed body reads as a complete amount.
+		{name: "a stray closing brace", in: `{"minor":1,"currency":"EUR"}}`, wantErr: money.ErrMalformedJSON},
+		{name: "a stray closing bracket", in: `{"minor":1,"currency":"EUR"}]`, wantErr: money.ErrMalformedJSON},
+		{name: "a stray comma", in: `{"minor":1,"currency":"EUR"},`, wantErr: money.ErrMalformedJSON},
+		{name: "trailing garbage", in: `{"minor":1,"currency":"EUR"} not json`, wantErr: money.ErrMalformedJSON},
 	}
 
 	for _, tc := range tests {
