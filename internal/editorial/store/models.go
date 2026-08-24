@@ -265,6 +265,20 @@ type CashbackOffer struct {
 	DeeplinkTemplate string
 }
 
+// A member's opt-in to cashback (FR-001). Leaving closes the row; it never deletes the financial record built on it (FR-003), because entries, payouts and evidence outlive participation by law and by accounting.
+type CashbackParticipation struct {
+	AccountID pgtype.UUID
+	BrandID   string
+	OptedInAt pgtype.Timestamptz
+	// Which version of the terms this member accepted (FR-002). Never blank: "they agreed to something" is not a record anyone can rely on later.
+	TermsVersion string
+	// active or left. Leaving is a status change and a timestamp, never a deletion.
+	Status string
+	LeftAt pgtype.Timestamptz
+	// The currency this member's wallet is denominated in, as an explicit ISO-4217 code (C-6). Configuration supplies the value; the schema carries no default, because a currency default is a brand decision (ADR-0004).
+	DefaultCurrency string
+}
+
 // One outbound money movement. C-4: approved_by is NOT NULL, so an unapproved payout is unrepresentable. C-5: the idempotency key is generated from the request, so a retry cannot mint a new one and the unique constraint turns a double submit into a 23505.
 type CashbackPayout struct {
 	ID pgtype.UUID
