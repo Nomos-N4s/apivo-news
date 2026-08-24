@@ -23,6 +23,12 @@ type cashbackFixtures struct {
 	merchantNetworkID string
 	placeID           string
 	offerID           string
+
+	// Set by seedCashbackEvidence only.
+	clickID    string
+	clickRef   string
+	externalID string
+	networkTxn string
 }
 
 func seedCashback(t *testing.T, tx pgx.Tx) cashbackFixtures {
@@ -109,6 +115,48 @@ func seedCashback(t *testing.T, tx pgx.Tx) cashbackFixtures {
 	).Scan(&f.offerID)
 	if err != nil {
 		t.Fatalf("seed offer: %v", err)
+	}
+
+	return f
+}
+
+// seedCashbackEvidence extends the catalogue chain with the evidence a
+// credit rests on: a tracked click, and one confirmed network report
+// carrying that click's reference. Both tables are immutable, so a test
+// that needs a different report inserts a superseding row rather than
+// editing this one.
+func seedCashbackEvidence(t *testing.T, tx pgx.Tx) cashbackFixtures {
+	t.Helper()
+	ctx := context.Background()
+	f := seedCashback(t, tx)
+
+	// 32 hex characters: comfortably past the 22 the click_ref check
+	// requires, and drawn from crypto/rand like the real reference.
+	f.clickRef = randomSuffix(t) + randomSuffix(t)
+	err := tx.QueryRow(ctx,
+		`insert into cashback.click
+		     (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot, context_digest)
+		 values ($1, $2, $3, $4::jsonb, 5000, 'ctx-digest') returning id`,
+		f.clickRef, f.accountID, f.offerID,
+		`{"rate_kind":"percent","rate_bps":400,"member_share_bps":5000}`,
+	).Scan(&f.clickID)
+	if err != nil {
+		t.Fatalf("seed click: %v", err)
+	}
+
+	f.externalID = "txn-" + f.suffix
+	err = tx.QueryRow(ctx,
+		`insert into cashback.network_transaction
+		     (network_id, network_account_id, external_id, click_ref, status_raw, status,
+		      sale_amount_minor, commission_minor, currency, transacted_at,
+		      query_window_start, query_window_end, raw_payload)
+		 values ($1, $2, $3, $4, 'approved', 'confirmed', 10000, 500, 'EUR', now(),
+		         now() - interval '1 day', now(), '{"id":"txn"}'::jsonb)
+		 returning id`,
+		f.networkID, f.networkAccountID, f.externalID, f.clickRef,
+	).Scan(&f.networkTxn)
+	if err != nil {
+		t.Fatalf("seed network_transaction: %v", err)
 	}
 
 	return f
