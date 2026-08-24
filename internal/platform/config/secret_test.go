@@ -14,6 +14,12 @@ import (
 // appears anywhere, a print path is not covered.
 const leaked = "sk_live_do_not_print_me"
 
+// sprintf is fmt.Sprintf behind an any-typed argument. The point of the
+// table below is to exercise the verbs a careless caller would reach for,
+// including "%s" on a Stringer - which staticcheck's S1025 would otherwise
+// insist be rewritten as the very call the test is proving redundant.
+func sprintf(format string, v any) string { return fmt.Sprintf(format, v) }
+
 func TestSecretNeverPrints(t *testing.T) {
 	t.Parallel()
 
@@ -31,14 +37,14 @@ func TestSecretNeverPrints(t *testing.T) {
 	}{
 		{name: "String", got: secret.String()},
 		{name: "GoString", got: secret.GoString()},
-		{name: "verb s", got: fmt.Sprintf("%s", secret)},
-		{name: "verb q", got: fmt.Sprintf("%q", secret)},
-		{name: "verb v", got: fmt.Sprintf("%v", secret)},
-		{name: "verb plus v", got: fmt.Sprintf("%+v", secret)},
-		{name: "verb sharp v", got: fmt.Sprintf("%#v", secret)},
-		{name: "inside a struct, verb v", got: fmt.Sprintf("%v", holder)},
-		{name: "inside a struct, verb plus v", got: fmt.Sprintf("%+v", holder)},
-		{name: "inside a struct, verb sharp v", got: fmt.Sprintf("%#v", holder)},
+		{name: "verb s", got: sprintf("%s", secret)},
+		{name: "verb q", got: sprintf("%q", secret)},
+		{name: "verb v", got: sprintf("%v", secret)},
+		{name: "verb plus v", got: sprintf("%+v", secret)},
+		{name: "verb sharp v", got: sprintf("%#v", secret)},
+		{name: "inside a struct, verb v", got: sprintf("%v", holder)},
+		{name: "inside a struct, verb plus v", got: sprintf("%+v", holder)},
+		{name: "inside a struct, verb sharp v", got: sprintf("%#v", holder)},
 		{name: "error wrapping it", got: fmt.Errorf("calling with %s", secret).Error()},
 	}
 

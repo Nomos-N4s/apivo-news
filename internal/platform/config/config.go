@@ -69,6 +69,11 @@ type Config struct {
 	// which provider, at what prices, under which budget. See
 	// TranslationConfig for the no-defaults stance.
 	Translation TranslationConfig
+	// Cashback is the cashback product's configuration: whether it is
+	// mounted at all, which ledger carries the money, which affiliate
+	// network reports the commission. See CashbackConfig for why its
+	// stance on incompleteness is stricter than Translation's.
+	Cashback CashbackConfig
 }
 
 // TranslationConfig is the TRANSLATION_* environment, parsed but not
@@ -213,6 +218,17 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.Translation = translation
+	cashback, err := parseCashback(getenv)
+	if err != nil {
+		return Config{}, err
+	}
+	// Completeness is checked after Env is resolved: two of the rules -
+	// no unauthenticated ledger, no in-process ledger - only apply in
+	// production.
+	if err := requireCashbackComplete(cashback, cfg.Env); err != nil {
+		return Config{}, err
+	}
+	cfg.Cashback = cashback
 	return cfg, nil
 }
 
