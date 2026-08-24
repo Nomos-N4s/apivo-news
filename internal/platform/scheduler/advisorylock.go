@@ -28,6 +28,18 @@ import (
 // the next interval retries.
 const DefaultAcquireTimeout = 5 * time.Second
 
+const (
+	// DefaultConnsPerJob is how many pool connections one running job is
+	// assumed to need: the one its lock is held on for the whole run, and
+	// one for the work it does under that lock. A job given a pool it does
+	// not otherwise query can lower it to 1.
+	DefaultConnsPerJob = 2
+	// DefaultReservedConns is how many connections the capacity check
+	// leaves untouched for the rest of the application - request handlers,
+	// chiefly - after every job has taken its share.
+	DefaultReservedConns = 2
+)
+
 // lockNamespace is the first key of every scheduler lock. Advisory locks in
 // the two-key space are disjoint from those in the one-key space, and the
 // namespace separates scheduler jobs from any other two-key user, so a job
@@ -49,8 +61,9 @@ type AdvisoryLocker struct {
 }
 
 var (
-	_ Locker = (*AdvisoryLocker)(nil)
-	_ Lock   = (*advisoryLock)(nil)
+	_ Locker          = (*AdvisoryLocker)(nil)
+	_ CapacityChecker = (*AdvisoryLocker)(nil)
+	_ Lock            = (*advisoryLock)(nil)
 )
 
 // LockerConfig tunes the locker. The zero value is usable: every field falls
@@ -60,6 +73,13 @@ type LockerConfig struct {
 	// before reporting that it could not get one. Zero or negative means
 	// DefaultAcquireTimeout.
 	AcquireTimeout time.Duration
+	// ConnsPerJob is how many pool connections CheckCapacity budgets for
+	// one running job. Zero or negative means DefaultConnsPerJob.
+	ConnsPerJob int
+	// ReservedConns is how many connections CheckCapacity leaves for the
+	// rest of the application. Zero or negative means
+	// DefaultReservedConns; reserving none is deliberately not offered.
+	ReservedConns int
 }
 
 // withDefaults returns cfg with every unset or out-of-range field replaced by
@@ -67,6 +87,12 @@ type LockerConfig struct {
 func (c LockerConfig) withDefaults() LockerConfig {
 	if c.AcquireTimeout <= 0 {
 		c.AcquireTimeout = DefaultAcquireTimeout
+	}
+	if c.ConnsPerJob <= 0 {
+		c.ConnsPerJob = DefaultConnsPerJob
+	}
+	if c.ReservedConns <= 0 {
+		c.ReservedConns = DefaultReservedConns
 	}
 	return c
 }
@@ -78,6 +104,31 @@ func (c LockerConfig) withDefaults() LockerConfig {
 // top, so the pool must be sized for the jobs registered against it.
 func NewAdvisoryLocker(pool *pgxpool.Pool, cfg LockerConfig) *AdvisoryLocker {
 	return &AdvisoryLocker{pool: pool, cfg: cfg.withDefaults()}
+}
+
+// CheckCapacity reports whether the pool can seat concurrent jobs: each needs
+// a connection to hold its lock on for the whole run and one to do its work
+// with, and the rest of the application needs what is left.
+//
+// Scheduler.Run calls it before it starts anything, which is the point. A pool
+// that cannot seat its jobs does not fail cleanly at runtime - pgxpool.Acquire
+// waits rather than failing - so without this check the symptom is jobs and
+// request handlers deadlocking against each other under load, a long way from
+// the configuration that caused it.
+func (l *AdvisoryLocker) CheckCapacity(concurrent int) error {
+	if concurrent <= 0 {
+		return nil
+	}
+	// int64 throughout: MaxConns is an int32, and the product must not be
+	// able to wrap into a number that looks like it fits.
+	need := int64(concurrent)*int64(l.cfg.ConnsPerJob) + int64(l.cfg.ReservedConns)
+	have := int64(l.pool.Config().MaxConns)
+	if have < need {
+		return fmt.Errorf(
+			"scheduler: the connection pool allows MaxConns=%d, but %d jobs need %d: %d per job (one to hold its lock, one for its work) plus %d reserved for the rest of the application; raise pool_max_conns on the pool or register fewer jobs",
+			have, concurrent, need, l.cfg.ConnsPerJob, l.cfg.ReservedConns)
+	}
+	return nil
 }
 
 // TryLock takes the advisory lock for name without waiting on the lock itself,

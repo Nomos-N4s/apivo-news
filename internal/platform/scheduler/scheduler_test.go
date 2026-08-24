@@ -89,6 +89,26 @@ func (l *fakeLock) Release(context.Context) error {
 	return err
 }
 
+// errCapacity is the refusal a locker under test reports at startup.
+var errCapacity = errors.New("the pool cannot seat these jobs")
+
+// capacityLocker is a fakeLocker that also implements CapacityChecker, so the
+// startup check has something to ask. fakeLocker deliberately does not
+// implement it, which keeps the other tests on the path where a locker has no
+// capacity to report.
+type capacityLocker struct {
+	*fakeLocker
+	err error
+	// asked records the job count Run passed in.
+	asked atomic.Int64
+}
+
+// CheckCapacity records the question and gives the configured answer.
+func (l *capacityLocker) CheckCapacity(concurrent int) error {
+	l.asked.Store(int64(concurrent))
+	return l.err
+}
+
 // newTestScheduler builds a scheduler with its jitter pinned to the lowest
 // draw, so the first run is immediate and every wait is the interval less the
 // full jitter swing. The tests below assert on schedules, never on draws.
@@ -324,6 +344,68 @@ func TestRegisterAndRunAreRefusedOnceRunning(t *testing.T) {
 	}
 	if err := stop(); err != nil {
 		t.Errorf("Run() error: %v", err)
+	}
+}
+
+func TestRunRefusesToStartWhenTheLockerCannotSeatItsJobs(t *testing.T) {
+	t.Parallel()
+
+	var runs atomic.Int64
+	locker := &capacityLocker{fakeLocker: &fakeLocker{}, err: errCapacity}
+	s := newTestScheduler(locker, Config{})
+	for _, name := range []string{"network-poll", "ledger-zero-sum"} {
+		if err := s.Register(Job{
+			Name:     name,
+			Interval: time.Millisecond,
+			Run: func(context.Context) error {
+				runs.Add(1)
+				return nil
+			},
+		}); err != nil {
+			t.Fatalf("Register(%s) error: %v", name, err)
+		}
+	}
+
+	// A live context: Run must refuse and return on its own, not wait to be
+	// cancelled. A misconfiguration should stop the deployment.
+	if err := s.Run(context.Background()); !errors.Is(err, errCapacity) {
+		t.Errorf("Run() with a locker that cannot seat its jobs = %v, want errCapacity", err)
+	}
+	if got := locker.asked.Load(); got != 2 {
+		t.Errorf("CheckCapacity() was asked about %d jobs, want 2: it must be told what is registered", got)
+	}
+	if got := runs.Load(); got != 0 {
+		t.Errorf("%d jobs ran, want 0: nothing may start when the pool cannot seat them", got)
+	}
+	if taken, _ := locker.counts(); taken != 0 {
+		t.Errorf("%d locks were taken, want 0", taken)
+	}
+}
+
+func TestRunStartsWhenTheLockerReportsCapacity(t *testing.T) {
+	t.Parallel()
+
+	var runs atomic.Int64
+	locker := &capacityLocker{fakeLocker: &fakeLocker{}}
+	s := newTestScheduler(locker, Config{})
+	if err := s.Register(Job{
+		Name:     "network-poll",
+		Interval: time.Millisecond,
+		Run: func(context.Context) error {
+			runs.Add(1)
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("Register() error: %v", err)
+	}
+	stop := start(t, s)
+
+	waitFor(t, "the job to run", func() bool { return runs.Load() >= 1 })
+	if err := stop(); err != nil {
+		t.Errorf("Run() error: %v", err)
+	}
+	if got := locker.asked.Load(); got != 1 {
+		t.Errorf("CheckCapacity() was asked about %d jobs, want 1", got)
 	}
 }
 

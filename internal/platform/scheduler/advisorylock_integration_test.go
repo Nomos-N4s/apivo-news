@@ -20,6 +20,7 @@ package scheduler_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
@@ -128,6 +129,80 @@ func TestTryLockReportsAPoolItCannotDrawFrom(t *testing.T) {
 	}
 	if held || lock != nil {
 		t.Errorf("TryLock() on a closed pool = lock %v, held %v; want no lock at all", lock, held)
+	}
+}
+
+// unconnectedPool builds a pool with a given MaxConns and never connects it:
+// pgxpool parses and configures eagerly but dials lazily, and CheckCapacity
+// only reads the configuration. So this needs no database either.
+func unconnectedPool(t *testing.T, maxConns int) *pgxpool.Pool {
+	t.Helper()
+	pool, err := pgxpool.New(context.Background(),
+		fmt.Sprintf("postgres://u:p@192.0.2.1:5432/x?connect_timeout=1&pool_max_conns=%d", maxConns))
+	if err != nil {
+		t.Fatalf("building a pool with MaxConns=%d: %v", maxConns, err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// TestCheckCapacity needs no database: it is arithmetic over the pool's
+// configuration, and it is what Scheduler.Run asks before it starts anything.
+// The case that matters is the second one - the pgx default of four
+// connections cannot seat two jobs - because that is the deployment this
+// scheduler would otherwise deadlock.
+func TestCheckCapacity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		maxConns int
+		jobs     int
+		cfg      scheduler.LockerConfig
+		wantErr  bool
+	}{
+		{name: "no jobs need no connections", maxConns: 1, jobs: 0},
+		{name: "the default pool seats one job exactly", maxConns: 4, jobs: 1},
+		{name: "the default pool cannot seat two jobs", maxConns: 4, jobs: 2, wantErr: true},
+		{name: "a pool sized for three jobs seats them", maxConns: 8, jobs: 3},
+		{name: "one connection short is still short", maxConns: 7, jobs: 3, wantErr: true},
+		{
+			name:     "a pool the jobs do not otherwise query needs one each",
+			maxConns: 5,
+			jobs:     3,
+			cfg:      scheduler.LockerConfig{ConnsPerJob: 1},
+		},
+		{
+			name:     "reserving more leaves less for the jobs",
+			maxConns: 8,
+			jobs:     3,
+			cfg:      scheduler.LockerConfig{ReservedConns: 4},
+			wantErr:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			locker := scheduler.NewAdvisoryLocker(unconnectedPool(t, tt.maxConns), tt.cfg)
+			err := locker.CheckCapacity(tt.jobs)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("CheckCapacity(%d) with MaxConns=%d: want an error, got nil", tt.jobs, tt.maxConns)
+				}
+				// The numbers are the whole value of the error: whoever
+				// reads it at deploy time has to know what to set.
+				for _, want := range []string{fmt.Sprintf("MaxConns=%d", tt.maxConns), fmt.Sprintf("%d jobs", tt.jobs)} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("CheckCapacity() error = %q, want it to mention %q", err, want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("CheckCapacity(%d) with MaxConns=%d = %v, want nil", tt.jobs, tt.maxConns, err)
+			}
+		})
 	}
 }
 

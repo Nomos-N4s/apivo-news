@@ -110,6 +110,20 @@ type Locker interface {
 	TryLock(ctx context.Context, name string) (Lock, bool, error)
 }
 
+// CapacityChecker is an optional interface a Locker may implement when its
+// locks draw on a resource that can run out - a connection pool, in the case
+// of AdvisoryLocker, which holds one connection for the whole of every run.
+//
+// Run asks before it starts anything, so a pool too small for the jobs
+// registered against it fails the deployment at startup, with the numbers in
+// the error, instead of deadlocking under load at three in the morning.
+type CapacityChecker interface {
+	// CheckCapacity reports an error, naming the numbers, when the locker
+	// could not hold concurrent locks at once and still leave the rest of
+	// the application enough of the resource to work with.
+	CheckCapacity(concurrent int) error
+}
+
 // Job is one unit of scheduled work.
 type Job struct {
 	// Name identifies the job in logs and names its fleet-wide lock. It must
@@ -219,7 +233,12 @@ func (s *Scheduler) Register(job Job) error {
 // Run drives every registered job until ctx ends, then waits up to the
 // configured shutdown grace for the runs still in flight.
 //
-// It returns nil when every job stopped within the grace and
+// It starts nothing at all when the locker implements CapacityChecker and
+// reports that it cannot seat the registered jobs: that error is returned
+// immediately, so a pool too small for its jobs stops the deployment rather
+// than deadlocking it later.
+//
+// Otherwise it returns nil when every job stopped within the grace and
 // ErrShutdownTimeout when one did not. Calling it twice returns ErrRunning; a
 // scheduler with no jobs simply waits for ctx, so a deployment that has
 // disabled every job still starts.
@@ -235,6 +254,15 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		jobs = append(jobs, job)
 	}
 	s.mu.Unlock()
+
+	// Before anything is started, and before the zero-jobs path, so that a
+	// misconfiguration is refused rather than discovered by a job that
+	// blocks forever waiting for a resource the others are holding.
+	if checker, ok := s.locker.(CapacityChecker); ok {
+		if err := checker.CheckCapacity(len(jobs)); err != nil {
+			return err
+		}
+	}
 
 	if len(jobs) == 0 {
 		s.log.WarnContext(ctx, "scheduler started with no jobs registered")
