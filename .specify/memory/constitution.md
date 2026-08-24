@@ -1,20 +1,37 @@
 <!--
 Sync Impact Report
-- Version change: (template) → 1.0.0
-- Modified principles: all placeholders replaced (initial ratification)
-- Added sections: Core Principles (I–VIII), Architecture Constraints,
-  Alpha Scope & Delivery Rules, Governance
-- Removed sections: none (template structure preserved)
-- Follow-up TODOs: none
+- Version change: 1.0.0 → 1.1.0 (MINOR: principles added, constraints
+  expanded; none removed or redefined)
+- Added principles: IX. Money Is Double Entry, Evidence-Backed and Exactly
+  Once (invariants C-1 to C-7)
+- Added sections: "Products" and "Rebrandability" under Architecture
+  Constraints; "Cashback alpha" under Product Scope & Delivery Rules
+- Modified sections:
+  * "Alpha Scope & Delivery Rules" → "Product Scope & Delivery Rules",
+    split per product; the news alpha text is carried verbatim
+  * Architecture Constraints: the single-binary / no-microservices line now
+    reads "a modular monolith per product domain, composed into one binary";
+    a self-hosted open-source ledger is permitted as a sidecar with the C-1
+    trade named explicitly
+  * Product Scope: cashback moves from "out of scope" to a named second
+    product with its own scope block; the remaining ecosystem mini-apps
+    stay out of scope
+  * Governance: founder-level open questions extended with the cashback
+    questions Q1–Q9; Q2 recorded as decided
+- Removed sections: none
+- Follow-up TODOs: founder answers to cashback questions Q1, Q3–Q9
 -->
 
-# Apivo News (epiloYES) Constitution
+# Apivo Constitution
 
-Apivo News builds epiloYES: a multilingual local newspaper for Greek
-communities abroad. A Greek speaker in Munich reads Munich news in Greek.
-The business carries real legal exposure around content licensing; this
-constitution exists to make the protections against that exposure
-structural rather than habitual.
+Apivo is a super app for Greek communities abroad. Its first surface is
+**epiloYES**: a multilingual local newspaper — a Greek speaker in Munich
+reads Munich news in Greek. Its second is **cashback**: members earn a share
+of the affiliate commission their purchases generate.
+
+Both carry real legal exposure — content licensing for news, money handling
+for cashback. This constitution exists to make the protections against that
+exposure structural rather than habitual.
 
 ## Core Principles
 
@@ -87,6 +104,9 @@ tags), `place` is a self-referencing hierarchy, and articles and readers
 relate to places many-to-many. No code, schema or UI may fuse language
 and place into one locale value.
 
+This principle applies to every product. The cashback catalogue takes
+`lang` and `place` as separate parameters for the same reason.
+
 ### VIII. Database-Enforced Invariants over Application Discipline
 
 Application code is never trusted with a legal guarantee. Every
@@ -96,76 +116,207 @@ illegal state, by SQLSTATE, against a real Postgres. Coverage numbers
 are necessary but not sufficient; a passing gate without these tests
 means nothing.
 
+Where an adopted component takes an invariant outside our own schema, the
+exception must be named in an ADR, the invariant must be verified
+continuously by an automated check that fails loudly, and an in-repository
+implementation that would restore full enforcement must be kept working.
+See Principle IX, C-1.
+
+### IX. Money Is Double Entry, Evidence-Backed and Exactly Once (NON-NEGOTIABLE)
+
+Cashback owes real money to real people out of money a third party says it
+will pay. The same discipline that defends the news product against
+licensing exposure defends the cashback product against money exposure.
+Seven invariants, enforced by the database, each with a test asserting the
+DATABASE rejects the illegal state:
+
+- **C-1 (Double entry)**: A member balance is never stored as a settable
+  number. It exists only as the sum of immutable ledger postings, and every
+  posting belongs to a transfer whose postings sum to zero per currency.
+- **C-2 (Attribution)**: A cashback credit cannot exist without a reference
+  to exactly one network transaction record and, through it, at most one
+  click record. Credits with no evidence are unrepresentable.
+- **C-3 (Immutable network evidence)**: Network transaction records, click
+  records and imported statements reject UPDATE, DELETE and TRUNCATE. A
+  status change is a new superseding record, never an edit.
+- **C-4 (No payout without a named approver)**: A payout row cannot exist
+  without a non-null named human approver. The row IS the approval, exactly
+  as `article.approved_by` is for news.
+- **C-5 (Exactly-once money movement)**: Every outbound payout carries a
+  unique idempotency key with a database uniqueness constraint, derived
+  deterministically from the withdrawal request. A retry cannot create a
+  second payout.
+- **C-6 (Integer money)**: All monetary amounts are integer minor units with
+  an explicit ISO-4217 currency code. Floating point in a money column, or a
+  posting without a currency, is rejected by the schema. No decimal ever
+  crosses an API boundary.
+- **C-7 (Traceability)**: For any member payout, one query returns the full
+  chain — payout, approver, ledger postings, cashback entries, network
+  transaction evidence, click, and the offer rate at click time — in under
+  five minutes.
+
+**C-1 exception, named as required by Principle VIII**: the double-entry
+guarantee is carried by the adopted open-source ledger rather than by a
+constraint in our own schema (ADR-0002). It is verified continuously by a
+zero-sum check over real rows, that check failing is treated as an incident,
+no member-facing number is ever computed outside the ledger, and a Postgres
+implementation of the ledger port is kept working as the exit route.
+
 ## Architecture Constraints
 
 Decided through an ADR process; implement, do not re-litigate. Concrete
-blockers stop work and go to the founder.
+blockers stop work and go to the founder. Records live in `docs/adr/`.
 
 - Frontend: **Astro** (v6+), TypeScript strict, `@astrojs/node` adapter.
-- Backend: **Go** — a single binary, modular monolith. No microservices.
+- Backend: **Go** — a modular monolith per product domain, composed into
+  one binary for the alpha. **No microservices.** Any future extraction of
+  a product into its own deployable must be a deployment change, not a
+  redesign, and only against the split triggers documented in ADR-0001.
 - Database: **Supabase** (Postgres), EU region.
 - Auth: Supabase Auth; Astro uses the JS SDK, Go validates the JWT.
 - Types are generated from the Postgres schema — `sqlc` for Go,
   `supabase gen types` for TypeScript. **Never hand-write types on both
   sides.** CI fails on drift between schema and generated code.
-- Module boundaries under `internal/` (`ingestion`, `translation`,
-  `editorial`, `content`, `identity`, `platform`): `platform/` may be
-  imported by anyone; no other module imports a sibling's internals —
-  modules communicate through interfaces defined by the consumer, wired
-  in `cmd`. An architecture test fails the build on violations.
-- Deployment is container-first: Cloudflare Containers today (EU
-  jurisdiction), Kubernetes-ready by construction. Nothing
-  platform-specific leaks into application code; platform bindings stay
-  behind interfaces in `internal/platform`.
-- The LLM translation adapter sits behind an interface, swappable in
-  under five engineer-days, with a per-article cost ceiling and a
-  monthly cap that halts the pipeline rather than overspending.
+- Module boundaries under `internal/` — `platform/` may be imported by
+  anyone; `identity/` may be imported by any product domain; no other
+  module imports a sibling's internals. Modules communicate through
+  interfaces defined by the consumer, wired in `cmd`. An architecture test
+  fails the build on violations.
+- Deployment is container-first: Cloudflare Containers and the Hetzner
+  compose host today (EU jurisdiction), Kubernetes-ready by construction.
+  Nothing platform-specific leaks into application code; platform bindings
+  stay behind interfaces in `internal/platform`.
+- Every external dependency sits behind a consumer-defined interface,
+  swappable in under five engineer-days, proved by a second working
+  implementation in the repository. This applies to the LLM translation
+  adapter (with a per-article cost ceiling and a monthly cap that halts the
+  pipeline rather than overspending), the ledger, affiliate network
+  adapters and payout rails alike.
+- A **self-hosted open-source ledger may run as a sidecar service** beside
+  the binary, with its supporting infrastructure, where it carries a
+  correctness burden we would otherwise write ourselves. This is the single
+  permitted exception to one-process-per-application, it must be
+  Apache/MIT-class licensed with no user or revenue cap, and the invariant
+  it takes out of our schema must be handled per Principle IX, C-1.
 
-## Alpha Scope & Delivery Rules
+### Products
 
-In scope (v1.0.0-alpha): Greek and German; Munich as reader locale;
-Greek national and Munich local sources; RSS/Atom feeds only — no
-scraping; text only — no images; translated headline and extract
-linking back to the source — not full-text translation; human approval
-on every item; full provenance; reader front page and article pages,
-locale-scoped, attribution rendered; registration and consent capture
-in the schema (UI only if time allows).
+- A **product domain** owns its own Postgres schema. Shared reference data
+  (`account`, `place`, `language`, `domain_event`) is the only thing both
+  products read.
+- **No foreign key crosses a product schema boundary.** A migration lint
+  fails the build on one.
+- **A product domain may not import another product domain, at any depth.**
+  Cross-product communication is asynchronous only, through the
+  transactional outbox into the append-only `domain_event` stream. There is
+  no synchronous call from one product into another.
+- Adding a product means adding a schema, a domain package and event
+  subscriptions — never modifying another product.
 
-Out of scope — do not build, do not scaffold, do not leave TODOs for:
-images, scraping, full-text translation, search, comments, newsletter,
-social login, the ebest.gr user migration, cashback, price comparison,
-fuel saver, loyalty, reviews, TV and radio listings, any ecosystem
-mini-app. Individual sources are upgraded to full text only with
-recorded written permission; every new source defaults to
-`extract_and_link`.
+### Rebrandability
+
+- No product name, legal entity, domain, colour, logo, support address or
+  currency default is hardcoded in application code, templates or
+  migrations. All of it resolves from one brand configuration, and a CI
+  lint fails on a literal outside it.
+- All member-facing text lives in translation catalogues keyed by BCP-47
+  primary language subtag.
+- A fixture brand renders every member-facing surface in CI. Rebrandability
+  is a test that goes red, not a claim in a document.
+- Simultaneous multi-tenancy is **not** built. Forward compatibility costs
+  one brand id on the records where a tenant boundary would fall, and no
+  global brand singleton.
+
+## Product Scope & Delivery Rules
+
+### epiloYES (news) v1.0.0-alpha
+
+In scope: Greek and German; Munich as reader locale; Greek national and
+Munich local sources; RSS/Atom feeds only — no scraping; text only — no
+images; translated headline and extract linking back to the source — not
+full-text translation; human approval on every item; full provenance;
+reader front page and article pages, locale-scoped, attribution rendered;
+registration and consent capture in the schema (UI only if time allows).
+
+Individual sources are upgraded to full text only with recorded written
+permission; every new source defaults to `extract_and_link`.
 
 Cut order under time pressure: registration UI → locale switching →
-editorial polish. **Never cut: provenance capture, the approval gate.**
+editorial polish. **Never cut**: provenance capture, the approval gate.
 Those cannot be added afterwards.
 
-Quality bar: Go minimum 90% statement coverage and TypeScript minimum
-80%, both CI-enforced; integration tests run against a real Postgres in
-CI; table-driven tests in Go; strict `golangci-lint` and clean
-`go vet`; every exported Go symbol documented.
+### Cashback alpha
+
+In scope: affiliate publishing with revenue share — merchant catalogue with
+place scope and per-language copy; tracked click-out with a click-time rate
+snapshot; polled ingestion of network transactions as immutable evidence;
+attribution to clicks; a member wallet whose totals derive from ledger
+postings; withdrawal with a named approver and exactly-once payout;
+operator queues for unattributed transactions, held entries, reconciliation
+differences and withdrawal approvals; reconciliation against network
+statements.
+
+Member balances are a **claim on a future rebate**, not stored value: no
+member-to-member transfers, no spending inside Apivo, payouts only to a
+destination the member owns and has verified. *(Founder decision,
+2026-08-24.)*
+
+Polling is the only thing that creates a credit. A webhook or push
+notification may shorten latency by triggering a targeted poll; it never
+moves money on its own.
+
+Cut order under time pressure: operator polish → catalogue breadth →
+reconciliation automation. **Never cut**: the C-1..C-7 invariant suite,
+evidence immutability, the approval gate on payouts, the exactly-once
+payout tests. Those cannot be added afterwards.
+
+### Out of scope for both products
+
+Do not build, do not scaffold, do not leave TODOs for: images, scraping,
+full-text translation, search, comments, newsletter, social login, the
+ebest.gr user migration, price comparison, fuel saver, loyalty points and
+tiers, reviews, TV and radio listings, referral bonuses, in-app spending of
+balances, member-to-member transfers, browser extension, mobile apps,
+card-linked offers, in-store cashback, multi-currency wallets, automated
+fraud scoring, simultaneous multi-brand tenancy, or any further ecosystem
+mini-app.
+
+### Quality bar (both products)
+
+Go minimum 90% statement coverage and TypeScript minimum 80%, both
+CI-enforced; integration tests run against a real Postgres in CI;
+table-driven tests in Go; strict `golangci-lint` and clean `go vet`; every
+exported Go symbol documented. For cashback, a green coverage number
+without a passing C-1..C-7 invariant suite means nothing.
 
 ## Governance
 
 This constitution supersedes all other practices in this repository.
 
-- Founder-level open questions (indexing/crawler posture, data
-  retention periods, LLM translation provider, per-source usage rules)
-  are decided by the founder alone. Specs, plans and code must not
-  silently resolve them; until answered, the recorded safe defaults
-  apply (block all crawlers at the edge in one place; default sources
-  to `extract_and_link`).
+- Founder-level open questions are decided by the founder alone. Specs,
+  plans and code must not silently resolve them; until answered, the
+  recorded safe defaults apply.
+  - **News**: indexing/crawler posture (default: block all crawlers at the
+    edge in one place), data retention periods (default: no automated
+    deletion), LLM translation provider, per-source usage rules (default:
+    `extract_and_link`).
+  - **Cashback**: which affiliate networks to join (Q1), clawback posture
+    after payout (Q3, default: absorb the loss), revenue share and rounding
+    (Q4), payout rails and threshold (Q5), KYC and sanctions posture (Q6),
+    tax treatment and member reporting (Q7), click-log retention (Q8),
+    repository and brand naming (Q9).
+  - **Decided**: the regulatory posture on member balances (Q2) — the
+    rebate-claim posture recorded under "Cashback alpha", founder decision
+    of 2026-08-24, for the alpha/MVP. A change to stored value is a new
+    founder decision taken with legal advice.
 - Amendments arrive as a signed, sole-authored PR that updates this
   document with a Sync Impact Report and a semantic version bump:
   MAJOR for removed or redefined principles, MINOR for new or
   materially expanded principles, PATCH for clarifications.
 - Every PR review verifies compliance: invariants keep their
   database-level rejection tests, boundaries hold, scope stays inside
-  the alpha, and commit hygiene is intact.
-- Complexity must justify itself against the alpha scope; when in
+  the declared product scope, and commit hygiene is intact.
+- Complexity must justify itself against the declared scope; when in
   doubt, the simpler structure that preserves the invariants wins.
 
-**Version**: 1.0.0 | **Ratified**: 2026-08-14 | **Last Amended**: 2026-08-14
+**Version**: 1.1.0 | **Ratified**: 2026-08-14 | **Last Amended**: 2026-08-24
