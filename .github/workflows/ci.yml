@@ -185,7 +185,7 @@ jobs:
       # Blnk's queue and cache. It holds no source of truth (ADR-0002), so
       # nothing here persists and nothing needs to.
       redis:
-        image: redis:8.10.1-alpine
+        image: redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a
         ports:
           - 6379:6379
         options: >-
@@ -194,10 +194,17 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
-      # Pinned exactly, and pinned in one place. The compose file pins the
-      # same version; the two drifting would mean the stack proved here is
-      # not the stack anyone runs.
-      BLNK_IMAGE: jerryenebeli/blnk:0.15.2
+      # Pinned by DIGEST, in the form `repo:tag@sha256:...` — the tag is
+      # documentation, the digest is the contract. A tag is mutable, and this
+      # job is the evidence that the ledger behaves: proving it against
+      # whatever `0.15.2` happened to point at that morning would make the
+      # evidence unreproducible, and the ledger is the one component here
+      # that can silently produce a wrong number rather than an error.
+      #
+      # Same digest as docker-compose.yml, deploy/hetzner and deploy/k8s. The
+      # four drifting would mean the stack proved here is not the stack that
+      # runs anywhere.
+      BLNK_IMAGE: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
       DATABASE_URL: postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
       # Blnk runs on the host network, so it reaches the service containers
       # through their published ports rather than by service name.
