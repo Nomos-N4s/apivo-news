@@ -22,8 +22,13 @@ migrations 0001–0009 are untouched.
 Rules enforced by a migration lint (ADR-0001):
 
 - No foreign key crosses from `cashback` into a news table.
-- `cashback` may reference `public.account`, `public.place` and
-  `public.language` — the shared reference data — and nothing else.
+- `cashback` may reference `public.account`, `public.place`,
+  `public.language` and `public.domain_event` — the shared reference data
+  named by constitution "Products" and ADR-0001 — and nothing else. All
+  four, not three: an event cursor in `cashback` referencing the append-only
+  `domain_event` stream is a legitimate reference to shared data, and the
+  earlier three-item wording here contradicted both higher-authority
+  documents.
 - Nothing writes to `blnk` except Blnk itself.
 
 ## 2. Entities
