@@ -436,7 +436,20 @@ func (s Support) validate(hosts []string, report reporter) {
 			report("support.%s %q is not an email address", field, address)
 			continue
 		}
-		if !own[match[1]] {
+		// The domain is held to the same rule as every other host in a
+		// brand definition, and it is checked BEFORE ownership so the
+		// error blames the right thing. A mail domain is case-insensitive
+		// on the wire, but a brand file is authored and the brand-literal
+		// lint greps for these strings: a domain written two ways is a
+		// domain the lint can only find one way. Lower-casing it here
+		// instead would hide a shouted domain rather than fix it, and
+		// leave the file disagreeing with itself.
+		domain := match[1]
+		if !hostPattern.MatchString(domain) {
+			report("support.%s domain %q is not a bare lower-case host name", field, domain)
+			continue
+		}
+		if !own[domain] {
 			report("support.%s %q is not on one of the brand's own domains", field, address)
 		}
 	}

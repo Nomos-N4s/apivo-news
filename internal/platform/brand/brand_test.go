@@ -327,6 +327,21 @@ func TestValidateNamesEveryBrokenRule(t *testing.T) {
 			want:   "is not on one of the brand's own domains",
 		},
 		{
+			// A mail domain is case-insensitive on the wire, so this
+			// address works - and it must still be refused, because a
+			// domain written two ways is one the brand-literal lint can
+			// only find one way. The error has to say THAT rather than
+			// claim the domain belongs to somebody else.
+			name:   "support domain is shouted",
+			mutate: func(b *brand.Brand) { b.Support.General = "hej@ZEPHYRA.EXAMPLE" },
+			want:   `support.general domain "ZEPHYRA.EXAMPLE" is not a bare lower-case host name`,
+		},
+		{
+			name:   "support domain is not a host at all",
+			mutate: func(b *brand.Brand) { b.Support.Privacy = "dataskydd@zephyra..example" },
+			want:   `support.privacy domain "zephyra..example" is not a bare lower-case host name`,
+		},
+		{
 			name:   "asset path is an absolute url",
 			mutate: func(b *brand.Brand) { b.Assets.Logo = "https://cdn.example/logo.svg" },
 			want:   "assets.logo",
