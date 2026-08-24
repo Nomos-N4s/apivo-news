@@ -1,9 +1,15 @@
 package money_test
 
 import (
+	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"math"
 	"math/big"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1109,5 +1115,251 @@ func TestSplitPostsTheRemainderToTheHouse(t *testing.T) {
 	}
 	if !transfer.IsZero() {
 		t.Errorf("the transfer's postings total %v, want zero; a transfer that does not balance is not postable", transfer)
+	}
+}
+
+func TestMarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		a    money.Amount
+		want string
+	}{
+		{name: "ordinary amount", a: money.Amount{Minor: 1234, Currency: eur}, want: `{"minor":1234,"currency":"EUR"}`},
+		{name: "negative", a: money.Amount{Minor: -1234, Currency: gbp}, want: `{"minor":-1234,"currency":"GBP"}`},
+		{name: "zero", a: money.Amount{Minor: 0, Currency: eur}, want: `{"minor":0,"currency":"EUR"}`},
+		{
+			name: "a whole number of major units is still minor units",
+			a:    money.Amount{Minor: 100, Currency: eur},
+			want: `{"minor":100,"currency":"EUR"}`,
+		},
+		{
+			name: "largest representable",
+			a:    money.Amount{Minor: math.MaxInt64, Currency: eur},
+			want: `{"minor":9223372036854775807,"currency":"EUR"}`,
+		},
+		{
+			name: "smallest representable",
+			a:    money.Amount{Minor: math.MinInt64, Currency: eur},
+			want: `{"minor":-9223372036854775808,"currency":"EUR"}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := json.Marshal(tc.a)
+			if err != nil {
+				t.Fatalf("json.Marshal(%v) returned error: %v", tc.a, err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("json.Marshal(%v) = %s, want %s", tc.a, got, tc.want)
+			}
+			// The whole point: no decimal ever crosses an API boundary. Read
+			// back as raw JSON so the assertion is about the number itself
+			// rather than about the letters in a currency code.
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(got, &fields); err != nil {
+				t.Fatalf("re-reading %s returned error: %v", got, err)
+			}
+			minor := string(fields["minor"])
+			if strings.ContainsAny(minor, ".eE") {
+				t.Errorf("json.Marshal(%v) encoded the units as %s, which carries a decimal or an exponent", tc.a, minor)
+			}
+		})
+	}
+}
+
+func TestMarshalJSONRejectsAnAmountWithNoCurrency(t *testing.T) {
+	t.Parallel()
+
+	// Units on the wire without a currency are a number that is not money, so
+	// there is nothing to encode.
+	if _, err := json.Marshal(money.Amount{Minor: 1234}); !errors.Is(err, money.ErrInvalidCurrency) {
+		t.Errorf("json.Marshal of an amount with no currency error = %v, want ErrInvalidCurrency", err)
+	}
+	if _, err := json.Marshal(money.Amount{Minor: 1234, Currency: "eur"}); !errors.Is(err, money.ErrInvalidCurrency) {
+		t.Errorf("json.Marshal of a malformed currency error = %v, want ErrInvalidCurrency", err)
+	}
+}
+
+func TestUnmarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want money.Amount
+	}{
+		{name: "ordinary amount", in: `{"minor":1234,"currency":"EUR"}`, want: money.Amount{Minor: 1234, Currency: eur}},
+		{name: "negative", in: `{"minor":-1234,"currency":"GBP"}`, want: money.Amount{Minor: -1234, Currency: gbp}},
+		{name: "zero", in: `{"minor":0,"currency":"EUR"}`, want: money.Amount{Minor: 0, Currency: eur}},
+		{name: "fields in either order", in: `{"currency":"EUR","minor":7}`, want: money.Amount{Minor: 7, Currency: eur}},
+		{name: "whitespace", in: "{ \"minor\" : 7 , \"currency\" : \"EUR\" }", want: money.Amount{Minor: 7, Currency: eur}},
+		{
+			name: "largest representable",
+			in:   `{"minor":9223372036854775807,"currency":"EUR"}`,
+			want: money.Amount{Minor: math.MaxInt64, Currency: eur},
+		},
+		{
+			name: "smallest representable",
+			in:   `{"minor":-9223372036854775808,"currency":"EUR"}`,
+			want: money.Amount{Minor: math.MinInt64, Currency: eur},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got money.Amount
+			if err := json.Unmarshal([]byte(tc.in), &got); err != nil {
+				t.Fatalf("json.Unmarshal(%s) returned error: %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("json.Unmarshal(%s) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUnmarshalJSONRejects(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		in      string
+		wantErr error
+	}{
+		{name: "a decimal", in: `{"minor":12.34,"currency":"EUR"}`, wantErr: money.ErrNotMinorUnits},
+		{name: "a decimal that happens to be whole", in: `{"minor":1234.0,"currency":"EUR"}`, wantErr: money.ErrNotMinorUnits},
+		{name: "an exponent", in: `{"minor":1.234e3,"currency":"EUR"}`, wantErr: money.ErrNotMinorUnits},
+		{name: "a negative decimal", in: `{"minor":-0.01,"currency":"EUR"}`, wantErr: money.ErrNotMinorUnits},
+		{name: "units past the int64 range", in: `{"minor":99999999999999999999,"currency":"EUR"}`, wantErr: money.ErrNotMinorUnits},
+		{name: "no minor units at all", in: `{"currency":"EUR"}`, wantErr: money.ErrNotMinorUnits},
+		{name: "null minor units", in: `{"minor":null,"currency":"EUR"}`, wantErr: money.ErrNotMinorUnits},
+		{name: "units in quotes", in: `{"minor":"1234","currency":"EUR"}`, wantErr: money.ErrNotMinorUnits},
+		{name: "a decimal in quotes", in: `{"minor":"12.34","currency":"EUR"}`, wantErr: money.ErrNotMinorUnits},
+		{name: "no currency", in: `{"minor":1234}`, wantErr: money.ErrInvalidCurrency},
+		{name: "an empty currency", in: `{"minor":1234,"currency":""}`, wantErr: money.ErrInvalidCurrency},
+		{name: "a lowercase currency", in: `{"minor":1234,"currency":"eur"}`, wantErr: money.ErrInvalidCurrency},
+		{name: "a currency symbol", in: `{"minor":1234,"currency":"€"}`, wantErr: money.ErrInvalidCurrency},
+		{name: "a field this type does not define", in: `{"minor":1234,"currency":"EUR","major":12}`, wantErr: money.ErrMalformedJSON},
+		{name: "null", in: `null`, wantErr: money.ErrMalformedJSON},
+		{name: "a formatted price as a string", in: `"12.34 EUR"`, wantErr: money.ErrMalformedJSON},
+		{name: "a bare number", in: `1234`, wantErr: money.ErrMalformedJSON},
+		{name: "an array", in: `[1234,"EUR"]`, wantErr: money.ErrMalformedJSON},
+		{name: "truncated JSON", in: `{"minor":1234,`, wantErr: money.ErrMalformedJSON},
+		{name: "a second amount trailing the first", in: `{"minor":1,"currency":"EUR"} {"minor":2,"currency":"EUR"}`, wantErr: money.ErrMalformedJSON},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Called directly rather than through json.Unmarshal so that
+			// trailing content reaches the method rather than being caught by
+			// the standard decoder first.
+			before := money.Amount{Minor: 999, Currency: gbp}
+			got := before
+			err := got.UnmarshalJSON([]byte(tc.in))
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("UnmarshalJSON(%s) error = %v, want %v", tc.in, err, tc.wantErr)
+			}
+			if got != before {
+				t.Errorf("UnmarshalJSON(%s) left the amount as %v; a rejected decode must not half-write one", tc.in, got)
+			}
+		})
+	}
+}
+
+func TestJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	// The wire shape is what the ledger port passes around, so it is exercised
+	// inside a struct as well as on its own.
+	type posting struct {
+		Account string       `json:"account"`
+		Amount  money.Amount `json:"amount"`
+	}
+
+	amounts := []money.Amount{
+		{Minor: 0, Currency: eur},
+		{Minor: 1, Currency: eur},
+		{Minor: -1, Currency: gbp},
+		{Minor: 8025, Currency: eur},
+		{Minor: math.MaxInt64, Currency: eur},
+		{Minor: math.MinInt64, Currency: gbp},
+	}
+
+	for _, want := range amounts {
+		encoded, err := json.Marshal(posting{Account: "member", Amount: want})
+		if err != nil {
+			t.Fatalf("json.Marshal of a posting holding %v returned error: %v", want, err)
+		}
+		var got posting
+		if err := json.Unmarshal(encoded, &got); err != nil {
+			t.Fatalf("json.Unmarshal(%s) returned error: %v", encoded, err)
+		}
+		if got.Amount != want {
+			t.Errorf("round trip of %v produced %v", want, got.Amount)
+		}
+	}
+}
+
+func TestPackageHasNoFloatPath(t *testing.T) {
+	t.Parallel()
+
+	// C-6 says floating point in a money position is unrepresentable. In Go
+	// that is only true while nobody adds a float, so it is asserted here
+	// rather than trusted: the package's own source is parsed and any float
+	// type, float literal, float conversion or decimal dependency fails the
+	// build. The source is parsed without comments, because this package
+	// writes about floats at length and the rule is about code.
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("reading the package directory: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	scanned := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" {
+			continue
+		}
+		file, err := parser.ParseFile(fset, entry.Name(), nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", entry.Name(), err)
+		}
+		scanned++
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch node := n.(type) {
+			case *ast.Ident:
+				if node.Name == "float32" || node.Name == "float64" {
+					t.Errorf("%s: %s has no place in a money package", fset.Position(node.Pos()), node.Name)
+				}
+			case *ast.BasicLit:
+				if node.Kind == token.FLOAT || node.Kind == token.IMAG {
+					t.Errorf("%s: %s is a floating point literal", fset.Position(node.Pos()), node.Value)
+				}
+			case *ast.SelectorExpr:
+				if strings.Contains(node.Sel.Name, "Float") {
+					t.Errorf("%s: %s is a floating point conversion", fset.Position(node.Pos()), node.Sel.Name)
+				}
+			case *ast.ImportSpec:
+				if strings.Contains(node.Path.Value, "decimal") {
+					t.Errorf("%s: %s is a decimal dependency, and int64 minor units already represent money exactly",
+						fset.Position(node.Pos()), node.Path.Value)
+				}
+			}
+			return true
+		})
+	}
+
+	if scanned < 2 {
+		t.Fatalf("scanned %d Go files; expected at least the package and its tests", scanned)
 	}
 }

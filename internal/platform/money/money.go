@@ -29,6 +29,8 @@
 package money
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -60,6 +62,15 @@ var (
 	// including the zero value of [Rounding]. There is no default mode: the
 	// direction money rounds in is a policy decision, not a language default.
 	ErrInvalidRounding = errors.New("money: rounding mode not specified")
+	// ErrMalformedJSON reports JSON that is not the object an Amount encodes
+	// to: not an object at all, null, carrying fields this type does not
+	// define, or followed by anything.
+	ErrMalformedJSON = errors.New("money: malformed JSON amount")
+	// ErrNotMinorUnits reports JSON minor units that are not a whole number -
+	// a decimal, an exponent, or a number in quotes. This is where C-6 is held
+	// at the API boundary: "no decimal ever crosses an API boundary" has to be
+	// a rejection on the way in, not only a promise on the way out.
+	ErrNotMinorUnits = errors.New("money: minor units must be a whole number")
 )
 
 // currencyCodeLen is the length of an ISO-4217 alphabetic code, and of the
@@ -544,4 +555,87 @@ func (a Amount) String() string {
 		return units + " <no currency>"
 	}
 	return units + " " + string(a.Currency)
+}
+
+// wireAmount is the JSON shape of an Amount.
+//
+// The minor units are kept as the raw JSON literal rather than decoded into an
+// int64, so that this package decides what a whole number is instead of
+// inheriting whatever the standard decoder happens to tolerate in a given
+// release. A quoted number, a trailing ".0" and an exponent are each a caller
+// thinking in major units, and each is rejected here by reading the literal
+// the sender actually wrote.
+type wireAmount struct {
+	Minor    json.RawMessage `json:"minor"`
+	Currency string          `json:"currency"`
+}
+
+// MarshalJSON encodes the amount as {"minor":1234,"currency":"EUR"} - an
+// integer count of minor units and the code they are denominated in.
+//
+// It is never a decimal. The frontend receives units and a currency and
+// formats them for a locale; nothing between here and there has to agree on
+// how many decimal places a currency has, and no JSON parser gets the chance
+// to widen the number into a float on the way.
+//
+// An amount with no valid currency does not encode at all. Emitting units
+// without a currency would put a number that is not money onto the wire.
+func (a Amount) MarshalJSON() ([]byte, error) {
+	if err := a.Validate(); err != nil {
+		return nil, err
+	}
+	// The currency is three uppercase ASCII letters by the check above and the
+	// units are digits, so neither needs escaping and the object can be built
+	// directly. That also guarantees the number is emitted as an integer
+	// literal rather than through anything that could reformat it.
+	out := make([]byte, 0, 32)
+	out = append(out, `{"minor":`...)
+	out = strconv.AppendInt(out, a.Minor, 10)
+	out = append(out, `,"currency":"`...)
+	out = append(out, a.Currency...)
+	out = append(out, `"}`...)
+	return out, nil
+}
+
+// UnmarshalJSON decodes the object [Amount.MarshalJSON] produces, and rejects
+// everything else.
+//
+// Rejection is the point. A decimal, an exponent, a trailing ".0" or a number
+// in quotes all fail with an error wrapping [ErrNotMinorUnits], because each
+// of them is a caller that thinks in major units and would otherwise have its
+// misunderstanding silently rounded into a balance. Unknown fields, a JSON
+// null and trailing content fail too: an amount is exactly this object, and a
+// null money field belongs to a pointer, not to a value that would decode as
+// zero of no currency.
+func (a *Amount) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return fmt.Errorf("%w: null is not an amount", ErrMalformedJSON)
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var wire wireAmount
+	if err := dec.Decode(&wire); err != nil {
+		return fmt.Errorf("%w: %w", ErrMalformedJSON, err)
+	}
+	if dec.More() {
+		return fmt.Errorf("%w: trailing content after the amount", ErrMalformedJSON)
+	}
+
+	// ParseInt in base ten accepts digits and a leading minus and nothing
+	// else, which is precisely the set of JSON literals that are a whole
+	// number of minor units.
+	literal := string(bytes.TrimSpace(wire.Minor))
+	minor, err := strconv.ParseInt(literal, 10, 64)
+	if err != nil {
+		return fmt.Errorf("%w: %s", ErrNotMinorUnits, strconv.Quote(literal))
+	}
+	currency, err := ParseCurrency(wire.Currency)
+	if err != nil {
+		return err
+	}
+
+	a.Minor = minor
+	a.Currency = currency
+	return nil
 }
