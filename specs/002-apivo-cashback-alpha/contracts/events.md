@@ -37,6 +37,37 @@ state change, or commits a state change without its event.
   published for one release cycle.
 - Consumers **must** ignore unknown fields and unknown types.
 
+### Where each envelope field lives
+
+The existing `public.domain_event` table is `(id, type, payload,
+occurred_at)` — it predates this contract and carries none of the routing
+fields. **Migration `0018_domain_event_envelope` adds them as real
+columns**, rather than burying them in `payload`, so the dispatcher can
+index and deduplicate on them:
+
+| Envelope field | Storage | Notes |
+|---|---|---|
+| `event_id` | existing `domain_event.id` | renamed only in the JSON projection; the column keeps its name |
+| `type` | existing `domain_event.type` | unchanged |
+| `occurred_at` | existing `domain_event.occurred_at` | unchanged |
+| `payload` | existing `domain_event.payload` | carries **only** the event's own data — never envelope fields |
+| `version` | **new** `version int not null default 1` | |
+| `producer` | **new** `producer text not null default 'news'` | the default is what every pre-existing row was |
+| `subject` | **new** `subject uuid` | nullable; ordering guarantees are per `(type, subject)` |
+| `idempotency_key` | **new** `idempotency_key text` | nullable, with a partial unique index `where idempotency_key is not null` — this is what makes redelivery a no-op |
+
+The migration is additive: `ADD COLUMN` with a constant default does not
+rewrite the table and does not fire the row-level immutability triggers, so
+`domain_event` stays append-only and existing rows stay untouched. The two
+existing writers (`internal/ingestion/store.go` and
+`internal/editorial/queries/approval.sql`) keep working unchanged — they
+insert `(type, payload)` and take `producer='news'`, `version=1` by default.
+Backfilling them with explicit values is **not** in scope; the defaults are
+correct for every row they wrote.
+
+Envelope fields never appear inside `payload`. A producer that writes one
+there is a defect, and the dispatcher test asserts it.
+
 ## Published by `identity` (consumed by both products)
 
 | Type | Payload | Notes |
