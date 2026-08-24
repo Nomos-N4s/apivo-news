@@ -118,6 +118,23 @@ services:
   # migrate, and a server answering before its tables exist would fail per
   # request instead of refusing to start. `service_completed_successfully`
   # below is what makes the ordering real rather than hopeful.
+  #
+  # It is ALSO what keeps the reconciler's rollout gate working, and that is
+  # worth stating because it looks like a hazard and is not. The reconciler
+  # runs `compose up -d --wait`, which normally waits for every service to be
+  # running or healthy - a container that exits would never satisfy that.
+  # Compose special-cases exactly this shape (pkg/compose/start.go):
+  #
+  #   // getDependencyCondition checks if service is depended on by other
+  #   // services with service_completed_successfully condition, and applies
+  #   // that condition instead, or --wait will never finish waiting for
+  #   // one-shot containers
+  #
+  # So because `blnk` and `blnk-worker` below depend on this service with
+  # `service_completed_successfully`, `--wait` waits for it to COMPLETE rather
+  # than to keep running. Present since compose v2.17.0. Remove that
+  # dependency and the rollout gate breaks as well as the ordering, which is
+  # the other reason validate.sh asserts it.
   blnk-migrate:
     image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
     container_name: apivo-${APIVO_ENV}-blnk-migrate
