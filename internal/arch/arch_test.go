@@ -20,9 +20,11 @@ import (
 const (
 	modulePath     = "github.com/Nomos-N4s/apivo-news"
 	internalPrefix = modulePath + "/internal/"
-	// cmdPrefix is the composition root. Wiring flows one way: cmd knows
-	// every domain, and no domain knows cmd.
-	cmdPrefix = modulePath + "/cmd/"
+	// cmdRoot is the composition root. Wiring flows one way: cmd knows every
+	// domain, and no domain knows cmd. It is the root itself, not a prefix
+	// with a trailing slash, because cmd/ may hold a package of its own and
+	// a rule that only matches the subtree would not see it.
+	cmdRoot = modulePath + "/cmd"
 	// platformModule is the shared bottom layer: any module may import it,
 	// and it may import no sibling.
 	platformModule = "platform"
@@ -190,9 +192,15 @@ func TestModuleBoundaryRules(t *testing.T) {
 			imports: []string{internalPrefix + "cashback/networks/awin"},
 		},
 		{
-			name:    "a domain importing the composition root",
+			name:    "a domain importing a binary under the composition root",
 			file:    "cashback/ops/queues.go",
-			imports: []string{cmdPrefix + "apivo"},
+			imports: []string{cmdRoot + "/apivo"},
+			want:    "must not import the composition root",
+		},
+		{
+			name:    "a domain importing the composition root itself",
+			file:    "cashback/ops/queues.go",
+			imports: []string{cmdRoot},
 			want:    "must not import the composition root",
 		},
 		{
@@ -418,7 +426,7 @@ func checkLayers(fsys fs.FS) error {
 // may import importPath, and states why not when it may not. Imports of
 // anything outside this module are never the architecture test's business.
 func violates(ownerPkg, importPath string) (string, bool) {
-	if strings.HasPrefix(importPath, cmdPrefix) {
+	if within(importPath, cmdRoot) {
 		return fmt.Sprintf("%s must not import the composition root (import %q); cmd wires the domains together and nothing under internal reaches back into the wiring", ownerPkg, importPath), true
 	}
 	if !strings.HasPrefix(importPath, internalPrefix) {
