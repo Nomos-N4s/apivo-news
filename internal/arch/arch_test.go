@@ -169,6 +169,18 @@ func TestModuleBoundaryRules(t *testing.T) {
 			want:    `domain "content" must not import domain "contentious"`,
 		},
 		{
+			name:    "a test file importing another product domain",
+			file:    "cashback/wallet/balance_test.go",
+			imports: []string{internalPrefix + "content/store"},
+			want:    `domain "cashback" must not import domain "content"`,
+		},
+		{
+			name:    "a test helper in one domain reaching into another",
+			file:    "editorial/testsupport/fixtures_test.go",
+			imports: []string{internalPrefix + "ingestion"},
+			want:    `domain "editorial" must not import domain "ingestion"`,
+		},
+		{
 			name:    "sub-packages under one domain's networks directory",
 			file:    "cashback/networks/evidence.go",
 			imports: []string{internalPrefix + "cashback/networks/store", internalPrefix + "cashback/networks/awin"},
