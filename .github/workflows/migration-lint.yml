@@ -1,0 +1,56 @@
+name: migration-lint
+
+# The product schema boundary, checked on every pull request (issue #186).
+#
+# ADR-0001 splits the products by Postgres schema and forbids any foreign key
+# crossing that boundary. Postgres will happily create one, so the boundary
+# holds only while something refuses the migration that would cross it -
+# before it is applied anywhere, because a foreign key is trivial to write and
+# expensive to remove once data depends on it.
+#
+# This is a separate workflow rather than a job in ci.yml so that the gate is
+# legible on its own: when it goes red, the annotation names the migration,
+# the line and the foreign key, and nothing else in the matrix is implicated.
+on:
+  pull_request:
+  # The merge queue tests a pull request against the queue's projected result
+  # rather than the main it was branched from - so without this trigger, two
+  # migrations that are each clean alone and cross the boundary together would
+  # merge unchecked.
+  merge_group:
+  # Callable, so this gate can be replayed by the publish and release
+  # pipelines the way ci.yml is, without either of them duplicating the steps.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migration-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The lint's own suite runs FIRST, for the reason the release workflow
+      # proves its guard before trusting it: a lint that cannot fail is worse
+      # than no lint, because it reads as a guarantee. The suite drives a
+      # cross-schema foreign key past it in every shape it can take - column
+      # constraint, table constraint, split across lines, quoted, upper case -
+      # and asserts each one is refused, then asserts the shapes that only
+      # look like foreign keys (comments, string literals, dollar-quoted
+      # bodies, GRANT REFERENCES) are not.
+      - name: Prove the lint refuses a boundary-crossing foreign key
+        run: sh scripts/lint-migrations_test.sh
+
+      - name: No foreign key crosses a product schema boundary
+        run: sh scripts/lint-migrations.sh
+
+      # Both scripts are POSIX sh and run in CI and on developer machines
+      # alike; a syntax error in either is otherwise discovered by the
+      # migration it failed to check.
+      - name: Lint the lint
+        run: shellcheck -s sh scripts/lint-migrations.sh scripts/lint-migrations_test.sh
