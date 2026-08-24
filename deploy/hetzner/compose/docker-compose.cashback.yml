@@ -164,6 +164,29 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    # The worker serves its OWN `GET /health` on 5004, and this was wrong in an
+    # earlier revision of this file, which claimed it had no health route.
+    #
+    # It does. In blnk v0.15.2, `runWorkers` (cmd/workers.go) calls
+    # `startMonitoringServer(conf)` unconditionally, and that registers
+    # `/health` returning 200 `{"status": "UP", "service": "worker"}`. Only
+    # `/monitoring/` and `/metrics` are wrapped in `MetricsAuthHandler`, so
+    # `/health` needs no credential. The port is `conf.Queue.MonitoringPort`,
+    # whose default is `DEFAULT_MONITORING_PORT = "5004"` (config/config.go) —
+    # overridable with `BLNK_QUEUE_MONITORING_PORT`, which is why 5004 is not
+    # restated as a container port anywhere else in this file.
+    #
+    # It matters because the reconciler gates a rollout on `up -d --wait`, and
+    # that waits only on services declaring a healthcheck. Without this, a
+    # worker that died on its first Redis call would let a deploy report
+    # success while every transaction sat QUEUED — money not moving, and
+    # nothing anywhere saying so.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     logging:
       driver: json-file
       options:

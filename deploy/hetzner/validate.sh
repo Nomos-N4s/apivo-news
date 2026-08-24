@@ -200,7 +200,13 @@ check_cashback() {
     # thing an operator will read.
     printf '%s' "$rendered" | grep -q -F ':5001/health' ||
         fail "$env_name cashback: the ledger has no healthcheck against its /health route, so the rollout gate would pass a Blnk that never reached its database"
-    echo "ok: $env_name gates the rollout on the ledger answering /health"
+    # And the WORKER, on its own monitoring port. The server answering says
+    # nothing about the process that drains the queue: a worker dead on its
+    # first Redis call lets a deploy report success while every transaction
+    # sits QUEUED - money not moving, and nothing anywhere saying so.
+    printf '%s' "$rendered" | grep -q -F ':5004/health' ||
+        fail "$env_name cashback: the blnk worker has no healthcheck against its /health route on 5004, so a dead worker would pass the rollout gate while transactions queued up behind it"
+    echo "ok: $env_name gates the rollout on both the ledger and its worker answering /health"
 
     # Redis is a queue and a cache with no persistence and no source of truth.
     # `noeviction` is what makes that safe: a full Redis must REFUSE a write,
