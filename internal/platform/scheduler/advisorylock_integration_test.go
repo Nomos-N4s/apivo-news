@@ -67,7 +67,7 @@ func jobName(prefix string) string {
 // every test here drives RunOnce, except the one that deliberately does not.
 func newInstance(t *testing.T, pool *pgxpool.Pool, name string, run func(context.Context) error) *scheduler.Scheduler {
 	t.Helper()
-	s := scheduler.New(slog.New(slog.DiscardHandler), scheduler.NewAdvisoryLocker(pool), scheduler.Config{})
+	s := scheduler.New(slog.New(slog.DiscardHandler), scheduler.NewAdvisoryLocker(pool, scheduler.LockerConfig{}), scheduler.Config{})
 	if err := s.Register(scheduler.Job{Name: name, Interval: time.Hour, Run: run}); err != nil {
 		t.Fatalf("Register() error: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestTryLockReportsAPoolItCannotDrawFrom(t *testing.T) {
 	}
 	pool.Close()
 
-	lock, held, err := scheduler.NewAdvisoryLocker(pool).TryLock(context.Background(), "unreachable")
+	lock, held, err := scheduler.NewAdvisoryLocker(pool, scheduler.LockerConfig{}).TryLock(context.Background(), "unreachable")
 	if err == nil {
 		t.Fatal("TryLock() on a closed pool: want an error, got nil")
 	}
@@ -101,7 +101,7 @@ func TestAdvisoryLockIsGrantedThenGivenBack(t *testing.T) {
 	t.Parallel()
 
 	pool := lockPool(t)
-	locker := scheduler.NewAdvisoryLocker(pool)
+	locker := scheduler.NewAdvisoryLocker(pool, scheduler.LockerConfig{})
 	ctx := context.Background()
 	name := jobName("granted")
 
@@ -144,7 +144,7 @@ func TestAdvisoryLockExcludesASecondInstance(t *testing.T) {
 	ctx := context.Background()
 	name := jobName("contended")
 
-	lock, held, err := scheduler.NewAdvisoryLocker(mine).TryLock(ctx, name)
+	lock, held, err := scheduler.NewAdvisoryLocker(mine, scheduler.LockerConfig{}).TryLock(ctx, name)
 	if err != nil {
 		t.Fatalf("first TryLock() error: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestAdvisoryLockExcludesASecondInstance(t *testing.T) {
 		t.Fatal("first TryLock() did not take a free lock")
 	}
 
-	other, held, err := scheduler.NewAdvisoryLocker(theirs).TryLock(ctx, name)
+	other, held, err := scheduler.NewAdvisoryLocker(theirs, scheduler.LockerConfig{}).TryLock(ctx, name)
 	if err != nil {
 		t.Fatalf("second TryLock() error = %v, want nil: a lock held elsewhere is an outcome, not a failure", err)
 	}
@@ -168,7 +168,7 @@ func TestAdvisoryLockExcludesASecondInstance(t *testing.T) {
 	}
 
 	// And once the first instance lets go, the second gets it.
-	other, held, err = scheduler.NewAdvisoryLocker(theirs).TryLock(ctx, name)
+	other, held, err = scheduler.NewAdvisoryLocker(theirs, scheduler.LockerConfig{}).TryLock(ctx, name)
 	if err != nil {
 		t.Fatalf("third TryLock() error: %v", err)
 	}
@@ -186,13 +186,13 @@ func TestDifferentJobsDoNotExcludeEachOther(t *testing.T) {
 	mine, theirs := lockPool(t), lockPool(t)
 	ctx := context.Background()
 
-	poll, held, err := scheduler.NewAdvisoryLocker(mine).TryLock(ctx, jobName("network-poll"))
+	poll, held, err := scheduler.NewAdvisoryLocker(mine, scheduler.LockerConfig{}).TryLock(ctx, jobName("network-poll"))
 	if err != nil || !held {
 		t.Fatalf("TryLock(network-poll) = held %v, error %v; want it taken", held, err)
 	}
 	t.Cleanup(func() { _ = poll.Release(ctx) })
 
-	zeroSum, held, err := scheduler.NewAdvisoryLocker(theirs).TryLock(ctx, jobName("ledger-zero-sum"))
+	zeroSum, held, err := scheduler.NewAdvisoryLocker(theirs, scheduler.LockerConfig{}).TryLock(ctx, jobName("ledger-zero-sum"))
 	if err != nil {
 		t.Fatalf("TryLock(ledger-zero-sum) error: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestTwoRunningInstancesNeverOverlapAJob(t *testing.T) {
 	defer cancel()
 	var wg sync.WaitGroup
 	for _, pool := range []*pgxpool.Pool{mine, theirs} {
-		s := scheduler.New(slog.New(slog.DiscardHandler), scheduler.NewAdvisoryLocker(pool), scheduler.Config{})
+		s := scheduler.New(slog.New(slog.DiscardHandler), scheduler.NewAdvisoryLocker(pool, scheduler.LockerConfig{}), scheduler.Config{})
 		if err := s.Register(scheduler.Job{Name: name, Interval: time.Millisecond, Run: job}); err != nil {
 			t.Fatalf("Register() error: %v", err)
 		}
@@ -369,7 +369,7 @@ func TestATimedOutRunGivesItsAdvisoryLockBack(t *testing.T) {
 	mine, theirs := lockPool(t), lockPool(t)
 	name := jobName("timed-out")
 
-	wedging := scheduler.New(slog.New(slog.DiscardHandler), scheduler.NewAdvisoryLocker(mine), scheduler.Config{})
+	wedging := scheduler.New(slog.New(slog.DiscardHandler), scheduler.NewAdvisoryLocker(mine, scheduler.LockerConfig{}), scheduler.Config{})
 	if err := wedging.Register(scheduler.Job{
 		Name:     name,
 		Interval: time.Hour,
@@ -449,7 +449,7 @@ func TestAReleaseThatCannotReachTheDatabaseStillFreesTheLock(t *testing.T) {
 	mine, theirs := lockPool(t), lockPool(t)
 	name := jobName("unreleasable")
 
-	lock, held, err := scheduler.NewAdvisoryLocker(mine).TryLock(context.Background(), name)
+	lock, held, err := scheduler.NewAdvisoryLocker(mine, scheduler.LockerConfig{}).TryLock(context.Background(), name)
 	if err != nil || !held {
 		t.Fatalf("TryLock() = held %v, error %v; want it taken", held, err)
 	}
@@ -466,7 +466,7 @@ func TestAReleaseThatCannotReachTheDatabaseStillFreesTheLock(t *testing.T) {
 		t.Error("Release() with an expired context reported success")
 	}
 
-	locker := scheduler.NewAdvisoryLocker(theirs)
+	locker := scheduler.NewAdvisoryLocker(theirs, scheduler.LockerConfig{})
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		other, held, err := locker.TryLock(context.Background(), name)

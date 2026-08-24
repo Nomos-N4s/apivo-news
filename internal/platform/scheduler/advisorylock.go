@@ -15,9 +15,18 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// DefaultAcquireTimeout bounds how long TryLock waits for a connection from
+// the pool. Without a bound, a pool with nothing free turns a tick into an
+// indefinite block: pgxpool.Acquire waits rather than failing, so the job
+// would neither run nor report why, and the loop behind it would stop
+// ticking entirely. With one, a starved pool is an error on this tick that
+// the next interval retries.
+const DefaultAcquireTimeout = 5 * time.Second
 
 // lockNamespace is the first key of every scheduler lock. Advisory locks in
 // the two-key space are disjoint from those in the one-key space, and the
@@ -36,6 +45,7 @@ const lockNamespace = "apivo.scheduler"
 // and never correctness.
 type AdvisoryLocker struct {
 	pool *pgxpool.Pool
+	cfg  LockerConfig
 }
 
 var (
@@ -43,23 +53,48 @@ var (
 	_ Lock   = (*advisoryLock)(nil)
 )
 
-// NewAdvisoryLocker builds a locker over the process's connection pool.
-//
-// Each held lock keeps one connection out of the pool for the length of the
-// run it guards, so the pool must have room for the concurrent jobs plus the
-// work those jobs do.
-func NewAdvisoryLocker(pool *pgxpool.Pool) *AdvisoryLocker {
-	return &AdvisoryLocker{pool: pool}
+// LockerConfig tunes the locker. The zero value is usable: every field falls
+// back to its documented default.
+type LockerConfig struct {
+	// AcquireTimeout bounds how long TryLock waits for a pool connection
+	// before reporting that it could not get one. Zero or negative means
+	// DefaultAcquireTimeout.
+	AcquireTimeout time.Duration
 }
 
-// TryLock takes the advisory lock for name without waiting, on a connection
-// acquired for the caller to hold until it releases the lock. It reports false
-// and no error when another session holds the lock, which is the ordinary
-// outcome on every instance but one.
+// withDefaults returns cfg with every unset or out-of-range field replaced by
+// its default.
+func (c LockerConfig) withDefaults() LockerConfig {
+	if c.AcquireTimeout <= 0 {
+		c.AcquireTimeout = DefaultAcquireTimeout
+	}
+	return c
+}
+
+// NewAdvisoryLocker builds a locker over a connection pool.
+//
+// Each held lock keeps one connection out of that pool for the length of the
+// run it guards, and the job's own queries need connections of their own on
+// top, so the pool must be sized for the jobs registered against it.
+func NewAdvisoryLocker(pool *pgxpool.Pool, cfg LockerConfig) *AdvisoryLocker {
+	return &AdvisoryLocker{pool: pool, cfg: cfg.withDefaults()}
+}
+
+// TryLock takes the advisory lock for name without waiting on the lock itself,
+// on a connection acquired for the caller to hold until it releases it. It
+// reports false and no error when another session holds the lock, which is the
+// ordinary outcome on every instance but one.
+//
+// The wait for the connection is bounded by the configured acquire timeout, so
+// a pool with nothing free costs this tick and is reported, rather than
+// blocking the job's loop until something frees up.
 func (l *AdvisoryLocker) TryLock(ctx context.Context, name string) (Lock, bool, error) {
-	conn, err := l.pool.Acquire(ctx)
+	acquireCtx, cancel := context.WithTimeout(ctx, l.cfg.AcquireTimeout)
+	defer cancel()
+	conn, err := l.pool.Acquire(acquireCtx)
 	if err != nil {
-		return nil, false, fmt.Errorf("scheduler: job %q: acquire lock connection: %w", name, err)
+		return nil, false, fmt.Errorf("scheduler: job %q: acquire lock connection within %v: %w",
+			name, l.cfg.AcquireTimeout, err)
 	}
 
 	var held bool
