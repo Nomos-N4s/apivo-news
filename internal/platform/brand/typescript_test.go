@@ -66,6 +66,85 @@ func TestTypeScriptTypesDeclaresTheWholeSchema(t *testing.T) {
 	}
 }
 
+func TestTypeScriptTypesCarriesTheSchemaAsDataToo(t *testing.T) {
+	t.Parallel()
+
+	got, err := TypeScriptTypes()
+	if err != nil {
+		t.Fatalf("TypeScriptTypes: %v", err)
+	}
+
+	// Interfaces vanish at compile time and a brand file read from disk
+	// is an `unknown`, so the same walk emits the schema again as data
+	// for the loader to check a brand against.
+	for _, want := range []string{
+		"export const brandRoot = 'Brand';",
+		"export const brandSchema: Readonly<Record<string, BrandInterfaceSchema>> = {",
+		"  Brand: {",
+		"    legal: { struct: 'Legal' },",
+		"    features: { map: { map: 'boolean' } },",
+		"  Domains: {",
+		"    aliases: { list: 'string' },",
+		"  Legal: {",
+		"    documents: { map: { struct: 'Document' } },",
+		"  Typography: {",
+		"    headingWeight: 'number',",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the runtime schema is missing %q", want)
+		}
+	}
+
+	// Every interface declared above must also appear as data: a field
+	// the checker cannot see is a field nothing checks.
+	for _, name := range []string{
+		"Brand", "Legal", "Document", "Domains", "Support",
+		"Assets", "Theme", "Typography", "Defaults", "Payout",
+	} {
+		if !strings.Contains(got, "\n  "+name+": {\n") {
+			t.Errorf("%s is declared as a type but not as schema data", name)
+		}
+	}
+}
+
+func TestTypeScriptSchemaRendersTheKindsTheSchemaUses(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		typ  reflect.Type
+		want string
+	}{
+		{name: "string", typ: reflect.TypeOf(""), want: "'string'"},
+		{name: "bool", typ: reflect.TypeOf(true), want: "'boolean'"},
+		{name: "int", typ: reflect.TypeOf(0), want: "'number'"},
+		{name: "float64", typ: reflect.TypeOf(0.0), want: "'number'"},
+		{name: "slice", typ: reflect.TypeOf([]string{}), want: "{ list: 'string' }"},
+		{name: "map", typ: reflect.TypeOf(map[string]bool{}), want: "{ map: 'boolean' }"},
+		{
+			name: "map of maps",
+			typ:  reflect.TypeOf(map[string]map[string]bool{}),
+			want: "{ map: { map: 'boolean' } }",
+		},
+		{name: "named struct", typ: reflect.TypeOf(Document{}), want: "{ struct: 'Document' }"},
+		{
+			name: "map of named structs",
+			typ:  reflect.TypeOf(map[string]Document{}),
+			want: "{ map: { struct: 'Document' } }",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := typeScriptSchema(testCase.typ); got != testCase.want {
+				t.Errorf("typeScriptSchema(%s) = %q, want %q", testCase.typ, got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestTypeScriptTypesIsDeterministic(t *testing.T) {
 	t.Parallel()
 
