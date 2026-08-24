@@ -64,13 +64,28 @@ else.
 | `cashback/blnk-worker-deployment.yaml` | Blnk's queue worker. No Service — nothing calls a worker |
 | `cashback/redis-deployment.yaml` / `cashback/redis-service.yaml` | Blnk's queue and cache: no persistence, `noeviction`, ClusterIP |
 
+### What applying this set does today
+
+**It gives you ledger infrastructure, not a working cashback product.** The Go
+binary on `main` reads none of `CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`,
+`REDIS_URL` or `NETWORK_DRIVER`, and mounts no cashback routes at all. Config
+parsing arrives with **T001 (#291)** and route mounting with **T040 (#187)**.
+
+So an operator who applies `deploy/k8s/cashback/` today gets a running Blnk, a
+running Redis, and an api that ignores the ConfigMap entirely. That is a
+useful and deliberate state — the ledger has to exist before anything can be
+wired to it — but it is not cashback, and nothing here should be read as
+claiming otherwise until both of those issues have landed.
+
+### The switch, once the API honours it
+
 The switch is the api Deployment's second `envFrom`, which references
 `apivo-cashback-config` with `optional: true`. On a cluster that never applied
 `cashback/` the ConfigMap does not exist, none of those keys reach the binary,
-the cashback routes are not mounted, and the api pod starts normally. This is
-the same mechanism the Hetzner deployment uses, in the vocabulary Kubernetes
-has: there, listing `docker-compose.cashback.yml` in `COMPOSE_FILE` is the
-switch; here, applying the subdirectory is.
+and the api pod starts normally. This is the same mechanism the Hetzner
+deployment uses, in the vocabulary Kubernetes has: there, listing
+`docker-compose.cashback.yml` in `COMPOSE_FILE` is the switch; here, applying
+the subdirectory is.
 
 ```sh
 # The ledger's own Postgres role — NOT the api's. It owns the `blnk` schema

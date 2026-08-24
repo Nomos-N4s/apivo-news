@@ -1,10 +1,26 @@
 # What applying this directory tells the api.
 #
+# ---------------------------------------------------------------------------
+# WHAT THIS DOES TODAY: it delivers the keys. It does not yet switch anything.
+#
+# The Go binary on `main` reads NONE of the variables below and mounts no
+# cashback routes. Config parsing arrives with T001 (#291) and route mounting
+# with T040 (#187); until both have landed, applying this directory gives a
+# cluster a running Blnk and Redis and an api that ignores this ConfigMap
+# entirely.
+#
+# The manifests are still correct and still worth having — the ledger has to
+# exist before anything can be wired to it, and the wiring tasks need
+# something to point at. But an operator applying this set today gets ledger
+# INFRASTRUCTURE, not a working cashback product, and this file says so rather
+# than letting them find out.
+# ---------------------------------------------------------------------------
+#
 # The api Deployment lists this ConfigMap in `envFrom` with `optional: true`,
 # so a cluster that has never applied `deploy/k8s/cashback/` runs the api with
-# none of these keys set — cashback off, no ledger, no routes — and the pod
-# starts perfectly. Applying this directory is the whole decision to run
-# cashback on a cluster.
+# none of these keys set and the pod starts perfectly. Once #291 and #187 have
+# landed, applying this directory is the whole decision to run cashback on a
+# cluster; the values below are written for that state.
 #
 # That is the same mechanism the Hetzner deployment uses, expressed in the
 # vocabulary Kubernetes has: there, listing docker-compose.cashback.yml in
@@ -24,8 +40,9 @@ metadata:
     app.kubernetes.io/part-of: apivo-news
     app.kubernetes.io/component: cashback
 data:
-  # The flag controls route MOUNTING, not just navigation: with it false or
-  # absent the cashback routes do not exist and answer 404, exactly as the
+  # The flag is designed to control route MOUNTING, not just navigation — once
+  # T040 (#187) implements it. With it false or absent the cashback routes will
+  # not exist and will answer 404, exactly as the
   # editorial routes do without JWKS_URL.
   CASHBACK_ENABLED: "true"
   # `blnk` here because this directory brings a Blnk to talk to. The other
