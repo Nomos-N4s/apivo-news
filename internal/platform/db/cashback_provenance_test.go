@@ -18,8 +18,11 @@ package db_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // TestCashbackProvenanceAnswersTheWholeChain asserts C-7: one query, every
@@ -195,6 +198,65 @@ func TestCashbackProvenanceCoversAnOperatorAttributedEntry(t *testing.T) {
 	}
 }
 
+// pinLedgerSchema points the C-1 check at a schema of this test's own, and
+// returns its name.
+//
+// The name is unique per call and the setting is transaction-local, so the
+// stand-in ledger built under it collides with nothing: not with the real
+// Blnk ledger that spike S1 creates beside the suite in the cashback job,
+// and not with another test doing the same thing at the same time. Before
+// migration 0020 the check read the name `blnk` and only that name, so the
+// one place a stand-in could be built was the one place the real ledger
+// already was - and the whole cashback job went red on the collision.
+func pinLedgerSchema(t *testing.T, tx pgx.Tx) string {
+	t.Helper()
+	schema := "ledger_standin_" + randomSuffix(t)
+	// set_config's third argument is is_local: the setting reverts when this
+	// test's transaction rolls back, so it cannot follow the connection back
+	// into the pool and change what another test's check reads.
+	if _, err := tx.Exec(context.Background(),
+		`select set_config('cashback.ledger_schema', $1, true)`, schema); err != nil {
+		t.Fatalf("pointing the C-1 check at %s: %v", schema, err)
+	}
+	return schema
+}
+
+// c1Assertion is the query the continuous C-1 check runs: every currency
+// the ledger holds a balance in that does not net to zero. A single row is
+// an incident, not a metric (SC-003).
+const c1Assertion = `select currency, net_minor from cashback.ledger_zero_sum where net_minor <> 0`
+
+// c1Violations runs that assertion and returns what it found, keyed by
+// currency.
+//
+// It is shared on purpose. One caller runs it against whatever ledger this
+// database actually has and requires it to find nothing; the other runs it
+// against a ledger built to be out of balance and requires it to find the
+// imbalance. The second is only evidence about the first for as long as
+// both run the same query, so they run the same string.
+func c1Violations(t *testing.T, tx pgx.Tx) map[string]int64 {
+	t.Helper()
+	rows, err := tx.Query(context.Background(), c1Assertion)
+	if err != nil {
+		t.Fatalf("the C-1 zero-sum check failed to run: %v", err)
+	}
+	defer rows.Close()
+
+	broken := map[string]int64{}
+	for rows.Next() {
+		var currency string
+		var net int64
+		if err := rows.Scan(&currency, &net); err != nil {
+			t.Fatalf("scanning the zero-sum check: %v", err)
+		}
+		broken[currency] = net
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterating the zero-sum check: %v", err)
+	}
+	return broken
+}
+
 // TestLedgerZeroSumCanActuallySeeAnImbalance is the test that stops the
 // C-1 check being decorative. Asserting "no currency is out of balance"
 // against a database with no ledger in it proves nothing at all - it is
@@ -202,27 +264,37 @@ func TestCashbackProvenanceCoversAnOperatorAttributedEntry(t *testing.T) {
 // lint whose reader is blind. So this builds a ledger the check can see,
 // puts a real imbalance in it, and requires the check to find it.
 //
-// The second case is the failure the check must NOT swallow: a ledger
-// schema that is present but whose postings cannot be read. An earlier
-// version of ledger_balance_relation() returned null there, exactly as it
-// does for "no ledger at all", so the view came back empty and C-1 passed
-// while seeing nothing - with a comment two lines above promising it would
-// raise. Both cases run in a rolled-back transaction, so no ledger schema
-// survives the test.
+// The three cases after that are the failures the check must NOT swallow,
+// each of which would leave it reporting zero rows while summing nothing:
 //
-// Deliberately not parallel: the schema name blnk is fixed by the ledger,
-// so two of these running at once would collide on creating it.
+//   - a ledger schema that is present but whose postings cannot be read.
+//     An earlier version of ledger_balance_relation() returned null there,
+//     exactly as it does for "no ledger at all", so the view came back
+//     empty and C-1 passed while seeing nothing.
+//   - a schema NAMED through the cashback.ledger_schema setting that is not
+//     there. That setting is how this test reaches a ledger of its own, and
+//     a knob that selects which schema to check is also a knob that can
+//     point the check at nothing, so 0020 makes a false claim raise rather
+//     than fall through to "no ledger here".
+//   - the setting unset resolving to anything other than blnk, which is
+//     what keeps the deployed check pointed at the real ledger.
+//
+// Every case runs in a rolled-back transaction, so no stand-in survives it.
 func TestLedgerZeroSumCanActuallySeeAnImbalance(t *testing.T) {
+	t.Parallel()
+
 	t.Run("an out-of-balance currency is reported", func(t *testing.T) {
+		t.Parallel()
 		tx := beginTx(t)
 		ctx := context.Background()
+		schema := pgx.Identifier{pinLedgerSchema(t, tx)}.Sanitize()
 
 		// A stand-in for the ledger's own balance rows, with the columns
 		// ledger_net_minor() reads. EUR nets to zero; GBP does not.
 		for _, stmt := range []string{
-			`create schema blnk`,
-			`create table blnk.balances (balance bigint not null, currency text not null)`,
-			`insert into blnk.balances (balance, currency) values (100, 'EUR'), (-100, 'EUR'), (50, 'GBP')`,
+			fmt.Sprintf(`create schema %s`, schema),
+			fmt.Sprintf(`create table %s.balances (balance bigint not null, currency text not null)`, schema),
+			fmt.Sprintf(`insert into %s.balances (balance, currency) values (100, 'EUR'), (-100, 'EUR'), (50, 'GBP')`, schema),
 		} {
 			if _, err := tx.Exec(ctx, stmt); err != nil {
 				t.Fatalf("building the stand-in ledger (%s): %v", stmt, err)
@@ -259,29 +331,70 @@ func TestLedgerZeroSumCanActuallySeeAnImbalance(t *testing.T) {
 		}
 
 		// And the assertion the continuous check actually makes must now
-		// fail, which is the whole point.
-		var broken int
-		if err := tx.QueryRow(ctx,
-			`select count(*) from cashback.ledger_zero_sum where net_minor <> 0`).Scan(&broken); err != nil {
-			t.Fatalf("running the C-1 assertion: %v", err)
+		// fail, which is the whole point. Same query, character for
+		// character, as the one TestLedgerZeroSumReportsNoNonZeroCurrency
+		// runs against the real ledger - if the two drift apart, this stops
+		// proving anything about that one.
+		broken := c1Violations(t, tx)
+		if len(broken) != 1 || broken["GBP"] != 50 {
+			t.Fatalf("the C-1 assertion reported %v against a deliberately broken ledger, want exactly GBP out by 50", broken)
 		}
-		if broken != 1 {
-			t.Fatalf("the C-1 assertion found %d out-of-balance currencies against a deliberately broken ledger, want 1", broken)
-		}
+		t.Logf("C-1 drill: the zero-sum check reported %v against a ledger deliberately short 50 GBP", broken)
 	})
 
 	t.Run("a ledger present but unreadable fails loudly", func(t *testing.T) {
+		t.Parallel()
 		tx := beginTx(t)
 		ctx := context.Background()
+		schema := pgx.Identifier{pinLedgerSchema(t, tx)}.Sanitize()
 
 		// The ledger is installed - the schema is there - but its balances
 		// are not readable. Reporting zero rows here would be a check
 		// passing on nothing.
-		if _, err := tx.Exec(ctx, `create schema blnk`); err != nil {
+		if _, err := tx.Exec(ctx, fmt.Sprintf(`create schema %s`, schema)); err != nil {
 			t.Fatalf("creating the ledger schema: %v", err)
 		}
 		_, err := tx.Exec(ctx, `select count(*) from cashback.ledger_zero_sum`)
 		wantPgCode(t, err, codeRaiseException)
+	})
+
+	t.Run("a named schema that is not there fails loudly", func(t *testing.T) {
+		t.Parallel()
+		tx := beginTx(t)
+		ctx := context.Background()
+		// Named, and deliberately never created. "No ledger here, nothing to
+		// check" is the right answer for a database that never had one; it is
+		// the wrong answer for a check that was told where to look and found
+		// nothing, because that is a misconfiguration reported as a pass.
+		pinLedgerSchema(t, tx)
+
+		_, err := tx.Exec(ctx, `select count(*) from cashback.ledger_zero_sum`)
+		wantPgCode(t, err, codeRaiseException)
+	})
+
+	t.Run("with nothing set the check reads the ledger's own schema", func(t *testing.T) {
+		t.Parallel()
+		tx := beginTx(t)
+		ctx := context.Background()
+
+		// The default is what the deployed check uses - nothing sets this
+		// setting outside these tests - so it is the line that decides
+		// whether C-1 is watching the real ledger or a test's stand-in.
+		var schema string
+		if err := tx.QueryRow(ctx, `select cashback.ledger_schema()`).Scan(&schema); err != nil {
+			t.Fatalf("resolving the ledger schema: %v", err)
+		}
+		if schema != "blnk" {
+			t.Fatalf("with nothing set the C-1 check reads schema %q, want \"blnk\": the deployed check is not pointed at the ledger", schema)
+		}
+
+		var override *string
+		if err := tx.QueryRow(ctx, `select cashback.ledger_schema_override()`).Scan(&override); err != nil {
+			t.Fatalf("reading the ledger schema override: %v", err)
+		}
+		if override != nil {
+			t.Fatalf("the ledger schema override is %q with nothing set, want null: a test's setting followed the connection out of its transaction", *override)
+		}
 	})
 }
 
@@ -299,24 +412,7 @@ func TestLedgerZeroSumReportsNoNonZeroCurrency(t *testing.T) {
 	tx := beginTx(t)
 	ctx := context.Background()
 
-	rows, err := tx.Query(ctx, `select currency, net_minor from cashback.ledger_zero_sum where net_minor <> 0`)
-	if err != nil {
-		t.Fatalf("the C-1 zero-sum check failed to run: %v", err)
-	}
-	defer rows.Close()
-
-	var broken []string
-	for rows.Next() {
-		var currency string
-		var net int64
-		if err := rows.Scan(&currency, &net); err != nil {
-			t.Fatalf("scanning the zero-sum check: %v", err)
-		}
-		broken = append(broken, currency)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterating the zero-sum check: %v", err)
-	}
+	broken := c1Violations(t, tx)
 	if len(broken) > 0 {
 		t.Fatalf("C-1 violated: the ledger does not net to zero in %v - money was created or destroyed inside it", broken)
 	}
