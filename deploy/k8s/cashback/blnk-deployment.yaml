@@ -1,0 +1,151 @@
+# The Blnk ledger server (ADR-0002). Cluster-internal only — exposed by a
+# ClusterIP Service (blnk-service.yaml) and deliberately absent from the
+# Ingress. Nothing outside the cluster reaches the ledger; the only client is
+# the api, and the only thing that ever computes a member-facing number is a
+# ledger posting.
+#
+# ONE replica, and `strategy: Recreate` rather than a rolling update. Both are
+# deliberate:
+#
+#   - This container runs `blnk migrate up` before `blnk start`, exactly as
+#     upstream's own compose file does. Two replicas rolling out together race
+#     the same migration, and a migration race on the ledger's schema is the
+#     one place in this system where "it usually works" is not good enough.
+#   - Recreate means the old pod is gone before the new one starts, so the
+#     migration runs against a database no other version of the ledger is
+#     writing to.
+#
+# The cost is a short ledger outage on every rollout. That is acceptable and
+# not hidden: a cashback credit is created by a poller on a cycle measured in
+# minutes (SC-001 allows 24 hours), and a withdrawal that cannot reach the
+# ledger fails loudly and idempotently rather than paying twice (C-5).
+#
+# There is no HPA and no PodDisruptionBudget for the same reason: a
+# single-replica Deployment cannot satisfy `minAvailable: 1` through a drain,
+# so a PDB here would block node drains instead of protecting anything.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blnk
+  labels:
+    app.kubernetes.io/name: blnk
+    app.kubernetes.io/part-of: apivo-news
+    app.kubernetes.io/component: cashback
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: blnk
+      app.kubernetes.io/part-of: apivo-news
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: blnk
+        app.kubernetes.io/part-of: apivo-news
+        app.kubernetes.io/component: cashback
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        # Upstream's image is debian-slim and does not declare a non-root
+        # user, so one is imposed here rather than trusted. If a spike finds
+        # the image genuinely needs root, that is a deviation to record in the
+        # ADR — not a line to quietly delete.
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: blnk
+          # Pinned to the version ADR-0002 was written against, BY DIGEST.
+          # Upstream publishes under jerryenebeli/, which is the maintainer's
+          # namespace and the one its own documentation and compose file use.
+          #
+          # A tag is mutable, and this is the one image in the repository where
+          # that matters most: a silent retag would change the binary that
+          # moves members' money, with no diff and no review. The
+          # `repo:tag@sha256:...` form keeps the version readable to a
+          # reviewer while the digest is what the kubelet resolves — the same
+          # pin, in the same form, as the Hetzner compose overlay, so there is
+          # one way to pin rather than two.
+          #
+          # The digest is a multi-architecture index covering linux/amd64 and
+          # linux/arm64, so pinning it does not commit a cluster to one
+          # architecture.
+          image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
+          command: ["/bin/sh", "-c"]
+          args: ["blnk migrate up && blnk start"]
+          ports:
+            - name: http
+              containerPort: 5001
+          envFrom:
+            - configMapRef:
+                name: blnk-config
+          env:
+            # The ledger's own Postgres role — NOT the api's. It owns the
+            # `blnk` schema and has no rights in `public`, which is what makes
+            # "Blnk's migrations never touch public" an enforceable property
+            # rather than a hope (ADR-0002 spike S1).
+            #
+            # Not optional: a ledger with no data source must fail to start,
+            # visibly, rather than come up answering questions about balances
+            # it cannot see.
+            - name: BLNK_DATA_SOURCE_DNS
+              valueFrom:
+                secretKeyRef:
+                  name: apivo-secrets
+                  key: BLNK_DATA_SOURCE_DNS
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # Blnk serves an unauthenticated `GET /health` (added upstream in
+          # v0.10.3; this image is 0.15.2). A real request, not a port knock:
+          # a listening socket says nothing about whether the ledger reached
+          # its database, and a ledger that answers TCP while failing every
+          # query is the worst of both states — it takes traffic.
+          #
+          # Nothing needs to be installed into the image for this. Unlike a
+          # compose healthcheck, an httpGet probe is performed by the KUBELET
+          # from outside the container, so what the image ships is irrelevant
+          # here.
+          #
+          # The startup probe owns the boot window: this container runs
+          # `blnk migrate up` before it listens, so liveness must not race the
+          # migration. Same shape, and the same reason, as the api's.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # readOnlyRootFilesystem with nowhere to write is how a process
+            # that only needs scratch space becomes a crash loop. One emptyDir
+            # for /tmp costs nothing and keeps the root filesystem read-only.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

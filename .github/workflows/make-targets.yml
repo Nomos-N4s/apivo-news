@@ -1,0 +1,35 @@
+# The Makefile's cashback targets, gated.
+#
+# Nothing else in CI invokes `make`: ci.yml's jobs call `go test`,
+# `sh deploy/hetzner/validate.sh` and so on directly. So until this workflow
+# existed, the Makefile was the one build artifact in the repository that no
+# check ever ran — which is how a `missing` macro that exited unconditionally
+# reached a pull request.
+#
+# The suite's whole point is the case that is easy to leave out: a target
+# whose dependency is PRESENT must SUCCEED. While a dependency is absent, a
+# target that guards correctly and a target that fails unconditionally are
+# indistinguishable, so the negative cases prove nothing on their own.
+name: make-targets
+
+on:
+  pull_request:
+  merge_group:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: make-targets-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  make-targets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Lint the suite
+        run: shellcheck -s sh scripts/make_targets_test.sh
+      - name: Prove the cashback targets guard rather than merely fail
+        run: sh scripts/make_targets_test.sh

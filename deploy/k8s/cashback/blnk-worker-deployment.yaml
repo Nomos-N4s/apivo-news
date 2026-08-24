@@ -1,0 +1,105 @@
+# Blnk's background worker. Upstream requires it as a separate process: the
+# server accepts transactions onto the queue and this drains them.
+#
+# Same image and same configuration as the server, with two differences that
+# matter:
+#
+#   - It runs `blnk workers` and NOT `blnk migrate up`. One process owns the
+#     ledger's schema migration, and it is the server.
+#   - It has no Service. Nothing calls a worker; it pulls from Redis. Port
+#     5004 is its own monitoring listener, which is what the probes below use
+#     and what a `kubectl port-forward` would reach — not a route into the
+#     ledger.
+#
+# One replica for the alpha. Blnk's queue is the coordination point, so more
+# workers is a throughput change rather than a design change — raise it when
+# a queue depth says to, not before.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blnk-worker
+  labels:
+    app.kubernetes.io/name: blnk-worker
+    app.kubernetes.io/part-of: apivo-news
+    app.kubernetes.io/component: cashback
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: blnk-worker
+      app.kubernetes.io/part-of: apivo-news
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: blnk-worker
+        app.kubernetes.io/part-of: apivo-news
+        app.kubernetes.io/component: cashback
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: blnk-worker
+          image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
+          command: ["blnk", "workers"]
+          ports:
+            - name: http
+              containerPort: 5004
+          envFrom:
+            - configMapRef:
+                name: blnk-config
+          env:
+            - name: BLNK_DATA_SOURCE_DNS
+              valueFrom:
+                secretKeyRef:
+                  name: apivo-secrets
+                  key: BLNK_DATA_SOURCE_DNS
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # The worker serves its OWN `GET /health` on 5004, and an earlier
+          # revision of this file wrongly said it had none.
+          #
+          # In blnk v0.15.2, `cmd/workers.go` `runWorkers` calls
+          # `startMonitoringServer(conf)` unconditionally, and that registers
+          # `/health` returning 200 with `{"status": "UP", "service":
+          # "worker"}` — the body names the worker, so it is the worker's own
+          # route rather than the server's. Only `/monitoring/` and `/metrics`
+          # are wrapped in `MetricsAuthHandler`, so `/health` needs no
+          # credential. The port is `conf.Queue.MonitoringPort`, whose default
+          # is `DEFAULT_MONITORING_PORT = "5004"` in `config/config.go`.
+          #
+          # A worker that died on its first Redis call would otherwise sit
+          # Running with transactions piling up behind it — money not moving,
+          # and nothing anywhere saying so. No startup probe: the worker runs
+          # no migration, so there is no boot window for liveness to race.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

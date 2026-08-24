@@ -1,0 +1,33 @@
+# Non-secret runtime configuration for the Blnk ledger and its worker.
+#
+# Blnk reads either a /blnk.json file or environment variables prefixed
+# `BLNK_`. The environment form is used because exactly one value in the set
+# is a credential, and a credential belongs in a Secret rather than in a JSON
+# document a ConfigMap would have to carry whole — mixing the two would put
+# the ledger's database password in `kubectl get configmap -o yaml` output.
+#
+# BLNK_DATA_SOURCE_DNS is therefore deliberately absent here. It is mapped
+# from the `apivo-secrets` Secret by both Deployments in this directory; its
+# structure is documented in ../examples/secret.example.yaml.
+#
+# Everything else Blnk exposes has a documented default and is left unset on
+# purpose (transaction batching and locking, queue sharding and retries,
+# reconciliation strategy, webhooks, backups). Blnk's own webhook and
+# Typesense search features are NOT used: cashback reads its evidence from
+# polled network transactions (ADR-0003) and searches nothing through the
+# ledger. Unconfigured is the intended state, not an oversight.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blnk-config
+  labels:
+    app.kubernetes.io/name: blnk-config
+    app.kubernetes.io/part-of: apivo-news
+    app.kubernetes.io/component: cashback
+data:
+  # The Redis Service in this directory, by name. Redis holds no source of
+  # truth: losing it loses throughput, not money, because a credit is only
+  # ever created from a polled, stored, verified network transaction and the
+  # outbox replays whatever a lost queue dropped.
+  BLNK_REDIS_DNS: "redis:6379"
+  TZ: "Etc/UTC"

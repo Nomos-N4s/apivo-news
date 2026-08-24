@@ -1,0 +1,58 @@
+# The Kubernetes manifests' TOPOLOGY, proved without a cluster.
+#
+# A separate workflow rather than a step inside ci.yml's `kubeconform` job,
+# because the two answer different questions and the split keeps that visible:
+#
+#   kubeconform (ci.yml)  is this well-formed YAML for this Kubernetes version
+#   this workflow         does this manifest set MEAN what the contract says
+#
+# kubeconform already validates every file under deploy/k8s recursively — the
+# cashback subdirectory included, with no path list to keep in step — and its
+# own documentation is explicit that anything beyond schema shape is out of
+# scope. "Is this Service publicly routable" is perfectly valid YAML either
+# way, and with a ledger in the manifest set that question stops being a
+# matter of taste: an internet-reachable ledger API is an internet-reachable
+# way to move members' money.
+#
+# deploy/k8s/validate.sh carries those properties, and this workflow is what
+# makes it a gate rather than a script somebody could run.
+#
+# Note for whoever owns ci.yml: publish.yml and release.yml replay the CI
+# matrix by CALLING ci.yml, so a check that lives outside it gates pull
+# requests but not the publish path. `workflow_call` is declared below so that
+# gap can be closed with one line in publish.yml whenever that file is next
+# touched.
+name: k8s-topology
+
+on:
+  pull_request:
+  merge_group:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: k8s-topology-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  k8s-topology:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Lint the validator
+        # It is a shell script that decides whether a pull request is allowed
+        # to expose a ledger to the internet. A syntax error in it would be a
+        # check that passes by not running.
+        run: shellcheck -s sh deploy/k8s/validate.sh deploy/k8s/validate_test.sh
+      - name: Prove the validator can fail
+        # Runs BEFORE the validator itself, deliberately. A gate is only worth
+        # having if it can both pass and fail, and this is the half that is
+        # easy to lose: it drives the validator at an empty directory and
+        # asserts it refuses fast and claims nothing, rather than reading
+        # stdin and either hanging or reporting checks passing about files
+        # that do not exist.
+        run: sh deploy/k8s/validate_test.sh
+      - name: Prove the manifest topology
+        run: sh deploy/k8s/validate.sh

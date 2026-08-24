@@ -55,6 +55,11 @@ check_env() {
     mkdir -p "$APIVO_ETC/$env_name"
     : > "$APIVO_ETC/$env_name/api.env"
     : > "$APIVO_ETC/$env_name/web.env"
+    # The cashback overlay's env_file. Written for every environment rather
+    # than only the cashback ones: compose resolves env_file paths for the
+    # whole file list it was given, so a missing one fails the render with an
+    # error about a file instead of an error about the configuration.
+    : > "$APIVO_ETC/$env_name/blnk.env"
 
     APIVO_ENV="$env_name"
     export APIVO_ENV
@@ -119,6 +124,110 @@ check_env qa docker-compose.yml docker-compose.local-db.yml
 check_env staging docker-compose.yml docker-compose.local-db.yml
 check_env staging docker-compose.yml
 check_env prod docker-compose.yml
+
+# ---------------------------------------------------------------------------
+# The cashback overlay (ADR-0002): Blnk and Redis beside the api.
+#
+# Checked in BOTH database shapes, because the overlay is orthogonal to which
+# Postgres an environment uses and both combinations will exist: QA layers it
+# over the local container, production over Supabase. The trap it guards is
+# the one docker-compose.local-db.yml documents — a `depends_on` naming a
+# service that does not exist fails the WHOLE configuration, so an overlay
+# that quietly assumed a `postgres` service would render fine on QA and take
+# production's stack out entirely.
+#
+# check_env carries the generic properties (it parses, nothing publishes a
+# host port, the data network is internal, every name is namespaced).
+# check_cashback adds the ones only this overlay can get wrong.
+# ---------------------------------------------------------------------------
+check_cashback() {
+    # check_cashback <env> <compose-files...>
+    env_name="$1"
+    shift
+
+    check_env "$env_name" "$@"
+
+    args=""
+    for f in "$@"; do
+        args="$args -f $COMPOSE_DIR/$f"
+    done
+
+    # shellcheck disable=SC2086 # deliberate word splitting: -f pairs
+    if ! rendered=$(docker compose $args config 2>&1); then
+        # check_env has already reported the parse failure; nothing below
+        # could say anything true about a configuration that did not render.
+        return
+    fi
+
+    for expected in "apivo-$env_name-blnk" "apivo-$env_name-blnk-worker" "apivo-$env_name-redis"; do
+        printf '%s' "$rendered" | grep -q -F -e "$expected" ||
+            fail "$env_name cashback: nothing in the rendered configuration is named '$expected'"
+    done
+    echo "ok: $env_name namespaces its ledger containers"
+
+    # The api must be pointed at THIS environment's ledger. Two environments
+    # on one host each run a Blnk, and an api addressing the other one would
+    # post real money into the wrong ledger while every container sat healthy
+    # and every log stayed quiet.
+    printf '%s' "$rendered" | grep -q -F "http://apivo-$env_name-blnk:5001" ||
+        fail "$env_name cashback: the api's BLNK_URL does not name apivo-$env_name-blnk; an api pointed at another environment's ledger posts money into it and nothing fails visibly"
+    printf '%s' "$rendered" | grep -q -F "redis://apivo-$env_name-redis:6379" ||
+        fail "$env_name cashback: the api's REDIS_URL does not name apivo-$env_name-redis"
+    echo "ok: $env_name points the api at its own ledger and queue"
+
+    # Loading the overlay IS the decision to run cashback. If that stopped
+    # being true, an environment could carry a ledger and serve none of the
+    # routes that use it — or, worse, the reverse.
+    #
+    # Matched tolerantly of quoting: `docker compose config` quotes a value
+    # that would otherwise parse as a boolean and leaves a plain word alone,
+    # so "true" arrives quoted and blnk does not. Pinning either form would
+    # make this check a hostage to a YAML emitter's style.
+    printf '%s' "$rendered" | grep -q 'CASHBACK_ENABLED: *"\{0,1\}true' ||
+        fail "$env_name cashback: the overlay does not set CASHBACK_ENABLED=true, so the stack would run a ledger with the cashback routes unmounted"
+    printf '%s' "$rendered" | grep -q 'LEDGER_DRIVER: *"\{0,1\}blnk' ||
+        fail "$env_name cashback: the overlay does not select the blnk ledger driver"
+    echo "ok: $env_name enables cashback against the blnk driver"
+
+    # The rollout gate is only real if the ledger has a healthcheck: the
+    # reconciler's `up -d --wait` waits on services that declare one and
+    # treats the rest as ready the moment they are running. A ledger that had
+    # crashed on its first database query would otherwise be rolled out,
+    # verified and declared serving.
+    #
+    # Asserted on the ROUTE, not merely on the presence of a healthcheck. A
+    # probe of some other path is a probe that passes while /health is the
+    # thing an operator will read.
+    printf '%s' "$rendered" | grep -q -F ':5001/health' ||
+        fail "$env_name cashback: the ledger has no healthcheck against its /health route, so the rollout gate would pass a Blnk that never reached its database"
+    # And the WORKER, on its own monitoring port. The server answering says
+    # nothing about the process that drains the queue: a worker dead on its
+    # first Redis call lets a deploy report success while every transaction
+    # sits QUEUED - money not moving, and nothing anywhere saying so.
+    printf '%s' "$rendered" | grep -q -F ':5004/health' ||
+        fail "$env_name cashback: the blnk worker has no healthcheck against its /health route on 5004, so a dead worker would pass the rollout gate while transactions queued up behind it"
+    echo "ok: $env_name gates the rollout on both the ledger and its worker answering /health"
+
+    # Redis is a queue and a cache with no persistence and no source of truth.
+    # `noeviction` is what makes that safe: a full Redis must REFUSE a write,
+    # visibly, rather than evict a queued transfer and leave no trace.
+    printf '%s' "$rendered" | grep -q -F 'noeviction' ||
+        fail "$env_name cashback: redis is not configured with maxmemory-policy noeviction; a full queue would silently drop transfers instead of refusing them"
+    echo "ok: $env_name refuses writes to a full Redis rather than evicting queued work"
+}
+
+# Every environment, in every database shape it has — matching the coverage
+# the plain checks above already give. Staging is the one with two shapes and
+# it was the one left out: provision.sh composes it with the local Postgres,
+# the documented model drops that file and points it at the nonprod Supabase
+# project, and the cashback overlay is orthogonal to both. Checking qa and
+# prod covered one shape each and left staging's pair unvalidated entirely —
+# which is precisely the environment a release candidate meets first, and the
+# only one that exists in two shapes for a breakage to hide in.
+check_cashback qa docker-compose.yml docker-compose.local-db.yml docker-compose.cashback.yml
+check_cashback staging docker-compose.yml docker-compose.local-db.yml docker-compose.cashback.yml
+check_cashback staging docker-compose.yml docker-compose.cashback.yml
+check_cashback prod docker-compose.yml docker-compose.cashback.yml
 
 # ---------------------------------------------------------------------------
 # The preview stacks.

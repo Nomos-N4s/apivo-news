@@ -15,6 +15,7 @@ asking anyone.
 | **`APP_ENV`** | `prod` | `prod` | `prod` |
 | **Channel** | `:qa` | `:staging` | `:prod` |
 | **Provisioned** | yes — serving | host yes, no release yet | not yet |
+| **[Cashback](#cashback-the-ledger-and-the-docker-free-path)** | off | off | off |
 
 **The pre-production host exists and QA is serving.** Every merge to `main`
 publishes the `:qa` channel, the host converges within the minute, and
@@ -168,6 +169,116 @@ asymmetric, and worth knowing before it happens rather than during:
 
 A deploy failing with a JWKS error on an environment that was fine yesterday
 is this, until proven otherwise.
+
+## Cashback: the ledger, and the Docker-free path
+
+**Cashback is off on every environment, and there is one switch per
+environment rather than a flag anyone can flip by accident.** It stays off
+until the three [ADR-0002](adr/0002-cashback-money-substrate.md) spikes have
+passed on that environment — a ledger that has not been proved against the
+database it will use is a ledger nobody should be able to enable in a hurry.
+
+### What the switch is
+
+Not a variable in `/etc/apivo/<env>/api.env`. On a Hetzner host it is the
+presence of `deploy/hetzner/compose/docker-compose.cashback.yml` in that
+environment's `COMPOSE_FILE`; in Kubernetes it is whether
+`deploy/k8s/cashback/` was applied. **Listing the overlay is the whole
+decision**, and the four keys that follow from it —
+`CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`, `REDIS_URL` — are set there,
+from the container and Service names that same file chose.
+
+That is deliberate and it is the reason `/etc/apivo/<env>/api.env` does *not*
+carry them. Two answers to "does this environment run cashback" disagree the
+first time one of them is edited in a hurry, and the disagreement is silent:
+an environment with a ledger running and the routes unmounted looks healthy
+from every angle.
+
+### The variables, and where each one is set
+
+Every repository path below is relative to the repository root, and every
+host path is the absolute path on a deployed box. The two are not the same
+file: `deploy/hetzner/env/*.example` are the templates `provision.sh` copies
+to `/etc/apivo/<env>/`, and editing the template on a host edits nothing.
+
+| Key | Local (`.env.example`) | Hetzner | Kubernetes |
+|---|---|---|---|
+| `CASHBACK_ENABLED` | `false` — flip it to try cashback | `deploy/hetzner/compose/docker-compose.cashback.yml` | `deploy/k8s/cashback/cashback-configmap.yaml` |
+| `LEDGER_DRIVER` | `memory` | the same overlay — `blnk`, because it brings one | `deploy/k8s/cashback/cashback-configmap.yaml` — `blnk` |
+| `NETWORK_DRIVER` | `fixture` | **`/etc/apivo/<env>/api.env`** on the host (template: `deploy/hetzner/env/api.env.example`) — an operator's choice, empty = `fixture` | `deploy/k8s/cashback/cashback-configmap.yaml`, empty |
+| `BLNK_URL` | `http://localhost:5001` | the same overlay, from the container name | the `blnk` Service — `deploy/k8s/cashback/blnk-service.yaml` |
+| `REDIS_URL` | `redis://localhost:6379` | the same overlay, from the container name | the `redis` Service — `deploy/k8s/cashback/redis-service.yaml` |
+| `NETWORK_AWIN_PUBLISHER_ID`, `NETWORK_AWIN_API_TOKEN` | empty | **`/etc/apivo/<env>/api.env`** — a real credential | the `apivo-secrets` Secret — structure in `deploy/k8s/examples/secret.example.yaml` |
+| `BLNK_DATA_SOURCE_DNS` | n/a — the memory driver has no database | **`/etc/apivo/<env>/blnk.env`**, 0600, read by the Docker daemon (template: `deploy/hetzner/env/blnk.env.example`) | the same `apivo-secrets` Secret |
+
+`NETWORK_DRIVER` and the network credentials are the exception that proves
+the rule: they are genuinely an operator's decision, against a founder
+question that is still open (**Q1 — which affiliate networks to join**), so
+they sit in `/etc/apivo/<env>/api.env` and default to the fixture adapter.
+Everything else
+follows mechanically from the overlay.
+
+**QA and Staging must never hold production's publisher credentials.** A poll
+is a real call against a real publisher account, counted against a real rate
+limit; QA reconciles on every merge to `main` and would spend that budget
+continuously. This is the same boundary the JWKS split draws for auth, for
+the same reason.
+
+### The ledger's database role is not the api's
+
+Blnk runs against the **same Postgres instance** as the api, in its own `blnk`
+schema with its own restricted role — one database, one backup, one
+point-in-time recovery, and the C-1 zero-sum check stays a plain SQL query
+over real rows instead of a distributed reconciliation. `BLNK_DATA_SOURCE_DNS`
+is therefore a *different* connection string from `DATABASE_URL`, with a role
+that has no rights in `public`. That separation is what makes "Blnk's
+migrations never touch `public`" enforceable rather than hoped for, and it is
+exactly what spike S1 exists to prove.
+
+Redis holds **no source of truth**. Losing it loses throughput, not money: a
+credit is only ever created from a polled, stored, verified network
+transaction, and the outbox replays whatever a lost queue dropped. It is
+configured with no persistence at all and with `maxmemory-policy noeviction`,
+so a full queue refuses a write visibly rather than dropping a transfer
+quietly.
+
+### Working without Docker
+
+**This is how work continues while Docker Desktop is broken on the founder's
+machine**, and it is the default in `.env.example` for exactly that reason —
+the configuration most likely to be copied has to be the one that works.
+
+```sh
+CASHBACK_ENABLED=true LEDGER_DRIVER=memory NETWORK_DRIVER=fixture go run ./cmd/apivo
+```
+
+Catalogue, click-out, the entry state machine, the wallet and payout
+orchestration all run. What does **not** run: the Blnk conformance suite, the
+cross-schema zero-sum check, and every `DATABASE_URL`-keyed invariant test.
+Those are expected skips — do not chase them locally.
+
+**The Docker path does not exist yet, and this is the only local path that
+works today.** `docker-compose.yml` on `main` defines neither `blnk` nor
+`redis`; both arrive with **#149**. Until that merges, `make cashback-up`
+fails with a message saying exactly that and naming the issue — deliberately,
+because a target that quietly exited 0 would report a ledger nobody started.
+`LEDGER_DRIVER=blnk` has nothing to point at in the meantime, which is why
+`.env.example` ships `memory`.
+
+Once #149 has landed, `make cashback-up` starts Postgres, Redis and Blnk, and
+each migrates itself on boot exactly as the deployed environments do. That is
+the intended end state, and it is described here so the shape is known — not
+because it is available now.
+
+The same rule holds for every other `make cashback-*` target: each one whose
+dependency has not merged fails with a message naming the file, the task and
+the issue, rather than exiting 0 and reporting a scenario nobody ran. Running
+one is the quickest way to find out what is actually available today.
+
+**CI is the verification of record**, and every pull request says plainly
+which checks ran locally and which ran in CI. That is not a formality here:
+on a machine with no containers, "it works locally" is a claim about a
+smaller system than the one being deployed.
 
 ## How a deploy actually happens
 
@@ -418,7 +529,19 @@ quickly.
 - `shellcheck` over every script that runs on a host, two of them as root;
 - every environment's compose configuration, rendered and asserted: names
   namespaced per environment, the api unpublished, the data network internal;
+- the cashback overlay in **both** database shapes — over the local Postgres
+  container and over Supabase — because it is orthogonal to which database an
+  environment uses and both combinations will exist. Its own assertions are
+  the ones only it can get wrong: every ledger container namespaced per
+  environment, the api pointed at *its own* ledger rather than the other
+  environment's, and Redis refusing writes when full instead of evicting
+  queued transfers;
 - both Caddyfiles through `caddy validate`.
+
+The Kubernetes manifests have the same pair of checks, split by what each can
+answer: `kubeconform` for shape, and `sh deploy/k8s/validate.sh` for meaning —
+nothing but the frontend publicly routable, the cashback directory a genuine
+opt-in, and the addresses the api is handed resolving to Services that exist.
 
 This is to the Hetzner deployment what `wrangler deploy --dry-run` was to the
 Cloudflare one: everything knowable without credentials, known on every pull

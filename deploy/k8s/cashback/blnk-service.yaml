@@ -1,0 +1,23 @@
+# ClusterIP only — the ledger is never publicly routable, and the type must
+# stay ClusterIP (never NodePort, never LoadBalancer). No Ingress references
+# this Service and none ever may: an internet-reachable ledger API is an
+# internet-reachable way to move members' money.
+#
+# The name is what apivo-cashback-config's BLNK_URL resolves to.
+apiVersion: v1
+kind: Service
+metadata:
+  name: blnk
+  labels:
+    app.kubernetes.io/name: blnk
+    app.kubernetes.io/part-of: apivo-news
+    app.kubernetes.io/component: cashback
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: blnk
+    app.kubernetes.io/part-of: apivo-news
+  ports:
+    - name: http
+      port: 5001
+      targetPort: http
