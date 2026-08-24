@@ -86,11 +86,8 @@ const (
 	// everywhere in Apivo (C-6); the ledger is told the scale so it stores
 	// the same integer.
 	precision = 100
-	// transferMinor is 25.00 EUR. A whole number of major units, so the
-	// float field the SDK also accepts carries no representation error -
-	// the wallet adapter (T043) uses PreciseAmount alone, and this spike
-	// sets both only to keep the ledger's own validation out of the way of
-	// the question being asked.
+	// transferMinor is 25.00 EUR, in minor units. It is sent to the ledger
+	// as precise_amount and never as a float - see postTransfer.
 	transferMinor = 2500
 )
 
@@ -211,10 +208,16 @@ func newLedgerClient() (*blnkgo.Client, error) {
 func postTransfer(client *blnkgo.Client, key, source, destination string) (*blnkgo.Transaction, error) {
 	txn, _, err := client.Transaction.Create(blnkgo.CreateTransactionRequest{
 		ParentTransaction: blnkgo.ParentTransaction{
-			Reference:     key,
-			Currency:      currency,
-			Precision:     precision,
-			Amount:        float64(transferMinor) / precision,
+			Reference: key,
+			Currency:  currency,
+			Precision: precision,
+			// PreciseAmount ONLY. The ledger rejects a request carrying
+			// both amount and precise_amount ("either amount or
+			// precise_amount should be provided, not both"), and the
+			// integer one is the only one Apivo may send anyway: money is
+			// integer minor units everywhere, and no float crosses this
+			// boundary (C-6). The wallet adapter (T043) inherits the
+			// same rule.
 			PreciseAmount: big.NewInt(transferMinor),
 			Source:        source,
 			Destination:   destination,
