@@ -171,6 +171,155 @@ jobs:
       - name: Coverage gate (90%)
         run: sh scripts/coverage_gate.sh 90 coverage.out
 
+  # The cashback stack, proved where it can be proved.
+  #
+  # Docker Desktop is unavailable on the founder's machine, so the ledger,
+  # Redis and every test that needs them cannot run locally at all. This job
+  # IS the verification of record for cashback (ADR-0002, quickstart.md):
+  # Postgres and Redis as service containers, Blnk brought up beside them,
+  # and the whole Go suite run with the product enabled and pointed at a
+  # real ledger.
+  #
+  # It is deliberately a separate job from `go` rather than more steps
+  # inside it. `go` is the gate on the news product and its coverage number;
+  # a ledger that will not start must not be reported as the news suite
+  # failing, and the two read very differently in a run summary.
+  cashback:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: apivo
+          POSTGRES_USER: apivo
+          POSTGRES_PASSWORD: apivo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apivo -d apivo"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      # Blnk's queue and cache. It holds no source of truth (ADR-0002), so
+      # nothing here persists and nothing needs to.
+      redis:
+        image: redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # Pinned by DIGEST, in the form `repo:tag@sha256:...` — the tag is
+      # documentation, the digest is the contract. A tag is mutable, and this
+      # job is the evidence that the ledger behaves: proving it against
+      # whatever `0.15.2` happened to point at that morning would make the
+      # evidence unreproducible, and the ledger is the one component here
+      # that can silently produce a wrong number rather than an error.
+      #
+      # Same digest as docker-compose.yml, deploy/hetzner and deploy/k8s. The
+      # four drifting would mean the stack proved here is not the stack that
+      # runs anywhere.
+      BLNK_IMAGE: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
+      DATABASE_URL: postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
+      # Blnk runs on the host network, so it reaches the service containers
+      # through their published ports rather than by service name.
+      #
+      # The founder's split posture (2026-08-24), run here exactly as it runs
+      # in a deployment: MIGRATIONS as the database owner, the SERVER as
+      # `blnk_app` with USAGE on one schema and DML on its tables — no DDL, no
+      # CREATE on the database, no reach into `public`.
+      #
+      # Splitting the two DSNs is the whole mechanism. Spike S1 creates and
+      # proves the role; every later step in this job then uses it, so the job
+      # exercises the narrow role rather than a permissive stand-in for it.
+      BLNK_MIGRATE_DSN: postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
+      BLNK_DATA_SOURCE_DNS: postgres://blnk_app:ci-only-loopback-blnk-role@localhost:5432/apivo?sslmode=disable
+      BLNK_REDIS_DNS: localhost:6379
+      BLNK_SERVER_PORT: "5001"
+      SPIKE_ADMIN_DATABASE_URL: postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
+      # The ledger role's password lives HERE, not in bootstrap.sql.
+      #
+      # bootstrap.sql is the production recipe an operator runs against the
+      # real database, so a credential written into it would be a credential
+      # for the role that owns the ledger, in a public repository, in the one
+      # file people copy verbatim. It refuses to run without -v blnk_password
+      # now. This value is a throwaway for a loopback database that exists for
+      # the length of one job — the same status as POSTGRES_PASSWORD above,
+      # and it is written in the open for the same reason.
+      SPIKE_BLNK_ROLE_PASSWORD: ci-only-loopback-blnk-role
+      SPIKE_BLNK_ROLE_DSN: postgres://blnk_app:ci-only-loopback-blnk-role@localhost:5432/apivo?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Lint the cashback shell scripts
+        # These decide whether a spike passed. A syntax error in one would
+        # otherwise surface as the spike's verdict.
+        run: shellcheck -s sh scripts/blnk_up.sh scripts/spikes/ledger_schema/run.sh
+      - name: Spike S1 — the ledger is confined to its own schema
+        # Runs BEFORE the ledger is brought up, because it is the thing that
+        # migrates: it creates the restricted role, snapshots `public`,
+        # migrates as that role, and asserts nothing outside the `blnk`
+        # schema moved. Every later step then uses the role it created.
+        run: sh scripts/spikes/ledger_schema/run.sh
+      - name: Bring up the ledger
+        run: sh scripts/blnk_up.sh
+      - name: Spike S2 — a commit and a ledger transfer survive a crash between them
+        # Verbose on purpose. The spike kills a real process in each of the
+        # two windows a crash can land in, and what it saw the ledger do is
+        # the evidence the decision rests on - a passing non-verbose run
+        # would swallow every t.Logf that carries it.
+        run: go test -count=1 -v ./scripts/spikes/outbox_crash/
+        env:
+          CASHBACK_ENABLED: "true"
+          LEDGER_DRIVER: blnk
+          NETWORK_DRIVER: fixture
+          BLNK_URL: http://127.0.0.1:5001
+          REDIS_URL: redis://127.0.0.1:6379
+      - name: Test with cashback enabled against the real ledger
+        # The whole suite, not a subset: the point of this job is that the
+        # binary behaves with the product mounted and money pointed at a
+        # running ledger, and a package that only breaks in that
+        # configuration is exactly what it exists to catch. No -race here —
+        # the `go` job already pays for that pass, and this one is about
+        # the stack rather than about the code.
+        run: go test -count=1 ./...
+        env:
+          CASHBACK_ENABLED: "true"
+          LEDGER_DRIVER: blnk
+          NETWORK_DRIVER: fixture
+          BLNK_URL: http://127.0.0.1:5001
+          REDIS_URL: redis://127.0.0.1:6379
+      - name: Ledger logs (for the record)
+        # Always, not on failure only: when a money test passes, what the
+        # ledger did while it passed is part of the evidence.
+        if: always()
+        run: docker logs blnk || true
+
+  # Spike S3 (ADR-0002): the other half of the cashback story — the path with
+  # NO containers at all.
+  #
+  # Note what this job does not declare: no `services`. That absence is the
+  # test. It reproduces the founder's machine deliberately, so a suite that
+  # quietly grew a dependency on a database or a ledger fails here rather
+  # than on the day the stack is unavailable. The spike unsets every key that
+  # could reach a container before it runs anything.
+  cashback-no-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Lint the spike script
+        run: shellcheck -s sh scripts/spikes/no_docker/run.sh
+      - name: Spike S3 — the repository is green with no Docker
+        run: sh scripts/spikes/no_docker/run.sh
+
   # Proves the Dockerfile builds; the image is never pushed from CI.
   docker:
     runs-on: ubuntu-latest

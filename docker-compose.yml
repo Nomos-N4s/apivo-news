@@ -5,6 +5,25 @@
 # service is the only published HTTP surface (http://localhost:4321);
 # Postgres is also published, on loopback, for local tooling and tests.
 # Host bindings are loopback-only so the dev stack never listens on the LAN.
+#
+# The cashback product adds two more services, Blnk and Redis (ADR-0002).
+# Both are published on loopback for the same reason Postgres is: the
+# documented local workflow runs the Go binary on the host against the
+# compose services (specs/002-apivo-cashback-alpha/quickstart.md).
+#
+# The two cashback images are pinned by DIGEST, in the form
+# `repo:tag@sha256:...` — the tag is documentation, the digest is the
+# contract. A tag is mutable: `jerryenebeli/blnk:0.15.2` is whatever that
+# name points at on the day a container is pulled, and the ledger is the one
+# place in this stack where a silent retag would change the binary that moves
+# members' money, with no diff and no review. Same digests as
+# deploy/hetzner/compose/docker-compose.cashback.yml and deploy/k8s, so the
+# stack proved in CI is the stack that runs.
+#
+# Redis is 7.2.4 rather than the newest 8.x for the same reason: it is what
+# Blnk's own compose file runs and what the deployment pins, and the local
+# stack is not the place to discover a version skew the deployment does not
+# have.
 services:
   postgres:
     image: postgres:17-alpine
@@ -21,6 +40,140 @@ services:
       retries: 10
     volumes:
       - pgdata:/var/lib/postgresql/data
+
+  # Redis backs Blnk's queueing and caching. It holds NO source of truth
+  # (ADR-0002): losing it loses throughput, not money — which is why there
+  # is no volume here and losing the container is not an incident.
+  redis:
+    image: redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # The ledger's role and schema.
+  #
+  # This runs the SAME bootstrap.sql an operator runs against the production
+  # database, mounted straight from the spike directory rather than copied,
+  # so the local stack cannot drift from the recipe. It creates `blnk_app`,
+  # creates the `blnk` schema owned by the database owner, and sets the
+  # default privileges that make the migration's tables readable and writable
+  # by the runtime role.
+  #
+  # The password is a compose variable with a local-only default. It is not a
+  # default inside bootstrap.sql, which refuses to run without one: that file
+  # is the production recipe, and a credential written into it would be a
+  # credential for the ledger role in a public repository.
+  blnk-bootstrap:
+    image: postgres:17-alpine
+    restart: "no"
+    entrypoint: ["psql"]
+    command:
+      - "postgres://apivo:apivo@postgres:5432/apivo?sslmode=disable"
+      - "-v"
+      - "ON_ERROR_STOP=1"
+      - "-v"
+      - "blnk_password=${BLNK_ROLE_PASSWORD:-blnk-local-dev}"
+      - "-f"
+      - "/bootstrap.sql"
+    volumes:
+      - ./scripts/spikes/ledger_schema/bootstrap.sql:/bootstrap.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Blnk's schema, migrated once before the server starts, AS THE DATABASE
+  # OWNER.
+  #
+  # That is the founder's split posture (2026-08-24): migrations are DDL and
+  # run as the owner; the server below runs as `blnk_app`, which has USAGE on
+  # one schema and DML on its tables and nothing else. Spike S1 found why the
+  # split is needed — Blnk's first migration issues
+  # `CREATE SCHEMA IF NOT EXISTS blnk`, and Postgres checks the database-level
+  # CREATE privilege before the IF NOT EXISTS shortcut, so a single role would
+  # need CREATE on the database permanently for one statement on one deploy.
+  #
+  # It is a separate one-shot service rather than a wrapped entrypoint on
+  # the server because `blnk start` does not migrate, and a server that
+  # answers before its tables exist would fail per request instead of
+  # refusing to start. `service_completed_successfully` below is what makes
+  # the ordering real rather than hopeful.
+  #
+  # Blnk confines itself to a `blnk` schema: its first migration creates it
+  # and every object is schema-qualified, and the server issues
+  # `SET search_path TO blnk` on every connection. It shares Apivo's
+  # database so the C-1 zero-sum check is a plain SQL query over real rows
+  # rather than a distributed reconciliation (ADR-0002).
+  blnk-migrate:
+    image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
+    restart: "no"
+    entrypoint: ["blnk", "migrate", "up"]
+    environment:
+      TZ: Etc/UTC
+      BLNK_DATA_SOURCE_DNS: postgres://apivo:apivo@postgres:5432/apivo?sslmode=disable
+      # Unused by the migration itself, and still required: Blnk validates
+      # its whole configuration before running any command.
+      BLNK_REDIS_DNS: redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      blnk-bootstrap:
+        condition: service_completed_successfully
+
+  # The Blnk ledger (ADR-0002). Configuration is environment-only — the
+  # image falls back to environment variables when no blnk.json is present,
+  # which keeps the whole configuration in this file and out of a mounted
+  # JSON nobody diffs.
+  #
+  # It runs UNAUTHENTICATED here (`server.secure` defaults to false), which
+  # is why it is bound to loopback and nothing else. A deployment sets
+  # BLNK_SERVER_SECRET_KEY and the api's BLNK_SECRET_KEY together; the api
+  # refuses to start in APP_ENV=prod without one.
+  blnk:
+    image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
+    environment:
+      TZ: Etc/UTC
+      BLNK_PROJECT_NAME: apivo-cashback
+      # As `blnk_app`, not as the owner: USAGE on one schema, DML on its
+      # tables, no DDL, no CREATE on the database, no reach into `public`.
+      # The same posture the deployment and the CI job run.
+      BLNK_DATA_SOURCE_DNS: postgres://blnk_app:${BLNK_ROLE_PASSWORD:-blnk-local-dev}@postgres:5432/apivo?sslmode=disable
+      BLNK_REDIS_DNS: redis:6379
+      BLNK_SERVER_PORT: "5001"
+    ports:
+      - "127.0.0.1:5001:5001"
+    healthcheck:
+      # Blnk serves an unauthenticated `GET /health` (added upstream in
+      # v0.10.3; this image is 0.15.2). An earlier revision of this file
+      # probed `/ledgers` and claimed there was no health route — wrong on
+      # both counts, and dangerous on the first: `/ledgers` is auth-gated, so
+      # the moment BLNK_SERVER_SECRET_KEY is set it answers 401 and the
+      # container stays permanently unhealthy, blocking every `depends_on`
+      # that waits for it.
+      #
+      # A compose healthcheck runs INSIDE the container, so it can only use a
+      # client the image ships. `wget` qualifies: the upstream Dockerfile
+      # installs it to fetch a signing key and removes only the apt lists
+      # afterwards. `--spider` is avoided deliberately — it sends HEAD, and a
+      # route that answers GET is not obliged to answer HEAD.
+      #
+      # Same probe as deploy/hetzner and deploy/k8s, on purpose: one answer
+      # in the repository, not two.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5001/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      blnk-migrate:
+        condition: service_completed_successfully
 
   # Go API. No `ports`: internal network only (contract topology). The
   # image defines its own healthcheck, which `depends_on` below relies on.
@@ -67,6 +220,33 @@ services:
       TRANSLATION_INTERVAL: ${TRANSLATION_INTERVAL:-}
       TRANSLATION_ARTICLE_CEILING_MICROUSD: ${TRANSLATION_ARTICLE_CEILING_MICROUSD:-}
       TRANSLATION_MONTHLY_CAP_MICROUSD: ${TRANSLATION_MONTHLY_CAP_MICROUSD:-}
+      # Cashback (ADR-0002, ADR-0003), passed through from the host
+      # environment (or .env) with NO defaults, for the same reason the
+      # translation keys have none: which ledger carries members' money is
+      # a decision, and a default would be one made by accident. Unset
+      # means CASHBACK_ENABLED=false and the cashback routes are not
+      # mounted at all.
+      #
+      # The two shapes that work against this file:
+      #   CASHBACK_ENABLED=true LEDGER_DRIVER=blnk \
+      #     BLNK_URL=http://blnk:5001 NETWORK_DRIVER=fixture
+      #   CASHBACK_ENABLED=true LEDGER_DRIVER=memory NETWORK_DRIVER=fixture
+      # The second needs neither of the services above and is what runs
+      # while Docker is unavailable — with the binary on the host, where
+      # BLNK_URL would instead be http://127.0.0.1:5001.
+      #
+      # BLNK_URL is deliberately not defaulted to the compose service:
+      # setting it beside LEDGER_DRIVER=memory is refused at startup, and a
+      # default would produce that refusal for someone who set neither.
+      CASHBACK_ENABLED: ${CASHBACK_ENABLED:-}
+      LEDGER_DRIVER: ${LEDGER_DRIVER:-}
+      BLNK_URL: ${BLNK_URL:-}
+      BLNK_SECRET_KEY: ${BLNK_SECRET_KEY:-}
+      REDIS_URL: ${REDIS_URL:-}
+      NETWORK_DRIVER: ${NETWORK_DRIVER:-}
+      NETWORK_ACCOUNT_ID: ${NETWORK_ACCOUNT_ID:-}
+      NETWORK_API_KEY: ${NETWORK_API_KEY:-}
+      NETWORK_API_SECRET: ${NETWORK_API_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
