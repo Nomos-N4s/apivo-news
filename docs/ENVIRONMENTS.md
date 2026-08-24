@@ -208,8 +208,19 @@ to `/etc/apivo/<env>/`, and editing the template on a host edits nothing.
 | `NETWORK_DRIVER` | `fixture` | **`/etc/apivo/<env>/api.env`** on the host (template: `deploy/hetzner/env/api.env.example`) — an operator's choice, empty = `fixture` | `deploy/k8s/cashback/cashback-configmap.yaml`, empty |
 | `BLNK_URL` | `http://localhost:5001` | the same overlay, from the container name | the `blnk` Service — `deploy/k8s/cashback/blnk-service.yaml` |
 | `REDIS_URL` | `redis://localhost:6379` | the same overlay, from the container name | the `redis` Service — `deploy/k8s/cashback/redis-service.yaml` |
-| `NETWORK_AWIN_PUBLISHER_ID`, `NETWORK_AWIN_API_TOKEN` | empty | **`/etc/apivo/<env>/api.env`** — a real credential | the `apivo-secrets` Secret — structure in `deploy/k8s/examples/secret.example.yaml` |
-| `BLNK_DATA_SOURCE_DNS` | n/a — the memory driver has no database | **`/etc/apivo/<env>/blnk.env`**, 0600, read by the Docker daemon (template: `deploy/hetzner/env/blnk.env.example`) | the same `apivo-secrets` Secret |
+| `NETWORK_ACCOUNT_ID` | empty | **`/etc/apivo/<env>/api.env`** | `deploy/k8s/cashback/cashback-configmap.yaml` — not a credential, and logged in clear |
+| `NETWORK_API_KEY`, `NETWORK_API_SECRET` | empty | **`/etc/apivo/<env>/api.env`** — real credentials | the `apivo-secrets` Secret — structure in `deploy/k8s/examples/secret.example.yaml` |
+| `BLNK_SECRET_KEY` | empty (local ledger is unauthenticated) | **`/etc/apivo/<env>/api.env`** — **required**, see below | the `apivo-secrets` Secret |
+| `BLNK_SERVER_SECRET_KEY` | n/a | **`/etc/apivo/<env>/blnk.env`** — the ledger's half of the same setting | the `apivo-secrets` Secret |
+| `BLNK_DATA_SOURCE_DNS` (**runtime**, `blnk_app`) | n/a — the memory driver has no database | **`/etc/apivo/<env>/blnk.env`**, 0600, read by the Docker daemon (template: `deploy/hetzner/env/blnk.env.example`) | Secret key `BLNK_DATA_SOURCE_DNS` |
+| `BLNK_DATA_SOURCE_DNS` (**migration**, the owner) | n/a | **`/etc/apivo/<env>/blnk-migrate.env`**, 0600 (template: `deploy/hetzner/env/blnk-migrate.env.example`) | Secret key `BLNK_MIGRATE_DSN` |
+
+The network keys are named for the role each value plays rather than for a
+particular network — the adapter selected by `NETWORK_DRIVER` reads them and
+decides what they mean. An earlier revision of this page invented
+`NETWORK_AWIN_PUBLISHER_ID` and `NETWORK_AWIN_API_TOKEN`, which nothing has
+ever read; a documented key that reaches no code is worse than a missing one,
+because it looks configured.
 
 `NETWORK_DRIVER` and the network credentials are the exception that proves
 the rule: they are genuinely an operator's decision, against a founder
@@ -224,16 +235,71 @@ limit; QA reconciles on every merge to `main` and would spend that budget
 continuously. This is the same boundary the JWKS split draws for auth, for
 the same reason.
 
-### The ledger's database role is not the api's
+### The ledger runs as TWO database roles
 
 Blnk runs against the **same Postgres instance** as the api, in its own `blnk`
-schema with its own restricted role — one database, one backup, one
-point-in-time recovery, and the C-1 zero-sum check stays a plain SQL query
-over real rows instead of a distributed reconciliation. `BLNK_DATA_SOURCE_DNS`
-is therefore a *different* connection string from `DATABASE_URL`, with a role
-that has no rights in `public`. That separation is what makes "Blnk's
-migrations never touch `public`" enforceable rather than hoped for, and it is
-exactly what spike S1 exists to prove.
+schema — one database, one backup, one point-in-time recovery, and the C-1
+zero-sum check stays a plain SQL query over real rows instead of a distributed
+reconciliation. Spike S1 has passed against that shape, so the ADR-0002
+fallback of a Blnk-owned Postgres is not needed.
+
+It reaches that database as **two different roles**, and this is the founder's
+decision of 2026-08-24 rather than an implementation detail:
+
+| | Role | Runs | Reads |
+|---|---|---|---|
+| **Migration** | the database **owner** | `blnk migrate up`, once per rollout | `/etc/apivo/<env>/blnk-migrate.env` — k8s Secret key `BLNK_MIGRATE_DSN` |
+| **Runtime** | **`blnk_app`**, which owns nothing | the ledger server and its worker, continuously | `/etc/apivo/<env>/blnk.env` — k8s Secret key `BLNK_DATA_SOURCE_DNS` |
+
+**Why it is required and not merely tidy.** Blnk's first migration issues
+`CREATE SCHEMA IF NOT EXISTS blnk`, and PostgreSQL checks the database-level
+`CREATE` privilege *before* it takes the `IF NOT EXISTS` shortcut — so
+pre-creating the schema does not avoid the grant. A single role doing both
+jobs would need `CREATE` on the database **permanently**, for one statement on
+one deploy. The founder took the split instead, so the role that is exposed
+every second of every day is the narrow one.
+
+What `blnk_app` therefore cannot do is the point: no `CREATE SCHEMA`, so it
+cannot give itself a second home; no DDL inside `blnk`, so a compromised
+ledger process cannot drop or reshape the tables holding members' balances;
+nothing in `public`, where Apivo's tables are legal evidence. Spike S1 proves
+all four refusals against a real Postgres, with Postgres's own log as the
+evidence, and then serves the rest of the CI job as `blnk_app` — which is
+what proves the reduced set sufficient rather than merely safe.
+
+**Both DSNs use the same variable name inside their container.** Blnk reads
+`BLNK_DATA_SOURCE_DNS` whichever job it is doing, so the split is expressed by
+*which file* or *which Secret key* each container reads. That is deliberate:
+it makes the owner's credential **absent** from the long-lived processes
+rather than merely unused by them, so a compromised ledger cannot read it back
+out of its own environment. `deploy/hetzner/validate.sh` and
+`deploy/k8s/validate.sh` both assert it.
+
+**Creating the role is a one-off an operator does**, with the recipe in
+[`scripts/spikes/ledger_schema/bootstrap.sql`](../scripts/spikes/ledger_schema/bootstrap.sql)
+— the production recipe, not a fixture. It refuses to run without a password
+rather than shipping one:
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -v blnk_password="$(openssl rand -base64 32)" \
+  -f scripts/spikes/ledger_schema/bootstrap.sql
+```
+
+### The ledger demands a credential, and the api presents it
+
+`BLNK_SERVER_SECRET_KEY` (in `blnk.env`) and `BLNK_SECRET_KEY` (in `api.env`)
+are two halves of one setting and must be **equal**. Neither is optional on a
+deployed environment: all three run `APP_ENV=prod`, and the api **refuses to
+start** with cashback enabled and `BLNK_SECRET_KEY` unset — *"a ledger
+reachable without a credential is a ledger anybody on that network can post
+to, and postings are money"*. Setting only one gives either a 401 on every
+ledger call or an unauthenticated ledger, and neither is a state to run money
+in.
+
+The local stack is the documented exception: it runs the ledger
+unauthenticated on a loopback address, which is why `.env.example` leaves
+`BLNK_SECRET_KEY` empty.
 
 Redis holds **no source of truth**. Losing it loses throughput, not money: a
 credit is only ever created from a polled, stored, verified network
@@ -257,18 +323,16 @@ orchestration all run. What does **not** run: the Blnk conformance suite, the
 cross-schema zero-sum check, and every `DATABASE_URL`-keyed invariant test.
 Those are expected skips — do not chase them locally.
 
-**The Docker path does not exist yet, and this is the only local path that
-works today.** `docker-compose.yml` on `main` defines neither `blnk` nor
-`redis`; both arrive with **#149**. Until that merges, `make cashback-up`
-fails with a message saying exactly that and naming the issue — deliberately,
-because a target that quietly exited 0 would report a ledger nobody started.
-`LEDGER_DRIVER=blnk` has nothing to point at in the meantime, which is why
-`.env.example` ships `memory`.
+**This is the path that needs nothing installed**, and it is what
+`.env.example` ships. With Docker available, `make cashback-up` starts
+Postgres, Redis and the ledger, and the ledger's schema is migrated by a
+one-shot `blnk-migrate` container before the server starts — the same
+two-role split every deployed environment uses.
 
-Once #149 has landed, `make cashback-up` starts Postgres, Redis and Blnk, and
-each migrates itself on boot exactly as the deployed environments do. That is
-the intended end state, and it is described here so the shape is known — not
-because it is available now.
+The local stack runs the ledger UNAUTHENTICATED, which is why it is bound to
+loopback and nothing else. That is a local-only affordance: every deployed
+environment runs `APP_ENV=prod`, where the api refuses to start with cashback
+enabled and `BLNK_SECRET_KEY` unset.
 
 The same rule holds for every other `make cashback-*` target: each one whose
 dependency has not merged fails with a message naming the file, the task and
