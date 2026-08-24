@@ -211,7 +211,8 @@ to `/etc/apivo/<env>/`, and editing the template on a host edits nothing.
 | `NETWORK_ACCOUNT_ID` | empty | **`/etc/apivo/<env>/api.env`** | `deploy/k8s/cashback/cashback-configmap.yaml` — not a credential, and logged in clear |
 | `NETWORK_API_KEY`, `NETWORK_API_SECRET` | empty | **`/etc/apivo/<env>/api.env`** — real credentials | the `apivo-secrets` Secret — structure in `deploy/k8s/examples/secret.example.yaml` |
 | `BLNK_SECRET_KEY` | empty (local ledger is unauthenticated) | **`/etc/apivo/<env>/api.env`** — **required**, see below | the `apivo-secrets` Secret |
-| `BLNK_SERVER_SECRET_KEY` | n/a | **`/etc/apivo/<env>/blnk.env`** — the ledger's half of the same setting | the `apivo-secrets` Secret |
+| `BLNK_SERVER_SECRET_KEY` | n/a | **`/etc/apivo/<env>/blnk.env`** — the value the ledger accepts | the `apivo-secrets` Secret |
+| `BLNK_SERVER_SECURE` | n/a (local ledger is unauthenticated) | the compose overlay — **`true`**, and without it the two keys above do nothing | `deploy/k8s/cashback/blnk-configmap.yaml` |
 | `BLNK_DATA_SOURCE_DNS` (**runtime**, `blnk_app`) | n/a — the memory driver has no database | **`/etc/apivo/<env>/blnk.env`**, 0600, read by the Docker daemon (template: `deploy/hetzner/env/blnk.env.example`) | Secret key `BLNK_DATA_SOURCE_DNS` |
 | `BLNK_DATA_SOURCE_DNS` (**migration**, the owner) | n/a | **`/etc/apivo/<env>/blnk-migrate.env`**, 0600 (template: `deploy/hetzner/env/blnk-migrate.env.example`) | Secret key `BLNK_MIGRATE_DSN` |
 
@@ -286,10 +287,41 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f scripts/spikes/ledger_schema/bootstrap.sql
 ```
 
-### The ledger demands a credential, and the api presents it
+### Authenticating the ledger takes THREE keys, not two
 
-`BLNK_SERVER_SECRET_KEY` (in `blnk.env`) and `BLNK_SECRET_KEY` (in `api.env`)
-are two halves of one setting and must be **equal**. Neither is optional on a
+**A secret key is not an authentication switch**, and an earlier revision of
+this page said it was. Blnk checks credentials only when
+`BLNK_SERVER_SECURE` is true. With it false — which is the default, since the
+field is never assigned one — the middleware returns before it ever looks at
+a key:
+
+```go
+// api/middleware/auth.go, Authenticate(), blnk v0.15.2
+if err == nil && conf != nil && !conf.Server.Secure {
+    // Skip authentication when secure mode is disabled
+    c.Next()
+    return
+}
+```
+
+Blnk says so itself, on every start: *"SECURITY: server.secure is false — API
+authentication is DISABLED."* So a deployment carrying only the secret key
+runs a ledger that accepts anything able to reach it, while every template
+around it claims otherwise.
+
+`BLNK_SERVER_SECURE` is set in the compose overlay and in
+`deploy/k8s/cashback/blnk-configmap.yaml`, and both validators assert it.
+
+**Why this was invisible.** `/health` is skipped *before* the secure check, so
+every healthcheck, probe and rollout gate passes identically whether
+authentication is on or off. Nothing in the deployment goes red; only a
+request to a real route tells you, and by then the ledger has been reachable
+for as long as it has been running.
+
+With the switch on, the remaining two are one credential in two places:
+`BLNK_SERVER_SECRET_KEY` (in `blnk.env`) is what the ledger **accepts**,
+`BLNK_SECRET_KEY` (in `api.env`) is what the api **presents**, and they must
+be **equal**. Neither is optional on a
 deployed environment: all three run `APP_ENV=prod`, and the api **refuses to
 start** with cashback enabled and `BLNK_SECRET_KEY` unset — *"a ledger
 reachable without a credential is a ledger anybody on that network can post
