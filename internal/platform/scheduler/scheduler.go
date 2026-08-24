@@ -325,7 +325,11 @@ func (s *Scheduler) runOnce(ctx context.Context, job Job) (bool, error) {
 		return false, err
 	}
 	if !held {
-		s.log.InfoContext(ctx, "job skipped: another instance holds its lock", "job", job.Name)
+		// Debug, not Info: with more than one instance, every instance but
+		// one loses this race on every tick of every job. That is the
+		// design working, not an event, and at Info it would be a
+		// continuous stream that buries the failures worth reading.
+		s.log.DebugContext(ctx, "job skipped: another instance holds its lock", "job", job.Name)
 		return false, nil
 	}
 	defer s.release(ctx, job, lock)

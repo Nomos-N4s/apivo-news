@@ -826,38 +826,46 @@ func TestOutcomesAreLoggedStructurally(t *testing.T) {
 		grant     func(string) (bool, error)
 		run       func(context.Context) error
 		wantMsg   string
+		wantLevel string
 		wantError bool
 		wantStack bool
 	}{
 		{
-			name:    "a successful run",
-			run:     func(context.Context) error { return nil },
-			wantMsg: "job completed",
+			name:      "a successful run",
+			run:       func(context.Context) error { return nil },
+			wantMsg:   "job completed",
+			wantLevel: "INFO",
 		},
 		{
 			name:      "a failed run",
 			run:       func(context.Context) error { return errJob },
 			wantMsg:   "job failed",
+			wantLevel: "ERROR",
 			wantError: true,
 		},
 		{
 			name:      "a panicking run",
 			run:       func(context.Context) error { panic("the job exploded") },
 			wantMsg:   "job panicked",
+			wantLevel: "ERROR",
 			wantError: true,
 			wantStack: true,
 		},
 		{
-			name:    "a run another instance is already doing",
-			grant:   func(string) (bool, error) { return false, nil },
-			run:     func(context.Context) error { return nil },
-			wantMsg: "job skipped: another instance holds its lock",
+			// Debug, deliberately: every instance but one loses this race
+			// on every tick, so at Info it would drown the records above.
+			name:      "a run another instance is already doing",
+			grant:     func(string) (bool, error) { return false, nil },
+			run:       func(context.Context) error { return nil },
+			wantMsg:   "job skipped: another instance holds its lock",
+			wantLevel: "DEBUG",
 		},
 		{
 			name:      "a lock that could not be taken",
 			grant:     func(string) (bool, error) { return false, errLock },
 			run:       func(context.Context) error { return nil },
 			wantMsg:   "taking the job lock failed",
+			wantLevel: "ERROR",
 			wantError: true,
 		},
 	}
@@ -877,6 +885,9 @@ func TestOutcomesAreLoggedStructurally(t *testing.T) {
 			record := findLogRecord(t, out.String(), tt.wantMsg)
 			if got := record["job"]; got != "zero-sum" {
 				t.Errorf("log record %q carries job = %v, want the job's name as its own attribute", tt.wantMsg, got)
+			}
+			if got := record["level"]; got != tt.wantLevel {
+				t.Errorf("log record %q is at level %v, want %v", tt.wantMsg, got, tt.wantLevel)
 			}
 			if _, ok := record["error"]; ok != tt.wantError {
 				t.Errorf("log record %q carries an error attribute = %v, want %v", tt.wantMsg, ok, tt.wantError)
