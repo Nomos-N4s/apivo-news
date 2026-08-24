@@ -49,6 +49,16 @@ type violation struct {
 
 func (v violation) String() string { return v.file + ": " + v.reason }
 
+// scan is the result of one pass over a package graph. The counters are not
+// decoration: a scan that parsed nothing, or that saw no import of this
+// module at all, reports zero violations for the same reason a scan of a
+// perfectly obedient repository does, and the two must not look alike.
+type scan struct {
+	violations []violation
+	files      int
+	imports    int
+}
+
 // TestModuleBoundaries walks every Go file under internal/ and asserts the
 // import rules of ADR-0001:
 //
@@ -70,12 +80,20 @@ func TestModuleBoundaries(t *testing.T) {
 	root := repoRoot(t)
 	assertModulePath(t, root)
 
-	found, err := checkInternal(os.DirFS(filepath.Join(root, "internal")))
+	internalFS := os.DirFS(filepath.Join(root, "internal"))
+	if err := checkLayers(internalFS); err != nil {
+		t.Fatalf("the rules can no longer see what they govern: %v", err)
+	}
+
+	got, err := checkInternal(internalFS)
 	if err != nil {
 		t.Fatalf("scanning internal/: %v", err)
 	}
-	for _, v := range found {
-		t.Errorf("%s: %s", v.file, v.reason)
+	if got.files == 0 || got.imports == 0 {
+		t.Fatalf("scanned %d Go file(s) holding %d import(s) of this module; the scan found nothing to judge, so every rule below passed vacuously", got.files, got.imports)
+	}
+	for _, v := range got.violations {
+		t.Errorf("%s", v)
 	}
 }
 
@@ -214,10 +232,11 @@ func TestModuleBoundaryRules(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			found, err := checkInternal(graphOf(tc.file, tc.imports))
+			got, err := checkInternal(graphOf(tc.file, tc.imports))
 			if err != nil {
 				t.Fatalf("scanning the fixture graph: %v", err)
 			}
+			found := got.violations
 			if tc.want == "" {
 				if len(found) != 0 {
 					t.Fatalf("imports the rules allow were refused: %v", found)
@@ -232,6 +251,67 @@ func TestModuleBoundaryRules(t *testing.T) {
 			}
 			if found[0].file != tc.file {
 				t.Errorf("violation blamed %q, want %q", found[0].file, tc.file)
+			}
+		})
+	}
+}
+
+// TestBoundaryScanRefusesToPassVacuously proves the anti-vacuity guard is
+// itself worth having: each tree below would produce a clean scan while
+// checking nothing, and must be refused as a broken test rather than
+// reported as an obedient repository.
+func TestBoundaryScanRefusesToPassVacuously(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		dirs []string
+		want string
+	}{
+		{
+			name: "the layers and two domains",
+			dirs: []string{"platform", "identity", "content", "cashback"},
+		},
+		{
+			name: "platform renamed or removed",
+			dirs: []string{"identity", "content", "cashback"},
+			want: "internal/platform/ does not exist",
+		},
+		{
+			name: "identity renamed or removed",
+			dirs: []string{"platform", "content", "cashback"},
+			want: "internal/identity/ does not exist",
+		},
+		{
+			name: "nothing but the shared layers",
+			dirs: []string{"platform", "identity"},
+			want: "needs two domains",
+		},
+		{
+			name: "a single domain, so nothing to cross",
+			dirs: []string{"platform", "identity", "content"},
+			want: "needs two domains",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tree := fstest.MapFS{}
+			for _, dir := range tc.dirs {
+				tree[dir+"/doc.go"] = &fstest.MapFile{Data: []byte("package " + path.Base(dir) + "\n")}
+			}
+
+			err := checkLayers(tree)
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatalf("a tree the rules can govern was refused: %v", err)
+			case tc.want == "":
+			case err == nil:
+				t.Fatalf("a tree that would pass vacuously was accepted; want a refusal mentioning %q", tc.want)
+			case !strings.Contains(err.Error(), tc.want):
+				t.Errorf("refused for the wrong reason:\n got: %v\nwant a reason containing: %s", err, tc.want)
 			}
 		})
 	}
@@ -257,9 +337,9 @@ func graphOf(file string, imports []string) fstest.MapFS {
 // module names, so a module added tomorrow is governed by the same rules
 // without this file being edited, and a module that does not exist yet
 // cannot make a rule pass vacuously.
-func checkInternal(fsys fs.FS) ([]violation, error) {
+func checkInternal(fsys fs.FS) (scan, error) {
 	fset := token.NewFileSet()
-	var found []violation
+	var got scan
 
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -276,22 +356,62 @@ func checkInternal(fsys fs.FS) ([]violation, error) {
 		if err != nil {
 			return err
 		}
+		got.files++
 		owner := path.Dir(p)
 		for _, imp := range file.Imports {
 			target, err := strconv.Unquote(imp.Path.Value)
 			if err != nil {
 				return err
 			}
+			if strings.HasPrefix(target, modulePath+"/") {
+				got.imports++
+			}
 			if reason, bad := violates(owner, target); bad {
-				found = append(found, violation{file: p, reason: reason})
+				got.violations = append(got.violations, violation{file: p, reason: reason})
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return scan{}, err
 	}
-	return found, nil
+	return got, nil
+}
+
+// checkLayers guards the part of the rule set that is named rather than
+// derived. platform and identity are the only two module names this file
+// spells out; if either directory is renamed or removed, every rule
+// mentioning it stops matching and starts passing - silently, and most
+// loudly on the day the rename lands, when nobody is looking for it. The
+// domain count guards the same way from the other side: the cross-domain
+// rule has nothing to forbid until two domains exist.
+func checkLayers(fsys fs.FS) error {
+	entries, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		return err
+	}
+
+	present := make(map[string]bool, len(entries))
+	domains := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		present[e.Name()] = true
+		if e.Name() != platformModule && e.Name() != identityModule {
+			domains = append(domains, e.Name())
+		}
+	}
+
+	for _, layer := range []string{platformModule, identityModule} {
+		if !present[layer] {
+			return fmt.Errorf("internal/%s/ does not exist, so every rule naming it now matches nothing and passes without checking anything; point the constant at the directory that replaced it, or delete the rule it belongs to", layer)
+		}
+	}
+	if len(domains) < 2 {
+		return fmt.Errorf("found %d module(s) beside platform and identity (%v); the cross-domain rule needs two domains before it forbids anything", len(domains), domains)
+	}
+	return nil
 }
 
 // violates answers whether ownerPkg - a package path relative to internal/ -
