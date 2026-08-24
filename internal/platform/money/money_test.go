@@ -419,6 +419,23 @@ func TestSub(t *testing.T) {
 			want: math.MaxInt64,
 		},
 		{
+			// The other guard's boundary. The case above lands exactly on the
+			// top of the range and pins the y < 0 branch; this lands exactly
+			// on the bottom and pins the y > 0 one, which would otherwise be
+			// defended only from the failing side - an off-by-one there would
+			// reject a subtraction that is perfectly representable.
+			name: "down to the smallest representable amount",
+			a:    money.Amount{Minor: math.MinInt64 + 1, Currency: eur},
+			b:    money.Amount{Minor: 1, Currency: eur},
+			want: math.MinInt64,
+		},
+		{
+			name:    "and one step past the bottom of the range",
+			a:       money.Amount{Minor: math.MinInt64 + 1, Currency: eur},
+			b:       money.Amount{Minor: 2, Currency: eur},
+			wantErr: money.ErrOverflow,
+		},
+		{
 			name:    "positive overflow is detected",
 			a:       money.Amount{Minor: math.MaxInt64, Currency: eur},
 			b:       money.Amount{Minor: -1, Currency: eur},
