@@ -91,13 +91,13 @@ func TestCashbackFromEnv(t *testing.T) {
 				Enabled:       true,
 				LedgerDriver:  config.LedgerDriverBlnk,
 				BlnkURL:       "http://blnk:5001",
-				BlnkSecretKey: "blnk-secret",
+				BlnkSecretKey: config.NewSecret("blnk-secret"),
 				RedisURL:      "redis://redis:6379/0",
 				Network: config.NetworkConfig{
 					Driver:    "reference_network",
 					AccountID: "publisher-42",
-					APIKey:    "network-key",
-					APISecret: "network-secret",
+					APIKey:    config.NewSecret("network-key"),
+					APISecret: config.NewSecret("network-secret"),
 				},
 			},
 		},
@@ -272,7 +272,7 @@ func TestCashbackFromEnv(t *testing.T) {
 				Network: config.NetworkConfig{
 					Driver:    "reference_network",
 					AccountID: "publisher-42",
-					APIKey:    "network-key",
+					APIKey:    config.NewSecret("network-key"),
 				},
 			},
 		},
@@ -508,13 +508,13 @@ func TestCashbackLogValue(t *testing.T) {
 		Enabled:       true,
 		LedgerDriver:  config.LedgerDriverBlnk,
 		BlnkURL:       "http://blnk:5001",
-		BlnkSecretKey: "blnk-secret-value",
+		BlnkSecretKey: config.NewSecret("blnk-secret-value"),
 		RedisURL:      "redis://apivo:redis-password-value@redis:6379/0",
 		Network: config.NetworkConfig{
 			Driver:    "reference_network",
 			AccountID: "publisher-42",
-			APIKey:    "network-key-value",
-			APISecret: "network-secret-value",
+			APIKey:    config.NewSecret("network-key-value"),
+			APISecret: config.NewSecret("network-secret-value"),
 		},
 	}
 

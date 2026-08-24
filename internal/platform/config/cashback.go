@@ -194,13 +194,13 @@ func parseCashback(getenv func(string) string) (CashbackConfig, error) {
 	c := CashbackConfig{
 		LedgerDriver:  strings.TrimSpace(getenv("LEDGER_DRIVER")),
 		BlnkURL:       strings.TrimSpace(getenv("BLNK_URL")),
-		BlnkSecretKey: Secret(getenv("BLNK_SECRET_KEY")),
+		BlnkSecretKey: NewSecret(getenv("BLNK_SECRET_KEY")),
 		RedisURL:      strings.TrimSpace(getenv("REDIS_URL")),
 		Network: NetworkConfig{
 			Driver:    strings.TrimSpace(getenv("NETWORK_DRIVER")),
 			AccountID: strings.TrimSpace(getenv("NETWORK_ACCOUNT_ID")),
-			APIKey:    Secret(getenv("NETWORK_API_KEY")),
-			APISecret: Secret(getenv("NETWORK_API_SECRET")),
+			APIKey:    NewSecret(getenv("NETWORK_API_KEY")),
+			APISecret: NewSecret(getenv("NETWORK_API_SECRET")),
 		},
 	}
 

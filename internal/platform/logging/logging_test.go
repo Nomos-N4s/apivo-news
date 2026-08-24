@@ -157,7 +157,7 @@ func TestNewRedactsSecretAttributes(t *testing.T) {
 		{
 			name:  "redacts a config.Secret whatever the key",
 			env:   config.EnvProd,
-			logAt: func(l *slog.Logger) { l.Info("call", "harmless_name", config.Secret(leaked)) },
+			logAt: func(l *slog.Logger) { l.Info("call", "harmless_name", config.NewSecret(leaked)) },
 		},
 	}
 

@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -23,7 +24,7 @@ func sprintf(format string, v any) string { return fmt.Sprintf(format, v) }
 func TestSecretNeverPrints(t *testing.T) {
 	t.Parallel()
 
-	secret := config.Secret(leaked)
+	secret := config.NewSecret(leaked)
 	// A struct holding one, printed whole, is the accident this type
 	// exists to survive.
 	holder := struct {
@@ -61,6 +62,67 @@ func TestSecretNeverPrints(t *testing.T) {
 	}
 }
 
+// TestSecretSurvivesTheEncoderPaths covers the two ways a Secret escaped
+// before: a format verb it has no answer for, and an encoder that reads the
+// underlying string kind by reflection rather than asking the type.
+//
+// Both are the same shape of accident - nobody writes %d on a credential or
+// marshals a config struct on purpose - which is exactly why the type has to
+// be airtight rather than merely well-behaved on the paths somebody
+// remembered.
+func TestSecretSurvivesTheEncoderPaths(t *testing.T) {
+	t.Parallel()
+
+	secret := config.NewSecret(leaked)
+	holder := struct {
+		Name  string        `json:"name"`
+		Token config.Secret `json:"token"`
+	}{Name: "network", Token: secret}
+
+	marshalled := func(v any) string {
+		encoded, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("marshalling: %v", err)
+		}
+		return string(encoded)
+	}
+
+	tests := []struct {
+		name string
+		got  string
+	}{
+		// fmt.badVerb sets p.erroring BEFORE printing the operand, and
+		// handleMethods returns immediately when that flag is set - so
+		// String() is never consulted and the raw value lands in the error
+		// text. Only fmt.Formatter runs early enough to stop it.
+		{name: "wrong verb d", got: sprintf("%d", secret)},
+		{name: "wrong verb f", got: sprintf("%f", secret)},
+		{name: "wrong verb with a flag", got: sprintf("%+d", secret)},
+		{name: "wrong verb inside a struct", got: sprintf("%d", holder)},
+		// encoding/json encodes a string KIND through reflection unless the
+		// type implements json.Marshaler or encoding.TextMarshaler.
+		{name: "json of the secret alone", got: marshalled(secret)},
+		{name: "json of a struct carrying one", got: marshalled(holder)},
+		{name: "json of a map valued by one", got: marshalled(map[string]config.Secret{"token": secret})},
+		{name: "json of a slice of them", got: marshalled([]config.Secret{secret})},
+		// A Secret used as a map KEY goes through encoding.TextMarshaler,
+		// which is a third path again.
+		{name: "json of a map keyed by one", got: marshalled(map[config.Secret]string{secret: "value"})},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if strings.Contains(tt.got, leaked) {
+				t.Fatalf("secret leaked: %s", tt.got)
+			}
+			if !strings.Contains(tt.got, config.RedactedPlaceholder) {
+				t.Fatalf("expected %q in %q", config.RedactedPlaceholder, tt.got)
+			}
+		})
+	}
+}
+
 func TestSecretLogValue(t *testing.T) {
 	t.Parallel()
 
@@ -68,7 +130,7 @@ func TestSecretLogValue(t *testing.T) {
 	// A bare slog handler with no redaction of its own: the redaction under
 	// test must be the Secret's, not the logger's.
 	log := slog.New(slog.NewJSONHandler(&buf, nil))
-	log.Info("call", "harmless_name", config.Secret(leaked))
+	log.Info("call", "harmless_name", config.NewSecret(leaked))
 
 	out := buf.String()
 	if strings.Contains(out, leaked) {
@@ -82,7 +144,7 @@ func TestSecretLogValue(t *testing.T) {
 func TestSecretReveal(t *testing.T) {
 	t.Parallel()
 
-	if got := config.Secret(leaked).Reveal(); got != leaked {
+	if got := config.NewSecret(leaked).Reveal(); got != leaked {
 		t.Fatalf("Reveal() = %q, want %q", got, leaked)
 	}
 }
@@ -95,11 +157,11 @@ func TestSecretIsZero(t *testing.T) {
 		secret config.Secret
 		want   bool
 	}{
-		{name: "unset", secret: "", want: true},
-		{name: "set", secret: config.Secret(leaked), want: false},
+		{name: "unset", secret: config.Secret{}, want: true},
+		{name: "set", secret: config.NewSecret(leaked), want: false},
 		// A secret that is whitespace was set to something; only the
 		// empty string means "not configured".
-		{name: "whitespace is set", secret: " ", want: false},
+		{name: "whitespace is set", secret: config.NewSecret(" "), want: false},
 	}
 
 	for _, tt := range tests {
