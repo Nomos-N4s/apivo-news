@@ -79,14 +79,33 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    # No healthcheck, and that is a decision rather than an omission. The
-    # image is debian-slim with no curl and no wget in the final layer, so an
-    # HTTP probe of /health cannot be expressed here without installing a
-    # package into a pinned upstream image. `docker compose up -d --wait`
-    # treats a service with no healthcheck as ready once it is running, so the
-    # rollout gate is unaffected; what proves the ledger is actually answering
-    # is the api's own /readyz and the continuous C-1 zero-sum check, both of
-    # which are real queries rather than a liveness ping.
+    # Blnk serves an unauthenticated `GET /health` (added upstream in v0.10.3;
+    # this image is 0.15.2), and the probe is a real HTTP request rather than
+    # a port knock because a listening socket says nothing about whether the
+    # ledger reached its database.
+    #
+    # A compose healthcheck runs INSIDE the container, so it can only use a
+    # client the image actually ships. This one does: the upstream Dockerfile
+    # installs `wget` in its final debian-slim stage to fetch a signing key
+    # and removes only the apt lists afterwards, never the package. `--spider`
+    # is avoided deliberately - it sends HEAD, and a route that answers GET is
+    # not obliged to answer HEAD.
+    #
+    # `start_period` covers the schema migration this container runs before it
+    # listens, exactly as the api's Kubernetes startup probe does. Without it
+    # the first rollout on a fresh database fails on a container that was
+    # working perfectly and simply had not finished migrating.
+    #
+    # This is what makes the reconciler's `up -d --wait` gate real for the
+    # ledger. What it still does not prove is that the ledger's numbers are
+    # right; only the continuous C-1 zero-sum check does that, and it is a
+    # query over real rows rather than a liveness ping.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     logging:
       driver: json-file
       options:
@@ -193,6 +212,17 @@ services:
       LEDGER_DRIVER: blnk
       BLNK_URL: http://apivo-${APIVO_ENV}-blnk:5001
       REDIS_URL: redis://apivo-${APIVO_ENV}-redis:6379
+    # `service_started` and NOT `service_healthy`, even though blnk now has a
+    # healthcheck worth waiting on. This host serves a newspaper as well as a
+    # wallet, and one binary serves both: a ledger that cannot pass its probe
+    # must not keep the api from starting, because that would take the public
+    # site down with it. Same rule the editorial routes already follow, where
+    # a missing JWKS_URL unmounts them and leaves readers served.
+    #
+    # The rollout is still gated on the ledger being healthy - `up -d --wait`
+    # waits on every service that has a healthcheck, whatever depends on what
+    # - so this costs no safety at rollout time and buys a failure mode that
+    # degrades instead of going dark.
     depends_on:
       blnk:
         condition: service_started

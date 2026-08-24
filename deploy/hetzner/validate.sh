@@ -189,6 +189,19 @@ check_cashback() {
         fail "$env_name cashback: the overlay does not select the blnk ledger driver"
     echo "ok: $env_name enables cashback against the blnk driver"
 
+    # The rollout gate is only real if the ledger has a healthcheck: the
+    # reconciler's `up -d --wait` waits on services that declare one and
+    # treats the rest as ready the moment they are running. A ledger that had
+    # crashed on its first database query would otherwise be rolled out,
+    # verified and declared serving.
+    #
+    # Asserted on the ROUTE, not merely on the presence of a healthcheck. A
+    # probe of some other path is a probe that passes while /health is the
+    # thing an operator will read.
+    printf '%s' "$rendered" | grep -q -F ':5001/health' ||
+        fail "$env_name cashback: the ledger has no healthcheck against its /health route, so the rollout gate would pass a Blnk that never reached its database"
+    echo "ok: $env_name gates the rollout on the ledger answering /health"
+
     # Redis is a queue and a cache with no persistence and no source of truth.
     # `noeviction` is what makes that safe: a full Redis must REFUSE a write,
     # visibly, rather than evict a queued transfer and leave no trace.
