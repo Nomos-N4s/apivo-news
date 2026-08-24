@@ -1,4 +1,4 @@
--- Spike S1 (ADR-0002) — the restricted role the Blnk ledger connects as.
+-- Spike S1 (ADR-0002) — the restricted role the Blnk ledger RUNS as.
 --
 -- This file is the production recipe as much as it is the spike's setup: it
 -- is what an operator runs, once, against the Supabase (EU) database before
@@ -21,12 +21,46 @@
 -- blnk_password is REQUIRED and has no default. An earlier revision of this
 -- file created the production-named role `blnk_app` with the password
 -- `blnk_app` hardcoded here — a credential in a public repository, on the
--- role that owns the ledger, in the file an operator is most likely to run
+-- role that reaches the ledger, in the file an operator is most likely to run
 -- verbatim against a real database. It refuses now instead.
 --
 -- The file is otherwise self-contained: it takes the database name from
 -- current_database() rather than from a psql variable, so the invocation
 -- above is the whole invocation.
+--
+-- ---------------------------------------------------------------------------
+-- THE POSTURE (founder decision, 2026-08-24)
+-- ---------------------------------------------------------------------------
+--
+-- Two roles, split by what they do rather than by convenience:
+--
+--   the database owner   runs `blnk migrate up`. Migrations are DDL, they
+--                        happen on a deploy, and they are reviewed.
+--   blnk_app             runs the ledger SERVER, day in and day out, with
+--                        USAGE on one schema and DML on its tables. No DDL,
+--                        no CREATE on the database, no reach into `public`.
+--
+-- Spike S1 established why the split is needed. Blnk's first migration issues
+-- `CREATE SCHEMA IF NOT EXISTS blnk`, and PostgreSQL checks the
+-- database-level CREATE privilege BEFORE it takes the IF NOT EXISTS
+-- shortcut — so pre-creating the schema does not avoid the grant, and a
+-- single role doing both jobs would need CREATE on the database permanently,
+-- for the sake of one statement on one deploy. The founder took the split
+-- instead, so the role that is exposed every second of every day is the
+-- narrow one.
+--
+-- What blnk_app therefore cannot do, and what that buys:
+--
+--   CREATE SCHEMA          it cannot give itself a second home
+--   DDL inside blnk        a compromised ledger process cannot drop or
+--                          reshape the tables that hold members' balances
+--   anything in public     Apivo's tables are legal evidence, and the ledger
+--                          has no business seeing them
+--
+-- Grants on the ledger's tables come from ALTER DEFAULT PRIVILEGES below,
+-- applied BEFORE the migration runs, so every table the migration creates is
+-- readable and writable by blnk_app the moment it exists. Spike S1's check 8
+-- verifies that actually happened rather than assuming it.
 
 -- Guard: refuse without a password. RAISE rather than \quit, because \quit
 -- exits psql with status 0 and a caller would read that as success.
@@ -57,20 +91,13 @@ CREATE ROLE blnk_app LOGIN PASSWORD :'blnk_password';
 ALTER ROLE blnk_app LOGIN PASSWORD :'blnk_password';
 \endif
 
--- The schema. Created here, by the database owner, rather than left to
--- Blnk's first migration: a role that may create schemas may create them
--- anywhere, and the whole point of this role is that it may not.
---
--- The schema itself stays owned by the database owner and is only granted to
--- blnk_app. That is deliberate: the ledger may fill its schema and may not
--- drop it, and the objects it creates inside are still its own.
+-- The schema, created and OWNED by the database owner. blnk_app is a guest
+-- in it: it may use what is there, and may not change its shape.
 CREATE SCHEMA IF NOT EXISTS blnk;
 
--- What the role MAY do: connect, and own its own schema completely. Blnk
--- creates tables, indexes, sequences and its own migration bookkeeping in
--- there, so it needs CREATE, not merely USAGE.
+-- What blnk_app MAY do: connect, and use its one schema.
 --
--- GRANT takes a database NAME, not an expression, so the two database-level
+-- GRANT takes a database NAME, not an expression, so the database-level
 -- statements go through format() with current_database(). That is what keeps
 -- this file runnable exactly as documented above.
 DO $$
@@ -79,39 +106,57 @@ BEGIN
 END
 $$;
 
-GRANT USAGE, CREATE ON SCHEMA blnk TO blnk_app;
+GRANT USAGE ON SCHEMA blnk TO blnk_app;
 
--- What the role MAY NOT do, stated explicitly rather than left to a default
+-- DML on every table the migration is ABOUT to create.
+--
+-- ALTER DEFAULT PRIVILEGES applies to objects created LATER, by the named
+-- role, which is why this runs before `blnk migrate up` and names the owner
+-- that will run it. Get this wrong and the ledger starts, connects, and
+-- fails on its first query with "permission denied" — which is why S1's
+-- check 8 proves the grant landed rather than trusting it.
+DO $$
+BEGIN
+    EXECUTE format(
+        'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA blnk '
+        'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO blnk_app', current_user);
+    EXECUTE format(
+        'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA blnk '
+        'GRANT USAGE, SELECT ON SEQUENCES TO blnk_app', current_user);
+END
+$$;
+
+-- And on anything already there, so re-running this after a migration
+-- repairs grants rather than only affecting the next one. No-ops on a fresh
+-- database.
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA blnk TO blnk_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA blnk TO blnk_app;
+
+-- What blnk_app MAY NOT do, stated explicitly rather than left to a default
 -- that a future Postgres or a managed provider might change.
 --
--- USAGE on `public` is granted to PUBLIC by default and is what would let
--- this role read Apivo's tables if any grant ever reached it; CREATE on
--- `public` has not been granted to PUBLIC since Postgres 15, and revoking it
--- again here costs nothing and survives a database restored from an older
--- dump.
-REVOKE ALL ON SCHEMA public FROM blnk_app;
-REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-REVOKE ALL ON ALL TABLES IN SCHEMA public FROM blnk_app;
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM blnk_app;
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM blnk_app;
+-- No CREATE on the schema: the runtime role does no DDL. Migrations are the
+-- owner's job.
+REVOKE CREATE ON SCHEMA blnk FROM blnk_app;
 
--- No CREATE on the database by default: the role cannot make itself a second
--- home.
---
--- Spike S1 found that Blnk's first migration issues
--- `CREATE SCHEMA IF NOT EXISTS blnk`, and PostgreSQL checks the
--- database-level privilege BEFORE it takes the IF NOT EXISTS shortcut — so
--- pre-creating the schema above does not avoid the grant, and the migration
--- fails with "permission denied for database" without it. The grant is
--- therefore added by run.sh, deliberately and visibly, rather than baked in
--- here where a reader would never learn it was needed. It widens the role to
--- "may create new schemas"; it does NOT widen it to `public`, which the
--- revokes above and checks 6 and 7 of the spike prove.
+-- No CREATE on the database: it cannot make itself a second home. This is
+-- the grant the founder's posture exists to avoid needing at all.
 DO $$
 BEGIN
     EXECUTE format('REVOKE CREATE ON DATABASE %I FROM blnk_app', current_database());
 END
 $$;
+
+-- Nothing in `public`. USAGE there is granted to PUBLIC by default and is
+-- what would let this role read Apivo's tables if any grant ever reached it;
+-- CREATE on `public` has not been granted to PUBLIC since Postgres 15, and
+-- revoking it again here costs nothing and survives a database restored from
+-- an older dump.
+REVOKE ALL ON SCHEMA public FROM blnk_app;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM blnk_app;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM blnk_app;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM blnk_app;
 
 -- Belt and braces on top of Blnk's own `SET search_path TO blnk`: even a
 -- session that skipped it resolves unqualified names inside blnk, never in

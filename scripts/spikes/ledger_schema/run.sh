@@ -146,41 +146,31 @@ echo "S1: snapshotting public before the ledger migration"
 psql "$ADMIN_DSN" -v ON_ERROR_STOP=1 -tAq -f "$HERE/public_snapshot.sql" > "$WORK/public.before" \
     || cannot_run "could not snapshot the public schema"
 
+# The migration runs as the DATABASE OWNER, and the server runs as blnk_app.
+#
+# That split is the founder's decision of 2026-08-24, taken on this spike's
+# earlier finding: Blnk's first migration issues
+# `CREATE SCHEMA IF NOT EXISTS blnk`, and PostgreSQL checks the
+# database-level CREATE privilege BEFORE the IF NOT EXISTS shortcut, so one
+# role doing both jobs would need CREATE on the database permanently for the
+# sake of one statement on one deploy. Splitting it keeps the role that is
+# exposed every second of every day as narrow as this spike proved it can be.
+POSTURE="migrations as the database owner; runtime as blnk_app with USAGE + DML only"
+
 migrate() {
     docker run --rm --network host \
-        -e "BLNK_DATA_SOURCE_DNS=$ROLE_DSN" \
+        -e "BLNK_DATA_SOURCE_DNS=$ADMIN_DSN" \
         -e "BLNK_REDIS_DNS=$REDIS_DNS" \
         "$IMAGE" blnk migrate up
 }
 
-# Check 1 — the migration runs at all under the restricted role.
-#
-# The strict posture is tried first: the role owns `blnk` and has no CREATE
-# on the database, so it cannot make itself a second home. Blnk's first
-# migration issues `CREATE SCHEMA IF NOT EXISTS blnk`, and whether Postgres
-# checks the database-level privilege before or after the IF NOT EXISTS
-# shortcut is exactly the sort of thing a spike exists to find out rather
-# than to reason about. If it needs the grant, the grant is added, the
-# migration is retried, and the posture the deployment must use is REPORTED
-# — because a wider grant is a fact the founder should read here, not
-# discover in a runbook.
-POSTURE="schema owner only (no CREATE on database)"
+# Check 1 — the migration runs, as the owner.
 if migrate; then
-    pass "check 1: \`blnk migrate up\` succeeded as the restricted role"
+    pass "check 1: \`blnk migrate up\` succeeded as the database owner"
 else
-    echo "S1: the strict posture was refused; granting CREATE ON DATABASE and retrying"
-    if admin_exec "GRANT CREATE ON DATABASE \"$DBNAME\" TO blnk_app"; then
-        POSTURE="schema owner PLUS CREATE on database (required: Blnk issues CREATE SCHEMA IF NOT EXISTS)"
-        if migrate; then
-            pass "check 1: \`blnk migrate up\` succeeded once CREATE ON DATABASE was granted"
-        else
-            fail "check 1: \`blnk migrate up\` failed under the restricted role even with CREATE ON DATABASE"
-        fi
-    else
-        fail "check 1: could not grant CREATE ON DATABASE to retry the migration"
-    fi
+    fail "check 1: \`blnk migrate up\` failed as the database owner"
 fi
-echo "S1: posture required = $POSTURE"
+echo "S1: posture = $POSTURE"
 
 echo "S1: snapshotting public after the ledger migration"
 psql "$ADMIN_DSN" -v ON_ERROR_STOP=1 -tAq -f "$HERE/public_snapshot.sql" > "$WORK/public.after" \
@@ -222,16 +212,28 @@ else
     fail "check 4: could not look for migration bookkeeping in public"
 fi
 
-# Check 5 — everything in `blnk` is owned by the restricted role, so nothing
-# there is silently the property of a superuser.
-if FOREIGN_OWNED=$(admin_value "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_roles r ON r.oid = c.relowner WHERE n.nspname = 'blnk' AND r.rolname <> 'blnk_app'"); then
-    if [ "$FOREIGN_OWNED" = "0" ]; then
-        pass "check 5: every relation in the blnk schema is owned by the restricted role"
+# Check 5 — the runtime role owns nothing. Under the split posture the
+# migration ran as the owner, so every relation in `blnk` belongs to the
+# owner and blnk_app is a guest with DML. A relation owned by blnk_app would
+# mean it had done DDL, which is exactly what this posture removes.
+if RUNTIME_OWNED=$(admin_value "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_roles r ON r.oid = c.relowner WHERE n.nspname = 'blnk' AND r.rolname = 'blnk_app'"); then
+    if [ "$RUNTIME_OWNED" = "0" ]; then
+        pass "check 5: the runtime role owns nothing in the blnk schema"
     else
-        fail "check 5: $FOREIGN_OWNED relations in the blnk schema are owned by another role"
+        fail "check 5: the runtime role owns $RUNTIME_OWNED relations in blnk; it should own none"
     fi
 else
     fail "check 5: could not read the owners of the blnk schema's relations"
+fi
+
+# Check 5b — and it cannot create a schema. This is the single privilege the
+# founder's split posture exists to withhold, so it gets its own assertion.
+CODE=$(sqlstate "CREATE SCHEMA spike_s1_should_not_exist")
+if [ "$CODE" = "42501" ]; then
+    pass "check 5b: the runtime role is refused CREATE SCHEMA (SQLSTATE 42501)"
+else
+    fail "check 5b: CREATE SCHEMA as the runtime role returned SQLSTATE $CODE, expected 42501"
+    admin_exec "DROP SCHEMA IF EXISTS spike_s1_should_not_exist CASCADE" || true
 fi
 
 # Check 6 — the confinement is enforced by Postgres, not by Blnk's good
@@ -254,13 +256,33 @@ else
     fail "check 7: SELECT on a public table as the restricted role returned SQLSTATE $CODE, expected 42501"
 fi
 
-# Check 8 — the boundary is a boundary, not a wall: the role must still be
-# able to work inside its own schema, or the ledger cannot run at all.
-CODE=$(sqlstate "CREATE TABLE blnk.spike_s1_scratch (id integer); DROP TABLE blnk.spike_s1_scratch")
+# Check 8 — the boundary is a boundary, not a wall: the runtime role must be
+# able to READ AND WRITE the ledger's tables, or the server cannot run at
+# all.
+#
+# This is the check that proves ALTER DEFAULT PRIVILEGES in bootstrap.sql
+# actually landed on tables the migration created afterwards. Get that wrong
+# and the ledger starts, connects, and fails on its first query — a failure
+# that would otherwise surface as an unexplained 500 during the first
+# transfer rather than here.
+#
+# The write is rolled back, so the ledger's own tables are left exactly as
+# the migration made them.
+CODE=$(sqlstate "BEGIN; INSERT INTO blnk.ledgers (name, ledger_id, meta_data) VALUES ('spike-s1', 'spike-s1-probe-ledger', '{}'); ROLLBACK;")
 if [ "$CODE" = "00000" ]; then
-    pass "check 8: the restricted role can create and drop inside its own schema"
+    pass "check 8: the runtime role can read and write the ledger's tables"
 else
-    fail "check 8: the restricted role cannot work inside blnk (SQLSTATE $CODE)"
+    fail "check 8: the runtime role cannot write inside blnk (SQLSTATE $CODE) - the ledger would fail on its first query"
+fi
+
+# Check 8b — but it cannot reshape them. A compromised ledger process must
+# not be able to drop the tables holding members' balances.
+CODE=$(sqlstate "CREATE TABLE blnk.spike_s1_should_not_exist (id integer)")
+if [ "$CODE" = "42501" ]; then
+    pass "check 8b: the runtime role is refused DDL inside blnk (SQLSTATE 42501)"
+else
+    fail "check 8b: CREATE TABLE in blnk as the runtime role returned SQLSTATE $CODE, expected 42501"
+    admin_exec "DROP TABLE IF EXISTS blnk.spike_s1_should_not_exist" || true
 fi
 
 # Check 9 — the cross-schema query ADR-0002 trades C-1 for. If the admin

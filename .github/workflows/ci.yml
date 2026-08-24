@@ -209,10 +209,16 @@ jobs:
       # Blnk runs on the host network, so it reaches the service containers
       # through their published ports rather than by service name.
       #
-      # It connects as `blnk_app`, the restricted role spike S1 creates and
-      # proves — not as `apivo`. The whole job therefore runs the posture the
-      # deployment runs, rather than a permissive stand-in for it.
-      BLNK_DATA_SOURCE_DNS: postgres://blnk_app:blnk_app@localhost:5432/apivo?sslmode=disable
+      # The founder's split posture (2026-08-24), run here exactly as it runs
+      # in a deployment: MIGRATIONS as the database owner, the SERVER as
+      # `blnk_app` with USAGE on one schema and DML on its tables — no DDL, no
+      # CREATE on the database, no reach into `public`.
+      #
+      # Splitting the two DSNs is the whole mechanism. Spike S1 creates and
+      # proves the role; every later step in this job then uses it, so the job
+      # exercises the narrow role rather than a permissive stand-in for it.
+      BLNK_MIGRATE_DSN: postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
+      BLNK_DATA_SOURCE_DNS: postgres://blnk_app:ci-only-loopback-blnk-role@localhost:5432/apivo?sslmode=disable
       BLNK_REDIS_DNS: localhost:6379
       BLNK_SERVER_PORT: "5001"
       SPIKE_ADMIN_DATABASE_URL: postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
