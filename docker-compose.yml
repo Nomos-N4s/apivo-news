@@ -54,7 +54,47 @@ services:
       timeout: 3s
       retries: 10
 
-  # Blnk's schema, migrated once before the server starts.
+  # The ledger's role and schema.
+  #
+  # This runs the SAME bootstrap.sql an operator runs against the production
+  # database, mounted straight from the spike directory rather than copied,
+  # so the local stack cannot drift from the recipe. It creates `blnk_app`,
+  # creates the `blnk` schema owned by the database owner, and sets the
+  # default privileges that make the migration's tables readable and writable
+  # by the runtime role.
+  #
+  # The password is a compose variable with a local-only default. It is not a
+  # default inside bootstrap.sql, which refuses to run without one: that file
+  # is the production recipe, and a credential written into it would be a
+  # credential for the ledger role in a public repository.
+  blnk-bootstrap:
+    image: postgres:17-alpine
+    restart: "no"
+    entrypoint: ["psql"]
+    command:
+      - "postgres://apivo:apivo@postgres:5432/apivo?sslmode=disable"
+      - "-v"
+      - "ON_ERROR_STOP=1"
+      - "-v"
+      - "blnk_password=${BLNK_ROLE_PASSWORD:-blnk-local-dev}"
+      - "-f"
+      - "/bootstrap.sql"
+    volumes:
+      - ./scripts/spikes/ledger_schema/bootstrap.sql:/bootstrap.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Blnk's schema, migrated once before the server starts, AS THE DATABASE
+  # OWNER.
+  #
+  # That is the founder's split posture (2026-08-24): migrations are DDL and
+  # run as the owner; the server below runs as `blnk_app`, which has USAGE on
+  # one schema and DML on its tables and nothing else. Spike S1 found why the
+  # split is needed — Blnk's first migration issues
+  # `CREATE SCHEMA IF NOT EXISTS blnk`, and Postgres checks the database-level
+  # CREATE privilege before the IF NOT EXISTS shortcut, so a single role would
+  # need CREATE on the database permanently for one statement on one deploy.
   #
   # It is a separate one-shot service rather than a wrapped entrypoint on
   # the server because `blnk start` does not migrate, and a server that
@@ -66,10 +106,7 @@ services:
   # and every object is schema-qualified, and the server issues
   # `SET search_path TO blnk` on every connection. It shares Apivo's
   # database so the C-1 zero-sum check is a plain SQL query over real rows
-  # rather than a distributed reconciliation (ADR-0002). Here it connects as
-  # the `apivo` role for simplicity; the restricted `blnk` role that
-  # production uses — and the proof that the migrations never touch `public`
-  # — is spike S1.
+  # rather than a distributed reconciliation (ADR-0002).
   blnk-migrate:
     image: jerryenebeli/blnk:0.15.2@sha256:796518b1025e529a8d899c604a2b9f76e366434cc5d09979ecdf85367877f6cf
     restart: "no"
@@ -83,6 +120,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      blnk-bootstrap:
+        condition: service_completed_successfully
 
   # The Blnk ledger (ADR-0002). Configuration is environment-only — the
   # image falls back to environment variables when no blnk.json is present,
@@ -98,7 +137,10 @@ services:
     environment:
       TZ: Etc/UTC
       BLNK_PROJECT_NAME: apivo-cashback
-      BLNK_DATA_SOURCE_DNS: postgres://apivo:apivo@postgres:5432/apivo?sslmode=disable
+      # As `blnk_app`, not as the owner: USAGE on one schema, DML on its
+      # tables, no DDL, no CREATE on the database, no reach into `public`.
+      # The same posture the deployment and the CI job run.
+      BLNK_DATA_SOURCE_DNS: postgres://blnk_app:${BLNK_ROLE_PASSWORD:-blnk-local-dev}@postgres:5432/apivo?sslmode=disable
       BLNK_REDIS_DNS: redis:6379
       BLNK_SERVER_PORT: "5001"
     ports:
