@@ -84,15 +84,28 @@ func seedRaceWorld(ctx context.Context, t *testing.T, conn *pgx.Conn) raceWorld 
 			return world
 		}
 		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.DeadlockDetected || attempt == seedAttempts {
-			t.Fatalf("seeding the race world (attempt %d of %d): %v", attempt, seedAttempts, err)
+		deadlock := errors.As(err, &pgErr) && pgErr.Code == pgerrcode.DeadlockDetected
+		if !deadlock || attempt == seedAttempts {
+			t.Fatalf("seeding the race world (attempt %d of %d): %v%s",
+				attempt, seedAttempts, err, pgDetail(err))
 		}
-		// Postgres names both sides of the cycle in DETAIL and the error's
-		// own text drops it; carrying it into the log is what makes the
-		// next occurrence evidence rather than another sighting.
-		t.Logf("seed attempt %d of %d lost a deadlock, rebuilding: %v (detail: %s)",
-			attempt, seedAttempts, err, pgErr.Detail)
+		t.Logf("seed attempt %d of %d lost a deadlock, rebuilding: %v%s",
+			attempt, seedAttempts, err, pgDetail(err))
 	}
+}
+
+// pgDetail renders Postgres's DETAIL line, which the error's own text drops.
+// For a deadlock that line names both sides of the cycle, which is the one
+// thing a report of this failure needs and cannot reconstruct afterwards -
+// so it belongs on the retry log and on the final failure alike. The last
+// attempt is exactly when it matters most, and it is the report nobody gets
+// to ask a follow-up question about.
+func pgDetail(err error) string {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Detail == "" {
+		return ""
+	}
+	return " (detail: " + pgErr.Detail + ")"
 }
 
 // trySeedRaceWorld is one attempt at the seed. It returns its failures
