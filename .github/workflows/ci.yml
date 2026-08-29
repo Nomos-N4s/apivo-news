@@ -42,6 +42,11 @@ jobs:
   # be skipped. Runs on PRs, and on every merge to main through publish.yml's
   # call - merge-time messages such as squash commits never pass through PR
   # CI, so that second path is the only thing that checks them.
+  #
+  # The author check below has no hook counterpart at all. A commit's author
+  # and committer are written into the commit when it is created and cannot
+  # be edited afterwards, only rewritten - so refusing them here, before the
+  # branch is merged, is the only enforcement there is.
   commit-hygiene:
     runs-on: ubuntu-latest
     steps:
@@ -82,6 +87,40 @@ jobs:
             echo "::error::Commit messages must not carry AI attribution trailers."
             exit 1
           fi
+      # The step above reads the commit MESSAGE, and the message is not where
+      # this failure lives: a development container carrying its own global
+      # git identity produces commits whose author AND committer are that
+      # identity while every message check passes green. The lint below reads
+      # the commit header instead.
+      #
+      # Both the proof and the gate live in this job rather than in a workflow
+      # of their own - unlike the brand and migration lints, which need
+      # nothing this matrix sets up. Three reasons, all specific to this
+      # check: the commit range is computed here and nowhere else; publish.yml
+      # CALLS this workflow on every merge, which is the only path that ever
+      # sees a merge-time commit, so a separate workflow would leave the
+      # identities on `main` unchecked until someone added it to that chain
+      # too; and this is the one job checked out with fetch-depth: 0, which
+      # the suite's last case needs in order to judge real history.
+      - name: Lint the commit author scripts
+        # Both are POSIX sh and run in CI and on contributors' machines alike;
+        # a syntax error in either is otherwise discovered by the commit it
+        # failed to check.
+        run: shellcheck -s sh scripts/lint-commit-authors.sh scripts/lint-commit-authors_test.sh
+      - name: Prove the commit author lint's decisions
+        # Proved before it is trusted, exactly as migration-lint.yml proves
+        # its lint: the suite drives an AI identity past the check in every
+        # field it can occupy - author, committer, and the identity on a merge
+        # commit - and asserts each is refused, then asserts that GitHub's own
+        # merge commits and contributors whose names merely resemble a blocked
+        # token are not. An empty range and a failed git are asserted to FAIL
+        # rather than pass, which is the way this gate would otherwise go
+        # quiet.
+        run: sh scripts/lint-commit-authors_test.sh
+      - name: Reject AI attribution authors and committers
+        # The same range as the steps around it, unquoted for the same reason:
+        # the first-push fallback is two words, not one.
+        run: sh scripts/lint-commit-authors.sh ${{ steps.range.outputs.range }}
       - name: Require Conventional Commit subjects
         run: |
           git log --no-merges --format='%s' ${{ steps.range.outputs.range }} > /tmp/subjects.txt
