@@ -9,6 +9,7 @@ package catalogue_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -124,27 +125,6 @@ func TestLiveOfferMapsRows(t *testing.T) {
 				MemberShare:   5000,
 				// Null conditions, exclusions and valid_to are absence, not
 				// empty-string-shaped values: no text, and the zero close.
-				ValidFrom:        validFrom,
-				DeeplinkTemplate: "https://network.example/deep?u=https%3A%2F%2Fshop.example",
-			},
-		},
-		{
-			name: "an infinite valid_to reads as a band with no published end",
-			row: func() store.GetLiveOfferRow {
-				row := percentRow()
-				row.ValidTo = pgtype.Timestamptz{Valid: true, InfinityModifier: pgtype.Infinity}
-				return row
-			}(),
-			want: catalogue.Offer{
-				ID:               offerID,
-				MerchantID:       merchantID,
-				MerchantSlug:     "shop-example",
-				NetworkID:        "awin",
-				ClickRefParam:    "clickref",
-				Rate:             catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 400},
-				MemberShare:      5000,
-				Conditions:       "new customers only",
-				Exclusions:       "gift cards",
 				ValidFrom:        validFrom,
 				DeeplinkTemplate: "https://network.example/deep?u=https%3A%2F%2Fshop.example",
 			},
@@ -282,11 +262,6 @@ func TestLiveOfferRejectsMalformedRows(t *testing.T) {
 		{"a band with no start", func(row *store.GetLiveOfferRow) {
 			row.ValidFrom = pgtype.Timestamptz{}
 		}},
-		{"a band open since forever", func(row *store.GetLiveOfferRow) {
-			// '-infinity' passes the live predicate but pgx hands it over as
-			// the zero time - the naive mapping would call it the year 1.
-			row.ValidFrom = pgtype.Timestamptz{Valid: true, InfinityModifier: pgtype.NegativeInfinity}
-		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+" is refused", func(t *testing.T) {
@@ -306,6 +281,401 @@ func TestLiveOfferRejectsMalformedRows(t *testing.T) {
 			}
 			if offer != (catalogue.Offer{}) {
 				t.Errorf("LiveOffer returned %+v beside the error", offer)
+			}
+		})
+	}
+}
+
+// Every combination of the two window ends.
+//
+// pgx hands 'infinity', '-infinity' and a genuinely unset timestamp over as
+// the SAME zero time.Time; only the Valid flag and the InfinityModifier
+// tell them apart, so this is the one place where a wrong reading turns
+// into a wrong window silently. Nothing below is a preference: each
+// expectation is what the store query's own predicates - `o.valid_from <=
+// $at` and `coalesce(o.valid_to, 'infinity') > $at` - say about that row,
+// so a band the database calls live is mapped rather than refused, and a
+// band it rules out is refused rather than published with its meaning
+// inverted.
+func TestLiveOfferMapsWindowInfinities(t *testing.T) {
+	t.Parallel()
+
+	var (
+		unset  = pgtype.Timestamptz{}
+		before = pgtype.Timestamptz{Time: validFrom, Valid: true}
+		after  = pgtype.Timestamptz{Time: validTo, Valid: true}
+		always = pgtype.Timestamptz{Valid: true, InfinityModifier: pgtype.NegativeInfinity}
+		never  = pgtype.Timestamptz{Valid: true, InfinityModifier: pgtype.Infinity}
+	)
+
+	cases := []struct {
+		name          string
+		from, to      pgtype.Timestamptz
+		wantFrom      time.Time
+		wantTo        time.Time
+		wantMalformed bool
+	}{
+		{
+			name: "a finite window is mapped as it stands",
+			from: before, to: after, wantFrom: validFrom, wantTo: validTo,
+		},
+		{
+			name: "a null close is a band with no published end",
+			from: before, to: unset, wantFrom: validFrom,
+		},
+		{
+			name: "a '+infinity' close is the same open end as a null one",
+			from: before, to: never, wantFrom: validFrom,
+		},
+		{
+			name: "a '-infinity' close is refused: it ends before it can begin",
+			from: before, to: always, wantMalformed: true,
+		},
+		{
+			name: "a '-infinity' start is in force since always, and live",
+			from: always, to: after, wantTo: validTo,
+		},
+		{
+			name: "in force since always with no published end",
+			from: always, to: unset,
+		},
+		{
+			name: "in force since always, open at '+infinity'",
+			from: always, to: never,
+		},
+		{
+			name: "in force since always but closing at '-infinity' is still refused",
+			from: always, to: always, wantMalformed: true,
+		},
+		{
+			name: "a '+infinity' start is refused: no moment reaches it",
+			from: never, to: after, wantMalformed: true,
+		},
+		{
+			name: "a '+infinity' start with a null close is refused too",
+			from: never, to: unset, wantMalformed: true,
+		},
+		{
+			name: "a '+infinity' start with an infinite close is refused too",
+			from: never, to: never, wantMalformed: true,
+		},
+		{
+			name: "a '+infinity' start with a '-infinity' close is refused twice over",
+			from: never, to: always, wantMalformed: true,
+		},
+		{
+			name: "an unset start is refused: valid_from is NOT NULL in the schema",
+			from: unset, to: after, wantMalformed: true,
+		},
+		{
+			name: "an unset start with a null close is refused",
+			from: unset, to: unset, wantMalformed: true,
+		},
+		{
+			name: "an unset start with an infinite close is refused",
+			from: unset, to: never, wantMalformed: true,
+		},
+		{
+			name: "an unset start with a '-infinity' close is refused",
+			from: unset, to: always, wantMalformed: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			row := percentRow()
+			row.ValidFrom, row.ValidTo = tc.from, tc.to
+			got, err := catalogue.NewOfferReader(&stubStore{row: row}).
+				LiveOffer(context.Background(), offerID, clickedAt)
+
+			if tc.wantMalformed {
+				if !errors.Is(err, catalogue.ErrMalformedOffer) {
+					t.Fatalf("LiveOffer error = %v, want ErrMalformedOffer", err)
+				}
+				// A row the schema forbids is a fault to investigate, not a
+				// 409 telling the member the offer ended.
+				if errors.Is(err, catalogue.ErrOfferNotLive) {
+					t.Errorf("LiveOffer also wore ErrOfferNotLive: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LiveOffer: %v", err)
+			}
+			if !got.ValidFrom.Equal(tc.wantFrom) {
+				t.Errorf("ValidFrom = %v, want %v", got.ValidFrom, tc.wantFrom)
+			}
+			if !got.ValidTo.Equal(tc.wantTo) {
+				t.Errorf("ValidTo = %v, want %v", got.ValidTo, tc.wantTo)
+			}
+		})
+	}
+}
+
+// The band's wire form (FR-013, data-model.md 2.3: click.rate_snapshot is
+// jsonb). These are not tests of encoding/json - they are tests that the
+// rate a credit is later computed from survives a write and a read
+// unchanged, and that a band which does not add up never reaches a snapshot
+// at all. Struct encoding gave neither: the unused zero money.Amount on a
+// percent band has no currency and refuses to encode, so the commonest kind
+// of band did not marshal at all, and a fixed band that did marshal carried
+// a "Percent":0 indistinguishable from a real rate of nothing.
+
+// eurAmount is the fixed band's amount, built through money.New so a
+// malformed currency fails here rather than inside a case.
+func eurAmount(t *testing.T, minor int64) money.Amount {
+	t.Helper()
+	amount, err := money.New(minor, "EUR")
+	if err != nil {
+		t.Fatalf("money.New: %v", err)
+	}
+	return amount
+}
+
+func TestRateBandJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		band func(t *testing.T) catalogue.RateBand
+		want string
+	}{
+		{
+			name: "a percent band carries basis points and no amount",
+			band: func(*testing.T) catalogue.RateBand {
+				return catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 400}
+			},
+			want: `{"kind":"percent","bps":400}`,
+		},
+		{
+			name: "a rate of nothing is a rate, not an absence",
+			band: func(*testing.T) catalogue.RateBand {
+				return catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 0}
+			},
+			want: `{"kind":"percent","bps":0}`,
+		},
+		{
+			name: "the whole hundred percent survives",
+			band: func(*testing.T) catalogue.RateBand {
+				return catalogue.RateBand{Kind: catalogue.RatePercent, Percent: money.BasisPointsScale}
+			},
+			want: `{"kind":"percent","bps":10000}`,
+		},
+		{
+			name: "a fixed band carries minor units with an explicit currency",
+			band: func(t *testing.T) catalogue.RateBand {
+				return catalogue.RateBand{Kind: catalogue.RateFixed, Fixed: eurAmount(t, 250)}
+			},
+			want: `{"kind":"fixed","amount":{"minor":250,"currency":"EUR"}}`,
+		},
+		{
+			name: "an amount too large for any float to hold survives exactly",
+			band: func(t *testing.T) catalogue.RateBand {
+				return catalogue.RateBand{Kind: catalogue.RateFixed, Fixed: eurAmount(t, 9007199254740993)}
+			},
+			want: `{"kind":"fixed","amount":{"minor":9007199254740993,"currency":"EUR"}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			band := tc.band(t)
+			got, err := json.Marshal(band)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("Marshal = %s, want %s", got, tc.want)
+			}
+			var back catalogue.RateBand
+			if err := json.Unmarshal(got, &back); err != nil {
+				t.Fatalf("Unmarshal(%s): %v", got, err)
+			}
+			// RateBand is comparable, so this is the whole value: the kind,
+			// the rate AND the field that must have stayed at its zero.
+			if back != band {
+				t.Errorf("round trip = %+v, want %+v", back, band)
+			}
+		})
+	}
+}
+
+// The snapshot is written as one member of a larger object, which is the
+// only place the band's encoding actually runs in production - and the
+// place struct encoding used to fail the whole write because of the band
+// nested inside it.
+func TestRateBandRoundTripsInsideASnapshot(t *testing.T) {
+	t.Parallel()
+	type snapshot struct {
+		Rate        catalogue.RateBand `json:"rate"`
+		MemberShare money.BasisPoints  `json:"member_share_bps"`
+	}
+	cases := []struct {
+		name string
+		in   snapshot
+		want string
+	}{
+		{
+			name: "a percent band",
+			in:   snapshot{Rate: catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 400}, MemberShare: 5000},
+			want: `{"rate":{"kind":"percent","bps":400},"member_share_bps":5000}`,
+		},
+		{
+			name: "a fixed band",
+			in: snapshot{
+				Rate:        catalogue.RateBand{Kind: catalogue.RateFixed, Fixed: money.Amount{Minor: 250, Currency: "EUR"}},
+				MemberShare: 5000,
+			},
+			want: `{"rate":{"kind":"fixed","amount":{"minor":250,"currency":"EUR"}},"member_share_bps":5000}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := json.Marshal(tc.in)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("Marshal = %s, want %s", got, tc.want)
+			}
+			var back snapshot
+			if err := json.Unmarshal(got, &back); err != nil {
+				t.Fatalf("Unmarshal(%s): %v", got, err)
+			}
+			if back != tc.in {
+				t.Errorf("round trip = %+v, want %+v", back, tc.in)
+			}
+		})
+	}
+}
+
+// Bands that do not hold to the type's own invariant must not reach a
+// snapshot. An error at the write is a bug someone can still find; a
+// snapshot with the wrong rate in it is a credit nobody can reconstruct.
+func TestRateBandMarshalRefusesIncoherentBands(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		band catalogue.RateBand
+	}{
+		{"the zero band, which names no kind", catalogue.RateBand{}},
+		{"a kind nothing publishes", catalogue.RateBand{Kind: "tiered", Percent: 400}},
+		{"a percent band above the whole", catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 10001}},
+		{"a percent band below nothing", catalogue.RateBand{Kind: catalogue.RatePercent, Percent: -1}},
+		{"a percent band carrying a fixed amount", catalogue.RateBand{
+			Kind: catalogue.RatePercent, Percent: 400, Fixed: money.Amount{Minor: 250, Currency: "EUR"},
+		}},
+		{"a fixed band with no amount at all", catalogue.RateBand{Kind: catalogue.RateFixed}},
+		{"a fixed band of nothing", catalogue.RateBand{
+			Kind: catalogue.RateFixed, Fixed: money.Amount{Minor: 0, Currency: "EUR"},
+		}},
+		{"a fixed band of less than nothing", catalogue.RateBand{
+			Kind: catalogue.RateFixed, Fixed: money.Amount{Minor: -250, Currency: "EUR"},
+		}},
+		{"a fixed band with a malformed currency", catalogue.RateBand{
+			Kind: catalogue.RateFixed, Fixed: money.Amount{Minor: 250, Currency: "eur"},
+		}},
+		{"a fixed band carrying basis points", catalogue.RateBand{
+			Kind: catalogue.RateFixed, Percent: 400, Fixed: money.Amount{Minor: 250, Currency: "EUR"},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+" does not encode", func(t *testing.T) {
+			t.Parallel()
+			got, err := json.Marshal(tc.band)
+			if !errors.Is(err, catalogue.ErrMalformedOffer) {
+				t.Fatalf("Marshal = %s, err = %v; want an error wrapping ErrMalformedOffer", got, err)
+			}
+		})
+	}
+}
+
+// Everything a snapshot could come back as that is not a band. Decoding is
+// where a rate re-enters the money path years after it was written, so the
+// rule the store mapping holds a row to is held here too: exactly the field
+// for the stated kind, a whole number of basis points, and nothing else.
+func TestRateBandUnmarshalRejects(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		json string
+	}{
+		{"a JSON null", `null`},
+		{"an array", `[{"kind":"percent","bps":400}]`},
+		{"a bare string", `"percent"`},
+		{"an empty object, which states no kind", `{}`},
+		{"a kind nothing publishes", `{"kind":"tiered","bps":400}`},
+		{"a kind that is not a string", `{"kind":42,"bps":400}`},
+		{"a null kind", `{"kind":null,"bps":400}`},
+		{"a percent band with no rate", `{"kind":"percent"}`},
+		{"a percent rate with a decimal point", `{"kind":"percent","bps":4.5}`},
+		{"a percent rate that is a whole number wearing a decimal point", `{"kind":"percent","bps":400.0}`},
+		{"a percent rate in an exponent", `{"kind":"percent","bps":4e2}`},
+		{"a percent rate in quotes", `{"kind":"percent","bps":"400"}`},
+		{"a percent rate above the whole", `{"kind":"percent","bps":10001}`},
+		{"a percent rate below nothing", `{"kind":"percent","bps":-1}`},
+		{"a percent band carrying an amount", `{"kind":"percent","bps":400,"amount":{"minor":250,"currency":"EUR"}}`},
+		{"a fixed band with no amount", `{"kind":"fixed"}`},
+		{"a fixed band carrying basis points", `{"kind":"fixed","bps":400,"amount":{"minor":250,"currency":"EUR"}}`},
+		{"a fixed amount of nothing", `{"kind":"fixed","amount":{"minor":0,"currency":"EUR"}}`},
+		{"a fixed amount in major units", `{"kind":"fixed","amount":{"minor":2.5,"currency":"EUR"}}`},
+		{"a fixed amount with no currency", `{"kind":"fixed","amount":{"minor":250}}`},
+		{"a fixed amount that is a bare number", `{"kind":"fixed","amount":250}`},
+		{"a field this type does not define", `{"kind":"percent","bps":400,"rate":400}`},
+		// Exact key matching, which struct decoding would not give: the
+		// second spelling is another field, not another way to say the first.
+		{"a key in the wrong case", `{"Kind":"percent","bps":400}`},
+		{"a rate given twice", `{"kind":"percent","bps":400,"bps":9999}`},
+		{"a kind given twice", `{"kind":"percent","kind":"fixed","bps":400}`},
+		{"a second document after the band", `{"kind":"percent","bps":400}{"kind":"fixed"}`},
+		{"a stray delimiter after the band", `{"kind":"percent","bps":400}]`},
+		{"nothing at all", ``},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+" is refused", func(t *testing.T) {
+			t.Parallel()
+			// Seeded with a live band, so a decoder that returns early
+			// without writing cannot pass by leaving the zero value behind.
+			band := catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 400}
+			err := json.Unmarshal([]byte(tc.json), &band)
+			if err == nil {
+				t.Fatalf("Unmarshal(%s) accepted it as %+v", tc.json, band)
+			}
+			// A syntax error the standard decoder raises before reaching
+			// this type is a rejection too; what must never happen is a
+			// silent acceptance.
+			t.Logf("rejected with: %v", err)
+		})
+	}
+}
+
+// money.Amount and money.BasisPoints already encode as C-6 requires, so
+// this package delegates to them instead of restating their rules. The
+// delegation is only as good as what it delegates to, which is what this
+// pins: a rate is a whole number, an amount is integer minor units beside
+// an explicit currency, and neither is ever a float or a decimal string.
+func TestMoneyValuesAlreadyEncodeAsIntegers(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"a rate is a whole number of basis points", money.BasisPoints(400), `400`},
+		{"the whole is ten thousand", money.BasisPointsScale, `10000`},
+		{"an amount is minor units beside its currency", money.Amount{Minor: 250, Currency: "EUR"}, `{"minor":250,"currency":"EUR"}`},
+		{"a negative amount keeps its sign", money.Amount{Minor: -250, Currency: "GBP"}, `{"minor":-250,"currency":"GBP"}`},
+		{"an amount beyond float64's exact range is exact", money.Amount{Minor: 9007199254740993, Currency: "JPY"}, `{"minor":9007199254740993,"currency":"JPY"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := json.Marshal(tc.value)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("Marshal = %s, want %s", got, tc.want)
 			}
 		})
 	}

@@ -18,9 +18,13 @@
 package catalogue
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,13 +47,13 @@ var (
 	// to its 409 (contract: http-api.md).
 	ErrOfferNotLive = errors.New("catalogue: offer not live")
 
-	// ErrMalformedOffer reports a live row whose rate fields do not add up
-	// to a rate anybody can compute a credit from. The schema already
-	// forbids every such row (0011, offer_rate_kind_fields), so seeing this
-	// error means the schema and this mapping disagree - and the mapping
-	// refuses rather than guessing, because a guess here would zero-fill a
-	// money value and a silently zero-filled money value is how money bugs
-	// start (C-6).
+	// ErrMalformedOffer reports a band whose fields do not add up to a rate
+	// anybody can compute a credit from - a row read from the store, or a
+	// snapshot decoded back off a click. The schema already forbids every
+	// such row (0011, offer_rate_kind_fields), so seeing this error means
+	// the schema and this mapping disagree - and the mapping refuses rather
+	// than guessing, because a guess here would zero-fill a money value and
+	// a silently zero-filled money value is how money bugs start (C-6).
 	ErrMalformedOffer = errors.New("catalogue: malformed offer")
 )
 
@@ -73,6 +77,15 @@ const (
 // schema's offer_rate_kind_fields constraint; LiveOffer enforces that on
 // every row it maps, so a band handed out by this package is always
 // well-formed.
+//
+// This is the value FR-013 snapshots onto the click as jsonb, so its JSON
+// form is part of the money path and is stated here rather than inherited
+// from struct encoding. Struct encoding is not merely untidy for this type:
+// the unused zero [money.Amount] on a PERCENT band has no currency and
+// refuses to encode, so the whole band - the commonest kind - fails to
+// marshal, and a fixed band that does marshal carries a "Percent":0 that
+// no reader can tell apart from a real rate of nothing. [RateBand.MarshalJSON]
+// writes the kind and only the field that kind uses.
 type RateBand struct {
 	// Kind says which of the two fields below carries this band's rate.
 	Kind RateKind
@@ -84,6 +97,229 @@ type RateBand struct {
 	// and the zero Amount otherwise. Always positive and always with an
 	// explicit currency (C-6).
 	Fixed money.Amount
+}
+
+// The members a band encodes to, matched exactly rather than resolved
+// through struct tags. [money.Amount] gives the reason and it applies with
+// equal force here: encoding/json matches field names case-insensitively
+// and lets the last spelling of a repeated key win, so {"bps":1,"BPS":9999}
+// would decode to a rate nobody wrote. A snapshot the member's money rests
+// on is the wrong place to inherit that.
+const (
+	fieldKind   = "kind"
+	fieldBps    = "bps"
+	fieldAmount = "amount"
+)
+
+// MarshalJSON encodes the band as {"kind":"percent","bps":400} or
+// {"kind":"fixed","amount":{"minor":250,"currency":"EUR"}} - the kind, and
+// only the field that kind uses.
+//
+// Both rates are integers on the wire. Basis points are written as a whole
+// number and the fixed amount goes out through [money.Amount]'s own
+// encoder, so it is minor units beside an explicit currency: never a float,
+// never a decimal string, at no point between here and a snapshot read back
+// years later (C-6).
+//
+// A band that does not hold to its own invariant does not encode at all. An
+// unencodable band is a bug someone can still find; a snapshot silently
+// written with the wrong rate in it is a credit nobody can reconstruct.
+func (b RateBand) MarshalJSON() ([]byte, error) {
+	switch b.Kind {
+	case RatePercent:
+		if b.Fixed != (money.Amount{}) {
+			return nil, fmt.Errorf("%w: percent band carrying the fixed amount %s", ErrMalformedOffer, b.Fixed)
+		}
+		if !b.Percent.Valid() {
+			return nil, fmt.Errorf("%w: rate of %d bps is outside 0..%d",
+				ErrMalformedOffer, b.Percent, money.BasisPointsScale)
+		}
+		// The kind is a literal from this file and the rate is digits, so
+		// nothing here needs escaping and the number is emitted as an
+		// integer literal rather than through anything that could reformat
+		// it - the same reason money builds its object by hand.
+		out := make([]byte, 0, 32)
+		out = append(out, `{"`+fieldKind+`":"`+string(RatePercent)+`","`+fieldBps+`":`...)
+		out = strconv.AppendInt(out, int64(b.Percent), 10)
+		out = append(out, '}')
+		return out, nil
+
+	case RateFixed:
+		if b.Percent != 0 {
+			return nil, fmt.Errorf("%w: fixed band carrying a rate of %d bps", ErrMalformedOffer, b.Percent)
+		}
+		if !b.Fixed.IsPositive() {
+			// The schema's own rule (offer_rate_fixed_positive): a fixed
+			// commission of nothing or less is not a rate a credit computes
+			// from, so it must not reach a snapshot either.
+			return nil, fmt.Errorf("%w: fixed band of %s", ErrMalformedOffer, b.Fixed)
+		}
+		amount, err := json.Marshal(b.Fixed)
+		if err != nil {
+			return nil, fmt.Errorf("%w: fixed band: %w", ErrMalformedOffer, err)
+		}
+		out := make([]byte, 0, 64)
+		out = append(out, `{"`+fieldKind+`":"`+string(RateFixed)+`","`+fieldAmount+`":`...)
+		out = append(out, amount...)
+		out = append(out, '}')
+		return out, nil
+
+	default:
+		return nil, fmt.Errorf("%w: unknown rate kind %s", ErrMalformedOffer, strconv.Quote(string(b.Kind)))
+	}
+}
+
+// UnmarshalJSON decodes the object [RateBand.MarshalJSON] produces, and
+// rejects everything else.
+//
+// Rejection is the point, and it is the same rule the store mapping holds a
+// row to: exactly the field for the stated kind, and nothing else. A band
+// carrying both rates is a band where somebody disagrees about which one
+// governs the credit, and a snapshot is precisely where that disagreement
+// would go unnoticed for as long as it takes to pay someone the wrong
+// amount. Basis points are read from the raw literal with ParseInt, so a
+// decimal, an exponent or a number in quotes fails rather than rounding
+// into a rate (C-6); the fixed amount is handed to [money.Amount], which
+// applies the same rule to minor units.
+//
+// Members are read one at a time so that each key must match exactly and
+// may appear once. Unknown fields, a JSON null and trailing content fail
+// too: a band is exactly this object.
+func (b *RateBand) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrMalformedOffer, err)
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("%w: a rate band is a JSON object", ErrMalformedOffer)
+	}
+
+	// A present member always yields a non-nil RawMessage, even for a JSON
+	// null, so "already set" is exactly "given twice".
+	var kindRaw, bpsRaw, amountRaw json.RawMessage
+	// Inside an object, More reports whether another MEMBER follows, which
+	// is the question here; it is the wrong tool only for the trailing
+	// content check below, which is about a whole document.
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrMalformedOffer, err)
+		}
+		// Token yields object keys as strings, so a key that is not one is
+		// already a syntax error from the call above. If that ever stopped
+		// holding, the empty key falls through to the unknown-field
+		// rejection below, which is the safe answer either way.
+		key, _ := keyTok.(string)
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return fmt.Errorf("%w: %w", ErrMalformedOffer, err)
+		}
+		var slot *json.RawMessage
+		switch key {
+		case fieldKind:
+			slot = &kindRaw
+		case fieldBps:
+			slot = &bpsRaw
+		case fieldAmount:
+			slot = &amountRaw
+		default:
+			return fmt.Errorf("%w: unexpected field %s", ErrMalformedOffer, strconv.Quote(key))
+		}
+		if *slot != nil {
+			return fmt.Errorf("%w: %s given twice", ErrMalformedOffer, strconv.Quote(key))
+		}
+		*slot = value
+	}
+
+	// The closing brace, and then proof that the document ends there.
+	if _, err := dec.Token(); err != nil {
+		return fmt.Errorf("%w: %w", ErrMalformedOffer, err)
+	}
+	// Only a second Decode proves it: Decoder.More() answers the narrower
+	// "is another VALUE coming?", so a stray closing delimiter after a
+	// valid object would read as "no more values" and be accepted.
+	if err := dec.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%w: trailing content after the band", ErrMalformedOffer)
+	}
+
+	if kindRaw == nil {
+		return fmt.Errorf("%w: band states no kind", ErrMalformedOffer)
+	}
+	var kind string
+	if err := json.Unmarshal(kindRaw, &kind); err != nil {
+		return fmt.Errorf("%w: kind: %w", ErrMalformedOffer, err)
+	}
+
+	switch RateKind(kind) {
+	case RatePercent:
+		rate, err := percentFromJSON(bpsRaw, amountRaw)
+		if err != nil {
+			return err
+		}
+		*b = RateBand{Kind: RatePercent, Percent: rate}
+		return nil
+
+	case RateFixed:
+		amount, err := fixedFromJSON(bpsRaw, amountRaw)
+		if err != nil {
+			return err
+		}
+		*b = RateBand{Kind: RateFixed, Fixed: amount}
+		return nil
+
+	default:
+		return fmt.Errorf("%w: unknown rate kind %s", ErrMalformedOffer, strconv.Quote(kind))
+	}
+}
+
+// percentFromJSON reads the rate of a percent band, holding it to the same
+// rule bandFromRow holds a percent row to: basis points, and no fixed
+// amount anywhere near it.
+func percentFromJSON(bpsRaw, amountRaw json.RawMessage) (money.BasisPoints, error) {
+	if amountRaw != nil {
+		return 0, fmt.Errorf("%w: percent band carrying an amount", ErrMalformedOffer)
+	}
+	if bpsRaw == nil {
+		return 0, fmt.Errorf("%w: percent band with no %s", ErrMalformedOffer, strconv.Quote(fieldBps))
+	}
+	// ParseInt in base ten accepts digits and a leading minus and nothing
+	// else, which is exactly the set of JSON literals that are a whole
+	// number of basis points.
+	literal := string(bytes.TrimSpace(bpsRaw))
+	value, err := strconv.ParseInt(literal, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %s must be a whole number, got %s",
+			ErrMalformedOffer, strconv.Quote(fieldBps), strconv.Quote(literal))
+	}
+	rate := money.BasisPoints(value)
+	if !rate.Valid() {
+		return 0, fmt.Errorf("%w: rate of %d bps is outside 0..%d",
+			ErrMalformedOffer, value, money.BasisPointsScale)
+	}
+	return rate, nil
+}
+
+// fixedFromJSON reads the amount of a fixed band, under the mirror of the
+// rule above: an amount in minor units with its currency, and no basis
+// points.
+func fixedFromJSON(bpsRaw, amountRaw json.RawMessage) (money.Amount, error) {
+	if bpsRaw != nil {
+		return money.Amount{}, fmt.Errorf("%w: fixed band carrying %s",
+			ErrMalformedOffer, strconv.Quote(fieldBps))
+	}
+	if amountRaw == nil {
+		return money.Amount{}, fmt.Errorf("%w: fixed band with no %s",
+			ErrMalformedOffer, strconv.Quote(fieldAmount))
+	}
+	var amount money.Amount
+	if err := json.Unmarshal(amountRaw, &amount); err != nil {
+		return money.Amount{}, fmt.Errorf("%w: fixed band: %w", ErrMalformedOffer, err)
+	}
+	if !amount.IsPositive() {
+		return money.Amount{}, fmt.Errorf("%w: fixed band of %s", ErrMalformedOffer, amount)
+	}
+	return amount, nil
 }
 
 // Offer is one live rate band as the click-out flow consumes it: the band
@@ -122,11 +358,17 @@ type Offer struct {
 	// Exclusions is the band's published exclusions text (FR-011); empty
 	// when the band records none.
 	Exclusions string
-	// ValidFrom is when the band came into force.
+	// ValidFrom is when the band came into force, or the zero time for a
+	// band in force since always - the schema's '-infinity', which the
+	// store query's `valid_from <= $at` treats as live at every moment.
+	// The zero time is unambiguous here because a band that states no
+	// start at all is refused rather than mapped (see [ErrMalformedOffer]).
 	ValidFrom time.Time
 	// ValidTo is when the band closes, or the zero time for a band with no
-	// published end. LiveOffer has already checked the window against the
-	// asked-for moment; the bounds ride along for the snapshot.
+	// published end - a null valid_to and '+infinity', which say the same
+	// thing. The two ends read the same way: an unbounded side is the zero
+	// time. LiveOffer has already checked the window against the asked-for
+	// moment; the bounds ride along for the snapshot.
 	ValidTo time.Time
 	// DeeplinkTemplate is what the network adapter builds the redirect
 	// from, with the click reference substituted into ClickRefParam
@@ -201,19 +443,13 @@ func offerFromRow(id uuid.UUID, row store.GetLiveOfferRow) (Offer, error) {
 			ErrMalformedOffer, id, row.MemberShareBps, money.BasisPointsScale)
 	}
 
-	// pgx reports an infinite timestamptz as a Valid value whose Time is the
-	// ZERO time, flagged only by the InfinityModifier - precisely the shape
-	// that zero-fills if mapped naively. A band must state a real moment it
-	// came into force ('-infinity' would pass the live predicate and then
-	// read as the year 1). An infinite valid_to means the same as null - no
-	// published end - and the only infinity the offer_validity_window
-	// constraint admits there is the positive one.
-	if !row.ValidFrom.Valid || row.ValidFrom.InfinityModifier != pgtype.Finite {
-		return Offer{}, fmt.Errorf("%w %s: band does not state when it came into force", ErrMalformedOffer, id)
+	validFrom, err := bandStart(id, row.ValidFrom)
+	if err != nil {
+		return Offer{}, err
 	}
-	var validTo time.Time
-	if row.ValidTo.Valid && row.ValidTo.InfinityModifier == pgtype.Finite {
-		validTo = row.ValidTo.Time
+	validTo, err := bandEnd(id, row.ValidTo)
+	if err != nil {
+		return Offer{}, err
 	}
 
 	return Offer{
@@ -226,10 +462,80 @@ func offerFromRow(id uuid.UUID, row store.GetLiveOfferRow) (Offer, error) {
 		MemberShare:      share,
 		Conditions:       row.Conditions.String,
 		Exclusions:       row.Exclusions.String,
-		ValidFrom:        row.ValidFrom.Time,
+		ValidFrom:        validFrom,
 		ValidTo:          validTo,
 		DeeplinkTemplate: row.DeeplinkTemplate,
 	}, nil
+}
+
+// A timestamptz reaches this package in three states that pgx flattens onto
+// two zero values, and telling them apart is the whole job of the two
+// functions below. A real moment arrives Valid and [pgtype.Finite]. An
+// infinite one arrives Valid too, with the ZERO Time and only an
+// InfinityModifier to say so - which is why reading Time without reading
+// the modifier dates 'infinity' to the year 1. Genuinely unset arrives with
+// Valid false and the same zero Time, and only that last state is absence.
+//
+// The infinities are then resolved by MEANING, and the meaning that governs
+// is the store query's own: a band the database calls live must not become
+// an error here, and a band it rules out must not be published by a fold in
+// this mapping.
+
+// bandStart resolves the moment a band came into force.
+//
+// valid_from is NOT NULL in the schema (0011), so an unset one is a
+// disagreement between schema and mapping rather than an open start.
+// '-infinity' is not: it satisfies `o.valid_from <= $at` at every moment,
+// so the database calls such a band LIVE, and refusing it would turn a row
+// the schema permits into a failed click-out every time anyone used it.
+// '+infinity' satisfies that predicate at no moment, so the query never
+// returns such a row; one arriving here is a fault to investigate, not a
+// band to publish.
+func bandStart(id uuid.UUID, ts pgtype.Timestamptz) (time.Time, error) {
+	if !ts.Valid {
+		return time.Time{}, fmt.Errorf("%w %s: band does not state when it came into force", ErrMalformedOffer, id)
+	}
+	switch ts.InfinityModifier {
+	case pgtype.NegativeInfinity:
+		// In force since always: the zero time, as [Offer.ValidFrom] documents.
+		return time.Time{}, nil
+	case pgtype.Infinity:
+		return time.Time{}, fmt.Errorf("%w %s: band comes into force at +infinity, which no moment reaches",
+			ErrMalformedOffer, id)
+	default:
+		return ts.Time, nil
+	}
+}
+
+// bandEnd resolves the moment a band closes, or the zero time for one with
+// no published end.
+//
+// A null valid_to is the ordinary open-ended band, and '+infinity' says the
+// same thing - `coalesce(valid_to, 'infinity') > $at` holds for both at
+// every moment, so both map to the same open end.
+//
+// '-infinity' says the exact opposite, and folding it in with those two
+// would invert it: a band that closed before it opened would be handed out
+// as one that never closes. The schema forbids the row outright
+// (offer_validity_window requires valid_to > valid_from, which no
+// '-infinity' close can satisfy) and the query's predicate is false for it
+// at every moment, so it is refused here rather than reported as not live -
+// [ErrOfferNotLive] is the answer to a question the query already
+// answered, and dressing a schema violation as one would retire it into a
+// 409 nobody investigates.
+func bandEnd(id uuid.UUID, ts pgtype.Timestamptz) (time.Time, error) {
+	if !ts.Valid {
+		return time.Time{}, nil
+	}
+	switch ts.InfinityModifier {
+	case pgtype.Infinity:
+		return time.Time{}, nil
+	case pgtype.NegativeInfinity:
+		return time.Time{}, fmt.Errorf("%w %s: band closes at -infinity, before any moment it could have opened",
+			ErrMalformedOffer, id)
+	default:
+		return ts.Time, nil
+	}
 }
 
 // bandFromRow builds the typed rate band, holding the row to the schema's
