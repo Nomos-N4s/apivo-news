@@ -20,6 +20,13 @@
 //   - C-6 is the column types: bigint minor units beside a format-checked
 //     char(3) currency, and a composite foreign key that makes a posting
 //     in a currency its account does not hold unrepresentable.
+//   - The rule that a member's stage account never goes negative - the
+//     withdrawal reservation's double-spend defence (D9) - is a row lock
+//     over the member accounts a transfer touches, taken before any
+//     balance is read, plus a second deferred trigger that states the same
+//     rule for writers that never come through this package. The account's
+//     kind column is what tells a member's bucket from a house account,
+//     which is exempt.
 //
 // Balances are never stored. Balance sums the account's postings in SQL at
 // the moment of the call, and the schema's balances view derives the same
@@ -81,16 +88,56 @@ type querier interface {
 // explicitly rather than trusting a search path some session might have
 // rearranged.
 const (
+	// ON CONFLICT names no target on purpose. The account table carries
+	// two unique indexes - the primary key on id, and the (id, currency)
+	// pair the posting foreign key aims at - and an arbiter naming only
+	// one of them leaves the other free to raise: when callers ensure one
+	// account at the same instant, a loser's speculative insert reaches
+	// the unnamed index and comes back a unique violation instead of the
+	// row that already exists. Arbitrating every constraint is what makes
+	// EnsureAccount idempotent under the concurrency the port promises it
+	// survives.
 	sqlEnsureAccount = `
-		insert into ledger.account (id, currency)
-		values ($1, $2)
-		on conflict (id) do nothing`
+		insert into ledger.account (id, currency, kind)
+		values ($1, $2, $3)
+		on conflict do nothing`
 
 	sqlAccountCurrency = `
 		select currency from ledger.account where id = $1`
 
+	// Post needs the kind beside the currency: the solvency rule governs
+	// member accounts and exempts house ones, and the column is what says
+	// which is which. The id's member/ prefix says the same thing, but the
+	// port declares ids opaque - a query that read one would be SQL
+	// coupled to a spelling this package is free to change.
+	sqlAccountCurrencyAndKind = `
+		select currency, kind from ledger.account where id = $1`
+
 	sqlAccountExists = `
 		select exists (select 1 from ledger.account where id = $1)`
+
+	// The row lock that makes the solvency check race-free. A plain sum
+	// would not be: under READ COMMITTED two concurrent posts each see
+	// their own snapshot, both read the same balance, and both pass. This
+	// statement makes the second wait out the first, and the balance query
+	// after it is a new statement with a new snapshot - so the loser sums
+	// a balance that already includes what the winner took.
+	//
+	// The account rows are the rendezvous because postings are only ever
+	// inserted: there is no posting row two transfers could contend on.
+	// ORDER BY id gives every transfer one lock order, so two transfers
+	// over the same pair of accounts cannot each hold what the other
+	// wants.
+	sqlLockAccounts = `
+		select 1 from ledger.account where id = any($1) order by id for update`
+
+	// The cast is the same overflow guard sqlSumAccountPostings carries.
+	sqlAccountBalances = `
+		select a.id, coalesce(sum(p.amount_minor), 0)::bigint
+		  from ledger.account a
+		  left join ledger.posting p on p.account_id = a.id
+		 where a.id = any($1)
+		 group by a.id`
 
 	// ON CONFLICT DO NOTHING is the whole concurrency story: when two
 	// posts of one key race, the unique index makes the second insert wait
@@ -142,6 +189,14 @@ const (
 // back into bigint. It is translated to [money.ErrOverflow] so every
 // implementation refuses an unrepresentable balance with the same error.
 const numericValueOutOfRange = "22003"
+
+// The two values ledger.account.kind takes, mirroring the two shapes
+// [wallet.AccountRef] has. They are written by EnsureAccount and read by
+// the solvency check; the schema's own check constraint allows no others.
+const (
+	kindMember = "member"
+	kindHouse  = "house"
+)
 
 // Ledger is the Postgres implementation of [wallet.Ledger]. Build one with
 // [New]; the zero value carries no database and is not usable.
@@ -209,8 +264,17 @@ func (l *Ledger) EnsureAccount(ctx context.Context, ref wallet.AccountRef, curre
 		return "", fmt.Errorf("postgres: %w", err)
 	}
 
+	// Which shape the ref carries is settled here, where the ref itself is
+	// in hand, and stored on the row: it is what Post's solvency rule
+	// governs by, and the ref is the only place the fact is stated without
+	// inference.
+	kind := kindHouse
+	if _, _, member := ref.Member(); member {
+		kind = kindMember
+	}
+
 	id := accountID(ref, currency)
-	if _, err := l.db.Exec(ctx, sqlEnsureAccount, string(id), string(currency)); err != nil {
+	if _, err := l.db.Exec(ctx, sqlEnsureAccount, string(id), string(currency), kind); err != nil {
 		return "", fmt.Errorf("postgres: ensuring account %q: %w", id, err)
 	}
 	return id, nil
@@ -263,6 +327,34 @@ func accountID(ref wallet.AccountRef, currency money.Currency) wallet.LedgerAcco
 // account does not hold wrapping [money.ErrCurrencyMismatch]. Both checks
 // run over the whole transfer inside the transaction, so a refused Post
 // rolls back having changed no balance and consumed no key.
+//
+// A transfer that would leave a member's stage account holding less than
+// nothing is refused wrapping [wallet.ErrInsufficientFunds], judged on the
+// transfer's net movement per account rather than posting by posting.
+// House accounts are exempt: they are the boundary of the closed set of
+// accounts, and a ledger in which nothing may go negative has nothing able
+// to fund its first credit.
+//
+// That refusal is the double-spend defence [wallet.StageReserved] leans
+// on, so it has to survive two withdrawal requests arriving at once, on
+// separate connections, in separate transactions. Summing the account
+// would not survive it: under READ COMMITTED each transaction sums its own
+// snapshot, neither sees the other, and both pass. So this implementation
+// takes a row lock on every member account the transfer touches - in id
+// order, one statement, so two transfers over one pair of accounts cannot
+// deadlock - and only then reads the balances. The second transfer waits
+// out the first, and because the balance query is a statement of its own
+// it sees a snapshot taken after the winner committed: it sums money that
+// is already gone and is refused. The schema carries the same rule as a
+// deferred constraint trigger, which is the half that judges SQL written
+// behind this package's back.
+//
+// The solvency check runs after the idempotency key is claimed rather than
+// beside the account checks, and that order is load-bearing. Two
+// concurrent posts of one key must both learn the winner's reference; a
+// loser that took the account lock first would instead wait out the
+// winner's commit, find the money spent, and answer about funds when the
+// question it asked was about a key.
 func (l *Ledger) Post(ctx context.Context, transfer wallet.Transfer) (wallet.TransferRef, error) {
 	if err := transfer.Validate(); err != nil {
 		return "", err
@@ -292,7 +384,8 @@ func (l *Ledger) Post(ctx context.Context, transfer wallet.Transfer) (wallet.Tra
 
 	// All-or-nothing: the whole transfer is judged before any posting is
 	// written, so posting 3 failing cannot leave postings 1 and 2 behind.
-	if err := checkAccounts(ctx, tx, transfer.Postings); err != nil {
+	drawn, err := checkAccounts(ctx, tx, transfer.Postings)
+	if err != nil {
 		return "", err
 	}
 
@@ -321,6 +414,13 @@ func (l *Ledger) Post(ctx context.Context, transfer wallet.Transfer) (wallet.Tra
 		return ref, nil
 	case err != nil:
 		return "", fmt.Errorf("postgres: claiming idempotency key %q: %w", transfer.IdempotencyKey, err)
+	}
+
+	// The key is this transfer's alone from here, so the question left is
+	// whether the money is there. Locking now rather than before the claim
+	// is what keeps a losing same-key post answering about its key.
+	if err := checkFunds(ctx, tx, drawn); err != nil {
+		return "", err
 	}
 
 	for i, p := range transfer.Postings {
@@ -446,28 +546,168 @@ func canonical(postings []wallet.Posting) []wallet.Posting {
 	return out
 }
 
+// drawing is one member account a transfer touches, beside the net
+// movement the transfer makes on it. The net is what the solvency rule is
+// judged on: a transfer that takes 5000 out of a bucket and puts 4500 back
+// in the same atomic act leaves the account 500 lighter and never leaves
+// it short of anything.
+type drawing struct {
+	account wallet.LedgerAccountID
+	net     money.Amount
+}
+
 // checkAccounts refuses the transfer whole when any posting names an
 // account the ledger never issued (wrapping [wallet.ErrUnknownAccount]) or
 // moves a currency its account does not hold (wrapping
 // [money.ErrCurrencyMismatch]). The composite foreign key enforces the
 // currency rule again at the insert; checking here first is what turns the
 // refusal into the port's error with the offending posting named.
-func checkAccounts(ctx context.Context, q querier, postings []wallet.Posting) error {
+//
+// It also nets the transfer over the member accounts it touches and hands
+// that back for [checkFunds] to judge, in the order the postings
+// introduced them - so a transfer overdrawing two accounts always names
+// the same one. House accounts are left out here rather than skipped
+// later: they are exempt from the rule, so they are not drawings.
+func checkAccounts(ctx context.Context, q querier, postings []wallet.Posting) ([]drawing, error) {
+	var drawn []drawing
+	at := make(map[wallet.LedgerAccountID]int, len(postings))
 	for i, p := range postings {
-		var held string
-		err := q.QueryRow(ctx, sqlAccountCurrency, string(p.Account)).Scan(&held)
+		var held, kind string
+		err := q.QueryRow(ctx, sqlAccountCurrencyAndKind, string(p.Account)).Scan(&held, &kind)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("%w: posting %d of %d names %q", wallet.ErrUnknownAccount, i+1, len(postings), p.Account)
+			return nil, fmt.Errorf("%w: posting %d of %d names %q", wallet.ErrUnknownAccount, i+1, len(postings), p.Account)
 		}
 		if err != nil {
-			return fmt.Errorf("postgres: reading account %q: %w", p.Account, err)
+			return nil, fmt.Errorf("postgres: reading account %q: %w", p.Account, err)
 		}
 		if p.Amount.Currency != money.Currency(held) {
-			return fmt.Errorf("postgres: posting %d of %d: %w: account %q holds %s, the posting moves %s",
+			return nil, fmt.Errorf("postgres: posting %d of %d: %w: account %q holds %s, the posting moves %s",
 				i+1, len(postings), money.ErrCurrencyMismatch, p.Account, held, p.Amount.Currency)
+		}
+		if kind != kindMember {
+			continue
+		}
+		j, seen := at[p.Account]
+		if !seen {
+			at[p.Account] = len(drawn)
+			drawn = append(drawn, drawing{account: p.Account, net: p.Amount})
+			continue
+		}
+		// Add can only fail on overflow: the currency check above passed,
+		// so every posting on one account shares that account's currency.
+		sum, err := drawn[j].net.Add(p.Amount)
+		if err != nil {
+			return nil, fmt.Errorf("postgres: netting the postings on account %q: %w", p.Account, err)
+		}
+		drawn[j].net = sum
+	}
+	return drawn, nil
+}
+
+// checkFunds refuses the transfer whole, wrapping
+// [wallet.ErrInsufficientFunds], when applying it would leave any of the
+// member accounts it draws on holding less than nothing. A transfer that
+// touches none - the ordinary commission split, whose only giver is a
+// house account - costs nothing here: no lock is taken and no query runs.
+//
+// The lock comes first and the balances second, in that order and as two
+// statements, which is the whole of why the check is race-free. See
+// [Ledger.Post].
+func checkFunds(ctx context.Context, q querier, drawn []drawing) error {
+	if len(drawn) == 0 {
+		return nil
+	}
+	ids := make([]string, len(drawn))
+	for i, d := range drawn {
+		ids[i] = string(d.account)
+	}
+	if err := lockAccounts(ctx, q, ids); err != nil {
+		return err
+	}
+	held, err := balancesOf(ctx, q, ids)
+	if err != nil {
+		return err
+	}
+
+	for _, d := range drawn {
+		// The account's currency is the posting's: checkAccounts refused
+		// the transfer otherwise, which is what lets a bigint from SQL
+		// become an amount here without asking the row again.
+		before := money.Amount{Minor: held[d.account], Currency: d.net.Currency}
+		after, err := before.Add(d.net)
+		if err != nil {
+			return fmt.Errorf("postgres: applying %s to account %q: %w", d.net, d.account, err)
+		}
+		if after.IsNegative() {
+			return fmt.Errorf("%w: account %q holds %s and this transfer would leave it at %s",
+				wallet.ErrInsufficientFunds, d.account, before, after)
 		}
 	}
 	return nil
+}
+
+// lockAccounts takes a row lock on each of the named accounts, in id
+// order, and holds it for the rest of the transaction. Every row is read,
+// because a lock is only taken as its row is returned, and the count is
+// checked against what was asked for: the ids were all read out of
+// ledger.account moments ago and the rows can never be deleted, so a
+// missing one means an assumption this package rests on has stopped being
+// true.
+func lockAccounts(ctx context.Context, q querier, ids []string) error {
+	rows, err := q.Query(ctx, sqlLockAccounts, ids)
+	if err != nil {
+		return fmt.Errorf("postgres: locking accounts %v: %w", ids, err)
+	}
+	defer rows.Close()
+
+	locked := 0
+	for rows.Next() {
+		locked++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("postgres: locking accounts %v: %w", ids, err)
+	}
+	if locked != len(ids) {
+		return fmt.Errorf("postgres: locked %d of the %d accounts %v", locked, len(ids), ids)
+	}
+	return nil
+}
+
+// balancesOf sums the postings of each named account in one statement,
+// which under READ COMMITTED is one snapshot: the balances answer as of a
+// single instant, after every transfer that had committed by then and
+// after none that had not.
+func balancesOf(ctx context.Context, q querier, ids []string) (map[wallet.LedgerAccountID]int64, error) {
+	rows, err := q.Query(ctx, sqlAccountBalances, ids)
+	if err != nil {
+		return nil, summingErr(ids, err)
+	}
+	defer rows.Close()
+
+	balances := make(map[wallet.LedgerAccountID]int64, len(ids))
+	for rows.Next() {
+		var id string
+		var minor int64
+		if err := rows.Scan(&id, &minor); err != nil {
+			return nil, summingErr(ids, err)
+		}
+		balances[wallet.LedgerAccountID(id)] = minor
+	}
+	if err := rows.Err(); err != nil {
+		return nil, summingErr(ids, err)
+	}
+	return balances, nil
+}
+
+// summingErr reports a failure to sum postings, translating Postgres's
+// out-of-range SQLSTATE into [money.ErrOverflow] so a balance too large
+// for an int64 is refused with the port's own error rather than a driver's.
+func summingErr(ids []string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == numericValueOutOfRange {
+		return fmt.Errorf("postgres: summing accounts %v: %w", ids, money.ErrOverflow)
+	}
+	return fmt.Errorf("postgres: summing accounts %v: %w", ids, err)
 }
 
 // encodeMetadata renders the transfer's annotations for the jsonb column.

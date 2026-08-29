@@ -24,6 +24,21 @@
 --   C-6  bigint minor units beside a format-checked char(3) ISO-4217
 --        currency; no numeric, float or money column exists here.
 --
+-- One further rule is the wallet port's rather than the constitution's,
+-- and it is enforced here for the same reason C-1 is: a MEMBER stage
+-- account may never be left holding less than nothing. That refusal is the
+-- whole of the withdrawal reservation's double-spend defence (D9) - two
+-- requests racing for one confirmed balance both try to take it, and only
+-- a ledger that refuses the second stops the member being paid twice for
+-- money they hold once. Nothing else refuses it: data-model.md 2.7 gives
+-- withdrawal_request no one-open-request constraint. HOUSE accounts are
+-- exempt, because they are the boundary of this closed set of accounts -
+-- money enters over a house account going negative, and a ledger in which
+-- nothing may go negative has nothing able to fund its first credit. The
+-- account.kind column below is what tells the two apart in SQL, and a
+-- deferred constraint trigger enforces the rule against writers that do
+-- not come through the adapter.
+--
 -- Postings and transfers are financial history in the same sense
 -- source_item is legal evidence: UPDATE, DELETE and TRUNCATE raise. A
 -- correction is a new transfer that reverses the old one, never an edit.
@@ -103,6 +118,16 @@ create table ledger.account (
         constraint account_id_not_blank check (btrim(id) <> ''),
     currency char(3) not null
         constraint account_currency_iso4217_format check (currency ~ '^[A-Z]{3}$'),
+    -- Which of the port's two account shapes this id was issued for, and
+    -- the only thing the solvency rule below distinguishes. Deliberately
+    -- NOT defaulted: a writer that omits it would be minting an account
+    -- whose kind nobody decided, and the kind that a silent default would
+    -- hand out is the exempt one. The prefix the adapter happens to put in
+    -- the id says the same thing, but the port declares ids opaque, so a
+    -- rule reading one would be SQL coupled to a string format that is
+    -- free to change.
+    kind text not null
+        constraint account_kind_known check (kind in ('member', 'house')),
     created_at timestamptz not null default now(),
     -- Redundant beside the primary key on purpose: it is the target the
     -- posting foreign key below aims at, which is what makes a posting in
@@ -117,6 +142,8 @@ comment on column ledger.account.id is
     'The identity the wallet adapter derives from (AccountRef, currency). Opaque to everything above the port: nothing outside the adapter parses it, so the derivation can change without stranding a caller.';
 comment on column ledger.account.currency is
     'ISO-4217 code of the one currency this account holds. A member holding two currencies holds two accounts; no operation ever spans them implicitly (C-6).';
+comment on column ledger.account.kind is
+    '''member'' for one claim bucket of one member''s money, ''house'' for an operational account the business owns. It exists so the solvency rule can be stated in SQL: a member account may never be left holding less than nothing (D9), while a house account may, because that is where money enters and leaves this closed set of accounts.';
 comment on column ledger.account.created_at is
     'When the account was first ensured. Bookkeeping for an operator; nothing derives from it.';
 
@@ -267,6 +294,60 @@ create constraint trigger posting_zero_sum
     after insert on ledger.posting
     deferrable initially deferred
     for each row execute function ledger.posting_zero_sum();
+
+------------------------------------------------------------------------------
+-- D9: a member's stage account never goes negative.
+------------------------------------------------------------------------------
+
+-- Same shape as the zero-sum trigger, for the same reason: deferred to
+-- COMMIT, so a transfer that takes 5000 out of a bucket and puts 4500 back
+-- is judged on what it actually leaves behind rather than on whichever
+-- posting the transaction happened to write first.
+--
+-- WHAT THIS IS AND IS NOT. It is the database's own statement of the rule,
+-- covering SQL written behind the port's back, exactly as the zero-sum
+-- trigger does. It is NOT by itself the defence against two concurrent
+-- withdrawals: under READ COMMITTED two transactions each sum their own
+-- snapshot and can both pass here. Serialising them is the adapter's job -
+-- it takes a row lock on every member account a transfer touches before it
+-- reads a balance - and this trigger is the backstop behind that lock, not
+-- a substitute for it.
+create function ledger.posting_member_not_negative() returns trigger
+language plpgsql
+as $$
+declare
+    account_kind text;
+    held bigint;
+begin
+    select a.kind into account_kind
+      from ledger.account a
+     where a.id = new.account_id;
+    if account_kind is distinct from 'member' then
+        return null;
+    end if;
+
+    -- An account holds exactly one currency (the composite foreign key
+    -- makes anything else unrepresentable), so its postings sum to its
+    -- balance with no per-currency grouping to do.
+    select coalesce(sum(p.amount_minor), 0)
+      into held
+      from ledger.posting p
+     where p.account_id = new.account_id;
+    if held < 0 then
+        raise exception 'account % would be left holding % minor units: a member stage account may never hold less than nothing, which is what makes a withdrawal reservation a reservation (D9)',
+            new.account_id, held;
+    end if;
+    return null;
+end;
+$$;
+
+comment on function ledger.posting_member_not_negative() is
+    'COMMIT-time check (deferred constraint trigger) that no transfer leaves a member stage account holding less than nothing (D9), house accounts exempt. The wallet port runs the same check inside its own transaction, under a row lock that also serialises concurrent transfers; this is the half that catches SQL written behind the port''s back.';
+
+create constraint trigger posting_member_not_negative
+    after insert on ledger.posting
+    deferrable initially deferred
+    for each row execute function ledger.posting_member_not_negative();
 
 ------------------------------------------------------------------------------
 -- Balances: derived, never stored (D7).

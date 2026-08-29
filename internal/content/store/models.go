@@ -461,6 +461,8 @@ type LedgerAccount struct {
 	ID string
 	// ISO-4217 code of the one currency this account holds. A member holding two currencies holds two accounts; no operation ever spans them implicitly (C-6).
 	Currency string
+	// 'member' for one claim bucket of one member's money, 'house' for an operational account the business owns. It exists so the solvency rule can be stated in SQL: a member account may never be left holding less than nothing (D9), while a house account may, because that is where money enters and leaves this closed set of accounts.
+	Kind string
 	// When the account was first ensured. Bookkeeping for an operator; nothing derives from it.
 	CreatedAt pgtype.Timestamptz
 }

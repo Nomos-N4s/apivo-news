@@ -13,6 +13,16 @@ package postgres_test
 //	C-6  integer minor units, format-checked currency, no fractional
 //	     money type anywhere in the schema
 //	     postings and transfers are financial history -> immutable
+//	D9   a member stage account never holds less than nothing -> the
+//	     second deferred trigger raises at COMMIT; house accounts are
+//	     exempt
+//
+// The synthetic accounts these tests write are house accounts, and
+// deliberately: every one of them is about the zero-sum, uniqueness and
+// immutability rules, several drive an account negative to get there, and
+// the house kind is the one those assertions have always assumed. The
+// member kind has its own test below, which is where being refused for
+// going negative is the point rather than the noise.
 //
 // Like the behaviour suite beside it they run against a real Postgres,
 // keyed on DATABASE_URL, and clean up by rolling back or by failing the
@@ -79,7 +89,7 @@ func seedSQL(t *testing.T, tx pgx.Tx) seededTransfer {
 		take: "sql/take/" + suffix,
 	}
 	if _, err := tx.Exec(ctx,
-		`insert into ledger.account (id, currency) values ($1, 'EUR'), ($2, 'EUR')`,
+		`insert into ledger.account (id, currency, kind) values ($1, 'EUR', 'house'), ($2, 'EUR', 'house')`,
 		s.give, s.take); err != nil {
 		t.Fatalf("seed accounts: %v", err)
 	}
@@ -147,8 +157,8 @@ func TestDatabaseRefusesAnUnbalancedTransferAtCommit(t *testing.T) {
 		defer func() { _ = tx.Rollback(ctx) }()
 		suffix := randomSuffix(t)
 		if _, err := tx.Exec(ctx,
-			`insert into ledger.account (id, currency)
-			 values ($1, 'EUR'), ($2, 'EUR'), ($3, 'GBP')`,
+			`insert into ledger.account (id, currency, kind)
+			 values ($1, 'EUR', 'house'), ($2, 'EUR', 'house'), ($3, 'GBP', 'house')`,
 			"sql/eur-a/"+suffix, "sql/eur-b/"+suffix, "sql/gbp/"+suffix); err != nil {
 			t.Fatalf("seed accounts: %v", err)
 		}
@@ -192,8 +202,15 @@ func TestDatabaseRefusesASecondUseOfAnIdempotencyKey(t *testing.T) {
 // financial history, and a correction is a reversing transfer. Each
 // attempt runs in a savepoint so the raised exception does not abort the
 // enclosing rolled-back transaction.
+//
+// Deliberately NOT parallel, alone in this file. Its TRUNCATE attempts
+// take ACCESS EXCLUSIVE on ledger.transfer and then, through the cascade,
+// on ledger.posting - the opposite order from the one History's join reads
+// those two tables in - and a pair of statements that take one pair of
+// table locks in opposite orders deadlocks whenever they overlap. They
+// cannot overlap if this test never runs beside another: Go releases the
+// parallel tests only once the sequential ones have finished.
 func TestLedgerRowsAreImmutable(t *testing.T) {
-	t.Parallel()
 	tx := beginTx(t)
 	ctx := context.Background()
 	s := seedSQL(t, tx)
@@ -263,7 +280,7 @@ func TestDatabaseRejectsMalformedMoney(t *testing.T) {
 			name: "an account in a lowercase currency",
 			write: func(ctx context.Context, tx pgx.Tx, _ seededTransfer) error {
 				_, err := tx.Exec(ctx,
-					`insert into ledger.account (id, currency) values ('sql/bad-currency', 'eur')`)
+					`insert into ledger.account (id, currency, kind) values ('sql/bad-currency', 'eur', 'house')`)
 				return err
 			},
 			wantCode: codeCheckViolation,
@@ -314,7 +331,7 @@ func TestDatabaseRejectsMalformedMoney(t *testing.T) {
 			name: "an account with a blank id",
 			write: func(ctx context.Context, tx pgx.Tx, _ seededTransfer) error {
 				_, err := tx.Exec(ctx,
-					`insert into ledger.account (id, currency) values ('  ', 'EUR')`)
+					`insert into ledger.account (id, currency, kind) values ('  ', 'EUR', 'house')`)
 				return err
 			},
 			wantCode: codeCheckViolation,
@@ -329,6 +346,133 @@ func TestDatabaseRejectsMalformedMoney(t *testing.T) {
 			wantPgCode(t, tt.write(context.Background(), tx, s), tt.wantCode)
 		})
 	}
+}
+
+// TestDatabaseKeepsMemberAccountsSolvent is D9 with the port bypassed: a
+// transfer written straight in SQL that leaves a member's stage account
+// holding less than nothing must be refused by the deferred trigger at
+// COMMIT, and a house account in the same position must not be. Every case
+// stages the money the way it really arrives - a house account credits the
+// member - so the exemption is load-bearing in the passing cases too: the
+// house ends each of them at -fund and commits anyway.
+func TestDatabaseKeepsMemberAccountsSolvent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// fund is credited to the member from the house account, and draw
+		// is then taken back out of the member to the house - both inside
+		// the one transaction whose COMMIT is under test.
+		fund, draw int64
+		// wantRefused is true when that COMMIT must raise.
+		wantRefused bool
+	}{
+		{name: "a member drawn inside its balance commits", fund: 1000, draw: 400},
+		{name: "a member drawn to exactly nothing commits", fund: 1000, draw: 1000},
+		{name: "a member drawn one minor unit past its balance is refused", fund: 1000, draw: 1001, wantRefused: true},
+		{name: "a member drawn with nothing like enough to give is refused", fund: 1000, draw: 5000, wantRefused: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pool := requirePool(t)
+			ctx := context.Background()
+
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatalf("begin: %v", err)
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+
+			suffix := randomSuffix(t)
+			member, house := "sql/member/"+suffix, "sql/house/"+suffix
+			if _, err := tx.Exec(ctx,
+				`insert into ledger.account (id, currency, kind)
+				 values ($1, 'EUR', 'member'), ($2, 'EUR', 'house')`,
+				member, house); err != nil {
+				t.Fatalf("seed accounts: %v", err)
+			}
+			stage := func(key string, onMember int64) {
+				t.Helper()
+				var ref string
+				if err := tx.QueryRow(ctx,
+					`insert into ledger.transfer (idempotency_key) values ($1) returning ref`,
+					key+"-"+suffix).Scan(&ref); err != nil {
+					t.Fatalf("staging transfer %s: %v", key, err)
+				}
+				if _, err := tx.Exec(ctx,
+					`insert into ledger.posting (transfer_ref, account_id, amount_minor, currency)
+					 values ($1, $2, $3, 'EUR'), ($1, $4, $5, 'EUR')`,
+					ref, member, onMember, house, -onMember); err != nil {
+					t.Fatalf("staging the postings of %s: %v", key, err)
+				}
+			}
+			stage("sql-fund", tc.fund)
+			stage("sql-draw", -tc.draw)
+
+			err = tx.Commit(ctx)
+			if tc.wantRefused {
+				wantPgCode(t, err, codeRaiseException)
+				return
+			}
+			if err != nil {
+				t.Fatalf("commit = %v, want nil: the member ends at %d, which is not less than nothing", err, tc.fund-tc.draw)
+			}
+		})
+	}
+
+	t.Run("a house account may end a transfer holding less than nothing", func(t *testing.T) {
+		t.Parallel()
+		pool := requirePool(t)
+		ctx := context.Background()
+
+		// No member anywhere in this transfer: one house account gives
+		// another money it never had, which is exactly how the first
+		// credit into a closed set of accounts has to work.
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		suffix := randomSuffix(t)
+		give, take := "sql/house-give/"+suffix, "sql/house-take/"+suffix
+		if _, err := tx.Exec(ctx,
+			`insert into ledger.account (id, currency, kind)
+			 values ($1, 'EUR', 'house'), ($2, 'EUR', 'house')`,
+			give, take); err != nil {
+			t.Fatalf("seed accounts: %v", err)
+		}
+		var ref string
+		if err := tx.QueryRow(ctx,
+			`insert into ledger.transfer (idempotency_key) values ($1) returning ref`,
+			"sql-house-"+suffix).Scan(&ref); err != nil {
+			t.Fatalf("staging the transfer: %v", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`insert into ledger.posting (transfer_ref, account_id, amount_minor, currency)
+			 values ($1, $2, -1000, 'EUR'), ($1, $3, 1000, 'EUR')`,
+			ref, give, take); err != nil {
+			t.Fatalf("staging the postings: %v", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatalf("commit = %v, want nil: a house account is where money enters, so it may go negative", err)
+		}
+	})
+
+	t.Run("an account of a kind nobody defined cannot be written", func(t *testing.T) {
+		t.Parallel()
+
+		// The rule only means anything while the column holds one of the
+		// two kinds: a third would be an account the solvency check has no
+		// opinion about, which is a silent exemption.
+		tx := beginTx(t)
+		_, err := tx.Exec(context.Background(),
+			`insert into ledger.account (id, currency, kind) values ($1, 'EUR', 'staff')`,
+			"sql/odd-kind/"+randomSuffix(t))
+		wantPgCode(t, err, codeCheckViolation)
+	})
 }
 
 // TestNoFractionalMoneyTypeExistsInTheLedgerSchema asserts C-6 as the
@@ -425,7 +569,7 @@ func TestZeroSumCheckCanBePointedAtThisLedger(t *testing.T) {
 	suffix := randomSuffix(t)
 	account := "sql/standin/" + suffix
 	if _, err := tx.Exec(ctx,
-		`insert into ledger.account (id, currency) values ($1, 'GBP')`, account); err != nil {
+		`insert into ledger.account (id, currency, kind) values ($1, 'GBP', 'house')`, account); err != nil {
 		t.Fatalf("staging the account: %v", err)
 	}
 	var ref string
