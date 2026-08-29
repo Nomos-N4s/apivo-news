@@ -13,6 +13,11 @@ package events_test
 // transaction occurred_at would be a single timestamp, so the expected
 // order is always computed from the stream order the dispatcher promises
 // - (occurred_at, id) - not from the order of Append calls.
+//
+// One test breaks that pattern on purpose. The checkpoint's hard case is
+// a producer transaction that is open while a poll runs, so
+// TestDispatcherNeverStepsPastAnOpenProducerTransaction drives two real
+// concurrent transactions and holds one of them open across a tick.
 
 import (
 	"bytes"
@@ -152,18 +157,29 @@ func appendSeeds(t *testing.T, pool *pgxpool.Pool, w *events.Writer, seeds []eve
 }
 
 // drainUntil ticks the dispatcher until done reports true, failing the
-// test if a tick errors or the limit is reached first.
+// test if a tick errors or the budget is reached first.
+//
+// The ticks are paced rather than spun, because a tick may legitimately
+// make no progress: the checkpoint waits behind any transaction that was
+// already open when an event was appended, and on a shared database that
+// transaction can belong to another suite entirely. Pausing between ticks
+// spends the budget on waiting for those to end instead of on hammering
+// the same query.
 func drainUntil(t *testing.T, d *events.Dispatcher, done func() bool) {
 	t.Helper()
-	for range 200 {
+	for range 500 {
 		if done() {
 			return
 		}
 		if err := d.Tick(context.Background()); err != nil {
 			t.Fatalf("tick: %v", err)
 		}
+		if done() {
+			return
+		}
+		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("the dispatcher did not finish within 200 ticks")
+	t.Fatal("the dispatcher did not finish within 500 ticks")
 }
 
 // TestDispatcherDeliversInOrderPerLane covers the ordering half of the
@@ -296,6 +312,171 @@ func TestDispatcherDeliversInOrderPerLane(t *testing.T) {
 		if gotPayload["n"] != wantPayload["n"] {
 			t.Fatalf("event %s arrived with payload %s, want %s", got.EventID, got.Payload, want.Payload)
 		}
+	}
+}
+
+// TestDispatcherNeverStepsPastAnOpenProducerTransaction is the no-skip
+// guarantee, driven by the interleaving that breaks a checkpoint trusting
+// occurred_at alone.
+//
+// occurred_at is the appending transaction's start time, and a row is
+// readable only once that transaction commits. So an event appended by a
+// transaction that stays open stands EARLIER in the stream than
+// everything appended and committed while it is open, and appears LATER
+// than all of it. A checkpoint that moved over the readable events would
+// leave that one behind the read position for good: a committed event
+// silently dropped, which consumer rule 4 of the event contract calls a
+// defect, and which for a credit event means a subscriber that never
+// hears about the money.
+//
+// The two cases are the same interleaving on either side of the open
+// transaction's first write, and the checkpoint has to survive both: an
+// append it has already made is one the poll cannot see, and an append it
+// has not made yet still lands at the start time it already took.
+func TestDispatcherNeverStepsPastAnOpenProducerTransaction(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// appendsFirst says whether the open transaction appends before
+		// the tick that must not step over it, or only afterwards.
+		appendsFirst bool
+	}{
+		{name: "the transaction has already appended", appendsFirst: true},
+		{name: "the transaction appends only afterwards", appendsFirst: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			pool := dispatcherDB(t)
+			ctx := context.Background()
+
+			w, err := events.NewWriter("cashback")
+			if err != nil {
+				t.Fatalf("NewWriter: %v", err)
+			}
+			eventType := "cashback.inflight" + randomSuffix(t) + ".tested"
+			subject := uuid.New()
+
+			// The slow producer: a transaction that starts - fixing the
+			// occurred_at of everything it will ever append - and stays
+			// open, which is what the outbox asks of a producer while the
+			// state change its event describes is still being written.
+			slow, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatalf("begin the producer transaction: %v", err)
+			}
+			t.Cleanup(func() { _ = slow.Rollback(ctx) })
+			var startedAt time.Time
+			if err := slow.QueryRow(ctx, "select now()").Scan(&startedAt); err != nil {
+				t.Fatalf("read the producer transaction's start time: %v", err)
+			}
+			appendSlow := func() events.Event {
+				t.Helper()
+				e, err := w.Append(ctx, slow, events.Message{
+					Type: eventType, Subject: subject, Payload: json.RawMessage(`{"n": 1}`),
+				})
+				if err != nil {
+					t.Fatalf("appending inside the open transaction: %v", err)
+				}
+				return e
+			}
+
+			var early events.Event
+			if tt.appendsFirst {
+				early = appendSlow()
+			}
+
+			// The quick producer, on its own connection, appending and
+			// committing while the slow one is still open. Its event is
+			// readable, and stands behind the slow one in the stream.
+			time.Sleep(2 * time.Millisecond)
+			late := appendSeeds(t, pool, w, []events.Message{
+				{Type: eventType, Subject: subject, Payload: json.RawMessage(`{"n": 2}`)},
+			})[0]
+			if !startedAt.Before(late.OccurredAt) {
+				t.Fatalf("the premise does not hold: the open transaction started at %s, not before the committed event at %s",
+					startedAt, late.OccurredAt)
+			}
+
+			var delivered []uuid.UUID
+			record := func(_ context.Context, e events.Event) error {
+				delivered = append(delivered, e.EventID)
+				return nil
+			}
+			store := events.NewMemoryCheckpoints()
+			d := events.NewDispatcher(pool, store, events.DispatcherConfig{})
+			if err := d.Register(eventType, record); err != nil {
+				t.Fatalf("Register: %v", err)
+			}
+
+			// The tick that sees only the committed event. Delivering it
+			// is right - it is committed data - but saving a checkpoint
+			// over it is not, while an append can still land in front of
+			// it.
+			if err := d.Tick(ctx); err != nil {
+				t.Fatalf("tick while the producer transaction is open: %v", err)
+			}
+			if len(delivered) != 1 || delivered[0] != late.EventID {
+				t.Fatalf("the tick delivered %v, want only the committed event %s", delivered, late.EventID)
+			}
+			cp, err := store.Load(ctx)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			// Reported, not fatal, so that the run goes on to show what
+			// saving it costs: the event that is lost, not just the
+			// position that was wrong.
+			if !cp.OccurredAt.Before(startedAt) {
+				t.Errorf("the checkpoint %+v stands at or past %s, where the open transaction's append lands; nothing will ever read that position again",
+					cp, startedAt)
+			}
+
+			if !tt.appendsFirst {
+				early = appendSlow()
+			}
+			if !streamLess(early, late) {
+				t.Fatalf("the premise does not hold: event %s at %s does not stand before event %s at %s",
+					early.EventID, early.OccurredAt, late.EventID, late.OccurredAt)
+			}
+
+			// The slow producer commits. Its event is now readable, at a
+			// position the poll has already read past once - so the ticks
+			// that follow have to find it there.
+			if err := slow.Commit(ctx); err != nil {
+				t.Fatalf("commit the producer transaction: %v", err)
+			}
+			count := func(id uuid.UUID) int {
+				n := 0
+				for _, got := range delivered {
+					if got == id {
+						n++
+					}
+				}
+				return n
+			}
+			arrived := func() bool { return count(early.EventID) > 0 }
+			for i := 0; !arrived(); i++ {
+				if i == 500 {
+					t.Fatalf("event %s was committed and never delivered: the checkpoint had stepped over the position it landed in, so no poll looks there again (delivered %v)",
+						early.EventID, delivered)
+				}
+				if err := d.Tick(ctx); err != nil {
+					t.Fatalf("tick after the commit: %v", err)
+				}
+				if !arrived() {
+					time.Sleep(time.Millisecond)
+				}
+			}
+
+			// And the event delivered while the checkpoint waited is not
+			// delivered again for the waiting: the ticks in between re-read
+			// its position, as they must, and pass over it.
+			if got := count(late.EventID); got != 1 {
+				t.Errorf("the committed event was delivered %d time(s) while the checkpoint waited, want exactly 1", got)
+			}
+		})
 	}
 }
 

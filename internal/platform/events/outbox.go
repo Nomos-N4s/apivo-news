@@ -23,6 +23,47 @@
 // dead-letter parking of deliveries that keep failing - is provided by the
 // subscriber registry layer, which builds on the Handler and
 // CheckpointStore seams this package defines.
+//
+// # What the checkpoint guarantees, and what it does not
+//
+// The stream is read along occurred_at, which domain_event stamps with
+// now() - the appending transaction's START time - while a row can only
+// be read once that transaction has COMMITTED. Read order and commit
+// order are therefore not the same order, and an event appended early and
+// committed late turns up behind events appended later and committed
+// sooner. A checkpoint that ignored that would move over the later ones
+// and never look at the earlier one's place again.
+//
+// So the checkpoint is only ever saved at a position that no append still
+// in flight can land in front of. Two bounds hold it there, both asked of
+// the database on every poll (see poll in dispatcher.go): the start time
+// of the oldest transaction open in this database, which is the earliest
+// occurred_at any event still to appear can carry; and the transaction-id
+// horizon of the poll's own snapshot, which says of each row read that
+// the transaction that wrote it had already finished.
+//
+// What that makes impossible: an event appended by a transaction the
+// dispatcher can see cannot end up behind the checkpoint, however long
+// that transaction stays open. The next poll reads its place again, finds
+// it and delivers it. What it costs is redelivery, never loss - rows the
+// checkpoint has not passed are read again on every tick - which is the
+// handler's side of the bargain and the reason idempotence is not
+// optional. It also costs delay: while a transaction sits open the
+// checkpoint stands still behind it, and delivery runs no further ahead
+// of the checkpoint than one batch.
+//
+// Two limits are worth stating rather than papering over. The first bound
+// sees a session's transaction only if the reading role is allowed to -
+// sessions of its own role, or all of them given pg_read_all_stats - so a
+// producer connecting as some other role is held only by the second
+// bound, which covers it from the moment it has written anything, an
+// append included, and not before. The second limit is the prepared
+// transaction, which has no session left to be seen at all and is held by
+// the transaction-id horizon alone. Closing both structurally means
+// recording deliveries instead of a position - the delivery table of the
+// subscriber registry layer, whose anti-join asks which events have no
+// delivery row rather than which events come after this timestamp, and so
+// cannot be outrun by a timestamp at all.
 package events
 
 import (

@@ -13,6 +13,19 @@ package events
 // on every tick until it is resolved - and pins the checkpoint behind the
 // failed event so that a restart retries it. A silently dropped event is
 // a defect; a halted lane is the design refusing to become one.
+//
+// The second thing that pins the checkpoint is the gap between the order
+// the stream is read in and the order rows appear in. domain_event stamps
+// occurred_at with now(), which is the appending transaction's START time,
+// while the row becomes readable only at its COMMIT. An event appended
+// early and committed late therefore arrives BEHIND events appended later
+// and committed sooner, so a checkpoint that had moved over those would
+// leave it behind the read position forever. poll asks the database which
+// rows are past that risk - see its comment for the two bounds it asks
+// for - and Tick advances the checkpoint over those alone, while still
+// delivering the rest. Delivery is at-least-once and re-reading is free;
+// a skipped event is unrecoverable, so the checkpoint is the half that
+// waits.
 
 import (
 	"context"
@@ -30,7 +43,8 @@ import (
 const (
 	// DefaultBatchSize is how many events one Tick reads past the
 	// checkpoint. It bounds a tick's work, and with it how far delivery
-	// can run ahead of a checkpoint pinned by a halted lane.
+	// can run ahead of a checkpoint pinned by a halted lane or by an
+	// in-flight producer transaction.
 	DefaultBatchSize = 100
 	// DefaultMaxAttempts is how many times one delivery is attempted
 	// before its lane halts.
@@ -46,8 +60,9 @@ const (
 var ErrStarted = errors.New("events: dispatcher has already started delivering; register every handler before the first Tick")
 
 // Querier is the narrow slice of database access the dispatcher needs:
-// running its one poll query. *pgxpool.Pool satisfies it, and so does
-// pgx.Tx.
+// running the two reads a poll is made of - the batch of events, and the
+// bound saying how far the checkpoint may follow it. *pgxpool.Pool
+// satisfies it, and so does pgx.Tx.
 type Querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
@@ -101,6 +116,12 @@ type Halt struct {
 // Checkpoint is a position in the stream, identified the way the stream
 // is ordered: occurred_at first, id as the tiebreak. The zero value is
 // the start of the stream.
+//
+// A saved checkpoint is a claim that nothing at or before it will ever
+// need reading again, so the dispatcher only ever saves a position that
+// no still-uncommitted append can undercut (see poll). Everything after
+// it is read again on the next tick, which is what lets an event that
+// became visible late still be found.
 type Checkpoint struct {
 	// OccurredAt is the position's time axis.
 	OccurredAt time.Time
@@ -197,7 +218,18 @@ func (c DispatcherConfig) withDefaults() DispatcherConfig {
 //
 // Ordering: events are delivered in stream order within each lane, and
 // lanes do not block each other - a failing delivery halts its own lane
-// and the rest keep flowing, up to the batch bound.
+// and the rest keep flowing, up to the batch bound. Stream order is the
+// order of the rows a poll can read: an event whose transaction commits
+// after its lane-mates were already delivered stands earlier in the
+// stream than they do and is still delivered late, because the only
+// alternative to a late delivery is no delivery at all.
+//
+// No skips: the checkpoint never moves over a position that an append
+// still in flight could land in front of, so an event that becomes
+// visible after the poll that would have passed it is read by the next
+// poll rather than lost. That is the guarantee handlers rely on; what
+// they owe in return is idempotence, because holding the checkpoint back
+// means re-reading, and re-reading means redelivery.
 //
 // Failure: when a delivery spends its retry budget the lane halts, the
 // halt is handed to OnHalt and returned from Tick, and the checkpoint
@@ -266,8 +298,8 @@ func (d *Dispatcher) Register(eventType string, handler Handler) error {
 // Tick is one poll-and-deliver pass: read a batch of events past the
 // checkpoint in stream order, deliver each through the handlers
 // registered for its type, and save the checkpoint over the contiguous
-// prefix that succeeded. A cancelled ctx ends the pass early, keeping
-// whatever the checkpoint already covers.
+// prefix that both succeeded and is safe to stop reading. A cancelled ctx
+// ends the pass early, keeping whatever the checkpoint already covers.
 //
 // The returned error is the tick's loud surface: infrastructure
 // failures, every lane that halted during this tick, and - again, on
@@ -306,9 +338,19 @@ func (d *Dispatcher) Tick(ctx context.Context) error {
 		}
 	}
 
-	for _, e := range batch {
+	for _, row := range batch {
 		if ctx.Err() != nil {
 			break
+		}
+		e := row.event
+		if !row.settled {
+			// The row is committed - we are reading it - but an older
+			// transaction is still open, and an open transaction's append
+			// lands behind this row in stream order. Saving a checkpoint
+			// here would move the read position past a place an event can
+			// still appear in. Deliver the row, and leave the checkpoint
+			// where the next poll will look at that place again.
+			advancing = false
 		}
 		lane := Lane{Type: e.Type, Subject: e.Subject}
 		if _, done := d.delivered[e.EventID]; done {
@@ -360,18 +402,64 @@ func (d *Dispatcher) Tick(ctx context.Context) error {
 	return errors.Join(faults...)
 }
 
+// polled is one row of a poll: the event, and whether the checkpoint may
+// be saved over it. Settledness is a fact about the read that found the
+// row, not about the event, so it stays here instead of on the Event a
+// handler receives.
+type polled struct {
+	event   Event
+	settled bool
+}
+
 // poll reads the next batch: every event strictly after cp in stream
 // order, up to the batch size. The order is (occurred_at, id):
 // occurred_at is the stream's time axis, and the id breaks its ties so
 // the order is total and stable across polls. The tiebreak means nothing
 // and never needs to - the only order the stream promises is per lane,
 // and any stable total order preserves it.
-func (d *Dispatcher) poll(ctx context.Context, cp Checkpoint) ([]Event, error) {
+//
+// Each row is also marked settled or not, because stream order is not the
+// order rows become readable in. occurred_at defaults to now(), which is
+// the appending transaction's START time, while the row is readable only
+// once that transaction COMMITS; a producer that appends early and
+// commits late lands BEHIND events appended later and committed sooner.
+// A checkpoint saved over those later events would put the late one
+// behind the read position permanently - a committed event silently
+// dropped, which consumer rule 4 of the event contract calls a defect.
+//
+// A row is settled when both of these hold, and the checkpoint moves over
+// settled rows only:
+//
+//   - Its occurred_at is before the start of the oldest transaction open
+//     in this database. Every event that can still appear is being
+//     written by a transaction open right now, and every transaction that
+//     has not begun yet will begin later and stamp a later occurred_at,
+//     so that start time is the line no unread event can be in front of.
+//     It is read first and in its own statement: a bound read afterwards
+//     could already have moved past a transaction that was open when the
+//     rows were read, which is the one direction that is not safe.
+//   - Its own xmin precedes the transaction-id horizon of the snapshot
+//     that read it, pg_snapshot_xmin(pg_current_snapshot()), which says
+//     the transaction that wrote the row had already finished. Both come
+//     out of this one statement, so they describe one instant. This test
+//     needs no view and no privilege, which is why it is here as well:
+//     a producer that appends and then stays open holds the horizon at
+//     its own transaction id, so nothing appended after it can be passed
+//     while it runs - even if that producer's session is one the first
+//     bound cannot see. The package doc sets out what each covers.
+func (d *Dispatcher) poll(ctx context.Context, cp Checkpoint) ([]polled, error) {
+	openSince, err := d.oldestOpenTransaction(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := d.db.Query(ctx,
-		`select id::text, type, version, occurred_at, producer, subject::text, idempotency_key, payload
-		 from domain_event
-		 where (occurred_at, id) > ($1, $2::uuid)
-		 order by occurred_at, id
+		`select e.id::text, e.type, e.version, e.occurred_at, e.producer,
+		        e.subject::text, e.idempotency_key, e.payload,
+		        e.xmin::text::bigint,
+		        pg_snapshot_xmin(pg_current_snapshot())::xid::text::bigint
+		 from domain_event e
+		 where (e.occurred_at, e.id) > ($1, $2::uuid)
+		 order by e.occurred_at, e.id
 		 limit $3`,
 		cp.OccurredAt, cp.EventID.String(), d.cfg.BatchSize)
 	if err != nil {
@@ -379,7 +467,7 @@ func (d *Dispatcher) poll(ctx context.Context, cp Checkpoint) ([]Event, error) {
 	}
 	defer rows.Close()
 
-	var batch []Event
+	var batch []polled
 	for rows.Next() {
 		var (
 			id, eventType, producer string
@@ -387,8 +475,10 @@ func (d *Dispatcher) poll(ctx context.Context, cp Checkpoint) ([]Event, error) {
 			occurredAt              time.Time
 			subject, key            *string
 			payload                 []byte
+			rowXID, horizonXID      int64
 		)
-		if err := rows.Scan(&id, &eventType, &version, &occurredAt, &producer, &subject, &key, &payload); err != nil {
+		if err := rows.Scan(&id, &eventType, &version, &occurredAt, &producer, &subject, &key, &payload,
+			&rowXID, &horizonXID); err != nil {
 			return nil, fmt.Errorf("scan event: %w", err)
 		}
 		eventID, err := uuid.Parse(id)
@@ -405,21 +495,106 @@ func (d *Dispatcher) poll(ctx context.Context, cp Checkpoint) ([]Event, error) {
 		if key != nil {
 			idempotencyKey = *key
 		}
-		batch = append(batch, Event{
-			EventID:        eventID,
-			Type:           eventType,
-			Version:        version,
-			OccurredAt:     occurredAt,
-			Producer:       producer,
-			Subject:        subjectID,
-			IdempotencyKey: idempotencyKey,
-			Payload:        payload,
+		batch = append(batch, polled{
+			event: Event{
+				EventID:        eventID,
+				Type:           eventType,
+				Version:        version,
+				OccurredAt:     occurredAt,
+				Producer:       producer,
+				Subject:        subjectID,
+				IdempotencyKey: idempotencyKey,
+				Payload:        payload,
+			},
+			settled: occurredAt.Before(openSince) && xidPrecedes(xid32(rowXID), xid32(horizonXID)),
 		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read events: %w", err)
 	}
 	return batch, nil
+}
+
+// oldestOpenTransaction reports when the oldest transaction still open in
+// this database started, which is the earliest occurred_at any event that
+// has not appeared yet can carry: occurred_at is a transaction's start
+// time, so an event still to be appended either belongs to one of these
+// transactions or to one that has not started, and one that has not
+// started will start later than this call. With no transaction open at
+// all the answer is the current instant - nothing is pending, so nothing
+// is held back.
+//
+// Scoped twice, and both scopings are about which transactions could
+// possibly append. To this database, because a transaction connected
+// elsewhere in the cluster cannot write this table - which also keeps an
+// unrelated database's long transaction from holding this stream's
+// checkpoint. And to client backends, because an event is appended by an
+// application connection: a vacuum worker chewing through this very table
+// for half an hour holds no event back, and must not hold the checkpoint
+// back either.
+//
+// The minimum covers every session the reading role is allowed to see the
+// transaction state of - its own role's, and every role's if it holds
+// pg_read_all_stats - which is why producers append through a connection
+// of the application's own role, and why the xmin horizon in poll stands
+// behind this bound rather than beside it.
+func (d *Dispatcher) oldestOpenTransaction(ctx context.Context) (time.Time, error) {
+	rows, err := d.db.Query(ctx,
+		`select coalesce(min(xact_start), clock_timestamp())
+		 from pg_stat_activity
+		 where datname = current_database()
+		   and backend_type = 'client backend'
+		   and xact_start is not null`)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read the open-transaction horizon: %w", err)
+	}
+	defer rows.Close()
+
+	var openSince time.Time
+	if rows.Next() {
+		if err := rows.Scan(&openSince); err != nil {
+			return time.Time{}, fmt.Errorf("scan the open-transaction horizon: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return time.Time{}, fmt.Errorf("read the open-transaction horizon: %w", err)
+	}
+	if openSince.IsZero() {
+		return time.Time{}, errors.New("the open-transaction horizon came back empty")
+	}
+	return openSince, nil
+}
+
+// firstNormalXID is Postgres's FirstNormalTransactionId. The ids below it
+// are the bootstrap and frozen markers rather than transactions: they
+// stand for "older than anything that could still be running", which is
+// what a row carries once vacuum has frozen it.
+const firstNormalXID = 3
+
+// xid32 narrows a transaction id read as bigint back to the 32 bits
+// Postgres keeps it in. The width is an artefact of the wire: both values
+// the poll reads are 32-bit transaction ids already - one an xmin column,
+// one a snapshot horizon cast down to xid - and bigint is simply the
+// integer type they can both be read as without losing any of them.
+func xid32(v int64) uint32 {
+	//nolint:gosec // G115: the mask is the conversion; the source is a 32-bit xid.
+	return uint32(v & 0xffffffff)
+}
+
+// xidPrecedes reports whether transaction id a comes before b, as
+// Postgres's own TransactionIdPrecedes does. The comparison has to be
+// modular: transaction ids are a 32-bit counter that wraps, so the
+// arithmetic difference of two of them says nothing and only the signed
+// distance does - which is why the poll compares ids this way instead of
+// as the plain numbers they are printed as. The frozen and bootstrap
+// markers are not on the circle at all, so they compare directly and come
+// before every real transaction.
+func xidPrecedes(a, b uint32) bool {
+	if a < firstNormalXID || b < firstNormalXID {
+		return a < b
+	}
+	//nolint:gosec // G115: the wrapped difference is the comparison, not a lost value.
+	return int32(a-b) < 0
 }
 
 // deliver is one delivery: every handler registered for the event's type,
