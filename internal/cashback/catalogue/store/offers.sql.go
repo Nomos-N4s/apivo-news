@@ -74,10 +74,16 @@ type GetLiveOfferRow struct {
 // veto (0011):
 //
 //   - the offer's validity window: valid_from has passed and valid_to has
-//     not. The moment is a query parameter, not now() - an index predicate
-//     cannot say "now", so offer_validity_window_idx covers the whole
-//     window via coalesce(valid_to, 'infinity'), and this query uses
-//     exactly that shape to stay on the index;
+//     not. The moment is a query parameter rather than now() so one
+//     instant pins the liveness check, the click row and the rate snapshot
+//     together, instead of three reads of the clock that can straddle a
+//     band's edge. coalesce(valid_to, 'infinity') is the shape 0011's own
+//     offer_validity_window_idx is built on, repeated here so that "still
+//     open" and "closes later" mean the same thing in the index, in this
+//     query, and in the catalogue reads that come later - not for a plan:
+//     this read finds its row by primary key, so the plan is an offer_pkey
+//     index scan and the window is a filter on the single row the key
+//     found;
 //   - the route: merchant_network.status = 'active'. A retailer that left
 //     one network may still be live on another, but not through this row;
 //   - the retailer: merchant.status = 'active' - whether we publish them
@@ -97,8 +103,10 @@ type GetLiveOfferRow struct {
 // No rows means "not live" - missing, expired, or with an inactive link in
 // the chain - and the endpoint maps that to its 409 (contract: POST
 // /clickouts). Which leg failed is deliberately not distinguished here:
-// the click must not be created either way, and the distinction would cost
-// the filtered index this query is shaped for.
+// the click must not be created either way, so splitting the answer would
+// buy the caller nothing but a description of catalogue state - which
+// merchant left which network, which network is switched off - that a
+// click-out request is not entitled to.
 func (q *Queries) GetLiveOffer(ctx context.Context, arg GetLiveOfferParams) (GetLiveOfferRow, error) {
 	row := q.db.QueryRow(ctx, getLiveOffer, arg.ID, arg.At)
 	var i GetLiveOfferRow

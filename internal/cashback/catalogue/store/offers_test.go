@@ -8,7 +8,13 @@ package store_test
 // hold, and any one of them failing hides the offer.
 //
 // Everything runs inside one transaction that is rolled back, so the suite
-// leaves no rows behind and cases cannot see each other's chains.
+// leaves no rows behind. That transaction is shared, so every case's chain
+// IS visible to every other one; what keeps the cases apart is that each
+// addresses its own offer by primary key, with a random suffix stopping
+// the chains' unique identifiers from colliding on the way in. A
+// transaction per case would make the isolation structural, but it would
+// buy nothing a key lookup does not already give and would spend a
+// connection per case to do it.
 
 import (
 	"context"
