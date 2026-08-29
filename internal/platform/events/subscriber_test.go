@@ -57,18 +57,18 @@ type brokenRow struct{}
 func (brokenRow) Scan(...any) error { return errDatabaseDown }
 
 // drainRegistry ticks the registry until done reports true, failing the
-// test if a tick errors or the budget is reached first.
+// test if a tick errors or the wait's budget runs out first.
 //
 // The ticks are paced rather than spun, for the reason the checkpoint
 // exists: a durable position may only be saved over rows no append still
 // in flight can land in front of, so a tick makes no progress at all
-// while another connection is mid-append - and on a shared database that
-// connection belongs to another suite entirely. Pausing between ticks
-// spends the budget waiting for those appends to commit instead of on
-// hammering the same query.
+// while another connection is mid-append - and that connection need not
+// even be on this database. tickWait carries the budget and the reason it
+// is measured in seconds rather than in ticks.
 func drainRegistry(t *testing.T, r *events.Registry, done func() bool) {
 	t.Helper()
-	for range 500 {
+	w := newTickWait()
+	for {
 		if done() {
 			return
 		}
@@ -78,26 +78,28 @@ func drainRegistry(t *testing.T, r *events.Registry, done func() bool) {
 		if done() {
 			return
 		}
-		time.Sleep(time.Millisecond)
+		if !w.next(t) {
+			t.Fatalf("the registry did not reach the expected state: %s", w.reason())
+		}
 	}
-	t.Fatal("the registry did not reach the expected state within 500 ticks")
 }
 
 // tickUntil ticks the registry until done reports true, collecting rather
 // than failing on tick errors - the parked-lane tests are about ticks
-// that error by design - and returns the last one. It paces its ticks for
-// the same reason drainRegistry does.
+// that error by design - and returns the last one. It paces its ticks and
+// spends its budget exactly as drainRegistry does.
 func tickUntil(t *testing.T, r *events.Registry, done func() bool) error {
 	t.Helper()
 	var lastErr error
-	for i := 0; !done(); i++ {
-		if i > 500 {
-			t.Fatalf("the registry did not reach the expected state within 500 ticks; last error: %v", lastErr)
-		}
-		if i > 0 {
-			time.Sleep(time.Millisecond)
-		}
+	w := newTickWait()
+	for !done() {
 		lastErr = r.Tick(context.Background())
+		if done() {
+			break
+		}
+		if !w.next(t) {
+			t.Fatalf("the registry did not reach the expected state: %s; last error: %v", w.reason(), lastErr)
+		}
 	}
 	return lastErr
 }
@@ -399,19 +401,21 @@ func TestShutdownDoesNotParkTheDelivery(t *testing.T) {
 	}
 
 	// Tick until the delivery is reached (earlier ticks may only be
-	// chewing through other suites' events on the shared stream); the
-	// tick that reaches it is shut down from inside the handler. Ticks
-	// may error during the shutdown - a cancelled context fails whatever
-	// statement it reaches next - so what matters is what was NOT done:
-	// no park, no completion, exactly the one interrupted attempt.
-	for i := 0; calls == 0; i++ {
-		if i > 200 {
-			t.Fatal("the delivery was never attempted within 200 ticks")
-		}
+	// chewing through other suites' events on the shared stream, and
+	// reaching past the first batch of them needs the checkpoint to
+	// advance); the tick that reaches it is shut down from inside the
+	// handler. Ticks may error during the shutdown - a cancelled context
+	// fails whatever statement it reaches next - so what matters is what
+	// was NOT done: no park, no completion, exactly the one interrupted
+	// attempt.
+	for w := newTickWait(); calls == 0; {
 		tickCtx, cancel := context.WithCancel(context.Background())
 		cancelTick = cancel
 		_ = r.Tick(tickCtx)
 		cancel()
+		if calls == 0 && !w.next(t) {
+			t.Fatalf("the delivery was never attempted: %s", w.reason())
+		}
 	}
 	if calls != 1 {
 		t.Fatalf("the interrupted delivery was attempted %d time(s); a shutdown must not sit out the retry schedule", calls)
@@ -645,16 +649,20 @@ func TestRegistryNeverStepsPastAnOpenProducerTransaction(t *testing.T) {
 				}
 				return n
 			}
-			for i := 0; count(early.EventID) == 0; i++ {
-				if i == 500 {
-					t.Fatalf("event %s was committed and never delivered: the checkpoint had stepped over the position it landed in, so no poll looks there again (delivered %v)",
-						early.EventID, delivered)
-				}
+			// The no-skip assertion itself. Nothing about it is on a
+			// horizon: the event is committed and stands after a
+			// checkpoint that never moved, so one poll finds it. The
+			// budget is only here to end the run when it does not -
+			// which is precisely what removing the gate in drainStream
+			// makes happen.
+			arrived := func() bool { return count(early.EventID) > 0 }
+			for w := newTickWait(); !arrived(); {
 				if err := r.Tick(ctx); err != nil {
 					t.Fatalf("tick after the commit: %v", err)
 				}
-				if count(early.EventID) == 0 {
-					time.Sleep(time.Millisecond)
+				if !arrived() && !w.next(t) {
+					t.Fatalf("event %s was committed and never delivered (%s): the checkpoint had stepped over the position it landed in, so no poll looks there again (delivered %v)",
+						early.EventID, w.reason(), delivered)
 				}
 			}
 

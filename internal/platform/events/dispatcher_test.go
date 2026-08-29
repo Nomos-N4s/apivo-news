@@ -157,17 +157,18 @@ func appendSeeds(t *testing.T, pool *pgxpool.Pool, w *events.Writer, seeds []eve
 }
 
 // drainUntil ticks the dispatcher until done reports true, failing the
-// test if a tick errors or the budget is reached first.
+// test if a tick errors or the wait's budget runs out first.
 //
 // The ticks are paced rather than spun, because a tick may legitimately
 // make no progress: the checkpoint waits behind any transaction that was
-// already open when an event was appended, and on a shared database that
-// transaction can belong to another suite entirely. Pausing between ticks
-// spends the budget on waiting for those to end instead of on hammering
-// the same query.
+// already open when an event was appended, and that transaction can
+// belong to another suite - or to another database on the same cluster
+// entirely. tickWait carries the budget and the reason it is measured in
+// seconds rather than in ticks.
 func drainUntil(t *testing.T, d *events.Dispatcher, done func() bool) {
 	t.Helper()
-	for range 500 {
+	w := newTickWait()
+	for {
 		if done() {
 			return
 		}
@@ -177,9 +178,10 @@ func drainUntil(t *testing.T, d *events.Dispatcher, done func() bool) {
 		if done() {
 			return
 		}
-		time.Sleep(time.Millisecond)
+		if !w.next(t) {
+			t.Fatalf("the dispatcher did not finish: %s", w.reason())
+		}
 	}
-	t.Fatal("the dispatcher did not finish within 500 ticks")
 }
 
 // TestDispatcherDeliversInOrderPerLane covers the ordering half of the
@@ -478,17 +480,18 @@ func TestDispatcherNeverStepsPastAnOpenProducerTransaction(t *testing.T) {
 				}
 				return n
 			}
+			// The no-skip assertion itself. Nothing about it is on a
+			// horizon: the event is committed and stands after a
+			// checkpoint that never moved, so one poll finds it. The
+			// budget is only here to end the run when it does not.
 			arrived := func() bool { return count(early.EventID) > 0 }
-			for i := 0; !arrived(); i++ {
-				if i == 500 {
-					t.Fatalf("event %s was committed and never delivered: the checkpoint had stepped over the position it landed in, so no poll looks there again (delivered %v)",
-						early.EventID, delivered)
-				}
+			for w := newTickWait(); !arrived(); {
 				if err := d.Tick(ctx); err != nil {
 					t.Fatalf("tick after the commit: %v", err)
 				}
-				if !arrived() {
-					time.Sleep(time.Millisecond)
+				if !arrived() && !w.next(t) {
+					t.Fatalf("event %s was committed and never delivered (%s): the checkpoint had stepped over the position it landed in, so no poll looks there again (delivered %v)",
+						early.EventID, w.reason(), delivered)
 				}
 			}
 
