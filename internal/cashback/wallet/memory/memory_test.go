@@ -244,6 +244,263 @@ func TestPostMovesEveryBalanceOrNone(t *testing.T) {
 	})
 }
 
+// stages is the cast the withdrawal reservation needs: the house account
+// money arrives over, the member's confirmed bucket and the reserved
+// bucket a withdrawal request moves it into (D9).
+type stages struct {
+	house, confirmed, reserved wallet.LedgerAccountID
+}
+
+// confirmedBalance is what a member holds in the confirmed bucket before
+// each solvency test makes its own move: enough to be drawn on, exactly
+// enough to be drained, and one minor unit short of what would overdraw
+// it. One figure, shared, so every case below reads against the same
+// balance.
+const confirmedBalance = 1000
+
+// funded builds a ledger whose member holds exactly confirmedBalance in
+// the confirmed bucket, credited from a house account the way money
+// really enters the closed set of accounts - which leaves the house
+// account at -confirmedBalance, and is already the exemption at work.
+func funded(t *testing.T) (*memory.Ledger, stages) {
+	t.Helper()
+	l := memory.New(memory.WithClock(tickingClock(anchor)))
+	s := stages{
+		house:     mustEnsure(t, l, wallet.HouseAccount("network-receivable"), eur),
+		confirmed: mustEnsure(t, l, wallet.MemberAccount(memberID, wallet.StageConfirmed), eur),
+		reserved:  mustEnsure(t, l, wallet.MemberAccount(memberID, wallet.StageReserved), eur),
+	}
+	credit := wallet.Transfer{
+		IdempotencyKey: "funding",
+		Postings: []wallet.Posting{
+			{Account: s.house, Amount: amt(-confirmedBalance, eur)},
+			{Account: s.confirmed, Amount: amt(confirmedBalance, eur)},
+		},
+		Reference: "confirmed earnings",
+	}
+	if _, err := l.Post(t.Context(), credit); err != nil {
+		t.Fatalf("Post(funding) = %v, want nil", err)
+	}
+	return l, s
+}
+
+// reserve is the withdrawal reservation itself: minor leaves the member's
+// confirmed bucket for their reserved one (D9).
+func reserve(key string, s stages, minor int64) wallet.Transfer {
+	return wallet.Transfer{
+		IdempotencyKey: key,
+		Postings: []wallet.Posting{
+			{Account: s.confirmed, Amount: amt(-minor, eur)},
+			{Account: s.reserved, Amount: amt(minor, eur)},
+		},
+		Reference: "withdrawal request " + key,
+	}
+}
+
+// TestPostNeverLeavesAMemberNegative is the port's rule 6: a member's
+// stage account may not be left holding less than nothing, house accounts
+// are exempt, and the judgement is on what the transfer leaves behind.
+func TestPostNeverLeavesAMemberNegative(t *testing.T) {
+	t.Parallel()
+
+	// Every case starts from the funded ledger: the member holds
+	// confirmedBalance and the house account, having funded it, sits at
+	// the negative of the same figure.
+	const held = confirmedBalance
+
+	tests := []struct {
+		name string
+		// transfer is the movement under test, built over the funded
+		// accounts.
+		transfer func(stages) wallet.Transfer
+		// wantErr is nil when the transfer must record.
+		wantErr error
+		// The three balances afterwards, in minor units.
+		wantHouse, wantConfirmed, wantReserved int64
+	}{
+		{
+			name:          "a reservation inside the balance is recorded",
+			transfer:      func(s stages) wallet.Transfer { return reserve("wd-1", s, 400) },
+			wantHouse:     -held,
+			wantConfirmed: 600,
+			wantReserved:  400,
+		},
+		{
+			name:          "a reservation for the whole balance is recorded",
+			transfer:      func(s stages) wallet.Transfer { return reserve("wd-1", s, held) },
+			wantHouse:     -held,
+			wantConfirmed: 0,
+			wantReserved:  held,
+		},
+		{
+			name:          "a reservation one minor unit past the balance is refused",
+			transfer:      func(s stages) wallet.Transfer { return reserve("wd-1", s, held+1) },
+			wantErr:       wallet.ErrInsufficientFunds,
+			wantHouse:     -held,
+			wantConfirmed: held,
+			wantReserved:  0,
+		},
+		{
+			name: "an empty member bucket cannot give a single minor unit",
+			transfer: func(s stages) wallet.Transfer {
+				// The reserved bucket holds nothing, and a member bucket
+				// holding nothing is already at its floor.
+				return wallet.Transfer{
+					IdempotencyKey: "wd-1",
+					Postings: []wallet.Posting{
+						{Account: s.reserved, Amount: amt(-1, eur)},
+						{Account: s.confirmed, Amount: amt(1, eur)},
+					},
+				}
+			},
+			wantErr:       wallet.ErrInsufficientFunds,
+			wantHouse:     -held,
+			wantConfirmed: held,
+			wantReserved:  0,
+		},
+		{
+			name: "a house account may go as negative as the money entering demands",
+			transfer: func(s stages) wallet.Transfer {
+				return wallet.Transfer{
+					IdempotencyKey: "credit-1",
+					Postings: []wallet.Posting{
+						{Account: s.house, Amount: amt(-5000, eur)},
+						{Account: s.confirmed, Amount: amt(5000, eur)},
+					},
+				}
+			},
+			wantHouse:     -6000,
+			wantConfirmed: 6000,
+			wantReserved:  0,
+		},
+		{
+			name: "a member drawn past the balance and handed most of it back is judged on the net",
+			transfer: func(s stages) wallet.Transfer {
+				// Net: the confirmed bucket gives 500 and the reserved one
+				// takes it, however large the gross movements are.
+				return wallet.Transfer{
+					IdempotencyKey: "wd-1",
+					Postings: []wallet.Posting{
+						{Account: s.confirmed, Amount: amt(-5000, eur)},
+						{Account: s.reserved, Amount: amt(5000, eur)},
+						{Account: s.reserved, Amount: amt(-4500, eur)},
+						{Account: s.confirmed, Amount: amt(4500, eur)},
+					},
+				}
+			},
+			wantHouse:     -held,
+			wantConfirmed: 500,
+			wantReserved:  500,
+		},
+		{
+			name: "a member whose net leaves it short is refused however it is spelled",
+			transfer: func(s stages) wallet.Transfer {
+				// The same shape, netting to 1500 out of a bucket of 1000.
+				return wallet.Transfer{
+					IdempotencyKey: "wd-1",
+					Postings: []wallet.Posting{
+						{Account: s.confirmed, Amount: amt(-5000, eur)},
+						{Account: s.reserved, Amount: amt(5000, eur)},
+						{Account: s.reserved, Amount: amt(-3500, eur)},
+						{Account: s.confirmed, Amount: amt(3500, eur)},
+					},
+				}
+			},
+			wantErr:       wallet.ErrInsufficientFunds,
+			wantHouse:     -held,
+			wantConfirmed: held,
+			wantReserved:  0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			l, s := funded(t)
+			_, err := l.Post(t.Context(), tc.transfer(s))
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("Post() = %v, want an error wrapping %v", err, tc.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("Post() = %v, want nil", err)
+			}
+			// A refusal applies nothing at all, so the balances say both
+			// what was recorded and what was not.
+			assertBalance(t, l, s.house, amt(tc.wantHouse, eur))
+			assertBalance(t, l, s.confirmed, amt(tc.wantConfirmed, eur))
+			assertBalance(t, l, s.reserved, amt(tc.wantReserved, eur))
+		})
+	}
+
+	t.Run("a refused transfer does not consume its key", func(t *testing.T) {
+		t.Parallel()
+
+		// The corrected retry is the same withdrawal request under the
+		// same derived key (D8): a refusal that burned the key would turn
+		// "you asked for more than you have" into a permanent conflict.
+		l, s := funded(t)
+		if _, err := l.Post(t.Context(), reserve("wd-1", s, held+1)); !errors.Is(err, wallet.ErrInsufficientFunds) {
+			t.Fatalf("Post(overdrawn) = %v, want an error wrapping %v", err, wallet.ErrInsufficientFunds)
+		}
+		if _, err := l.Post(t.Context(), reserve("wd-1", s, held)); err != nil {
+			t.Fatalf("Post(corrected retry) = %v, want nil", err)
+		}
+		assertBalance(t, l, s.confirmed, amt(0, eur))
+		assertBalance(t, l, s.reserved, amt(held, eur))
+	})
+}
+
+// TestConcurrentReservationsCannotDoubleSpend is D9's scenario as a race:
+// two withdrawal requests reach the ledger at once, each claiming the
+// whole confirmed balance. Nothing above the ledger stops them - there is
+// no one-open-request constraint on withdrawal_request - so this refusal
+// is the entire double-spend defence, and exactly one request must win.
+func TestConcurrentReservationsCannotDoubleSpend(t *testing.T) {
+	t.Parallel()
+
+	const held = confirmedBalance
+	l, s := funded(t)
+
+	// Distinct keys: these are two different requests fighting over one
+	// balance, not one request retried, so idempotency cannot be what
+	// separates them.
+	keys := []string{"wd-1", "wd-2"}
+	errs := make([]error, len(keys))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, key := range keys {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, errs[i] = l.Post(t.Context(), reserve(key, s, held))
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	recorded, refused := 0, 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			recorded++
+		case errors.Is(err, wallet.ErrInsufficientFunds):
+			refused++
+		default:
+			t.Fatalf("Post(%s) = %v, want nil or an error wrapping %v", keys[i], err, wallet.ErrInsufficientFunds)
+		}
+	}
+	if recorded != 1 || refused != 1 {
+		t.Fatalf("%d reservations recorded and %d were refused, want exactly one of each: one balance funds one withdrawal", recorded, refused)
+	}
+	// The money is where the winner put it, and the loser took nothing:
+	// the confirmed bucket is empty rather than overdrawn.
+	assertBalance(t, l, s.confirmed, amt(0, eur))
+	assertBalance(t, l, s.reserved, amt(held, eur))
+}
+
 func TestPostValidatesBeforeAnythingElse(t *testing.T) {
 	t.Parallel()
 

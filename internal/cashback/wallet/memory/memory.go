@@ -65,11 +65,41 @@ type Ledger struct {
 	sequence uint64
 }
 
-// account is one ledger account: the currency it is denominated in and
-// every posting recorded on it, in the order they were recorded.
+// account is one ledger account: the currency it is denominated in, which
+// of the port's two shapes it was ensured under, and every posting
+// recorded on it, in the order they were recorded.
 type account struct {
 	currency money.Currency
+	// member marks a member's stage account, the kind Post may not leave
+	// holding less than nothing. It is recorded here, from the
+	// [wallet.AccountRef] EnsureAccount was handed, rather than read back
+	// out of the id: the id's spelling is this package's own convenience
+	// and the port declares it opaque, so a rule that re-parsed it would
+	// break the moment the spelling changed.
+	member   bool
 	postings []wallet.Posting
+}
+
+// balance sums every posting on the account. It is the one place this
+// ledger computes a balance, shared by [Ledger.Balance] and by Post's
+// insufficient-funds check so the two can never drift apart. Add can only
+// fail on overflow here - Post refuses a posting whose currency differs
+// from the account's, so every operand matches by construction - and the
+// overflow is reported rather than wrapped around.
+func (a *account) balance() (money.Amount, error) {
+	total, err := money.Zero(a.currency)
+	if err != nil {
+		// Unreachable while EnsureAccount validates every currency it
+		// stores - and returned rather than swallowed in case that ever
+		// stops being true.
+		return money.Amount{}, err
+	}
+	for _, p := range a.postings {
+		if total, err = total.Add(p.Amount); err != nil {
+			return money.Amount{}, err
+		}
+	}
+	return total, nil
 }
 
 // recorded is what one idempotency key remembers: the reference the first
@@ -183,11 +213,17 @@ func (l *Ledger) EnsureAccount(ctx context.Context, ref wallet.AccountRef, curre
 		return "", fmt.Errorf("memory: %w", err)
 	}
 
+	// Which shape the ref carries is settled here, where the ref itself is
+	// in hand, and remembered on the account: it is what Post's
+	// insufficient-funds rule governs by, and the ref is the only place
+	// the fact is stated without inference.
+	_, _, member := ref.Member()
+
 	id := accountID(ref, currency)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if _, ok := l.accounts[id]; !ok {
-		l.accounts[id] = &account{currency: currency}
+		l.accounts[id] = &account{currency: currency, member: member}
 	}
 	return id, nil
 }
@@ -239,6 +275,20 @@ func accountID(ref wallet.AccountRef, currency money.Currency) wallet.LedgerAcco
 // kind has no meaning on it. Both checks run over the whole transfer
 // before anything is applied, so a refused transfer changes no balance
 // and consumes no key.
+//
+// A transfer that would leave a member's stage account holding less than
+// nothing is refused wrapping [wallet.ErrInsufficientFunds]. The
+// judgement is the transfer's net movement on each account added to the
+// balance that account holds under this lock - not a figure some caller
+// read a moment ago - which is what makes it the double-spend defence
+// [wallet.StageReserved] leans on: two withdrawal requests racing for one
+// confirmed balance both reach this check, and the second sees what the
+// first took. House accounts are exempt, because they are the boundary of
+// the closed set of accounts: money enters over a house account going
+// negative, and a ledger in which nothing may go negative has nothing
+// able to fund its first credit. The check is per account rather than per
+// posting, so a transfer that draws more than the balance and hands part
+// of it straight back is judged on what it actually leaves behind.
 func (l *Ledger) Post(ctx context.Context, transfer wallet.Transfer) (wallet.TransferRef, error) {
 	if err := transfer.Validate(); err != nil {
 		return "", err
@@ -268,6 +318,13 @@ func (l *Ledger) Post(ctx context.Context, transfer wallet.Transfer) (wallet.Tra
 			return "", fmt.Errorf("memory: posting %d of %d: %w: account %q holds %s, the posting moves %s",
 				i+1, len(transfer.Postings), money.ErrCurrencyMismatch, p.Account, acct.currency, p.Amount.Currency)
 		}
+	}
+
+	// Judged here, under the same lock that will apply the postings: the
+	// balance this reads is the balance the transfer lands on, with no
+	// window between the two for another Post to spend the same money.
+	if err := l.checkFunds(transfer.Postings); err != nil {
+		return "", err
 	}
 
 	// The reference is minted from a counter rather than randomness so a
@@ -302,6 +359,61 @@ func (l *Ledger) Post(ctx context.Context, transfer wallet.Transfer) (wallet.Tra
 	return ref, nil
 }
 
+// checkFunds refuses the whole transfer, wrapping
+// [wallet.ErrInsufficientFunds], when applying it would leave any member
+// stage account holding less than nothing. House accounts are skipped:
+// they are where money enters and leaves the closed set of accounts, so a
+// negative house balance is the commission not yet received or the loss
+// already absorbed, not an overdraft.
+//
+// It nets the transfer per account first and judges the net, because the
+// balance a transfer leaves behind is what the rule is about - a transfer
+// that takes 5000 from a bucket holding 1000 and returns 4500 to it in the
+// same atomic act never leaves the account short of anything. The caller
+// holds the lock, so the balances read here are the balances the postings
+// are about to land on, and it has already established that every posting
+// names an account this ledger issued.
+func (l *Ledger) checkFunds(postings []wallet.Posting) error {
+	// Netted in posting order and judged in that order, so a transfer
+	// overdrawing two accounts always names the same one.
+	nets := make(map[wallet.LedgerAccountID]money.Amount, len(postings))
+	drawn := make([]wallet.LedgerAccountID, 0, len(postings))
+	for _, p := range postings {
+		if !l.accounts[p.Account].member {
+			continue
+		}
+		net, seen := nets[p.Account]
+		if !seen {
+			nets[p.Account] = p.Amount
+			drawn = append(drawn, p.Account)
+			continue
+		}
+		// Add can only fail on overflow: the currency check above passed,
+		// so every posting on one account shares that account's currency.
+		sum, err := net.Add(p.Amount)
+		if err != nil {
+			return fmt.Errorf("memory: netting the postings on account %q: %w", p.Account, err)
+		}
+		nets[p.Account] = sum
+	}
+
+	for _, id := range drawn {
+		held, err := l.accounts[id].balance()
+		if err != nil {
+			return fmt.Errorf("memory: summing account %q: %w", id, err)
+		}
+		after, err := held.Add(nets[id])
+		if err != nil {
+			return fmt.Errorf("memory: applying %s to account %q: %w", nets[id], id, err)
+		}
+		if after.IsNegative() {
+			return fmt.Errorf("%w: account %q holds %s and this transfer would leave it at %s",
+				wallet.ErrInsufficientFunds, id, held, after)
+		}
+	}
+	return nil
+}
+
 // Balance sums every posting on the account at the moment of the call,
 // under the lock - there is no stored figure that could drift from the
 // postings (D7). The currency argument is the caller's assertion of what
@@ -328,23 +440,10 @@ func (l *Ledger) Balance(ctx context.Context, account wallet.LedgerAccountID, cu
 			account, money.ErrCurrencyMismatch, acct.currency, currency)
 	}
 
-	total, err := money.Zero(acct.currency)
-	if err != nil {
-		// Unreachable while EnsureAccount validates every currency it
-		// stores - and returned rather than swallowed in case that ever
-		// stops being true.
-		return money.Amount{}, err
-	}
-	for _, p := range acct.postings {
-		// Add can only fail on overflow here: Post refuses a posting
-		// whose currency differs from the account's, so every operand
-		// matches by construction.
-		total, err = total.Add(p.Amount)
-		if err != nil {
-			return money.Amount{}, err
-		}
-	}
-	return total, nil
+	// The same summation Post judges an insufficient-funds refusal by, so
+	// the figure a caller is shown and the figure a transfer is measured
+	// against can never be two different calculations.
+	return acct.balance()
 }
 
 // History streams the account's postings whose PostedAt falls inside
