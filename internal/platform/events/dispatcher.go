@@ -20,12 +20,13 @@ package events
 // while the row becomes readable only at its COMMIT. An event appended
 // early and committed late therefore arrives BEHIND events appended later
 // and committed sooner, so a checkpoint that had moved over those would
-// leave it behind the read position forever. poll asks the database which
-// rows are past that risk - see its comment for the two bounds it asks
-// for - and Tick advances the checkpoint over those alone, while still
-// delivering the rest. Delivery is at-least-once and re-reading is free;
-// a skipped event is unrecoverable, so the checkpoint is the half that
-// waits.
+// leave it behind the read position forever. pollStream asks the database
+// which rows are past that risk - see its comment for the two bounds it
+// asks for - and Tick advances the checkpoint over those alone, while
+// still delivering the rest. Delivery is at-least-once and re-reading is
+// free; a skipped event is unrecoverable, so the checkpoint is the half
+// that waits. The Registry's durable per-subscriber checkpoint answers to
+// the same rule, through the same poll (subscriber.go).
 
 import (
 	"context"
@@ -99,9 +100,9 @@ func (l Lane) String() string {
 // Halt is one lane the dispatcher stopped delivering: a delivery on it
 // spent its whole retry budget. The halted event stays in the stream and
 // ahead of the checkpoint - a halt is loud back-pressure, never a drop -
-// so a process restart retries it. Deliveries that keep failing across
-// restarts are parked in the dead-letter table by the subscriber registry
-// layer, which consumes this surface.
+// so a process restart retries it. The Registry refines this posture into
+// its durable form: a delivery that keeps failing there is parked in the
+// dead-letter table instead of being retried on every restart.
 type Halt struct {
 	// Lane is the lane that halted.
 	Lane Lane
@@ -118,10 +119,10 @@ type Halt struct {
 // the start of the stream.
 //
 // A saved checkpoint is a claim that nothing at or before it will ever
-// need reading again, so the dispatcher only ever saves a position that
-// no still-uncommitted append can undercut (see poll). Everything after
-// it is read again on the next tick, which is what lets an event that
-// became visible late still be found.
+// need reading again, so neither delivery layer saves a position that a
+// still-uncommitted append could undercut (see pollStream). Everything
+// after it is read again on the next tick, which is what lets an event
+// that became visible late still be found.
 type Checkpoint struct {
 	// OccurredAt is the position's time axis.
 	OccurredAt time.Time
@@ -132,8 +133,8 @@ type Checkpoint struct {
 // CheckpointStore persists how far the dispatcher has read. A Load with
 // nothing saved reports the start of the stream, which is the safe
 // direction: at-least-once redelivers, it never skips. MemoryCheckpoints
-// is the in-process implementation; the durable one is provided by the
-// subscriber registry layer.
+// is the in-process implementation; PostgresCheckpoints is the durable
+// one.
 type CheckpointStore interface {
 	// Load returns the last saved checkpoint, or the zero Checkpoint
 	// when none was ever saved.
@@ -146,8 +147,8 @@ type CheckpointStore interface {
 // lives and dies with its process. Losing it is safe by design - the next
 // start re-reads the stream from the beginning and the idempotent
 // handlers absorb the redelivery - but on a long stream that is a real
-// cost, so it suits tests and short-lived processes. The durable
-// implementation is provided by the subscriber registry layer.
+// cost, so it suits tests and short-lived processes. PostgresCheckpoints
+// is the durable implementation.
 type MemoryCheckpoints struct {
 	mu sync.Mutex
 	cp Checkpoint
@@ -241,7 +242,7 @@ func (c DispatcherConfig) withDefaults() DispatcherConfig {
 // already delivered, is tracked in memory; after a restart or a failover
 // the new instance retries from the checkpoint, which is the
 // at-least-once posture working as designed. Durable per-delivery
-// tracking is provided by the subscriber registry layer.
+// tracking is provided by the Registry.
 //
 // Tick is shaped to be a scheduler job's Run
 // (internal/platform/scheduler): the advisory lock there keeps two
@@ -314,7 +315,7 @@ func (d *Dispatcher) Tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("events: tick: load checkpoint: %w", err)
 	}
-	batch, err := d.poll(ctx, cp)
+	batch, err := pollStream(ctx, d.db, cp, d.cfg.BatchSize)
 	if err != nil {
 		return fmt.Errorf("events: tick: %w", err)
 	}
@@ -411,12 +412,16 @@ type polled struct {
 	settled bool
 }
 
-// poll reads the next batch: every event strictly after cp in stream
-// order, up to the batch size. The order is (occurred_at, id):
-// occurred_at is the stream's time axis, and the id breaks its ties so
-// the order is total and stable across polls. The tiebreak means nothing
-// and never needs to - the only order the stream promises is per lane,
-// and any stable total order preserves it.
+// pollStream reads the next batch: every event strictly after cp in
+// stream order, up to limit. The order is (occurred_at, id): occurred_at
+// is the stream's time axis, and the id breaks its ties so the order is
+// total and stable across polls. The tiebreak means nothing and never
+// needs to - the only order the stream promises is per lane, and any
+// stable total order preserves it. It is the one poll both delivery
+// layers share, so the Dispatcher and the Registry cannot disagree about
+// what stream order is, nor about which rows a checkpoint may be saved
+// over - both of them record a position, so both are exposed to the same
+// skip.
 //
 // Each row is also marked settled or not, because stream order is not the
 // order rows become readable in. occurred_at defaults to now(), which is
@@ -427,7 +432,7 @@ type polled struct {
 // behind the read position permanently - a committed event silently
 // dropped, which consumer rule 4 of the event contract calls a defect.
 //
-// A row is settled when both of these hold, and the checkpoint moves over
+// A row is settled when both of these hold, and a checkpoint moves over
 // settled rows only:
 //
 //   - Its occurred_at is before the start of the oldest transaction open
@@ -447,12 +452,12 @@ type polled struct {
 //     its own transaction id, so nothing appended after it can be passed
 //     while it runs - even if that producer's session is one the first
 //     bound cannot see. The package doc sets out what each covers.
-func (d *Dispatcher) poll(ctx context.Context, cp Checkpoint) ([]polled, error) {
-	openSince, err := d.oldestOpenTransaction(ctx)
+func pollStream(ctx context.Context, db Querier, cp Checkpoint, limit int) ([]polled, error) {
+	openSince, err := oldestOpenTransaction(ctx, db)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.db.Query(ctx,
+	rows, err := db.Query(ctx,
 		`select e.id::text, e.type, e.version, e.occurred_at, e.producer,
 		        e.subject::text, e.idempotency_key, e.payload,
 		        e.xmin::text::bigint,
@@ -461,7 +466,7 @@ func (d *Dispatcher) poll(ctx context.Context, cp Checkpoint) ([]polled, error) 
 		 where (e.occurred_at, e.id) > ($1, $2::uuid)
 		 order by e.occurred_at, e.id
 		 limit $3`,
-		cp.OccurredAt, cp.EventID.String(), d.cfg.BatchSize)
+		cp.OccurredAt, cp.EventID.String(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("poll after event %s: %w", cp.EventID, err)
 	}
@@ -481,31 +486,12 @@ func (d *Dispatcher) poll(ctx context.Context, cp Checkpoint) ([]polled, error) 
 			&rowXID, &horizonXID); err != nil {
 			return nil, fmt.Errorf("scan event: %w", err)
 		}
-		eventID, err := uuid.Parse(id)
+		e, err := buildEvent(id, eventType, version, occurredAt, producer, subject, key, payload)
 		if err != nil {
-			return nil, fmt.Errorf("event id %q: %w", id, err)
-		}
-		subjectID := uuid.Nil
-		if subject != nil {
-			if subjectID, err = uuid.Parse(*subject); err != nil {
-				return nil, fmt.Errorf("event %s: subject %q: %w", id, *subject, err)
-			}
-		}
-		idempotencyKey := ""
-		if key != nil {
-			idempotencyKey = *key
+			return nil, err
 		}
 		batch = append(batch, polled{
-			event: Event{
-				EventID:        eventID,
-				Type:           eventType,
-				Version:        version,
-				OccurredAt:     occurredAt,
-				Producer:       producer,
-				Subject:        subjectID,
-				IdempotencyKey: idempotencyKey,
-				Payload:        payload,
-			},
+			event:   e,
 			settled: occurredAt.Before(openSince) && xidPrecedes(xid32(rowXID), xid32(horizonXID)),
 		})
 	}
@@ -536,10 +522,10 @@ func (d *Dispatcher) poll(ctx context.Context, cp Checkpoint) ([]polled, error) 
 // The minimum covers every session the reading role is allowed to see the
 // transaction state of - its own role's, and every role's if it holds
 // pg_read_all_stats - which is why producers append through a connection
-// of the application's own role, and why the xmin horizon in poll stands
-// behind this bound rather than beside it.
-func (d *Dispatcher) oldestOpenTransaction(ctx context.Context) (time.Time, error) {
-	rows, err := d.db.Query(ctx,
+// of the application's own role, and why the xmin horizon in pollStream
+// stands behind this bound rather than beside it.
+func oldestOpenTransaction(ctx context.Context, db Querier) (time.Time, error) {
+	rows, err := db.Query(ctx,
 		`select coalesce(min(xact_start), clock_timestamp())
 		 from pg_stat_activity
 		 where datname = current_database()
@@ -595,6 +581,35 @@ func xidPrecedes(a, b uint32) bool {
 	}
 	//nolint:gosec // G115: the wrapped difference is the comparison, not a lost value.
 	return int32(a-b) < 0
+}
+
+// buildEvent assembles one Event from its scanned columns, turning the
+// database's nullable text renderings back into the envelope's Go shapes.
+func buildEvent(id, eventType string, version int, occurredAt time.Time, producer string, subject, key *string, payload []byte) (Event, error) {
+	eventID, err := uuid.Parse(id)
+	if err != nil {
+		return Event{}, fmt.Errorf("event id %q: %w", id, err)
+	}
+	subjectID := uuid.Nil
+	if subject != nil {
+		if subjectID, err = uuid.Parse(*subject); err != nil {
+			return Event{}, fmt.Errorf("event %s: subject %q: %w", id, *subject, err)
+		}
+	}
+	idempotencyKey := ""
+	if key != nil {
+		idempotencyKey = *key
+	}
+	return Event{
+		EventID:        eventID,
+		Type:           eventType,
+		Version:        version,
+		OccurredAt:     occurredAt,
+		Producer:       producer,
+		Subject:        subjectID,
+		IdempotencyKey: idempotencyKey,
+		Payload:        payload,
+	}, nil
 }
 
 // deliver is one delivery: every handler registered for the event's type,

@@ -21,8 +21,8 @@
 // idempotent (consumer rule 1 of the event contract). Durable per-delivery
 // tracking - a delivery idempotency key per subscriber, and the
 // dead-letter parking of deliveries that keep failing - is provided by the
-// subscriber registry layer, which builds on the Handler and
-// CheckpointStore seams this package defines.
+// Registry, which builds on the Handler and CheckpointStore seams the
+// dispatcher defines.
 //
 // # What the checkpoint guarantees, and what it does not
 //
@@ -34,18 +34,21 @@
 // sooner. A checkpoint that ignored that would move over the later ones
 // and never look at the earlier one's place again.
 //
-// So the checkpoint is only ever saved at a position that no append still
+// So a checkpoint is only ever saved at a position that no append still
 // in flight can land in front of. Two bounds hold it there, both asked of
-// the database on every poll (see poll in dispatcher.go): the start time
-// of the oldest transaction open in this database, which is the earliest
-// occurred_at any event still to appear can carry; and the transaction-id
-// horizon of the poll's own snapshot, which says of each row read that
-// the transaction that wrote it had already finished.
+// the database on every poll (see pollStream in dispatcher.go): the start
+// time of the oldest transaction open in this database, which is the
+// earliest occurred_at any event still to appear can carry; and the
+// transaction-id horizon of the poll's own snapshot, which says of each
+// row read that the transaction that wrote it had already finished. Both
+// delivery layers save a position, so both are read through that one poll
+// and both obey its verdict - the Dispatcher for its in-process
+// checkpoint, the Registry for each subscriber's durable one.
 //
-// What that makes impossible: an event appended by a transaction the
-// dispatcher can see cannot end up behind the checkpoint, however long
-// that transaction stays open. The next poll reads its place again, finds
-// it and delivers it. What it costs is redelivery, never loss - rows the
+// What that makes impossible: an event appended by a transaction the poll
+// can see cannot end up behind a checkpoint, however long that
+// transaction stays open. The next poll reads its place again, finds it
+// and delivers it. What it costs is redelivery, never loss - rows the
 // checkpoint has not passed are read again on every tick - which is the
 // handler's side of the bargain and the reason idempotence is not
 // optional. It also costs delay: while a transaction sits open the
@@ -59,11 +62,19 @@
 // bound, which covers it from the moment it has written anything, an
 // append included, and not before. The second limit is the prepared
 // transaction, which has no session left to be seen at all and is held by
-// the transaction-id horizon alone. Closing both structurally means
-// recording deliveries instead of a position - the delivery table of the
-// subscriber registry layer, whose anti-join asks which events have no
-// delivery row rather than which events come after this timestamp, and so
-// cannot be outrun by a timestamp at all.
+// the transaction-id horizon alone.
+//
+// Recording deliveries does not close either one. The Registry's delivery
+// table says which events a subscriber has already handled, which is what
+// makes a redelivery a recorded no-op and a replay free of side effects,
+// but it is not how the Registry finds work: that is still the same
+// position read, the same (occurred_at, id) tuple compared against a
+// stored checkpoint. Closing the two limits structurally would mean
+// asking which events have no delivery row instead - an anti-join no
+// timestamp can outrun - and the Registry does not ask that. It advances
+// by position, so for the durable path exactly as for the in-process one,
+// these two bounds are what stand between a slow producer and a lost
+// event.
 package events
 
 import (
