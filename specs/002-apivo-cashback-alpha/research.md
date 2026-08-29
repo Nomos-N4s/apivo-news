@@ -68,6 +68,111 @@ version:
 
 ---
 
+## S-results — spike outcomes
+
+All three blocking spikes **passed**. Recorded 2026-08-29. The spikes are
+not one-off experiments: each harness reruns on every CI push — S1 and S2 as
+named steps of the `cashback` job, S3 as the `cashback-no-docker` job
+(`.github/workflows/ci.yml`) — so the evidence is continuous rather than
+archival, and a regression in anything a harness **asserts** — S1's eleven
+checks, S2's three crash-and-race tests, S3's five checks — turns a named
+step red instead of fading quietly. Five of the facts below sit outside that
+guarantee: the harnesses **record** them without gating on them, and each is
+marked where it appears. They can stop being true with every named step
+still green, so they are observations from the run cited here rather than
+continuing promises. Most recent verification at the time of this record:
+[ci run 460](https://github.com/Nomos-N4s/apivo-news/actions/runs/33255760615)
+(2026-08-29, `22eb232`), both jobs green. The quoted observations are from
+that run and from a 2026-08-29 rerun of everything that runs on a machine
+without Docker — which is the honest split, and each entry says which half
+ran where.
+
+**S1 — passed** (step *"Spike S1 — the ledger is confined to its own
+schema"*, `sh scripts/spikes/ledger_schema/run.sh`). `blnk migrate up`, run
+as the database owner after `bootstrap.sql` has created the restricted
+`blnk_app` role, lands the ledger's tables inside the `blnk` schema and
+leaves its migration bookkeeping out of `public`, where a stray
+`gorp_migrations` is the one object a migration tool most often leaves
+behind; a catalogue snapshot of `public` is byte-identical before and after
+the migration. Nineteen tables in the cited run — *recorded, not gated*: the
+check asserts at least ten and prints what it found, so a migration that
+stopped creating half of them would still pass it. The runtime role owns
+nothing, and Postgres itself, not the ledger's good manners, refuses it
+`CREATE SCHEMA`, DDL inside `blnk`, and both `CREATE` and `SELECT` in
+`public` (SQLSTATE 42501 each time) while leaving it the DML the server
+needs; Apivo's own role reads `blnk.balances` across the schema boundary, so
+the continuous C-1 zero-sum check is the one plain SQL query the co-location
+argument in ADR-0002 depends on. The finding that changed a design on the
+way: Blnk's first migration issues `CREATE SCHEMA IF NOT EXISTS`, and
+Postgres checks the database-level CREATE privilege *before* taking the IF
+NOT EXISTS shortcut, so one role doing both jobs would carry CREATE on the
+database permanently — hence the split posture (founder decision,
+2026-08-24): migrations as the database owner, the server as `blnk_app` with
+USAGE and DML only. Nothing in the confinement is Supabase-specific — it is
+plain Postgres privilege, proved against the job's stock Postgres and
+applied to the real database by running `bootstrap.sql` there. Re-checked
+2026-08-29 without Docker: `bootstrap.sql` plus the four refusal probes,
+replayed against a local Postgres 16, returned 42501 in every case; the
+migration half needs the pinned container, which is exactly the case the
+harness's three-valued exit reserves for CI.
+
+**S2 — passed** (step *"Spike S2 — a commit and a ledger transfer survive a
+crash between them"*, `go test -count=1 -v ./scripts/spikes/outbox_crash/`,
+verbose so that what the ledger did is on the record of every run). The
+crash is a real `os.Exit` in a re-executed worker process, landed in each of
+the two windows. After the commit, before the ledger call: the entry row and
+its undispatched outbox row survive together, nothing has reached the
+ledger, and recovery posts exactly one transfer. After the ledger call,
+before the mark — the window that decides S2, because recovery is then
+*guaranteed* to replay — the replay adds no second transfer and the
+destination balance does not move again; four dispatchers racing the same
+undispatched row leave one ledger row between them. Those outcomes are what
+the tests assert. *How* the ledger absorbed the replay is **recorded, not
+gated**: it refused outright (HTTP 409, `TXN_DUPLICATE_REFERENCE`) in the
+cited run, and one of the four concurrent posts was accepted and three
+refused — but a ledger that swallowed a duplicate silently would satisfy
+every assertion here, so a change in that shape would be visible only in
+the logged output. The evidence worth keeping is recorded in the same
+deliberate way, by a test that reports which of two enforcement shapes it
+finds and passes on either: in the cited run Blnk enforces reference
+uniqueness **in the database** — one unique index on
+`blnk.transactions.reference` — so exactly-once is held by two independent
+unique constraints, the ledger's and C-5's own, not by application
+discipline in one process. Losing that index would narrow the guarantee to
+C-5 rather than break it, which is why the record states it and CI does not
+require it. Re-checked 2026-08-29 without a ledger to reach: all four tests
+skip naming `BLNK_URL`, which is the designed outcome on precisely the
+machine ADR-0002 describes.
+
+**S3 — passed**, and it is the one spike that ran in full locally: on
+2026-08-29, on a machine with no Docker at all,
+`sh scripts/spikes/no_docker/run.sh` reported all five checks green — build,
+vet, the entire suite with nothing to connect to, the container-keyed suites
+observed *skipping* rather than passing vacuously, and no failure anywhere
+in the verbose run — ending in `S3 VERDICT: PASS`, with
+`LEDGER_DRIVER=memory` a complete cashback configuration. What that fourth
+check requires is a skip naming `DATABASE_URL` and a skip naming `BLNK_URL`;
+the count it also printed — 321 — is *recorded, not gated*, so the number
+moves with the suite and only the naming is enforced. The configuration half
+is pinned by tests of its own: the memory ledger needs no endpoint, no Redis
+and no network credentials, still requires `DATABASE_URL`, and is refused in
+production, where balances that vanish with the process would be a lie. The
+other half — the full stack starting in CI — is the `cashback` job itself:
+the digest-pinned image migrates, the ledger answers `/health` within
+seconds of `blnk_up.sh`, and the whole Go suite then runs against it. The
+SDK pin rides along (`scripts/spikes/ledger_sdk/`): the offline
+construct-and-field tests run everywhere, the reachability test runs where
+the ledger is.
+
+**Consequence**: S1 and S2 passed, so neither ADR-0002 fallback is taken and
+no ADR-0006 exists — the ledger stays co-located in one Postgres behind the
+cross-schema zero-sum check, the outbox with a shared idempotency key stays
+the consistency mechanism, and D1 stands as recorded. What would reopen the
+decision is unchanged: the revisit triggers in ADR-0002, none of which has
+fired.
+
+---
+
 ## 2. Super-app architecture (the founder's second question)
 
 **Question**: microservices, multiple modular monoliths, events, multi-repo,
