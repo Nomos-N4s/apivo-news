@@ -40,7 +40,39 @@ const (
 	// holding arch and one real domain has nothing to forbid, and counting
 	// arch would let it claim otherwise.
 	archModule = "arch"
+	// ledgerPortPkg is the package that declares the Ledger port. Its
+	// adapters are the packages directly beneath it, and they are the only
+	// ones allowed to know a ledger vendor's name (ADR-0002's
+	// non-negotiable mitigation). The port package itself is deliberately
+	// outside the allowance: a port that imports the vendor it exists to
+	// hide is the failure this rule is about.
+	ledgerPortPkg = "cashback/wallet"
 )
+
+// ledgerSDKs are the module paths of vendor ledger SDKs. Money is the one
+// dependency the constitution demands be swappable on a five-day budget,
+// and that budget is only real while exactly one directory per vendor
+// knows the vendor exists - so an import of one of these outside a ledger
+// adapter package is refused wherever it appears, including in tests,
+// where the first such import is likeliest to show up.
+//
+// This is a list of paths rather than a prefix match on the vendor's
+// organisation, because the rule should refuse the SDK a decision was
+// taken about, not every package a company happens to publish.
+var ledgerSDKs = []string{
+	"github.com/blnkfinance/blnk-go",
+}
+
+// ledgerSDK reports whether importPath is a vendor ledger SDK or a package
+// inside one, returning the SDK's module path so the refusal can name it.
+func ledgerSDK(importPath string) (string, bool) {
+	for _, sdk := range ledgerSDKs {
+		if within(importPath, sdk) {
+			return sdk, true
+		}
+	}
+	return "", false
+}
 
 // violation is one import that breaks a boundary rule: the file that holds
 // the import, and the reason the import is refused.
@@ -71,8 +103,12 @@ type scan struct {
 //  3. a product domain may not import another product domain, at any depth -
 //     cross-product collaboration is asynchronous, through the domain event
 //     stream, never a direct call; and
-//  4. sub-packages of one product domain may import each other freely; and
-//  5. composition happens only in cmd.
+//  4. sub-packages of one product domain may import each other freely;
+//  5. composition happens only in cmd; and
+//  6. only a ledger adapter package - one directly beneath the package that
+//     declares the Ledger port - may import a ledger vendor's SDK
+//     (ADR-0002). This is the rule the wallet package's own documentation
+//     promises, and the reason the money substrate is swappable at all.
 //
 // Every .go file is judged, _test.go files included: a test helper that
 // imports a sibling domain couples the two exactly as production code does,
@@ -86,6 +122,7 @@ func TestModuleBoundaries(t *testing.T) {
 
 	root := repoRoot(t)
 	assertModulePath(t, root)
+	assertLedgerSDKsDeclared(t, root)
 
 	internalFS := os.DirFS(filepath.Join(root, "internal"))
 	if err := checkLayers(internalFS); err != nil {
@@ -227,6 +264,49 @@ func TestModuleBoundaryRules(t *testing.T) {
 			name:    "imports from outside this module",
 			file:    "ingestion/feed.go",
 			imports: []string{"strings", "github.com/mmcdole/gofeed"},
+		},
+		{
+			name:    "a ledger adapter importing its vendor's SDK",
+			file:    "cashback/wallet/blnk/blnk.go",
+			imports: []string{ledgerSDKs[0], internalPrefix + "cashback/wallet"},
+		},
+		{
+			name:    "a ledger adapter importing a package inside its vendor's SDK",
+			file:    "cashback/wallet/blnk/transfer.go",
+			imports: []string{ledgerSDKs[0] + "/model"},
+		},
+		{
+			// The port exists to hide the vendor. A port that imports one
+			// hides nothing, so the allowance stops at its own doorstep.
+			name:    "the port package importing a ledger vendor's SDK",
+			file:    "cashback/wallet/ledger.go",
+			imports: []string{ledgerSDKs[0]},
+			want:    "must not import ledger SDK",
+		},
+		{
+			name:    "a sibling of the port importing a ledger vendor's SDK",
+			file:    "cashback/earnings/credit.go",
+			imports: []string{ledgerSDKs[0]},
+			want:    "must not import ledger SDK",
+		},
+		{
+			name:    "another domain importing a ledger vendor's SDK",
+			file:    "content/store/queries.go",
+			imports: []string{ledgerSDKs[0]},
+			want:    "must not import ledger SDK",
+		},
+		{
+			name:    "a test file importing a ledger vendor's SDK",
+			file:    "cashback/earnings/credit_test.go",
+			imports: []string{ledgerSDKs[0]},
+			want:    "must not import ledger SDK",
+		},
+		{
+			// The rule names SDKs, not organisations: a vendor's unrelated
+			// package is nobody's architecture problem.
+			name:    "a package whose path merely starts like a ledger SDK's",
+			file:    "cashback/earnings/credit.go",
+			imports: []string{ledgerSDKs[0] + "-tools"},
 		},
 	}
 
@@ -445,6 +525,13 @@ func checkLayers(fsys fs.FS) error {
 // block. T109 owns SC-008, in internal/arch/network_isolation_test.go,
 // written against the packages T049 to T053 actually produce.
 func violates(ownerPkg, importPath string) (string, bool) {
+	// Checked before the module filter below, because a vendor SDK is by
+	// definition not part of this module and would otherwise be waved
+	// through as somebody else's business - which is exactly what it must
+	// not be.
+	if sdk, isSDK := ledgerSDK(importPath); isSDK && !strings.HasPrefix(ownerPkg, ledgerPortPkg+"/") {
+		return fmt.Sprintf("%s must not import ledger SDK %q (import %q); only a ledger adapter under internal/%s/ may name a ledger vendor, which is what keeps the money substrate swappable (ADR-0002) - define what you need on the Ledger port and let the adapter satisfy it", ownerPkg, sdk, importPath, ledgerPortPkg), true
+	}
 	if within(importPath, cmdRoot) {
 		return fmt.Sprintf("%s must not import the composition root (import %q); cmd wires the domains together and nothing under internal reaches back into the wiring", ownerPkg, importPath), true
 	}
@@ -491,6 +578,35 @@ func assertModulePath(t *testing.T, root string) {
 		return
 	}
 	t.Fatal("no module line found in go.mod")
+}
+
+// assertLedgerSDKsDeclared guards the vendor rule the way assertModulePath
+// guards the boundary rules. Every path in ledgerSDKs is spelled out by
+// hand, so a dependency renamed, majored or dropped would leave the rule
+// matching nothing and passing on every repository forever - and it would
+// pass most convincingly on the day the rename landed, when nobody is
+// looking for it. Requiring the module to still be declared turns that
+// silence into a failure that says what to edit.
+func assertLedgerSDKsDeclared(t *testing.T, root string) {
+	t.Helper()
+	if len(ledgerSDKs) == 0 {
+		t.Fatal("ledgerSDKs is empty, so the rule forbidding a vendor ledger import matches nothing; name the SDK this repository depends on or delete the rule")
+	}
+	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("reading go.mod: %v", err)
+	}
+	declared := make(map[string]bool)
+	for _, line := range strings.Split(string(data), "\n") {
+		if fields := strings.Fields(line); len(fields) >= 2 {
+			declared[fields[0]] = true
+		}
+	}
+	for _, sdk := range ledgerSDKs {
+		if !declared[sdk] {
+			t.Errorf("go.mod no longer requires %q, so the rule forbidding it outside a ledger adapter now matches nothing and passes without checking anything; point ledgerSDKs at the module that replaced it, or delete the entry", sdk)
+		}
+	}
 }
 
 // within reports whether slashPath is root or sits underneath it.

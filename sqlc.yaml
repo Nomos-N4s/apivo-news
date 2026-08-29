@@ -18,3 +18,16 @@ sql:
         package: "store"
         out: "internal/editorial/store"
         sql_package: "pgx/v5"
+  # The cashback domain applies the same rule one level down (T029): each of
+  # its sub-packages owns its queries and generated store
+  # (internal/cashback/<pkg>/queries -> internal/cashback/<pkg>/store), so a
+  # later sub-package (networks, earnings, ...) adds its own entry beside
+  # this one instead of widening it.
+  - engine: "postgresql"
+    schema: "internal/platform/db/migrations"
+    queries: "internal/cashback/catalogue/queries"
+    gen:
+      go:
+        package: "store"
+        out: "internal/cashback/catalogue/store"
+        sql_package: "pgx/v5"
