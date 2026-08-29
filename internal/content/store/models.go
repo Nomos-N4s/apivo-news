@@ -455,6 +455,51 @@ type Language struct {
 	Code string
 }
 
+// One ledger account: an identity issued by the wallet adapter's EnsureAccount and the single currency it is denominated in (C-6). Insert-only - an issued id stays issued, and a rewritten currency would re-denominate every posting already recorded against it.
+type LedgerAccount struct {
+	// The identity the wallet adapter derives from (AccountRef, currency). Opaque to everything above the port: nothing outside the adapter parses it, so the derivation can change without stranding a caller.
+	ID string
+	// ISO-4217 code of the one currency this account holds. A member holding two currencies holds two accounts; no operation ever spans them implicitly (C-6).
+	Currency string
+	// When the account was first ensured. Bookkeeping for an operator; nothing derives from it.
+	CreatedAt pgtype.Timestamptz
+}
+
+// Every account's balance as the sum of its postings at the moment of the query - there is nothing here a stored figure could drift from (D7). Presents the currency and balance columns the C-1 zero-sum check reads (0016/0020), under the relation name that check resolves.
+type LedgerBalance struct {
+	AccountID string
+	Currency  string
+	Balance   int64
+}
+
+// One signed movement of money on one account: the double-entry atom. A balance is the sum of an account's postings at the moment it is asked for, never a stored figure (D7), and within a transfer the postings of each currency sum to zero (C-1, the deferred trigger below). Immutable.
+type LedgerPosting struct {
+	// Recording order. History orders by the transfer's posted_at and breaks ties by this value, so a frozen clock cannot shuffle the record.
+	ID int64
+	// The transfer this posting belongs to. Every posting has one; the zero-sum trigger judges the postings of a transfer together.
+	TransferRef string
+	// The account the amount moves on, as issued by EnsureAccount.
+	AccountID string
+	// The signed movement in minor units of the posting's explicit currency (C-6). Positive raises the account's balance, negative lowers it, zero cannot be written.
+	AmountMinor int64
+	// ISO-4217 code the amount is denominated in. Pinned to the account's own currency by the composite foreign key, so it exists to make each row self-describing and to give the zero-sum trigger its per-currency grouping.
+	Currency string
+}
+
+// One atomic movement of money: the identity its postings hang from, the idempotency key that makes retrying it safe (C-5), and when it was recorded. Immutable: the postings are the substance, and a transfer whose annotations could drift after commit would be a record that changes under its auditor.
+type LedgerTransfer struct {
+	// The minted reference the domain stores (entry_transition.ledger_transfer_ref, withdrawal_request.reserved_transfer_ref). Text, opaque and never blank: the seam between the domain schema and the ledger is a reference, not a foreign key (D7).
+	Ref string
+	// The caller-derived key that makes Post safe to retry, compared byte for byte. Unique in the database, so the concurrent-replay race is resolved by this index and nowhere else.
+	IdempotencyKey string
+	// The domain record that caused the transfer, as free text for whoever reads the ledger directly. A courtesy pointer, not the seam: the authoritative join runs the other way, from the domain rows that store ref.
+	Reference string
+	// Free-form string-to-string annotations stored with the transfer, for reading the ledger directly. Part of replay identity: the same key under different metadata is a conflict, not a replay.
+	Metadata []byte
+	// When the ledger recorded the transfer: the one instant every posting of the transfer carries, and the instant History windows select on.
+	PostedAt pgtype.Timestamptz
+}
+
 // Self-referencing hierarchy of places (e.g. Munich -> Bavaria -> Germany). jurisdiction_override applies when a place's legal jurisdiction differs from its country default.
 type Place struct {
 	ID                   pgtype.UUID
