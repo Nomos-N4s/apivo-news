@@ -9,8 +9,14 @@ budget the constitution sets for the translation adapter: **swappable in
 under five engineer-days**, proved by there being a second working
 implementation in the repository.
 
-An architecture test fails the build if a vendor type crosses a port
-boundary.
+An architecture test fails the build when a vendor type crosses a port
+boundary. What is enforced today is the ledger half of that rule
+(`internal/arch`): only a package directly beneath
+`internal/cashback/wallet` may import a ledger vendor's SDK — the port
+package itself included in the refusal. The network and payout ports get
+the same rule with the packages they describe, and until they exist the
+claim above is a statement of intent for them and an enforced rule for the
+ledger.
 
 ---
 
@@ -38,16 +44,57 @@ type Transfer struct {
 **Contract**
 
 1. `Post` is idempotent on `IdempotencyKey`: replaying returns the original
-   `TransferRef` and creates nothing.
+   `TransferRef` and creates nothing. **The same transfer** means the same
+   *multiset* of `(account, amount)` movements — posting order is
+   representation, not identity — plus an identical `Reference` and
+   identical `Metadata`, with a nil map and an empty map both meaning "no
+   annotations". Anything else under a used key is
+   `ErrIdempotencyConflict`.
 2. `Post` rejects a transfer whose postings do not sum to zero per currency,
    before any I/O (C-1 checked twice — in the port and in the ledger).
 3. `Post` rejects mixed-currency netting: each currency balances
-   independently.
+   independently. It also rejects a posting whose currency is not its
+   account's, wrapping `money.ErrCurrencyMismatch` — an account is one
+   currency (C-6), and no implementation converts, picks a rate, or
+   re-denominates.
 4. Amounts are `int64` minor units with an explicit currency. There is no
    float, no decimal string and no implicit currency anywhere in this
    interface (C-6).
-5. `Balance` never returns a cached value the caller could mistake for
-   authoritative; the wallet computes member-facing totals from postings.
+5. `Balance` is the ledger's own authoritative figure, consistent with the
+   postings it recorded and never a number Apivo stored beside them; the
+   wallet computes member-facing totals from postings and the two are
+   cross-checked to the minor unit (D7). Whether the ledger sums on demand
+   or maintains the figure as it posts is the ledger's business — what is
+   forbidden is a second truth outside it.
+6. `Post` rejects a transfer that balances by moving nothing — every
+   account it touches netting to zero — wrapping `ErrNoMovement`. That is
+   the shape a caller bug makes when source and destination resolve to one
+   account, and a `TransferRef` for it is proof of a payment that never
+   happened.
+7. `Post` never leaves a **member stage account** negative: refused
+   wrapping `ErrInsufficientFunds`, judged against the balance at the
+   moment the transfer is applied. This is the mechanism behind D9 —
+   nothing else refuses the second concurrent reservation. **House
+   accounts are exempt**: they are the boundary of the closed set of
+   accounts, and a ledger where nothing may go negative cannot fund its
+   first credit.
+8. A transfer this port admits but an implementation cannot record in one
+   atomic act is refused wrapping `ErrUnsupportedTransfer` — never posted
+   in instalments. The production substrate denominates a transaction in a
+   single currency, so a cross-currency transfer is that refusal there;
+   callers split it into one transfer per currency, each with its own key.
+   Within one currency the shape is unrestricted: any number of accounts
+   giving, any number receiving.
+9. What `Post` recorded is readable the moment it returns: a `Balance` or
+   `History` call beginning afterwards sees the transfer's postings. An
+   implementation whose substrate records asynchronously does not return
+   until it has stopped being asynchronous.
+10. `History` orders by ascending `PostedAt` with ties broken by recording
+    order, stably across repeated calls. Ties are ordinary — every posting
+    of a transfer shares its instant, and a substrate may store instants
+    coarsely (Postgres truncates to microseconds) — so watermark
+    resumption is **at-least-once**: a reader resumes from the `PostedAt`
+    of the last posting it consumed, inclusive, and is idempotent.
 
 **Implementations**
 
@@ -57,9 +104,16 @@ type Transfer struct {
 | `memory` | unit tests and `ledger=stub` local development while Docker is unavailable |
 | `postgres` | the documented exit route — three tables, a zero-sum trigger, a unique idempotency key |
 
-All three run the **same** conformance suite: idempotent replay, zero-sum
-rejection, concurrent post of the same key, balance-after-reversal, and a
-crash injected between Apivo's commit and the ledger call (spike S2).
+All three run the **same** conformance suite: idempotent replay (including
+a replay whose postings are rebuilt in a different order, which must be a
+replay, and one whose metadata differs, which must be a conflict), zero-sum
+rejection, wrong-currency posting rejection, no-movement rejection,
+concurrent post of the same key, two concurrent reservations against one
+confirmed balance where exactly one wins, read-your-writes after `Post`,
+balance-after-reversal, and a crash injected between Apivo's commit and the
+ledger call (spike S2). An implementation that refuses a shape with
+`ErrUnsupportedTransfer` declares which shapes those are, and the suite
+holds it to refusing them rather than mis-posting them.
 
 ---
 
