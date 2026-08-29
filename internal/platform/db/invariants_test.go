@@ -1596,17 +1596,18 @@ func TestTranslationIsImmutable(t *testing.T) {
 func TestImmutableTablesRejectTruncate(t *testing.T) {
 	tests := []struct {
 		name string
-		// source_item and translation are referenced by foreign keys, so a
-		// plain TRUNCATE would fail on the FK (SQLSTATE 0A000) before the
-		// trigger fires; CASCADE expands the closure so the immutability
-		// trigger itself is what raises.
+		// source_item, translation and domain_event (since 0021, the
+		// delivery-tracking tables point at it) are referenced by foreign
+		// keys, so a plain TRUNCATE would fail on the FK (SQLSTATE 0A000)
+		// before the trigger fires; CASCADE expands the closure so the
+		// immutability trigger itself is what raises.
 		stmt string
 	}{
 		{name: "source_item", stmt: `truncate source_item cascade`},
 		{name: "translation", stmt: `truncate translation cascade`},
 		{name: "article", stmt: `truncate article cascade`},
 		{name: "consent", stmt: `truncate consent`},
-		{name: "domain_event", stmt: `truncate domain_event`},
+		{name: "domain_event", stmt: `truncate domain_event cascade`},
 	}
 
 	for _, tt := range tests {

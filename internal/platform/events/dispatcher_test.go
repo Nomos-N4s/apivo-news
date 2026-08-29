@@ -232,7 +232,28 @@ func TestDispatcherDeliversInOrderPerLane(t *testing.T) {
 		}
 	}
 
-	drainUntil(t, d, func() bool { return len(delivered) >= handled })
+	// The last event in stream order, needed before the drain rather than
+	// after it: the drain waits for the checkpoint to reach it, not only
+	// for the deliveries. A position is saved only over rows no append
+	// still in flight can land in front of, so on a database several
+	// suites are appending to at once it arrives a tick or two behind the
+	// handler.
+	last := appended[0]
+	for _, e := range appended {
+		if streamLess(last, e) {
+			last = e
+		}
+	}
+	drainUntil(t, d, func() bool {
+		if len(delivered) < handled {
+			return false
+		}
+		cp, err := store.Load(ctx)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		return !checkpointBefore(cp, last)
+	})
 
 	// Another tick delivers nothing new: everything is behind the
 	// checkpoint now.
@@ -277,12 +298,13 @@ func TestDispatcherDeliversInOrderPerLane(t *testing.T) {
 		}
 	}
 
-	// The checkpoint moved past everything, the unhandled event included.
+	// The checkpoint moved past everything, the unhandled event included -
+	// which is what the drain above waited for, re-read here so a later
+	// tick cannot have walked it back.
 	cp, err := store.Load(ctx)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	last := sorted[len(sorted)-1]
 	if checkpointBefore(cp, last) {
 		t.Fatalf("the checkpoint %+v never passed the last event %s", cp, last.EventID)
 	}
