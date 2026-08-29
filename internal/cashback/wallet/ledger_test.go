@@ -96,12 +96,25 @@ func TestTransferValidate(t *testing.T) {
 			},
 		},
 		{
-			name: "both sides on one account still balance",
+			name: "one account cancelling itself while others move",
 			transfer: wallet.Transfer{
 				IdempotencyKey: "k",
 				Postings: []wallet.Posting{
 					posting("a", -100, eur),
 					posting("a", 100, eur),
+					posting("b", -50, eur),
+					posting("c", 50, eur),
+				},
+			},
+		},
+		{
+			name: "an account appearing twice on the same side",
+			transfer: wallet.Transfer{
+				IdempotencyKey: "k",
+				Postings: []wallet.Posting{
+					posting("a", -60, eur),
+					posting("a", -40, eur),
+					posting("b", 100, eur),
 				},
 			},
 		},
@@ -357,6 +370,108 @@ func TestTransferValidate(t *testing.T) {
 			},
 			wantErr: money.ErrOverflow,
 		},
+		{
+			// The shape a caller bug makes when the source and the
+			// destination resolve to the same account. It balances
+			// perfectly and moves nothing, and minting a TransferRef for
+			// it would file proof of a payment that never happened.
+			name: "a source and a destination that are one account",
+			transfer: wallet.Transfer{
+				IdempotencyKey: "k",
+				Postings: []wallet.Posting{
+					posting("a", -100, eur),
+					posting("a", 100, eur),
+				},
+			},
+			wantErr: wallet.ErrNoMovement,
+			wantIn:  []string{`"a"`},
+		},
+		{
+			name: "two accounts each cancelling themselves",
+			transfer: wallet.Transfer{
+				IdempotencyKey: "k",
+				Postings: []wallet.Posting{
+					posting("a", -100, eur),
+					posting("a", 100, eur),
+					posting("b", -50, eur),
+					posting("b", 50, eur),
+				},
+			},
+			wantErr: wallet.ErrNoMovement,
+			wantIn:  []string{`"a", "b"`},
+		},
+		{
+			name: "a split whose every share lands back on its source",
+			transfer: wallet.Transfer{
+				IdempotencyKey: "k",
+				Postings: []wallet.Posting{
+					posting("source", -1000, eur),
+					posting("source", 900, eur),
+					posting("source", 100, eur),
+				},
+			},
+			wantErr: wallet.ErrNoMovement,
+		},
+		{
+			name: "cancelling in two currencies at once",
+			transfer: wallet.Transfer{
+				IdempotencyKey: "k",
+				Postings: []wallet.Posting{
+					posting("a", -100, eur),
+					posting("a", 100, eur),
+					posting("b", -50, gbp),
+					posting("b", 50, gbp),
+				},
+			},
+			wantErr: wallet.ErrNoMovement,
+			wantIn:  []string{`"a", "b"`},
+		},
+		{
+			// One account holding two currencies is two holdings and one
+			// account, and the refusal must name it once.
+			name: "one account cancelling itself in two currencies",
+			transfer: wallet.Transfer{
+				IdempotencyKey: "k",
+				Postings: []wallet.Posting{
+					posting("a", -100, eur),
+					posting("a", 100, eur),
+					posting("a", -50, gbp),
+					posting("a", 50, gbp),
+				},
+			},
+			wantErr: wallet.ErrNoMovement,
+			wantIn:  []string{`("a")`},
+		},
+		{
+			name: "a posting moving nothing is reported before the transfer's stillness",
+			transfer: wallet.Transfer{
+				IdempotencyKey: "k",
+				Postings: []wallet.Posting{
+					posting("a", -100, eur),
+					posting("a", 100, eur),
+					posting("b", 0, eur),
+				},
+			},
+			wantErr: wallet.ErrZeroPosting,
+			wantIn:  []string{"posting 3 of 3"},
+		},
+		{
+			// The currency nets stay inside int64 the whole way through;
+			// only account a's own running total leaves it, which the
+			// per-currency pass alone would never have noticed.
+			name: "one account's own postings overflowing",
+			transfer: wallet.Transfer{
+				IdempotencyKey: "k",
+				Postings: []wallet.Posting{
+					posting("a", math.MaxInt64, eur),
+					posting("b", -math.MaxInt64, eur),
+					posting("a", 1, eur),
+					posting("b", -1, eur),
+				},
+			},
+			wantErr: money.ErrOverflow,
+			wantIn:  []string{`account "a"`},
+		},
 	}
 
 	for _, tc := range tests {
@@ -422,10 +537,13 @@ func TestSentinelsAreDistinct(t *testing.T) {
 		wallet.ErrRecycledPosting,
 		wallet.ErrUnbalanced,
 		wallet.ErrMixedCurrency,
+		wallet.ErrNoMovement,
 		wallet.ErrInvalidAccountRef,
 		wallet.ErrInvalidWindow,
 		wallet.ErrUnknownAccount,
 		wallet.ErrIdempotencyConflict,
+		wallet.ErrInsufficientFunds,
+		wallet.ErrUnsupportedTransfer,
 	}
 	for i, a := range sentinels {
 		for j, b := range sentinels {
