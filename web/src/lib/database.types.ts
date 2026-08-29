@@ -241,6 +241,79 @@ export type Database = {
         }
         Relationships: []
       }
+      event_dead_letter: {
+        Row: {
+          attempts: number
+          event_id: string
+          event_type: string
+          last_error: string
+          occurred_at: string
+          parked_at: string
+          requeued_at: string | null
+          subject: string | null
+          subscriber: string
+        }
+        Insert: {
+          attempts: number
+          event_id: string
+          event_type: string
+          last_error: string
+          occurred_at: string
+          parked_at?: string
+          requeued_at?: string | null
+          subject?: string | null
+          subscriber: string
+        }
+        Update: {
+          attempts?: number
+          event_id?: string
+          event_type?: string
+          last_error?: string
+          occurred_at?: string
+          parked_at?: string
+          requeued_at?: string | null
+          subject?: string | null
+          subscriber?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "event_dead_letter_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "domain_event"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      event_delivery: {
+        Row: {
+          attempts: number
+          delivered_at: string
+          event_id: string
+          subscriber: string
+        }
+        Insert: {
+          attempts: number
+          delivered_at?: string
+          event_id: string
+          subscriber: string
+        }
+        Update: {
+          attempts?: number
+          delivered_at?: string
+          event_id?: string
+          subscriber?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "event_delivery_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "domain_event"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       language: {
         Row: {
           code: string
@@ -467,6 +540,27 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      subscriber_checkpoint: {
+        Row: {
+          event_id: string
+          occurred_at: string
+          subscriber: string
+          updated_at: string
+        }
+        Insert: {
+          event_id: string
+          occurred_at: string
+          subscriber: string
+          updated_at?: string
+        }
+        Update: {
+          event_id?: string
+          occurred_at?: string
+          subscriber?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       translation: {
         Row: {

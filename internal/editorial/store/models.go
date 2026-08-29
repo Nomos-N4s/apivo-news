@@ -450,6 +450,40 @@ type DomainEvent struct {
 	IdempotencyKey pgtype.Text
 }
 
+// Deliveries parked after spending their retry budget - consumer rule 4's dead-letter table, and the operator queue that surfaces it. A row here blocks its own (type, subject) lane for its subscriber until an operator requeues it, because delivering a later event of the same subject past a parked earlier one would reorder the subject's history. Rows are resolved by deletion once a requeued delivery completes: this table is the open operator queue, not an audit log - the durable outcome lands in event_delivery and the audit stream stays domain_event (data-model 2.9).
+type EventDeadLetter struct {
+	// The subscriber whose delivery is parked. The same event may be parked for one subscriber and long delivered for another.
+	Subscriber string
+	// The event whose delivery is parked. It stays in the stream untouched; this row is about one subscriber's failure to consume it.
+	EventID pgtype.UUID
+	// The event's type, copied from the stream so the blocked (type, subject) lane can be read without a join on every poll.
+	EventType string
+	// The event's subject, copied from the stream; null for a subjectless event. With event_type it names the lane this row blocks.
+	Subject pgtype.UUID
+	// The event's stream position (with event_id), so requeued deliveries are re-attempted in stream order.
+	OccurredAt pgtype.Timestamptz
+	// Total handler attempts so far, across the original delivery and every requeue that failed again.
+	Attempts int32
+	// What the final attempt reported - the first thing an operator reads when deciding what to do with the row.
+	LastError string
+	// When the delivery (last) entered the queue. A requeue that fails again re-parks and refreshes this.
+	ParkedAt pgtype.Timestamptz
+	// When an operator asked for redelivery; null while the row waits for one. A requeued row no longer blocks its lane query, because the next dispatcher pass re-attempts it before touching anything behind it.
+	RequeuedAt pgtype.Timestamptz
+}
+
+// IMMUTABLE. One row per completed delivery of one event to one named subscriber - the delivery idempotency key of contracts/events.md. The primary key is the guarantee: a redelivery finds the row and becomes a recorded no-op instead of a second side effect. The row is written AFTER the handler returns, so a crash between the two redelivers the event; closing that window entirely needs the handler's own idempotence (consumer rule 1), which this table narrows but can never replace.
+type EventDelivery struct {
+	// The named subscriber this delivery completed for. Each subscriber records its own deliveries: the same event is delivered once to every subscriber of its type, independently.
+	Subscriber string
+	// The delivered event. The foreign key can hold because domain_event is append-only: a delivery of an event that never happened is unrepresentable.
+	EventID pgtype.UUID
+	// How many handler attempts the completed delivery took, the dead-lettered ones included when an operator requeue resolved it. Attempts spent in a run that crashed before completing are not in the count - only the run that completed records.
+	Attempts int32
+	// When the delivery completed. Together with attempts, the recorded outcome consumer rule 1 asks handlers to keep.
+	DeliveredAt pgtype.Timestamptz
+}
+
 // BCP-47 primary language subtags only (el, de, en). Never combined with place into a single locale tag.
 type Language struct {
 	Code string
@@ -568,6 +602,18 @@ type SourceItem struct {
 	UsageRuleSnapshot string
 	// The permission evidence on record at retrieval, written by trigger; preserved even if the source row changes later.
 	PermissionEvidenceSnapshot pgtype.Text
+}
+
+// How far each named subscriber has read the domain_event stream, as a position in its (occurred_at, id) order. Losing a row is safe by design: delivery is at-least-once, the subscriber re-reads from the start and event_delivery absorbs the replay - so this table is a resumption optimisation, never the correctness record.
+type SubscriberCheckpoint struct {
+	// The subscriber this position belongs to. Positions are per subscriber on purpose: one slow or blocked subscriber must not hold another back.
+	Subscriber string
+	// The time axis of the position: the occurred_at of the last event this subscriber's contiguous prefix covers.
+	OccurredAt pgtype.Timestamptz
+	// The id breaking occurred_at ties, completing the position. Deliberately NOT a foreign key to domain_event: this is a cursor, not a reference - a replay resets it and a fresh subscriber starts before the first event, neither of which names a row.
+	EventID pgtype.UUID
+	// When the position last advanced. Operational visibility only: a subscriber whose position has not moved while the stream has is stuck.
+	UpdatedAt pgtype.Timestamptz
 }
 
 // IMMUTABLE machine translation lineage: which model, which prompt version, when, from which retrieved item (I-5). Corrections and re-translations create a new row; rewriting an old one would silently falsify the provenance of every article built on it.
