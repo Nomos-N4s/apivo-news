@@ -157,7 +157,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 
 **Depends on**: Phase 3 (the fixture adapter and evidence store).
 
-- [ ] T063 [US1] Implement click-reference generation (≥128 bits of entropy) and the click store in `internal/cashback/clickout/click.go` + `store/`
+- [x] T063 [US1] Implement click-reference generation (≥128 bits of entropy) and the click store in `internal/cashback/clickout/click.go` + `store/`
 - [ ] T064 [US1] Implement `POST /clickouts` committing the click and its rate snapshot before the redirect is returned, in `internal/cashback/clickout/handlers.go`
 - [ ] T065 [US1] Implement the deeplink-failure path so nothing is committed and the member gets a plain problem document, in `internal/cashback/clickout/handlers.go`
 - [ ] T066 [US1] Implement per-member and per-context click rate limiting returning 429 with `Retry-After` in `internal/cashback/clickout/ratelimit.go`
