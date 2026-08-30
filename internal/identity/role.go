@@ -15,9 +15,20 @@ import (
 // is the guarantee.
 const RoleEditor = "editor"
 
+// RoleOperator is the account role the /ops/* endpoints require. It
+// mirrors the value payout_insert_guard enforces on write (migration
+// 0019), and the authority it names is not the editor's with more added:
+// an editor approves articles, an operator releases money and closes the
+// queues that decide who gets it (C-4, FR-060).
+const RoleOperator = "operator"
+
 // ErrNotEditor reports an authenticated account that lacks the editor
 // role. Consumers map it to 403.
 var ErrNotEditor = errors.New("identity: account is not an editor")
+
+// ErrNotOperator reports an authenticated account that lacks the operator
+// role. Consumers map it to 403.
+var ErrNotOperator = errors.New("identity: account is not an operator")
 
 // RoleLookup resolves the role of an account.
 //
@@ -74,6 +85,31 @@ func RequireEditor(ctx context.Context, id Identity, roles RoleLookup) error {
 	}
 	if role != RoleEditor {
 		return fmt.Errorf("%w: account %s holds role %q", ErrNotEditor, id.Subject, role)
+	}
+	return nil
+}
+
+// RequireOperator is the gate the operator endpoints apply after
+// Authenticate, and the exact counterpart of RequireEditor: nil when the
+// identity's account holds the operator role, ErrNotOperator (403) when it
+// holds any other, and the wrapped lookup error when the role could not be
+// determined.
+//
+// The two are separate functions rather than one parameterised check
+// because they are separate authorities. A helper taking the required role
+// as an argument would make "operator or editor" as easy to write as
+// either one alone, and the first place that was convenient would be the
+// place the separation quietly ended. The database says the same thing
+// twice for the same reason (0002 for articles, 0019 for payouts), and
+// this check is the polite early answer to those rules, never a
+// replacement for them.
+func RequireOperator(ctx context.Context, id Identity, roles RoleLookup) error {
+	role, err := roles.Role(ctx, id.Subject)
+	if err != nil {
+		return fmt.Errorf("identity: role lookup for %s: %w", id.Subject, err)
+	}
+	if role != RoleOperator {
+		return fmt.Errorf("%w: account %s holds role %q", ErrNotOperator, id.Subject, role)
 	}
 	return nil
 }

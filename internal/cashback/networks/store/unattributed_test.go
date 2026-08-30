@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -29,18 +30,27 @@ import (
 // that starts here starts at the beginning.
 var beginning = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 
-// openPage lists from the beginning, which is what every case here wants.
-func openPage(ctx context.Context, t *testing.T, q *store.Queries) []store.ListOpenUnattributedReportsRow {
+// openPage lists from the beginning, which is what every case here wants,
+// and keeps only the rows belonging to the caller's own network.
+//
+// The counts below are exact - under-recording is the failure that looks
+// like a quiet morning - and this transaction is not the only writer this
+// table has ever had. Whatever another test COMMITTED is visible here, so
+// scoping is what keeps "exactly one" a statement about the case rather
+// than about what else has run against this database.
+func openPage(ctx context.Context, t *testing.T, q *store.Queries, networkID string) []store.ListOpenUnattributedReportsRow {
 	t.Helper()
 	rows, err := q.ListOpenUnattributedReports(ctx, store.ListOpenUnattributedReportsParams{
 		AfterDetectedAt: pgtype.Timestamptz{Time: beginning, Valid: true},
 		AfterID:         pgtype.UUID{Valid: true},
-		PageSize:        50,
+		PageSize:        200,
 	})
 	if err != nil {
 		t.Fatalf("ListOpenUnattributedReports(): %v", err)
 	}
-	return rows
+	return slices.DeleteFunc(rows, func(row store.ListOpenUnattributedReportsRow) bool {
+		return row.NetworkID != networkID
+	})
 }
 
 // storeReport writes one evidence row and answers its id. The report is
@@ -99,7 +109,7 @@ func TestUnattributedQueueAgainstSchema(t *testing.T) {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("queueing an attributed report returned %v, want pgx.ErrNoRows", err)
 		}
-		if rows := openPage(ctx, t, q); len(rows) != 0 {
+		if rows := openPage(ctx, t, q, networkID); len(rows) != 0 {
 			t.Errorf("%d row(s) of work for an attributed report, want 0", len(rows))
 		}
 	})
@@ -125,7 +135,7 @@ func TestUnattributedQueueAgainstSchema(t *testing.T) {
 		if _, err := q.RecordUnattributedReport(ctx, reportID); !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("recording the same observation twice returned %v, want pgx.ErrNoRows", err)
 		}
-		if rows := openPage(ctx, t, q); len(rows) != 1 {
+		if rows := openPage(ctx, t, q, networkID); len(rows) != 1 {
 			t.Fatalf("%d row(s) of work after recording twice, want 1", len(rows))
 		}
 	})
@@ -136,7 +146,7 @@ func TestUnattributedQueueAgainstSchema(t *testing.T) {
 		if _, err := q.RecordUnattributedReport(ctx, first); err != nil {
 			t.Fatalf("recording the first observation: %v", err)
 		}
-		if rows := openPage(ctx, t, q); len(rows) != 1 {
+		if rows := openPage(ctx, t, q, networkID); len(rows) != 1 {
 			t.Fatalf("%d row(s) of work before the supersede, want 1", len(rows))
 		}
 
@@ -145,7 +155,7 @@ func TestUnattributedQueueAgainstSchema(t *testing.T) {
 		// being anybody's work.
 		storeReport(ctx, t, q, networkID, accountID, "Zml4dHVyZS1jbGljay0wMDAwMDAwMQ", first)
 
-		if rows := openPage(ctx, t, q); len(rows) != 0 {
+		if rows := openPage(ctx, t, q, networkID); len(rows) != 0 {
 			t.Errorf("%d row(s) of work after the network attributed the transaction, want 0", len(rows))
 		}
 		var recorded int
@@ -176,7 +186,7 @@ func TestUnattributedQueueAgainstSchema(t *testing.T) {
 			t.Fatalf("resolving: %v", err)
 		}
 
-		if rows := openPage(ctx, t, q); len(rows) != 0 {
+		if rows := openPage(ctx, t, q, networkID); len(rows) != 0 {
 			t.Errorf("%d row(s) of work after an operator resolved it, want 0", len(rows))
 		}
 		if _, err := q.GetOpenUnattributedReport(ctx, queued.ID); !errors.Is(err, pgx.ErrNoRows) {
@@ -201,7 +211,7 @@ func TestUnattributedQueueAgainstSchema(t *testing.T) {
 			t.Fatalf("crediting the report: %v", err)
 		}
 
-		if rows := openPage(ctx, t, q); len(rows) != 0 {
+		if rows := openPage(ctx, t, q, networkID); len(rows) != 0 {
 			t.Errorf("%d row(s) of work for a report already credited, want 0", len(rows))
 		}
 	})
@@ -218,7 +228,7 @@ func TestUnattributedQueueAgainstSchema(t *testing.T) {
 			t.Fatalf("planting the orphan observation: %v", err)
 		}
 
-		rows := openPage(ctx, t, q)
+		rows := openPage(ctx, t, q, networkID)
 		if len(rows) != 1 {
 			t.Fatalf("%d row(s) of work, want 1", len(rows))
 		}
@@ -249,7 +259,7 @@ func TestUnattributedQueueAgainstSchema(t *testing.T) {
 			t.Fatalf("recording the second observation: %v", err)
 		}
 
-		rows := openPage(ctx, t, q)
+		rows := openPage(ctx, t, q, networkID)
 		if len(rows) != 1 {
 			t.Fatalf("%d row(s) of work for one transaction, want 1", len(rows))
 		}

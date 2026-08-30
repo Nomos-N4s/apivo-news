@@ -116,7 +116,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 > endpoint.**
 
 - [ ] T135 Write migration `internal/platform/db/migrations/0018_domain_event_envelope.{up,down}.sql` adding `version`, `producer`, `subject` and `idempotency_key` to `public.domain_event` with a partial unique index on `idempotency_key`, per [data-model.md](data-model.md) §2.10 — **blocks T017, T018**
-- [ ] T136 Write migration `internal/platform/db/migrations/0019_operator_role.{up,down}.sql` extending `account_role_known` to include `operator`, adding `payout_insert_guard` (approver must hold the operator role, read `FOR SHARE`) and extending `account_role_guard`, per [data-model.md](data-model.md) §2.10 — **blocks every `/ops/*` task and T092**
+- [x] T136 Write migration `internal/platform/db/migrations/0019_operator_role.{up,down}.sql` extending `account_role_known` to include `operator`, adding `payout_insert_guard` (approver must hold the operator role, read `FOR SHARE`) and extending `account_role_guard`, per [data-model.md](data-model.md) §2.10 — **blocks every `/ops/*` task and T092**
 
 **Checkpoint**: Foundation ready. The invariants exist before any row does, and the ledger is swappable and proven.
 
@@ -140,7 +140,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [x] T056 [US2] Implement the per-adapter rate limiter with exponential backoff and jitter in `internal/cashback/networks/ratelimiter.go` + `backoff.go` + `retryable.go`
 - [x] T057 [US2] Register the poll and trailing re-read jobs with the scheduler in `cmd/apivo/main.go`
 - [x] T058 [US2] Record transactions with no matching click as unattributed in `internal/cashback/networks/unattributed.go`
-- [ ] T059 [US2] Implement `GET /ops/unattributed`, `POST /ops/unattributed/{id}/attribute` and `/dismiss` in `internal/cashback/ops/handlers.go` per [contracts/http-api.md](contracts/http-api.md)
+- [ ] T059 [US2] Implement `GET /ops/unattributed`, `POST /ops/unattributed/{id}/attribute` and `/dismiss` in `internal/cashback/ops/handlers.go` per [contracts/http-api.md](contracts/http-api.md) — the listing and `/dismiss` are served, behind the operator role and mounted with the cashback flag. **`/attribute` waits on T068 and T069**: it writes a `cashback.entry`, and an entry needs a member's share and a ledger posting, which those tasks own — one written without them is a credit nobody can reconcile. It is also lawful only for the rows this queue records today; where the network named a reference that matched no click (T067's half), `entry_evidence_guard` refuses a credit citing no click, which is what the listing's `attributable` field reports
 - [x] T060 [P] [US2] Integration test: re-polling an unchanged window creates no duplicate; a changed status creates a superseding row and both stay readable, in `internal/cashback/networks/ingest_integration_test.go`
 - [x] T061 [P] [US2] Integration test: rate-limit backoff, and no window lost or double-counted across a restart, in `internal/cashback/networks/poller_integration_test.go`
 - [x] T062 [P] [US2] Publish `cashback.transaction.ingested` and `.unattributed` events through the outbox in `internal/cashback/networks/events.go`

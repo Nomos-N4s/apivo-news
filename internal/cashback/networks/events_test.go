@@ -31,13 +31,36 @@ type storedEvent struct {
 	Payload        map[string]any
 }
 
-// outbox reads every event appended in this transaction, oldest first.
-func outbox(ctx context.Context, t *testing.T, tx pgx.Tx) []storedEvent {
+// outboxAbout reads the events appended about one subject, oldest first.
+//
+// Scoped, because domain_event is append-only and shared: every other test
+// that commits an event is visible from this transaction, so an unscoped
+// read counts whatever else has run against this database rather than what
+// this case appended. Filtering on the subject is what makes the exact
+// counts below statements about the announcer.
+func outboxAbout(ctx context.Context, t *testing.T, tx pgx.Tx, subject uuid.UUID) []storedEvent {
+	t.Helper()
+	return readOutbox(ctx, t, tx, `subject = $1`, subject.String())
+}
+
+// outboxAboutNothing reads the events this module appended with no subject
+// at all - which is exactly the defect the refusal test is about, and the
+// only shape an event announced about a report the database never stored
+// could take. Producer as well as subject, because a null subject is the
+// ordinary case for the news module's events and none of those are this
+// test's business.
+func outboxAboutNothing(ctx context.Context, t *testing.T, tx pgx.Tx) []storedEvent {
+	t.Helper()
+	return readOutbox(ctx, t, tx, `producer = $1 and subject is null`, networks.EventProducer)
+}
+
+func readOutbox(ctx context.Context, t *testing.T, tx pgx.Tx, where string, arg any) []storedEvent {
 	t.Helper()
 	rows, err := tx.Query(ctx, `
 		select type, version, producer, subject::text, idempotency_key, payload
 		  from domain_event
-		 order by occurred_at, id`)
+		 where `+where+`
+		 order by occurred_at, id`, arg)
 	if err != nil {
 		t.Fatalf("reading the outbox: %v", err)
 	}
@@ -97,7 +120,7 @@ func TestAnnouncerRefusesAFactAboutNothing(t *testing.T) {
 	if err := announcer.Unattributed(ctx, tx, networks.Queued{}); !errors.Is(err, networks.ErrNotAnnounced) {
 		t.Errorf("Unattributed(zero) = %v, want one wrapping ErrNotAnnounced", err)
 	}
-	if events := outbox(ctx, t, tx); len(events) != 0 {
+	if events := outboxAboutNothing(ctx, t, tx); len(events) != 0 {
 		t.Errorf("%d event(s) were appended about nothing", len(events))
 	}
 }
@@ -127,7 +150,7 @@ func TestTheTwoFactsAboutOneReportDoNotCollide(t *testing.T) {
 		t.Fatalf("Unattributed(): %v", err)
 	}
 
-	events := outbox(ctx, t, tx)
+	events := outboxAbout(ctx, t, tx, report)
 	if len(events) != 2 {
 		t.Fatalf("%d event(s) about one report, want both facts: %+v", len(events), events)
 	}

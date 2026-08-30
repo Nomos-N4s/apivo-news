@@ -33,6 +33,10 @@
     {
       "name": "account",
       "description": "A signed-in person's own state. Bearer JWT and nothing more: every route acts on the caller's own row, so there is no role that could be insufficient."
+    },
+    {
+      "name": "cashback-ops",
+      "description": "Cashback operator queues and decisions. Bearer JWT plus the operator role on the account behind the token - the same authority the database requires of a payout approver (migration 0019)."
     }
   ],
   "paths": {
@@ -252,6 +256,148 @@
                 }
               }
             }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/cashback/ops/unattributed": {
+      "get": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "listUnattributed",
+        "summary": "List network transactions that matched no click",
+        "description": "The work an operator has to decide (FR-034, FR-060). A row is listed only while it is still work: nobody has resolved it, the report it names is still what the network last said about the transaction, and nothing has been credited against it.\n\nThe whole /api/v1/cashback/ops/ prefix sits behind one auth gate, so a request without a usable token answers 401 whether or not the path exists. The prefix is unmounted entirely when cashback is off, and then answers 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the queue.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnattributedQueue"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unparseable limit (outside 1-100), a cursor this endpoint did not issue, or an unrecognised query parameter."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/cashback/ops/unattributed/{id}/dismiss": {
+      "post": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "dismissUnattributed",
+        "summary": "Close an unattributed transaction without crediting anybody",
+        "description": "Records who closed the row and why, and publishes that fact, in one transaction (FR-061). Nothing is edited and nothing is deleted: a resolution can be written but never erased, so a mistaken one is corrected by a new fact in the stream rather than by a second call here - which is why replaying a dismissal answers 409 rather than repeating it.\n\nAttributing a transaction to a member is not yet served: it writes a cashback.entry, which needs the member's share and a ledger posting the earnings module owns.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The queue row, as returned by the listing.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Dismissal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The recorded resolution.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Resolution"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An id that is not a UUID, a body that is not this endpoint's shape, or a blank reason."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No queue row has this id. A queue row is never deleted, so this id was never issued."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The row is no longer open work: somebody has closed it, an entry now cites the report it names, or the network has replaced that report. The detail says which."
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -1449,6 +1595,26 @@
             }
           }
         }
+      },
+      "NotOperator": {
+        "description": "The token authenticated, but the account behind it does not hold the operator role.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "examples": {
+              "notOperator": {
+                "value": {
+                  "type": "about:blank",
+                  "title": "Forbidden",
+                  "status": 403,
+                  "detail": "the operator role is required"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "schemas": {
@@ -2528,6 +2694,188 @@
             "example": {
               "editor": "7"
             }
+          }
+        }
+      },
+      "Money": {
+        "type": "object",
+        "description": "An amount of money: whole minor units and the ISO-4217 code they are denominated in. Never a decimal and never a float - the frontend formats these two fields for a locale, and nothing between here and there has to agree on how many decimal places a currency has (C-6).",
+        "required": [
+          "minor",
+          "currency"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "minor": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The amount in minor units, e.g. 4999 for 49.99 EUR."
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$",
+            "example": "EUR"
+          }
+        }
+      },
+      "UnattributedTransaction": {
+        "type": "object",
+        "description": "One network report that matched no click, waiting for an operator (FR-034). Every field is a fact the network reported or the database stamped; there is no recommended action, because what may lawfully be done with the row is `attributable`.",
+        "required": [
+          "id",
+          "detected_at",
+          "network_transaction_id",
+          "network_account_id",
+          "network_id",
+          "external_id",
+          "status",
+          "sale",
+          "commission",
+          "transacted_at",
+          "retrieved_at",
+          "attributable"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The queue row, and what an operator action names."
+          },
+          "detected_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the poll that stored the report noticed it had no click reference."
+          },
+          "network_transaction_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The evidence row: the report an entry for this purchase would have to cite."
+          },
+          "network_account_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The publisher account whose poll found it."
+          },
+          "network_id": {
+            "type": "string",
+            "description": "The affiliate network, e.g. \"awin\"."
+          },
+          "external_id": {
+            "type": "string",
+            "description": "The network's own transaction id, for finding it in their dashboard."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "confirmed",
+              "declined",
+              "reversed"
+            ],
+            "description": "What the network last said about the transaction."
+          },
+          "sale": {
+            "$ref": "#/components/schemas/Money",
+            "description": "What the member spent."
+          },
+          "commission": {
+            "$ref": "#/components/schemas/Money",
+            "description": "What the network says it will pay; the member's share is computed from this (FR-040)."
+          },
+          "transacted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this report was read from the network."
+          },
+          "attributable": {
+            "type": "boolean",
+            "description": "Whether an entry could lawfully be created for this report at all. False where the network named a click reference that matched no click: a credit must cite the click the network named, and there is none - so dismissing is the only outcome the database will accept."
+          }
+        }
+      },
+      "UnattributedQueue": {
+        "type": "object",
+        "description": "One page of unattributed work, oldest first.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnattributedTransaction"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 256,
+            "description": "Null on the last page. Present only when a further page exists, so a cursor never leads to an empty one."
+          }
+        }
+      },
+      "Dismissal": {
+        "type": "object",
+        "description": "Why an operator is closing a queue row without crediting anybody. The acting account is taken from the bearer token and is never part of the body.",
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "The recorded reason (FR-061). Trimmed; a blank or whitespace-only reason is rejected with 400, because the audit record is part of the action."
+          }
+        }
+      },
+      "Resolution": {
+        "type": "object",
+        "description": "The resolution the database recorded, read back rather than echoed.",
+        "required": [
+          "id",
+          "network_transaction_id",
+          "detected_at",
+          "resolved_by",
+          "reason",
+          "resolved_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "network_transaction_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "detected_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resolved_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The operator account that closed it, taken from the token subject."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "resolved_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Stamped by the database, not supplied by the caller."
           }
         }
       }

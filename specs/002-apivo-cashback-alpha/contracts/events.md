@@ -84,6 +84,7 @@ there is a defect, and the dispatcher test asserts it.
 | `cashback.click.created` | `{ click_id, account_id, offer_id, at }` |
 | `cashback.transaction.ingested` | `{ network_transaction_id, network_id, status, at }` |
 | `cashback.transaction.unattributed` | `{ network_transaction_id, at }` |
+| `cashback.unattributed.dismissed` | `{ unattributed_id, network_transaction_id, resolved_by, reason, at }` |
 | `cashback.entry.created` | `{ entry_id, account_id, state, amount, at }` |
 | `cashback.entry.state_changed` | `{ entry_id, from, to, ledger_transfer_ref, at }` |
 | `cashback.entry.reversed` | `{ entry_id, reversal_entry_id, reason, at }` |
@@ -93,6 +94,14 @@ there is a defect, and the dispatcher test asserts it.
 
 Amounts in payloads are `{ "minor": int, "currency": "EUR" }` — the same
 shape as the HTTP contract, for the same reason (C-6).
+
+`cashback.unattributed.dismissed` carries the acting account and the reason
+in its payload rather than leaving them to a lookup. That is what makes it
+the audit record FR-061 asks for: a consumer that had to come back and ask
+the cashback schema why would be making exactly the synchronous call-back
+consumer rule 2 forbids. Its subject is the queue row, and its idempotency
+key is the row — a row is resolved at most once, so a second append under
+that key means the resolution is already in the stream.
 
 ## Published by `news` (existing)
 

@@ -21,6 +21,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Nomos-N4s/apivo-news/internal/account"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
@@ -99,7 +101,7 @@ func documentedOperations(t *testing.T, doc openAPIDocument) map[string]operatio
 // registeredPatterns is every route this binary mounts: the platform's own
 // plus each module's, reported by the same maps the routers are built from.
 func registeredPatterns() []string {
-	return slices.Concat(platformhttp.Patterns(), content.Patterns(), editorial.Patterns(), account.Patterns())
+	return slices.Concat(platformhttp.Patterns(), content.Patterns(), editorial.Patterns(), account.Patterns(), ops.Patterns())
 }
 
 func TestOpenAPIDocumentDescribesEveryRegisteredRoute(t *testing.T) {
@@ -148,13 +150,16 @@ func TestOpenAPISecurityMatchesTheAuthGate(t *testing.T) {
 		t.Errorf("root security = %v, want an empty list so unmarked operations are public", doc.Security)
 	}
 
-	// Both authenticated prefixes, not just editorial: the two gates differ
-	// in what they require BEYOND a verified token - editorial adds the
-	// editor role - but the document says the same thing about both,
-	// because bearerAuth is what either one refuses a request for.
+	// Every authenticated prefix, not just editorial: the gates differ in
+	// what they require BEYOND a verified token - editorial adds the editor
+	// role, the operator surface the operator role - but the document says
+	// the same thing about all of them, because bearerAuth is what any of
+	// them refuses a request for.
 	for pattern, op := range documentedOperations(t, doc) {
 		_, path, _ := strings.Cut(pattern, " ")
-		gated := strings.HasPrefix(path, editorialPrefix) || strings.HasPrefix(path, accountPrefix)
+		gated := strings.HasPrefix(path, editorialPrefix) ||
+			strings.HasPrefix(path, accountPrefix) ||
+			strings.HasPrefix(path, opsPrefix)
 		switch {
 		case gated && !requiresBearer(op):
 			t.Errorf("%s is behind an auth gate but the document does not require bearerAuth on it", pattern)
@@ -340,4 +345,61 @@ func (unreachableStore) Withdraw(context.Context, uuid.UUID, uuid.UUID, string) 
 
 func (unreachableStore) Provenance(context.Context, uuid.UUID) (editorial.Provenance, error) {
 	return editorial.Provenance{}, errors.New("the route probe must not reach the store")
+}
+
+// TestOperatorPatternsAreReachable proves the operator module's list is not
+// bookkeeping either. Like the two probes above, a pattern that lost its
+// registration falls to the catch-all, whose two answers are named below -
+// a status code alone would dress the loss up as an ordinary 404.
+func TestOperatorPatternsAreReachable(t *testing.T) {
+	t.Parallel()
+	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, alwaysOperator{})
+
+	for _, pattern := range ops.Patterns() {
+		t.Run(pattern, func(t *testing.T) {
+			t.Parallel()
+			method, path, ok := strings.Cut(pattern, " ")
+			if !ok {
+				t.Fatalf("pattern %q is not %q", pattern, "METHOD /path")
+			}
+			if !strings.HasPrefix(path, opsPrefix) {
+				t.Fatalf("%q is outside the mounted prefix %q, so nothing would reach it", pattern, opsPrefix)
+			}
+			req := httptest.NewRequest(method, strings.ReplaceAll(path, "{id}", uuid.New().String()), strings.NewReader(""))
+			req.Header.Set("Authorization", "Bearer probe")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			var problem struct {
+				Detail string `json:"detail"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+				t.Fatalf("answer to %s %s is not problem+json: %v (body %q)", method, path, err, rec.Body.String())
+			}
+			if strings.Contains(problem.Detail, "no such endpoint") ||
+				strings.Contains(problem.Detail, "is not allowed on this endpoint") {
+				t.Fatalf("%s is listed by Patterns() but the catch-all answered it: %q", pattern, problem.Detail)
+			}
+		})
+	}
+}
+
+// alwaysOperator authenticates every token, so the probe reaches the routes
+// rather than the gate in front of them.
+type alwaysOperator struct{}
+
+func (alwaysOperator) AuthenticateOperator(context.Context, string) (ops.Operator, error) {
+	return ops.Operator{ID: uuid.New(), Email: "probe@example.test", DisplayName: "Route Probe"}, nil
+}
+
+// unreachableOpsStore fails loudly: the probe sends bodies no handler
+// accepts, so persistence must never be reached.
+type unreachableOpsStore struct{}
+
+func (unreachableOpsStore) Open(context.Context, networks.After, int) ([]networks.OpenReport, error) {
+	return nil, errors.New("the route probe must not reach the store")
+}
+
+func (unreachableOpsStore) Dismiss(context.Context, ops.Dismissal) (ops.Dismissed, error) {
+	return ops.Dismissed{}, errors.New("the route probe must not reach the store")
 }

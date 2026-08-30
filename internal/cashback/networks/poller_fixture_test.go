@@ -17,6 +17,7 @@ package networks_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -221,8 +222,17 @@ func TestPollingTheFixtureRecordsTheUnattributedWork(t *testing.T) {
 	if unattributed != 3 {
 		t.Errorf("the polls recorded %d observation(s), want 3", unattributed)
 	}
+	// Counted over this fixture's own network. The count is exact, and a
+	// database shared with every other integration test in the package is
+	// not a database with only these rows in it - scoping is what keeps
+	// "exactly three" a statement about the recording rather than about
+	// what else happened to run first.
 	var recorded int
-	if err := tx.QueryRow(ctx, `select count(*) from cashback.unattributed_transaction`).Scan(&recorded); err != nil {
+	if err := tx.QueryRow(ctx, `
+		select count(*)
+		  from cashback.unattributed_transaction u
+		  join cashback.network_transaction nt on nt.id = u.network_transaction_id
+		 where nt.network_id = $1`, string(fixture.ID)).Scan(&recorded); err != nil {
 		t.Fatalf("counting the recorded observations: %v", err)
 	}
 	if recorded != 3 {
@@ -236,10 +246,13 @@ func TestPollingTheFixtureRecordsTheUnattributedWork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewUnattributedQueue(): %v", err)
 	}
-	open, err := queue.Open(ctx, networks.After{}, 20)
+	open, err := queue.Open(ctx, networks.After{}, 100)
 	if err != nil {
 		t.Fatalf("Open(): %v", err)
 	}
+	open = slices.DeleteFunc(open, func(row networks.OpenReport) bool {
+		return row.Network != fixture.ID
+	})
 	if len(open) != 1 {
 		t.Fatalf("%d line(s) of work, want 1: %+v", len(open), open)
 	}
@@ -289,7 +302,11 @@ func TestPollingTheFixtureRecordsTheUnattributedWork(t *testing.T) {
 	// having resolved it - which is the whole point of deriving the work
 	// rather than editing the row.
 	var resolved int
-	if err := tx.QueryRow(ctx, `select count(*) from cashback.unattributed_transaction where resolved_at is not null`).Scan(&resolved); err != nil {
+	if err := tx.QueryRow(ctx, `
+		select count(*)
+		  from cashback.unattributed_transaction u
+		  join cashback.network_transaction nt on nt.id = u.network_transaction_id
+		 where nt.network_id = $1 and u.resolved_at is not null`, string(fixture.ID)).Scan(&resolved); err != nil {
 		t.Fatalf("counting resolutions: %v", err)
 	}
 	if resolved != 0 {
