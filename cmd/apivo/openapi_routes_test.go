@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Nomos-N4s/apivo-news/internal/account"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/clickout"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/content"
@@ -101,7 +102,7 @@ func documentedOperations(t *testing.T, doc openAPIDocument) map[string]operatio
 // registeredPatterns is every route this binary mounts: the platform's own
 // plus each module's, reported by the same maps the routers are built from.
 func registeredPatterns() []string {
-	return slices.Concat(platformhttp.Patterns(), content.Patterns(), editorial.Patterns(), account.Patterns(), ops.Patterns())
+	return slices.Concat(platformhttp.Patterns(), content.Patterns(), editorial.Patterns(), account.Patterns(), ops.Patterns(), clickout.Patterns())
 }
 
 func TestOpenAPIDocumentDescribesEveryRegisteredRoute(t *testing.T) {
@@ -159,7 +160,8 @@ func TestOpenAPISecurityMatchesTheAuthGate(t *testing.T) {
 		_, path, _ := strings.Cut(pattern, " ")
 		gated := strings.HasPrefix(path, editorialPrefix) ||
 			strings.HasPrefix(path, accountPrefix) ||
-			strings.HasPrefix(path, opsPrefix)
+			strings.HasPrefix(path, opsPrefix) ||
+			strings.HasPrefix(path, clickoutPrefix)
 		switch {
 		case gated && !requiresBearer(op):
 			t.Errorf("%s is behind an auth gate but the document does not require bearerAuth on it", pattern)

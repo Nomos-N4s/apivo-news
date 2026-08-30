@@ -104,16 +104,16 @@ func TestNewNetworkSweepsSaysWhatIsMissing(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			sweeps, err := newNetworkSweeps(ctx, slog.New(slog.DiscardHandler), tc.cfg, tx)
+			adapter, _, err := connectNetwork(ctx, tc.cfg, tx)
 			var off *ingestionOff
 			if !errors.As(err, &off) {
-				t.Fatalf("newNetworkSweeps() = %v, want one wrapping ingestionOff", err)
+				t.Fatalf("connectNetwork() = %v, want one wrapping ingestionOff", err)
 			}
 			if !strings.Contains(off.Error(), tc.says) {
 				t.Errorf("the reason is %q, want it to name %q", off.Error(), tc.says)
 			}
-			if sweeps != nil {
-				t.Error("a deployment that cannot poll was handed sweeps anyway")
+			if adapter != nil {
+				t.Error("a deployment that is not connected was handed an adapter anyway")
 			}
 		})
 	}
@@ -130,14 +130,13 @@ func TestNewNetworkSweepsRefusesAnAdapterThisBinaryDoesNotHave(t *testing.T) {
 	// The row exists, so the refusal is about the adapter and nothing else.
 	networkWiringAccount(ctx, t, tx, "reference_network", true, time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC))
 
-	_, err := newNetworkSweeps(ctx, slog.New(slog.DiscardHandler),
-		networkWiringConfig("reference_network", "publisher-1"), tx)
+	_, _, err := connectNetwork(ctx, networkWiringConfig("reference_network", "publisher-1"), tx)
 	var off *ingestionOff
 	if errors.As(err, &off) {
 		t.Fatalf("an adapter this binary does not have was reported as a deployment that is merely unfinished: %v", err)
 	}
 	if err == nil || !strings.Contains(err.Error(), "reference_network") {
-		t.Fatalf("newNetworkSweeps() = %v, want a refusal naming the driver", err)
+		t.Fatalf("connectNetwork() = %v, want a refusal naming the driver", err)
 	}
 }
 
@@ -168,8 +167,12 @@ func TestNewNetworkSweepsBuildsThePairAndReportsTheRowsGaps(t *testing.T) {
 
 			var logged strings.Builder
 			log := slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
-			sweeps, err := newNetworkSweeps(ctx, log,
+			adapter, connected, err := connectNetwork(ctx,
 				networkWiringConfig(config.NetworkDriverFixture, "publisher-1"), tx)
+			if err != nil {
+				t.Fatalf("connectNetwork(): %v", err)
+			}
+			sweeps, err := newNetworkSweeps(ctx, log, adapter, connected, tx)
 			if err != nil {
 				t.Fatalf("newNetworkSweeps(): %v", err)
 			}
@@ -314,11 +317,12 @@ func TestRunRegistersTheNetworkSweeps(t *testing.T) {
 	}
 }
 
-// TestRunSaysWhenNoNetworkIsBeingPolled is the state this arm exists to make
-// impossible to miss: cashback mounted, and nothing ingesting what any
-// network reports. It is loud and it is not fatal - the site stays up - which
-// is the same trade serve() makes for an unset JWKS_URL.
-func TestRunSaysWhenNoNetworkIsBeingPolled(t *testing.T) {
+// TestRunSaysWhenNoNetworkIsConnected is the state this arm exists to make
+// impossible to miss: cashback mounted, and no network connected - so
+// nothing ingests what any network reports AND no click-out can be issued.
+// It is loud and it is not fatal - the site stays up - which is the same
+// trade serve() makes for an unset JWKS_URL.
+func TestRunSaysWhenNoNetworkIsConnected(t *testing.T) {
 	t.Parallel()
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -331,11 +335,17 @@ func TestRunSaysWhenNoNetworkIsBeingPolled(t *testing.T) {
 	defer stop()
 
 	logged := out.String()
-	if !strings.Contains(logged, "NO AFFILIATE NETWORK IS BEING POLLED") {
+	if !strings.Contains(logged, "NO AFFILIATE NETWORK IS CONNECTED") {
 		t.Fatalf("an unwired deployment said nothing about it; output: %q", logged)
 	}
 	if !strings.Contains(logged, "NETWORK_ACCOUNT_ID") {
 		t.Errorf("the line does not name what is missing; output: %q", logged)
+	}
+	// Once, not twice. The poller and the click-out endpoint both need the
+	// connection, and two ERROR lines about one missing account read as two
+	// different problems.
+	if got := strings.Count(logged, "NO AFFILIATE NETWORK IS CONNECTED"); got != 1 {
+		t.Errorf("the line appears %d times, want once", got)
 	}
 	// And it serves anyway: ingestion is not the site.
 	if !strings.Contains(logged, "starting") {
