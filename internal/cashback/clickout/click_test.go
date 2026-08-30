@@ -35,6 +35,11 @@ type fakeStore struct {
 	row       store.CashbackClick
 	insertErr error
 	getErr    error
+	// echo makes an insert answer with the row it was asked to write,
+	// stamped as the database would stamp it. Callers that care what came
+	// back rather than what went in set it, so a mapping that dropped a
+	// field on the way out is visible.
+	echo bool
 
 	inserted store.InsertClickParams
 	askedFor string
@@ -47,8 +52,24 @@ func (f *fakeStore) InsertClick(_ context.Context, arg store.InsertClickParams) 
 	if f.insertErr != nil {
 		return store.CashbackClick{}, f.insertErr
 	}
+	if f.echo {
+		return store.CashbackClick{
+			ID:                     pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			ClickRef:               arg.ClickRef,
+			AccountID:              arg.AccountID,
+			OfferID:                arg.OfferID,
+			ClickedAt:              pgtype.Timestamptz{Time: echoedClickedAt, Valid: true},
+			RateSnapshot:           arg.RateSnapshot,
+			MemberShareBpsSnapshot: arg.MemberShareBpsSnapshot,
+			ContextDigest:          arg.ContextDigest,
+		}, nil
+	}
 	return f.row, nil
 }
+
+// echoedClickedAt is the instant an echoing store stamps, standing in for
+// the column's own default.
+var echoedClickedAt = time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 
 func (f *fakeStore) GetClickByRef(_ context.Context, ref string) (store.CashbackClick, error) {
 	f.askedFor, f.reads = ref, f.reads+1
