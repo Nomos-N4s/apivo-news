@@ -124,12 +124,33 @@ func (w *EvidenceWriter) Record(ctx context.Context, retrieval Retrieval, report
 		return Recorded{}, err
 	}
 
+	row, err := w.store.InsertNetworkTransaction(ctx, evidenceRow(retrieval, report, pgtype.UUID{}))
+	if err != nil {
+		return Recorded{}, fmt.Errorf("%w: %s reporting %s: %w",
+			ErrEvidenceNotWritten, retrieval, strconv.Quote(report.ExternalID), err)
+	}
+
+	return Recorded{
+		ID:            uuid.UUID(row.ID.Bytes),
+		ContentDigest: row.ContentDigest,
+		RetrievedAt:   row.RetrievedAt.Time,
+	}, nil
+}
+
+// evidenceRow is the row one report and one retrieval describe, naming
+// supersedes as its predecessor - the zero value for a first report.
+//
+// One builder for three write paths (this file's, the dedup path's and the
+// supersede path's), because "what a report becomes in the table" is one
+// answer and three copies of it would be three places to forget a column the
+// day one is added. The digest is absent from all of them, as it is from the
+// queries: the database computes it.
+func evidenceRow(retrieval Retrieval, report Reported, supersedes pgtype.UUID) store.InsertNetworkTransactionParams {
 	clickRef := pgtype.Text{}
 	if ref, present := report.ClickRef.Ref(); present {
 		clickRef = pgtype.Text{String: ref, Valid: true}
 	}
-
-	row, err := w.store.InsertNetworkTransaction(ctx, store.InsertNetworkTransactionParams{
+	return store.InsertNetworkTransactionParams{
 		NetworkID:        string(retrieval.Account.Network()),
 		NetworkAccountID: pgtype.UUID{Bytes: retrieval.Account.ID(), Valid: true},
 		ExternalID:       report.ExternalID,
@@ -144,15 +165,15 @@ func (w *EvidenceWriter) Record(ctx context.Context, retrieval Retrieval, report
 		QueryWindowStart: pgtype.Timestamptz{Time: retrieval.Window.From, Valid: true},
 		QueryWindowEnd:   pgtype.Timestamptz{Time: retrieval.Window.To, Valid: true},
 		RawPayload:       report.RawPayload,
-	})
-	if err != nil {
-		return Recorded{}, fmt.Errorf("%w: %s reporting %s: %w",
-			ErrEvidenceNotWritten, retrieval, strconv.Quote(report.ExternalID), err)
+		SupersedesID:     supersedes,
 	}
+}
 
-	return Recorded{
-		ID:            uuid.UUID(row.ID.Bytes),
-		ContentDigest: row.ContentDigest,
-		RetrievedAt:   row.RetrievedAt.Time,
-	}, nil
+// evidenceRowIfNew is the same row for the conflict-swallowing insert. The
+// conversion is deliberate rather than a second builder: sqlc generates the
+// two parameter structs independently, so if a column ever reached one query
+// and not the other this line would stop compiling - which is the tripwire
+// worth having, because the alternative is two builders that drift silently.
+func evidenceRowIfNew(retrieval Retrieval, report Reported, supersedes pgtype.UUID) store.InsertNetworkTransactionIfNewParams {
+	return store.InsertNetworkTransactionIfNewParams(evidenceRow(retrieval, report, supersedes))
 }

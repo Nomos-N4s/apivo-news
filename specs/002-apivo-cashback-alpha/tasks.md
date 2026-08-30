@@ -135,7 +135,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [x] T051 [P] [US2] Write the adapter conformance suite (status-mapping totality, raw-payload presence, window clamping, rate-limit adherence, deeplink round-trip, resumable iteration) in `internal/cashback/networks/conformance_test.go`
 - [x] T052 [US2] Implement evidence persistence writing the normalised record and verbatim raw payload in one transaction in `internal/cashback/networks/evidence.go` + `store/`
 - [x] T053 [US2] Implement the database-computed content digest and the dedup path in `internal/cashback/networks/digest.go`
-- [ ] T054 [US2] Implement superseding-record logic for changed status or amount in `internal/cashback/networks/supersede.go`
+- [x] T054 [US2] Implement superseding-record logic for changed status or amount in `internal/cashback/networks/supersede.go`
 - [ ] T055 [US2] Implement the poller with durable primary and trailing cursors, advancing only after a window is fully persisted, in `internal/cashback/networks/poller.go`
 - [ ] T056 [US2] Implement the per-adapter rate limiter with exponential backoff and jitter in `internal/cashback/networks/limiter.go`
 - [ ] T057 [US2] Register the poll and trailing re-read jobs with the scheduler in `cmd/apivo/main.go`

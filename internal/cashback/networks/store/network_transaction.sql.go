@@ -11,6 +11,66 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getCurrentNetworkTransaction = `-- name: GetCurrentNetworkTransaction :one
+select nt.id, nt.network_id, nt.network_account_id, nt.external_id, nt.click_ref, nt.status_raw, nt.status, nt.sale_amount_minor, nt.commission_minor, nt.currency, nt.transacted_at, nt.retrieved_at, nt.query_window_start, nt.query_window_end, nt.raw_payload, nt.content_digest, nt.supersedes_id
+from cashback.network_transaction nt
+where nt.network_id = $1
+  and nt.external_id = $2
+  and not exists (
+      select 1
+      from cashback.network_transaction superseding
+      where superseding.supersedes_id = nt.id
+  )
+`
+
+type GetCurrentNetworkTransactionParams struct {
+	NetworkID  string
+	ExternalID string
+}
+
+// The transaction's current row: what the network last said about it, and
+// what a new report is judged against (T054).
+//
+// "Current" is DERIVED rather than stamped, because the table is immutable
+// (C-3): a superseding report cannot mark its predecessor superseded, since
+// that would be an UPDATE the table refuses. 0012 builds the chain the other
+// way round - the new row names the old one - and then constrains it so that
+// exactly one row can be the tip: one root per transaction (a partial unique
+// index) and no forks (supersedes_id is unique). One root plus one path
+// means one tip, and the tip is the row nothing supersedes.
+//
+// Which is what this asks. The NOT EXISTS is a single index probe rather
+// than a scan, because supersedes_id carries a unique constraint of its own,
+// so the question "is there a row superseding this one" has at most one
+// answer to find.
+//
+// No rows means the network has never reported this transaction, which is a
+// first report rather than a failure.
+func (q *Queries) GetCurrentNetworkTransaction(ctx context.Context, arg GetCurrentNetworkTransactionParams) (CashbackNetworkTransaction, error) {
+	row := q.db.QueryRow(ctx, getCurrentNetworkTransaction, arg.NetworkID, arg.ExternalID)
+	var i CashbackNetworkTransaction
+	err := row.Scan(
+		&i.ID,
+		&i.NetworkID,
+		&i.NetworkAccountID,
+		&i.ExternalID,
+		&i.ClickRef,
+		&i.StatusRaw,
+		&i.Status,
+		&i.SaleAmountMinor,
+		&i.CommissionMinor,
+		&i.Currency,
+		&i.TransactedAt,
+		&i.RetrievedAt,
+		&i.QueryWindowStart,
+		&i.QueryWindowEnd,
+		&i.RawPayload,
+		&i.ContentDigest,
+		&i.SupersedesID,
+	)
+	return i, err
+}
+
 const getNetworkTransaction = `-- name: GetNetworkTransaction :one
 select id, network_id, network_account_id, external_id, click_ref, status_raw, status, sale_amount_minor, commission_minor, currency, transacted_at, retrieved_at, query_window_start, query_window_end, raw_payload, content_digest, supersedes_id
 from cashback.network_transaction
