@@ -102,11 +102,15 @@ jobs:
       # identities on `main` unchecked until someone added it to that chain
       # too; and this is the one job checked out with fetch-depth: 0, which
       # the suite's last case needs in order to judge real history.
-      - name: Lint the commit author scripts
-        # Both are POSIX sh and run in CI and on contributors' machines alike;
-        # a syntax error in either is otherwise discovered by the commit it
-        # failed to check.
-        run: shellcheck -s sh scripts/lint-commit-authors.sh scripts/lint-commit-authors_test.sh
+      - name: Lint the hygiene scripts
+        # All POSIX sh, run in CI and on contributors' machines alike; a
+        # syntax error in any of them is otherwise discovered by the commit or
+        # the push it failed to check.
+        run: |
+          shellcheck -s sh \
+            scripts/lint-commit-authors.sh scripts/lint-commit-authors_test.sh \
+            scripts/lint-refs.sh scripts/lint-refs_test.sh \
+            scripts/pre-push-hook_test.sh .githooks/pre-push
       - name: Prove the commit author lint's decisions
         # Proved before it is trusted, exactly as migration-lint.yml proves
         # its lint: the suite drives an AI identity past the check in every
@@ -121,6 +125,59 @@ jobs:
         # The same range as the steps around it, unquoted for the same reason:
         # the first-push fallback is two words, not one.
         run: sh scripts/lint-commit-authors.sh ${{ steps.range.outputs.range }}
+      # The three steps above read a COMMIT. None of them reads the name of
+      # the branch it is on, which is not a missing pattern but a missing
+      # subject - and it is the one that put 32 merge commits on `main`
+      # reading "Merge pull request #N from <owner>/<assistant>/<slug>". The
+      # message hook never runs on a merge GitHub writes server-side, the
+      # trailer grep matches three trailer shapes and a merge subject is none
+      # of them, and the identities on those merges are correct: a branch name
+      # is not an identity.
+      - name: Prove the ref name lint's decisions
+        # Proved before it is trusted, exactly as the author lint above is.
+        # The suite drives a name past both rules - the ban and the
+        # convention - and asserts each refusal, then asserts that a release
+        # tag, a fork's branch and the refs GitHub generates are not refused.
+        # No arguments and the empty string are asserted to FAIL rather than
+        # pass, which is the way this gate would otherwise go quiet: on a push
+        # event `github.head_ref` is empty.
+        run: sh scripts/lint-refs_test.sh
+      - name: Prove the pre-push hook
+        # Driven through real `git push` against a bare repository, because
+        # what the hook has to get right is the protocol git speaks to it.
+        # Runs here rather than in a workflow of its own for the same reason
+        # the author lint does: this job is the one that judges history, and
+        # publish.yml calls this workflow on every merge.
+        run: sh scripts/pre-push-hook_test.sh
+      - name: Reject a ref name that names an assistant or vendor
+        # `github.ref` rather than `github.ref_name`, because the short name
+        # of a tag is `v1.2.3` and the convention rule would refuse it; the
+        # lint reads the qualified form and applies the ban alone to a tag.
+        # `head_ref` is a branch by definition, so it is qualified here.
+        #
+        # Through the environment, never interpolated into the script: a head
+        # ref on a pull request from a fork is chosen by whoever opened it.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            sh scripts/lint-refs.sh "refs/heads/$HEAD_REF"
+          else
+            sh scripts/lint-refs.sh "$REF"
+          fi
+      - name: Reject a ref name quoted in a commit subject
+        # The same range as the steps around it, unquoted for the same reason:
+        # the first-push fallback is two words, not one.
+        #
+        # This is the half that catches a name the step above never saw - a
+        # hook skipped, a merge made by hand, a branch that reached `main` by
+        # some path this job does not run on. It judges what the range ADDS;
+        # the 32 merge commits already on `main` are outside every range this
+        # job is given, and could not be corrected without rewriting shared
+        # history in any case.
+        run: sh scripts/lint-refs.sh --from-messages ${{ steps.range.outputs.range }}
       - name: Require Conventional Commit subjects
         run: |
           git log --no-merges --format='%s' ${{ steps.range.outputs.range }} > /tmp/subjects.txt
