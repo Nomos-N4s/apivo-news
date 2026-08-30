@@ -274,7 +274,7 @@
         ],
         "operationId": "createClickOut",
         "summary": "Create a tracked click and get the redirect target",
-        "description": "Records the click and its rate snapshot, then answers where to send the member (FR-020, FR-021).\n\nThe click is committed before this response is written, and nothing is committed when the redirect cannot be built - so a 502 here means it is safe to try again. An anonymous click is never created: without a usable token the request is refused before anything is read (FR-023).\n\nThe whole path is unmounted when cashback is off, and then answers 404.",
+        "description": "Records the click and its rate snapshot, then answers where to send the member (FR-020, FR-021).\n\nThe click is committed before this response is written, and nothing is committed when the redirect cannot be built - so a 502 here means it is safe to try again. An anonymous click is never created: without a usable token the request is refused before anything is read (FR-023).\n\nA member or device clicking far too often is refused with 429 and a Retry-After, and nothing is recorded then either (US7 scenario 1).\n\nThe whole path is unmounted when cashback is off, and then answers 404.",
         "security": [
           {
             "bearerAuth": []
@@ -323,6 +323,26 @@
               }
             },
             "description": "The offer is not published at this moment: expired, not yet started, or its retailer is no longer active."
+          },
+          "429": {
+            "description": "Too many click-outs from this member, or from this device where the deployment can tell devices apart (US7 scenario 1). Nothing was minted and nothing was recorded, so waiting and trying again leaves the caller exactly where they were.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the rule lifts, rounded up: the moment the oldest click in the window falls out of it. Never zero.",
+                "required": true,
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
