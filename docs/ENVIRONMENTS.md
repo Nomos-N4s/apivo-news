@@ -184,9 +184,11 @@ Not a variable in `/etc/apivo/<env>/api.env`. On a Hetzner host it is the
 presence of `deploy/hetzner/compose/docker-compose.cashback.yml` in that
 environment's `COMPOSE_FILE`; in Kubernetes it is whether
 `deploy/k8s/cashback/` was applied. **Listing the overlay is the whole
-decision**, and the four keys that follow from it —
-`CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`, `REDIS_URL` — are set there,
-from the container and Service names that same file chose.
+decision**, and the six keys that follow from it —
+`CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`, `REDIS_URL`,
+`HOUSE_ACCOUNT_ROUNDING`, `HOUSE_ACCOUNT_CLAWBACK` — are set there, from the
+container and Service names that same file chose and the house account
+layout it committed to.
 
 That is deliberate and it is the reason `/etc/apivo/<env>/api.env` does *not*
 carry them. Two answers to "does this environment run cashback" disagree the
@@ -208,6 +210,7 @@ to `/etc/apivo/<env>/`, and editing the template on a host edits nothing.
 | `NETWORK_DRIVER` | `fixture` | **`/etc/apivo/<env>/api.env`** on the host (template: `deploy/hetzner/env/api.env.example`) — an operator's choice, empty = `fixture` | `deploy/k8s/cashback/cashback-configmap.yaml`, empty |
 | `BLNK_URL` | `http://localhost:5001` | the same overlay, from the container name | the `blnk` Service — `deploy/k8s/cashback/blnk-service.yaml` |
 | `REDIS_URL` | `redis://localhost:6379` | the same overlay, from the container name | the `redis` Service — `deploy/k8s/cashback/redis-service.yaml` |
+| `HOUSE_ACCOUNT_ROUNDING`, `HOUSE_ACCOUNT_CLAWBACK` | `rounding-remainder` / `clawback-loss` | the same overlay — the house account the sub-minor-unit rounding remainder accrues to (D6) and the one an absorbed post-payout clawback is recorded against (Q3). Required once `CASHBACK_ENABLED=true` in production, which every deployed environment is (`APP_ENV=prod`); the api refuses to start anywhere if the two share a name, and renaming one later strands whatever balance had accrued under the old name | `deploy/k8s/cashback/cashback-configmap.yaml` |
 | `NETWORK_ACCOUNT_ID` | empty | **`/etc/apivo/<env>/api.env`** | `deploy/k8s/cashback/cashback-configmap.yaml` — not a credential, and logged in clear |
 | `NETWORK_API_KEY`, `NETWORK_API_SECRET` | empty | **`/etc/apivo/<env>/api.env`** — real credentials | the `apivo-secrets` Secret — structure in `deploy/k8s/examples/secret.example.yaml` |
 | `BLNK_SECRET_KEY` | empty (local ledger is unauthenticated) | **`/etc/apivo/<env>/api.env`** — **required**, see below | the `apivo-secrets` Secret |

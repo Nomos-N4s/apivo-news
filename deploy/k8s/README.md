@@ -58,7 +58,7 @@ else.
 
 | File | Contents |
 |---|---|
-| `cashback/cashback-configmap.yaml` | `apivo-cashback-config` — the api's cashback env (`CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`, `REDIS_URL`, `NETWORK_DRIVER`) |
+| `cashback/cashback-configmap.yaml` | `apivo-cashback-config` — the api's cashback env (`CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`, `REDIS_URL`, `NETWORK_DRIVER`, `HOUSE_ACCOUNT_ROUNDING`, `HOUSE_ACCOUNT_CLAWBACK`) |
 | `cashback/blnk-configmap.yaml` | `blnk-config` — non-secret Blnk configuration (`BLNK_REDIS_DNS`, `TZ`) |
 | `cashback/blnk-deployment.yaml` / `cashback/blnk-service.yaml` | The ledger server: one replica, `Recreate`, migrates on boot, ClusterIP |
 | `cashback/blnk-worker-deployment.yaml` | Blnk's queue worker. No Service — nothing calls a worker |
@@ -208,7 +208,7 @@ neither is an oversight:
 | `JWT_AUDIENCE` | empty in `.env.example` | `configmap.yaml`, shipped **empty** (Supabase access tokens carry `authenticated`). Optional; only meaningful alongside a non-empty `JWKS_URL`, and setting it alone fails startup by design |
 | `DATABASE_URL` | local Postgres from `docker-compose.yml` | api `secretKeyRef` → the `apivo-secrets` Secret, created out of band; structure documented in `examples/secret.example.yaml`, which a plain `kubectl apply -f deploy/k8s/` never touches (apply does not recurse into subdirectories) |
 | `HOST` / `PORT` (web) | Astro defaults | Set inline in `web-deployment.yaml` (`0.0.0.0:4321` so the Node adapter binds the pod interface) |
-| `CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`, `REDIS_URL` | `.env.example`; on Hetzner they come from `docker-compose.cashback.yml` | `cashback/cashback-configmap.yaml` → the api's **optional** second `envFrom`. Absent unless `cashback/` was applied, which is the whole switch |
+| `CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`, `REDIS_URL`, `HOUSE_ACCOUNT_ROUNDING`, `HOUSE_ACCOUNT_CLAWBACK` | `.env.example`; on Hetzner they come from `docker-compose.cashback.yml` | `cashback/cashback-configmap.yaml` → the api's **optional** second `envFrom`. Absent unless `cashback/` was applied, which is the whole switch |
 | `NETWORK_DRIVER` | `.env.example`, empty = `fixture` | `cashback/cashback-configmap.yaml`, shipped **empty**. Empty means the fixture adapter, which needs no credentials — the safe default while founder question Q1 is open (ADR-0003) |
 | `BLNK_DATA_SOURCE_DNS` | Hetzner: `blnk.env`, read by the Docker daemon | Blnk `secretKeyRef` → `apivo-secrets`, **required**. A different Postgres role from `DATABASE_URL`: it owns the `blnk` schema and has no rights in `public` |
 | `BLNK_REDIS_DNS` | Hetzner: set in the compose overlay from the container name | `cashback/blnk-configmap.yaml`, naming the `redis` Service |

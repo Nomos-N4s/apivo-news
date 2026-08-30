@@ -9,17 +9,34 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 )
 
-// enabledCashbackEnv is the smallest environment that fully configures
-// cashback: the product on, a ledger, a network adapter that needs no
-// credentials, and - because the ledger is the sidecar - where it lives.
+// The house account names enabledCashbackEnv configures, held as constants
+// so the envs and the wants below cannot drift apart by a typo.
+const (
+	houseRounding = "rounding-remainder"
+	houseClawback = "clawback-loss"
+)
+
+// enabledCashbackEnv fully configures cashback: the product on, a ledger,
+// a network adapter that needs no credentials, the two house accounts
+// money is routed through (optional outside production, but a complete
+// environment is the honest baseline for the wants below), and - because
+// the ledger is the sidecar - where it lives.
 func enabledCashbackEnv() map[string]string {
 	return map[string]string{
-		"DATABASE_URL":     "postgres://x",
-		"CASHBACK_ENABLED": "true",
-		"LEDGER_DRIVER":    config.LedgerDriverBlnk,
-		"BLNK_URL":         "http://blnk:5001",
-		"NETWORK_DRIVER":   config.NetworkDriverFixture,
+		"DATABASE_URL":           "postgres://x",
+		"CASHBACK_ENABLED":       "true",
+		"LEDGER_DRIVER":          config.LedgerDriverBlnk,
+		"BLNK_URL":               "http://blnk:5001",
+		"NETWORK_DRIVER":         config.NetworkDriverFixture,
+		"HOUSE_ACCOUNT_ROUNDING": houseRounding,
+		"HOUSE_ACCOUNT_CLAWBACK": houseClawback,
 	}
+}
+
+// configuredHouseAccounts is what every enabled want below expects the
+// house names to parse to.
+func configuredHouseAccounts() config.HouseAccountsConfig {
+	return config.HouseAccountsConfig{Rounding: houseRounding, Clawback: houseClawback}
 }
 
 func withEnv(base map[string]string, overrides map[string]string) map[string]string {
@@ -71,10 +88,11 @@ func TestCashbackFromEnv(t *testing.T) {
 			name: "complete fixture-network environment",
 			env:  enabledCashbackEnv(),
 			want: config.CashbackConfig{
-				Enabled:      true,
-				LedgerDriver: config.LedgerDriverBlnk,
-				BlnkURL:      "http://blnk:5001",
-				Network:      config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Enabled:       true,
+				HouseAccounts: configuredHouseAccounts(),
+				LedgerDriver:  config.LedgerDriverBlnk,
+				BlnkURL:       "http://blnk:5001",
+				Network:       config.NetworkConfig{Driver: config.NetworkDriverFixture},
 			},
 		},
 		{
@@ -89,6 +107,7 @@ func TestCashbackFromEnv(t *testing.T) {
 			}),
 			want: config.CashbackConfig{
 				Enabled:       true,
+				HouseAccounts: configuredHouseAccounts(),
 				LedgerDriver:  config.LedgerDriverBlnk,
 				BlnkURL:       "http://blnk:5001",
 				BlnkSecretKey: config.NewSecret("blnk-secret"),
@@ -104,14 +123,17 @@ func TestCashbackFromEnv(t *testing.T) {
 		{
 			name: "surrounding whitespace is trimmed",
 			env: withEnv(enabledCashbackEnv(), map[string]string{
-				"LEDGER_DRIVER":  "  " + config.LedgerDriverMemory + " ",
-				"BLNK_URL":       "",
-				"NETWORK_DRIVER": " " + config.NetworkDriverFixture + "  ",
+				"LEDGER_DRIVER":          "  " + config.LedgerDriverMemory + " ",
+				"BLNK_URL":               "",
+				"NETWORK_DRIVER":         " " + config.NetworkDriverFixture + "  ",
+				"HOUSE_ACCOUNT_ROUNDING": "  " + houseRounding + " ",
+				"HOUSE_ACCOUNT_CLAWBACK": " " + houseClawback + "  ",
 			}),
 			want: config.CashbackConfig{
-				Enabled:      true,
-				LedgerDriver: config.LedgerDriverMemory,
-				Network:      config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Enabled:       true,
+				HouseAccounts: configuredHouseAccounts(),
+				LedgerDriver:  config.LedgerDriverMemory,
+				Network:       config.NetworkConfig{Driver: config.NetworkDriverFixture},
 			},
 		},
 		{
@@ -121,9 +143,10 @@ func TestCashbackFromEnv(t *testing.T) {
 				"BLNK_URL":      "",
 			}),
 			want: config.CashbackConfig{
-				Enabled:      true,
-				LedgerDriver: config.LedgerDriverMemory,
-				Network:      config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Enabled:       true,
+				HouseAccounts: configuredHouseAccounts(),
+				LedgerDriver:  config.LedgerDriverMemory,
+				Network:       config.NetworkConfig{Driver: config.NetworkDriverFixture},
 			},
 		},
 		{
@@ -133,9 +156,10 @@ func TestCashbackFromEnv(t *testing.T) {
 				"BLNK_URL":      "",
 			}),
 			want: config.CashbackConfig{
-				Enabled:      true,
-				LedgerDriver: config.LedgerDriverPostgres,
-				Network:      config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Enabled:       true,
+				HouseAccounts: configuredHouseAccounts(),
+				LedgerDriver:  config.LedgerDriverPostgres,
+				Network:       config.NetworkConfig{Driver: config.NetworkDriverFixture},
 			},
 		},
 		{
@@ -211,11 +235,12 @@ func TestCashbackFromEnv(t *testing.T) {
 				"REDIS_URL": "rediss://redis.example.test:6380",
 			}),
 			want: config.CashbackConfig{
-				Enabled:      true,
-				LedgerDriver: config.LedgerDriverBlnk,
-				BlnkURL:      "http://blnk:5001",
-				RedisURL:     "rediss://redis.example.test:6380",
-				Network:      config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Enabled:       true,
+				HouseAccounts: configuredHouseAccounts(),
+				LedgerDriver:  config.LedgerDriverBlnk,
+				BlnkURL:       "http://blnk:5001",
+				RedisURL:      "rediss://redis.example.test:6380",
+				Network:       config.NetworkConfig{Driver: config.NetworkDriverFixture},
 			},
 		},
 		{
@@ -266,15 +291,50 @@ func TestCashbackFromEnv(t *testing.T) {
 				"NETWORK_API_KEY":    "network-key",
 			}),
 			want: config.CashbackConfig{
-				Enabled:      true,
-				LedgerDriver: config.LedgerDriverBlnk,
-				BlnkURL:      "http://blnk:5001",
+				Enabled:       true,
+				HouseAccounts: configuredHouseAccounts(),
+				LedgerDriver:  config.LedgerDriverBlnk,
+				BlnkURL:       "http://blnk:5001",
 				Network: config.NetworkConfig{
 					Driver:    "reference_network",
 					AccountID: "publisher-42",
 					APIKey:    config.NewSecret("network-key"),
 				},
 			},
+		},
+		{
+			// The documented no-Docker loop and the CI jobs enable the
+			// product with four keys and no house names, and spike S3
+			// holds that environment complete (ADR-0002). The names are
+			// demanded where money is real instead - see
+			// TestCashbackProductionRefusals.
+			name: "enabled without house names is accepted outside production",
+			env: withEnv(enabledCashbackEnv(), map[string]string{
+				"HOUSE_ACCOUNT_ROUNDING": "",
+				"HOUSE_ACCOUNT_CLAWBACK": "",
+			}),
+			want: config.CashbackConfig{
+				Enabled:      true,
+				LedgerDriver: config.LedgerDriverBlnk,
+				BlnkURL:      "http://blnk:5001",
+				Network:      config.NetworkConfig{Driver: config.NetworkDriverFixture},
+			},
+		},
+		{
+			name: "two house purposes on one name are refused",
+			env: withEnv(enabledCashbackEnv(), map[string]string{
+				"HOUSE_ACCOUNT_CLAWBACK": houseRounding,
+			}),
+			wantErr: "HOUSE_ACCOUNT_ROUNDING and HOUSE_ACCOUNT_CLAWBACK both name",
+		},
+		{
+			name: "a shared house name is refused even with the product off",
+			env: map[string]string{
+				"DATABASE_URL":           "postgres://x",
+				"HOUSE_ACCOUNT_ROUNDING": "house-shared",
+				"HOUSE_ACCOUNT_CLAWBACK": "house-shared",
+			},
+			wantErr: "HOUSE_ACCOUNT_ROUNDING and HOUSE_ACCOUNT_CLAWBACK both name",
 		},
 		{
 			name: "an incomplete environment is fine with the product off",
@@ -310,9 +370,11 @@ func TestCashbackFromEnv(t *testing.T) {
 	}
 }
 
-// TestCashbackProductionRefusals pins the two rules that only bite in
-// production. Both are money rules: a ledger nobody has to authenticate to,
-// and a ledger that forgets everything when the process restarts.
+// TestCashbackProductionRefusals pins the rules that only bite in
+// production. All are money rules: a ledger nobody has to authenticate to,
+// a ledger that forgets everything when the process restarts, and a
+// deployment that cannot name the house accounts its first commission
+// will post through.
 func TestCashbackProductionRefusals(t *testing.T) {
 	t.Parallel()
 
@@ -345,6 +407,23 @@ func TestCashbackProductionRefusals(t *testing.T) {
 			name:    "an authenticated blnk ledger is accepted in production",
 			env:     prod(map[string]string{"BLNK_SECRET_KEY": "blnk-secret"}),
 			wantErr: "",
+		},
+		{
+			name: "missing house accounts are refused in production",
+			env: prod(map[string]string{
+				"BLNK_SECRET_KEY":        "blnk-secret",
+				"HOUSE_ACCOUNT_ROUNDING": "",
+				"HOUSE_ACCOUNT_CLAWBACK": "",
+			}),
+			wantErr: "HOUSE_ACCOUNT_ROUNDING, HOUSE_ACCOUNT_CLAWBACK are unset",
+		},
+		{
+			name: "one missing house account is refused in production naming its key",
+			env: prod(map[string]string{
+				"BLNK_SECRET_KEY":        "blnk-secret",
+				"HOUSE_ACCOUNT_CLAWBACK": "",
+			}),
+			wantErr: "HOUSE_ACCOUNT_CLAWBACK is unset",
 		},
 		{
 			name: "the postgres exit route is accepted in production",
@@ -383,10 +462,12 @@ func TestCashbackProductionRulesDoNotApplyInDev(t *testing.T) {
 	t.Parallel()
 
 	got, err := config.FromEnv(envFrom(map[string]string{
-		"DATABASE_URL":     "postgres://x?sslmode=disable",
-		"CASHBACK_ENABLED": "true",
-		"LEDGER_DRIVER":    config.LedgerDriverMemory,
-		"NETWORK_DRIVER":   config.NetworkDriverFixture,
+		"DATABASE_URL":           "postgres://x?sslmode=disable",
+		"CASHBACK_ENABLED":       "true",
+		"LEDGER_DRIVER":          config.LedgerDriverMemory,
+		"NETWORK_DRIVER":         config.NetworkDriverFixture,
+		"HOUSE_ACCOUNT_ROUNDING": houseRounding,
+		"HOUSE_ACCOUNT_CLAWBACK": houseClawback,
 	}))
 	if err != nil {
 		t.Fatalf("FromEnv() error: %v", err)
@@ -490,6 +571,9 @@ func TestCashbackMissing(t *testing.T) {
 			want: []string{"NETWORK_ACCOUNT_ID", "NETWORK_API_KEY"},
 		},
 		{
+			// No house names and still complete: the keys are a
+			// production startup rule, not part of what Missing() gates
+			// mounting on - spike S3 pins the four-key environment.
 			name: "complete",
 			cfg: config.CashbackConfig{
 				Enabled:      true,
@@ -568,6 +652,7 @@ func TestCashbackLogValue(t *testing.T) {
 
 	cfg := config.CashbackConfig{
 		Enabled:       true,
+		HouseAccounts: configuredHouseAccounts(),
 		LedgerDriver:  config.LedgerDriverBlnk,
 		BlnkURL:       "http://blnk:5001",
 		BlnkSecretKey: config.NewSecret("blnk-secret-value"),
@@ -599,6 +684,12 @@ func TestCashbackLogValue(t *testing.T) {
 		"http://blnk:5001",
 		"reference_network",
 		"publisher-42",
+		// The house names are pinned as key:value pairs rather than bare
+		// fragments: an operator debugging a house misconfiguration reads
+		// the label, and a line with the two values swapped across the
+		// labels would still contain both bare fragments.
+		`"house_account_rounding":"` + houseRounding + `"`,
+		`"house_account_clawback":"` + houseClawback + `"`,
 		"blnk_secret_key_set",
 		"redis://apivo:xxxxx@redis:6379/0",
 	} {
