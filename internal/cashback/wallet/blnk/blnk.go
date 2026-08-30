@@ -16,36 +16,69 @@
 // # How the port's model lands on Blnk's
 //
 // Blnk has ledgers, balances and transactions. A balance is an account; a
-// transaction moves one currency's worth of value from one or more sources
-// to one or more destinations. The mapping is therefore:
+// transaction moves one currency's worth of value from one source to one
+// destination, from one to several, or from several to one. The mapping is
+// therefore:
 //
-//   - a [wallet.AccountRef] in a currency is one Blnk balance, created in
-//     this ledger's own Blnk ledger and found again by a deterministic
-//     indicator derived from the pair AND from that ledger (see
-//     [Ledger.EnsureAccount]);
+//   - a [wallet.AccountRef] in a currency is one Blnk balance, addressed by
+//     a deterministic indicator derived from the pair AND from the Blnk
+//     ledger this value is configured for (see [Ledger.EnsureAccount]);
+//   - a [wallet.LedgerAccountID] is that indicator, "@" and all, rather
+//     than Blnk's own balance id. Blnk creates a balance the first time a
+//     transaction names one and only that way, so there is no id to hand
+//     out until money has moved;
 //   - a [wallet.Transfer] is one Blnk transaction, whose reference is the
 //     transfer's idempotency key - which is what makes a replay a duplicate
 //     reference rather than a second movement of money;
 //   - a [wallet.Posting] is one movement the caller wrote, read back from
 //     the document this package records on the transaction rather than
-//     from the legs, which are netted per account for the wire.
+//     from what the ledger stored, which is netted per account.
+//
+// # Accounts are named, never created
+//
+// Blnk's create-a-balance endpoint takes a ledger, an identity, a currency
+// and a precision, and no indicator at all: a balance created through it is
+// nameless, and the endpoint that finds a balance by name would never find
+// it again. The only writer of an indicator is the transaction path, which
+// resolves a source or destination beginning with "@" to the balance
+// carrying that name and creates it - in Blnk's own General Ledger - when
+// there is none.
+//
+// So EnsureAccount writes nothing. It validates the reference, resolves the
+// Blnk ledger whose id namespaces the indicator, derives the indicator and
+// returns it; the balance behind it appears when the first transfer names
+// it. Two things follow, and both are load-bearing:
+//
+//   - the balance sits in Blnk's General Ledger, never in the ledger this
+//     value is configured for. That ledger is a namespace and nothing else,
+//     so nothing here may judge a balance by which ledger it belongs to.
+//   - an indicator is unique across the whole server: the lookup filters on
+//     the indicator and the currency, and on nothing else. The ledger id
+//     inside the name is therefore the only thing keeping two deployments
+//     over one Blnk server apart, which is why it is part of every name.
 //
 // # How a split transfer is recorded and read back
 //
 // A transfer touching more than one account on a side becomes one Blnk
-// transaction carrying legs, and Blnk keeps a child transaction beneath it
-// for each leg. Both are ordinary rows, so the filter History reads through
-// answers with the parent for the account that travelled as the scalar end
-// and with a child for each leg account - and a reader that took every row
-// it was handed as a posting would count the scalar side's movement once
-// for the parent and once for every child.
+// transaction carrying legs, and Blnk splits it into one child transaction
+// per leg: each child names one leg account at one end and the whole
+// transfer's other end at the other. ONLY the children are recorded. There
+// is no parent row - the parent exists in the request and in the response
+// and is never persisted - so the transfer's identity is the id its
+// children point at, which is the id the create answered with.
 //
-// So the rows are grouped by the transfer they belong to, the parent is the
-// only one read, and a parent the filter did not return is fetched by id.
-// That costs one extra read per split whose parent was not matched, and it
-// is what makes a member's history of a rounded earning - one funding
-// account, a member bucket and a rounding remainder (D6) - come back as the
-// one posting the caller wrote.
+// A split also rewrites the reference: each child is stored under the
+// transfer's reference with an ordinal appended, and no row carries the
+// original. That is why an idempotency key is looked up by probing for the
+// first child as well as for the key itself, and why the postings of one
+// transfer are gathered by grouping rows on the id they point at rather
+// than by reading a row that does not exist.
+//
+// Every child carries a copy of the whole transfer's annotation, so the
+// document that says which postings the caller wrote is read from ONE child
+// of a group. Reading it once per child would multiply a rounded earning -
+// one funding account, a member bucket and a rounding remainder (D6) - by
+// the number of legs it had.
 //
 // # Money never touches a float
 //
@@ -67,27 +100,49 @@
 // wrapping [wallet.ErrUnsupportedTransfer] rather than split into several
 // transactions, because splitting would promise an atomicity this package
 // would not be delivering. Callers split such a movement themselves, one
-// transfer per currency, each with its own key. Within one currency the
-// shape is unrestricted: any number of accounts giving and any number
-// receiving become one transaction with source and destination legs.
+// transfer per currency, each with its own key.
 //
-// Five smaller divergences from the in-memory reference are real and are
+// A transfer with several accounts giving AND several receiving is refused
+// the same way. Blnk splits exactly one side of a transaction: it takes the
+// sources when there are sources and the destinations otherwise, and hands
+// every child the other side's scalar - which a transfer split on both
+// sides does not have. Such a request is not recorded wrongly, it is not
+// recorded at all, and refusing it here says so in the port's own
+// vocabulary rather than as whatever the ledger answers when it cannot
+// resolve an empty account. One side may have as many accounts as it likes.
+//
+// Seven smaller divergences from the in-memory reference are real and are
 // stated here rather than left to be discovered:
 //
 //   - PostedAt is the ledger's instant, not a clock this process can set.
 //     [WithClock] moves the settle deadline and nothing else, so a test
 //     that needs postings at chosen instants draws its windows from what
 //     History returns instead of from instants it invented.
+//   - The postings of one SPLIT transfer can carry instants a shade apart
+//     when they are read from different accounts. The ledger writes a
+//     split's children one at a time, each stamped as it lands, and a
+//     History read sees only the children naming the account being read;
+//     the transfer's instant is the earliest of those, which is the whole
+//     truth for the account on the split's single side and one child's
+//     truth for an account on the other. Every account's own history stays
+//     ordered, stable across re-reads and partitioned by adjacent windows,
+//     which is what a watermark resume needs - a watermark is per account -
+//     and closing the gap would cost a second query per split on every read
+//     to fetch rows that account is no part of.
 //   - History's tie-break is the ledger's transaction id. It is stable
 //     across repeated reads, which is what a watermark resume needs, but
 //     the ids are not ordered, so it is not the order the ledger recorded
 //     them in. Postings sharing an instant are the ordinary case within one
 //     transfer, and those all carry one reference anyway.
-//   - History finds a transfer by the account being one end of a recorded
-//     transaction, and the integration suite posts a many-to-many transfer
-//     and reads it back to hold the substrate to it - because a history
-//     that silently omitted a leg would understate a member's total while
-//     Balance, which is the ledger's own figure, went on being right.
+//   - [wallet.ErrUnknownAccount] is judged by reading the account id, not
+//     by asking the ledger. An id EnsureAccount issued is an indicator this
+//     package's derivation could have written, in this deployment's ledger
+//     namespace; anything else was never issued here, whether or not some
+//     balance somewhere answers to it. The other two implementations ask
+//     their storage, because their storage is where accounts are created.
+//     Here nothing is created, so a lookup would only answer whether money
+//     has moved yet - which is a different question, and answering it as
+//     "no such account" would refuse the first transfer into a bucket.
 //   - An account whose postings cancel inside a transfer has no History
 //     entry for it here, where the other two keep one per posting. Such an
 //     account is no leg of the transaction - it moves nothing - so nothing
@@ -98,8 +153,15 @@
 //   - A transaction written on one of these balances by something other
 //     than this package carries none of its annotations, so there is
 //     nothing to read but what the ledger recorded: it comes back as the
-//     one netted posting the legs describe. The other two implementations
+//     one netted posting the rows describe. The other two implementations
 //     have no such transactions to answer for.
+//   - A transfer's Reference travels as the transaction's description,
+//     which Blnk requires to be non-empty. The port does not, so a blank
+//     Reference is sent as the idempotency key instead: the description is
+//     a courtesy pointer for whoever reads the ledger directly, and the key
+//     is the truest pointer this package has when the caller named nothing.
+//     What a replay compares is unaffected - that is the annotation, not
+//     the description.
 //
 // One promise the port makes cannot be kept over a network and is stated
 // here as well: a failure with no answer from the ledger - a transport
@@ -111,14 +173,20 @@
 //
 // Docker is unavailable on the founder's machine, so the suite in
 // integration_test.go skips there and first runs for real in the cashback
-// CI job. Four readings of the substrate are encoded here and cannot be
+// CI job. Five readings of the substrate are encoded here and cannot be
 // confirmed anywhere else, and each is written to fail loudly rather than
 // guess:
 //
-//   - that a split is recorded as a parent transaction with a child per
-//     leg. A child whose parent this package cannot read makes History
-//     fail, naming the transfer it could not read, rather than answering
-//     for the leg under the leg's own reference.
+//   - that naming an account in a transaction creates a balance under that
+//     name, with the "@" kept, so the same name finds it afterwards. If it
+//     did not, a member's balance would read as zero while the ledger's own
+//     figure was right, so the live suite reads a balance back immediately
+//     after the transfer that created it.
+//   - which ordinal a split appends to the reference. The queued path and
+//     the synchronous path in the server spell it differently, and this
+//     package sends only synchronous transactions - so it probes the
+//     spelling that path writes first and the other second, and the live
+//     suite posts a split and replays its key to prove the probe finds it.
 //   - that a filtered page arrives under the key this package reads. A page
 //     under any other key is an error, never an empty history.
 //   - that a transaction the ledger declines to apply frees the reference
@@ -171,12 +239,13 @@ var _ wallet.Ledger = (*Ledger)(nil)
 // need to move, and none of them is a money decision: the amounts, the
 // accounts and the refusals are the same whatever these are set to.
 const (
-	// DefaultLedgerName is the name of the Blnk ledger this package keeps
-	// its balances in when no id or name is configured. Blnk groups
-	// balances into named ledgers, and the resolved group is part of every
-	// account name this package derives, which is what keeps its accounts
-	// apart from anything else pointed at the same server - the endpoint
-	// that finds a balance by name carries no ledger of its own.
+	// DefaultLedgerName is the name of the Blnk ledger this package
+	// namespaces its account names under when no id or name is configured.
+	// The balances themselves are created by Blnk, in its own General
+	// Ledger, so this names a namespace rather than a container - and it is
+	// the whole of what keeps this deployment's accounts apart from
+	// anything else pointed at the same server, because an indicator is
+	// unique across the server rather than within a ledger.
 	DefaultLedgerName = "cashback"
 	// DefaultPrecision is the minor units per major unit Blnk is told each
 	// transaction uses. It affects only how the ledger renders its own
@@ -196,9 +265,13 @@ const (
 
 // historyPageSize is how many transactions one History page asks for. It is
 // a page rather than an unbounded read because a history is unbounded, and
-// it is large because the alternative to one round trip per few postings is
-// a member's wallet view costing dozens.
-const historyPageSize = 200
+// it is as large as the ledger will honour because the alternative to one
+// round trip per few postings is a member's wallet view costing dozens.
+//
+// A hundred is that maximum: the server clamps a larger page down to its
+// own default of twenty rather than refusing it, so asking for more than
+// this would quietly cost five times the round trips.
+const historyPageSize = 100
 
 // historyMaxPages caps the paging loop. A server that ignored the offset
 // would otherwise return page one forever, and a wallet view that never
@@ -220,7 +293,7 @@ const metaKeyTransfer = "wallet_transfer"
 // for the account, derived from the resolved Blnk ledger and the (ref,
 // currency) pair EnsureAccount was handed - it is how the same pair finds
 // the same balance on every call, across processes and restarts, with no
-// mapping table anywhere.
+// mapping table anywhere, and it is the account id this package hands out.
 //
 // The parts are joined with a full stop and every part is restricted to
 // characters that need no escaping, because the indicator travels in a URL
@@ -228,15 +301,23 @@ const metaKeyTransfer = "wallet_transfer"
 // a part would let two different accounts spell one indicator, which is a
 // member's money merged with somebody else's.
 //
-// The first part is the Blnk ledger the balance belongs to, and it is what
-// makes [WithLedgerID] and [WithLedgerName] isolate anything at all: the
-// endpoint that finds a balance by name carries no ledger, so two
-// deployments pointed at one Blnk server would otherwise resolve one
+// The first part is the Blnk ledger the name belongs to, and it is what
+// makes [WithLedgerID] and [WithLedgerName] isolate anything at all: an
+// indicator is unique across the whole server rather than within a ledger,
+// so two deployments pointed at one Blnk server would otherwise resolve one
 // another's house accounts - the configured names are the same strings in
 // every environment - and post each other's money. The resolved ledger id
 // is used rather than the configured name, because a deployment may name
 // its ledger or pin its id and both spellings must derive one account.
 const (
+	// indicatorPrefix is what makes Blnk treat a source or destination as a
+	// name to resolve rather than as a balance id, and it is stored as part
+	// of the name: the server passes the raw source through to the balance
+	// it creates, so the lookup must ask for the "@" too. It is part of the
+	// account id this package hands out for that reason - an id that had to
+	// be decorated before use would be an id whose spelling every caller
+	// had learned.
+	indicatorPrefix    = "@"
 	indicatorSeparator = "."
 	// memberIndicator marks a member's claim bucket:
 	// <ledger>.member.<uuid>.<stage>.<CUR>. Every part is fixed-format, so
@@ -274,9 +355,9 @@ const (
 // It holds no money of its own. Accounts, transfers and postings live in
 // Blnk, so any number of Ledger values over one Blnk server are one ledger,
 // across processes and restarts alike. What it does hold is the resolved id
-// of the Blnk ledger its balances sit in, and the account ids it has
-// already resolved - both immutable facts about a server that never deletes
-// either, cached so the common path costs one round trip rather than three.
+// of the Blnk ledger that namespaces its account names - an immutable fact
+// about a server that neither renames nor deletes one, memoised so the
+// common path costs no round trip at all.
 type Ledger struct {
 	client *blnkgo.Client
 
@@ -301,19 +382,10 @@ type Ledger struct {
 	// its own transactions - see [WithClock].
 	now func() time.Time
 
-	// mu guards the two caches below and the per-account locks.
+	// mu guards the resolved ledger below.
 	mu sync.Mutex
 	// ledgerID is the resolved Blnk ledger, empty until first resolved.
 	ledgerID string
-	// accounts memoises indicator -> balance id. A Blnk balance is never
-	// deleted and its indicator never changes, so an entry can never go
-	// stale; it can only save a lookup.
-	accounts map[string]wallet.LedgerAccountID
-	// ensuring holds one lock per account name, so two goroutines racing
-	// to create one account do not both create it. Entries are never
-	// removed: there is one per account this process has ever ensured,
-	// which is the same bound the memo above already carries.
-	ensuring map[string]*sync.Mutex
 }
 
 // Option configures the ledger [New] returns.
@@ -327,22 +399,22 @@ func WithSecretKey(key string) Option {
 	return func(l *Ledger) { l.secretKey = key }
 }
 
-// WithLedgerID pins the Blnk ledger balances are created in, skipping the
-// lookup by name. Use it where the ledger is provisioned outside this
-// process and its id is configuration. The ledger it names is part of every
-// account name this value derives, so two deployments over one Blnk server
-// keep their accounts apart by choosing different ledgers and by nothing
-// else.
+// WithLedgerID pins the Blnk ledger account names are namespaced under,
+// skipping the lookup by name. Use it where the ledger is provisioned
+// outside this process and its id is configuration. The ledger it names is
+// part of every account name this value derives, so two deployments over
+// one Blnk server keep their accounts apart by choosing different ledgers
+// and by nothing else.
 func WithLedgerID(id string) Option {
 	return func(l *Ledger) { l.ledgerIDOpt = strings.TrimSpace(id) }
 }
 
-// WithLedgerName names the Blnk ledger balances are created in, to be
-// resolved on first use and created if it does not exist. An empty name
-// keeps [DefaultLedgerName]: a nameless ledger would be found by nothing.
-// The resolved ledger is part of every account name this value derives, so
-// two deployments sharing one Blnk server keep their accounts apart by
-// naming different ledgers.
+// WithLedgerName names the Blnk ledger account names are namespaced under,
+// to be resolved on first use and created if it does not exist. An empty
+// name keeps [DefaultLedgerName]: a nameless ledger would be found by
+// nothing. The resolved ledger is part of every account name this value
+// derives, so two deployments sharing one Blnk server keep their accounts
+// apart by naming different ledgers.
 func WithLedgerName(name string) Option {
 	return func(l *Ledger) {
 		if strings.TrimSpace(name) != "" {
@@ -420,8 +492,6 @@ func New(baseURL string, opts ...Option) (*Ledger, error) {
 		settleTimeout:  DefaultSettleTimeout,
 		settleInterval: DefaultSettleInterval,
 		now:            time.Now,
-		accounts:       make(map[string]wallet.LedgerAccountID),
-		ensuring:       make(map[string]*sync.Mutex),
 	}
 	for _, opt := range opts {
 		opt(l)
@@ -462,25 +532,32 @@ type silentLogger struct{}
 func (silentLogger) Info(string)  {}
 func (silentLogger) Error(string) {}
 
-// EnsureAccount resolves ref in currency to the Blnk balance that holds it,
-// creating the balance the first time the pair is named.
+// EnsureAccount resolves ref in currency to the name Blnk knows the account
+// by. It creates nothing, and it is the one method here that could not
+// create anything if it wanted to.
 //
 // Identity is an indicator derived deterministically from the Blnk ledger
 // this value is configured for and from (ref, currency) -
-// <ledger>.member.<uuid>.<stage>.<CUR> or <ledger>.house.<hex of the
-// name>.<CUR> - which is what makes the call idempotent with no mapping
-// table on this side: the same pair spells the same indicator on every
-// call, in every process, and the balance is found by looking that
-// indicator up. The returned id is Blnk's own balance id and is opaque to
-// every caller, as the port says.
+// @<ledger>.member.<uuid>.<stage>.<CUR> or @<ledger>.house.<hex of the
+// name>.<CUR> - and that string IS the returned account id. The same pair
+// spells the same id in every process and after every restart, with no
+// mapping table on either side, which is what makes the call idempotent and
+// safe under any number of racing callers: there is nothing to race for.
 //
-// The ledger is part of the name because the endpoint that looks a name up
-// carries no ledger: two deployments pointed at one Blnk server would
-// otherwise resolve one another's accounts, and house names come from
-// configuration, so "commission" is the same string in staging and in
-// production. Member accounts are no safer - a database restored from
-// production carries the same member ids. Naming the ledger is what makes
-// [WithLedgerName] and [WithLedgerID] isolate anything.
+// The balance behind the name appears when the first transfer names it.
+// Blnk creates a balance only along that path - its create-a-balance
+// endpoint takes no indicator, so a balance made through it could never be
+// found by name again - and it creates it in its own General Ledger. An
+// account nothing has posted to yet therefore has no balance row at all,
+// which is not an error: it holds nothing, and Balance and History say so.
+//
+// The ledger is part of the name because an indicator is unique across the
+// whole server rather than within a ledger: two deployments pointed at one
+// Blnk server would otherwise resolve one another's accounts, and house
+// names come from configuration, so "commission" is the same string in
+// staging and in production. Member accounts are no safer - a database
+// restored from production carries the same member ids. Naming the ledger
+// is what makes [WithLedgerName] and [WithLedgerID] isolate anything.
 //
 // The derivation is injective. Member ids are fixed-format uuids and stages
 // come from a closed set; house names are hex-encoded, so a configured name
@@ -490,12 +567,10 @@ func (silentLogger) Error(string) {}
 // mistyped from. No member identity beyond the opaque account uuid reaches
 // the ledger.
 //
-// An unusable ref is refused wrapping [wallet.ErrInvalidAccountRef], a
+// An unusable ref is refused wrapping [wallet.ErrInvalidAccountRef] and a
 // malformed currency wrapping [money.ErrInvalidCurrency], both before any
-// I/O. A created balance is read back and its indicator checked: a server
-// that did not record the name would otherwise hand out a new balance on
-// every call and split one member's money across all of them, and that is a
-// failure worth stopping on rather than discovering in a reconciliation.
+// I/O. The only I/O this method can do is resolving the Blnk ledger the
+// name is scoped to, once per process.
 func (l *Ledger) EnsureAccount(ctx context.Context, ref wallet.AccountRef, currency money.Currency) (wallet.LedgerAccountID, error) {
 	if err := ref.Validate(); err != nil {
 		return "", err
@@ -515,98 +590,27 @@ func (l *Ledger) EnsureAccount(ctx context.Context, ref wallet.AccountRef, curre
 	if err != nil {
 		return "", err
 	}
-	indicator := indicatorFor(ledgerID, ref, currency)
-	if id, ok := l.cachedAccount(indicator); ok {
-		return id, nil
-	}
-
-	// One lock per account name. Two goroutines ensuring one account must
-	// not both create it: Blnk mints a balance id per create, and two
-	// balances under one indicator is one member's money in two places.
-	// Different accounts do not wait on each other.
-	unlock := l.lockAccount(indicator)
-	defer unlock()
-	if id, ok := l.cachedAccount(indicator); ok {
-		return id, nil
-	}
-
-	id, err := l.resolveAccount(ctx, ledgerID, indicator, currency)
-	if err != nil {
-		return "", err
-	}
-	l.cacheAccount(indicator, id)
-	return id, nil
+	return wallet.LedgerAccountID(indicatorFor(ledgerID, ref, currency)), nil
 }
 
-// resolveAccount finds the balance carrying indicator, creating it when
-// there is none. The lookup runs again after a create, so two processes
-// that raced converge on whichever balance the lookup answers with rather
-// than each keeping the one it made.
+// balanceByIndicator looks one balance up by the name Blnk created it
+// under, reporting a nil balance and no error when no transfer has named it
+// yet. An account with no balance row is an account holding nothing, which
+// is an ordinary answer here and not an unknown account: EnsureAccount
+// issued the name, and the row appears when money first moves.
 //
-// A create that fails is not given up on until the lookup has been asked
-// once more. Two processes cold-starting on one account race, and a server
-// that refuses the second create is indistinguishable from one that
-// accepted it - exactly the argument createLedger already makes - so the
-// losing process converges instead of failing an EnsureAccount that a
-// retry would have satisfied.
-//
-// The balance the read-back answers with is compared against the one the
-// create returned. They differ only if this process has just leaked a
-// second balance under a name that is supposed to be the account's whole
-// identity, which would leave one account's money split across two
-// balances with nothing to find it later. That is reported rather than
-// memoised.
-func (l *Ledger) resolveAccount(ctx context.Context, ledgerID, indicator string, currency money.Currency) (wallet.LedgerAccountID, error) {
-	found, err := l.balanceByIndicator(ledgerID, indicator, currency)
-	switch {
-	case err == nil:
-		return wallet.LedgerAccountID(found.BalanceID), nil
-	case !isNotFound(err):
-		return "", fmt.Errorf("blnk: looking up account %q: %w", indicator, err)
-	}
-
-	created, createErr := l.createBalance(ctx, ledgerID, indicator, currency)
-	if createErr != nil {
-		// A create that lost a race to another process has already put the
-		// account there, so the lookup - not the refusal - is the answer.
-		if raced, err := l.balanceByIndicator(ledgerID, indicator, currency); err == nil {
-			return wallet.LedgerAccountID(raced.BalanceID), nil
-		}
-		return "", createErr
-	}
-
-	// Read back through the same lookup every other caller will use. If it
-	// answers, its answer is the one that converges; if it does not, the
-	// server did not record the indicator and every future EnsureAccount
-	// would create another balance.
-	found, err = l.balanceByIndicator(ledgerID, indicator, currency)
-	if err != nil {
-		return "", fmt.Errorf(
-			"blnk: account %q was created as balance %q but cannot be found by name; the ledger did not record the name, so every call would create another balance and one account's money would be split across them: %w",
-			indicator, created.BalanceID, err)
-	}
-	if found.BalanceID != created.BalanceID {
-		return "", fmt.Errorf(
-			"blnk: account %q was created as balance %q but the name now answers with balance %q; two balances carry one account's name, so its money is already split across them and no later reconciliation finds it",
-			indicator, created.BalanceID, found.BalanceID)
-	}
-	return wallet.LedgerAccountID(found.BalanceID), nil
-}
-
-// balanceByIndicator looks one balance up by the name this package gave it,
-// and checks that what came back is the account that was asked for. The
-// check is not ceremony: the lookup is the whole of this package's account
-// identity, and a server answering with some other balance would be money
-// posted to the wrong account.
-//
-// The balance must also sit in the Blnk ledger this value is configured
-// for. The endpoint carries no ledger, so a server shared by two
-// deployments answers both of them from one pool of names; a balance
-// belonging to another ledger is reported as absent, which is what it is
-// from here.
-func (l *Ledger) balanceByIndicator(ledgerID, indicator string, currency money.Currency) (*blnkgo.LedgerBalance, error) {
+// What came back is checked against what was asked for. The check is not
+// ceremony: the lookup is the whole of this package's account identity, and
+// a server answering with some other balance would be money read off the
+// wrong account. Which Blnk ledger the balance sits in is NOT checked -
+// every balance this package touches is auto-created in the General Ledger,
+// and the configured ledger lives inside the name instead.
+func (l *Ledger) balanceByIndicator(indicator string, currency money.Currency) (*blnkgo.LedgerBalance, error) {
 	balance, resp, err := l.client.LedgerBalance.GetByIndicator(indicator, string(currency))
 	closeResponse(resp)
+	if isNotFound(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -616,52 +620,17 @@ func (l *Ledger) balanceByIndicator(ledgerID, indicator string, currency money.C
 	if balance.Indicator != indicator {
 		return nil, fmt.Errorf("blnk: looking up account %q answered with an account named %q", indicator, balance.Indicator)
 	}
-	if balance.LedgerID != ledgerID {
-		return nil, notFoundError{fmt.Errorf("blnk: account %q sits in the ledger %q, not %q", indicator, balance.LedgerID, ledgerID)}
-	}
 	if balance.Currency != string(currency) {
 		return nil, fmt.Errorf("blnk: account %q holds %s, not %s", indicator, balance.Currency, currency)
 	}
 	return balance, nil
 }
 
-// notFoundError marks a refusal this package makes for itself that means
-// the same thing as the ledger answering "no such thing": the account is
-// not there to be found, so the caller creates it rather than failing.
-type notFoundError struct{ err error }
-
-func (e notFoundError) Error() string { return e.err.Error() }
-func (e notFoundError) Unwrap() error { return e.err }
-
-// createBalanceRequest is the create-a-balance body this package sends. The
-// SDK's own request type carries no indicator field, and the indicator is
-// this package's entire account identity, so the body is written here and
-// posted through the SDK's client - which keeps the transport, the
-// credential and the error decoding shared with every other call.
-type createBalanceRequest struct {
-	LedgerID  string `json:"ledger_id"`
-	Currency  string `json:"currency"`
-	Indicator string `json:"indicator"`
-}
-
-// createBalance creates one empty balance under the given name.
-func (l *Ledger) createBalance(ctx context.Context, ledgerID, indicator string, currency money.Currency) (*blnkgo.LedgerBalance, error) {
-	body := createBalanceRequest{LedgerID: ledgerID, Currency: string(currency), Indicator: indicator}
-	created := new(blnkgo.LedgerBalance)
-	if err := l.call(ctx, "balances", http.MethodPost, body, created); err != nil {
-		return nil, fmt.Errorf("blnk: creating account %q: %w", indicator, err)
-	}
-	if created.BalanceID == "" {
-		return nil, fmt.Errorf("blnk: creating account %q returned no balance id", indicator)
-	}
-	return created, nil
-}
-
-// resolveLedgerID answers with the Blnk ledger this package's balances live
-// in, resolving it once per process. A configured id is taken as given; a
-// name is looked up and created if absent, and the list is re-read after a
-// create so two processes that raced converge on one ledger rather than
-// each keeping its own.
+// resolveLedgerID answers with the Blnk ledger this package's account names
+// are scoped to, resolving it once per process. A configured id is taken as
+// given; a name is looked up and created if absent, and the list is re-read
+// after a create so two processes that raced converge on one ledger rather
+// than each keeping its own.
 func (l *Ledger) resolveLedgerID(ctx context.Context) (string, error) {
 	id, err := l.knownLedgerID(ctx)
 	if err != nil || id != "" {
@@ -681,11 +650,11 @@ func (l *Ledger) resolveLedgerID(ctx context.Context) (string, error) {
 	return id, nil
 }
 
-// knownLedgerID answers with the Blnk ledger this package's balances live
-// in when there already is one, and with the empty string when the
-// configured name names no ledger yet. It creates nothing, which is what
-// makes it usable from the read paths: a Balance or a History over an id
-// nobody issued must not bring a ledger into existence as a side effect.
+// knownLedgerID answers with the Blnk ledger this package's account names
+// are scoped to when there already is one, and with the empty string when
+// the configured name names no ledger yet. It creates nothing, which is
+// what makes it usable from the read paths: a Balance or a History over an
+// id nobody issued must not bring a ledger into existence as a side effect.
 func (l *Ledger) knownLedgerID(ctx context.Context) (string, error) {
 	l.mu.Lock()
 	cached := l.ledgerID
@@ -764,7 +733,7 @@ func (l *Ledger) createLedger(ctx context.Context) error {
 // derivation is injective, why the house name is encoded rather than
 // written through, and why the ledger is part of the name at all.
 func indicatorFor(ledgerID string, ref wallet.AccountRef, currency money.Currency) string {
-	scope := hex.EncodeToString([]byte(ledgerID))
+	scope := indicatorPrefix + hex.EncodeToString([]byte(ledgerID))
 	if memberID, stage, ok := ref.Member(); ok {
 		return strings.Join([]string{scope, memberIndicator, memberID.String(), stage.String(), string(currency)}, indicatorSeparator)
 	}
@@ -803,11 +772,19 @@ var stageNames = map[string]bool{
 // parseIndicator reads back what indicatorFor wrote for the ledger
 // ledgerID: which shape the account has and which currency it was ensured
 // in. It reports ok false for anything this package did not write, and for
-// anything it wrote for another ledger - which is how an id EnsureAccount
-// never issued, here, is told from one it did.
+// anything it wrote for another ledger.
+//
+// This is the whole of how an id EnsureAccount never issued is told from
+// one it did, and it is a divergence from the other two implementations,
+// which ask their storage. Nothing is created here, so the ledger could
+// only answer whether money has moved through the account yet - a different
+// question, and answering it as "no such account" would refuse the first
+// transfer into every bucket. What the port promises is that ids it issued
+// work and ids it did not are refused, and the derivation is injective, so
+// reading the name answers exactly that.
 func parseIndicator(ledgerID, indicator string) (kind accountKind, currency money.Currency, ok bool) {
 	parts := strings.Split(indicator, indicatorSeparator)
-	if len(parts) < 2 || parts[0] != hex.EncodeToString([]byte(ledgerID)) {
+	if len(parts) < 2 || parts[0] != indicatorPrefix+hex.EncodeToString([]byte(ledgerID)) {
 		return kindUnknown, "", false
 	}
 	parts = parts[1:]
@@ -838,23 +815,33 @@ func parseIndicator(ledgerID, indicator string) (kind accountKind, currency mone
 	}
 }
 
-// account is what Post and Balance need to know about one ledger account:
-// the currency it holds, whether the solvency rule governs it, and what it
-// holds right now.
+// account is what Post, Balance and History need to know about one ledger
+// account: the currency it holds, whether the solvency rule governs it,
+// what it holds right now, and the balance id Blnk gave it if a transfer
+// has named it yet.
+//
+// balanceID is empty for an account no money has reached. That is an
+// ordinary state, not a missing one, and the two readers treat it as such:
+// there is nothing to hold and nothing to have a history of.
 type account struct {
-	id       wallet.LedgerAccountID
-	kind     accountKind
-	currency money.Currency
-	held     money.Amount
+	id        wallet.LedgerAccountID
+	kind      accountKind
+	currency  money.Currency
+	held      money.Amount
+	balanceID string
 }
 
-// readAccount reads one balance and turns it into this package's view of
-// the account. An id Blnk does not know, an id Blnk knows but EnsureAccount
-// did not issue, and an id belonging to another deployment's Blnk ledger
-// are all refused wrapping [wallet.ErrUnknownAccount]: the port's promise
-// is about ids this ledger handed out, and a balance somebody else created
-// - in this ledger or in a neighbouring one on the same server - is not one
-// of them.
+// readAccount turns an account id into this package's view of the account:
+// what its name says it is, and what the ledger holds under that name.
+//
+// The name decides whether the id was ever issued here. An id that is not
+// an indicator this package's derivation could have written, in this
+// deployment's ledger namespace, is refused wrapping
+// [wallet.ErrUnknownAccount] - see [parseIndicator] on why that judgement
+// is made by reading rather than by asking. A name this deployment did
+// write that the ledger has no balance for is an account holding nothing:
+// the balance appears when the first transfer names it, so its absence
+// means no money has moved yet and never that the account is unknown.
 func (l *Ledger) readAccount(ctx context.Context, id wallet.LedgerAccountID) (account, error) {
 	if err := ctx.Err(); err != nil {
 		return account{}, fmt.Errorf("blnk: %w", err)
@@ -869,32 +856,23 @@ func (l *Ledger) readAccount(ctx context.Context, id wallet.LedgerAccountID) (ac
 	if ledgerID == "" {
 		return account{}, fmt.Errorf("%w: %q, and this port has issued no account at all yet", wallet.ErrUnknownAccount, id)
 	}
-	balance, resp, err := l.client.LedgerBalance.Get(string(id))
-	closeResponse(resp)
-	if isNotFound(err) {
-		return account{}, fmt.Errorf("%w: %q", wallet.ErrUnknownAccount, id)
+	kind, currency, ok := parseIndicator(ledgerID, string(id))
+	if !ok {
+		return account{}, fmt.Errorf("%w: %q is not a name this ledger issues", wallet.ErrUnknownAccount, id)
 	}
+
+	empty, err := money.Zero(currency)
+	if err != nil {
+		return account{}, fmt.Errorf("blnk: account %q: %w", id, err)
+	}
+	acct := account{id: id, kind: kind, currency: currency, held: empty}
+
+	balance, err := l.balanceByIndicator(string(id), currency)
 	if err != nil {
 		return account{}, fmt.Errorf("blnk: reading account %q: %w", id, err)
 	}
 	if balance == nil {
-		return account{}, fmt.Errorf("blnk: reading account %q returned nothing", id)
-	}
-	if balance.LedgerID != ledgerID {
-		return account{}, fmt.Errorf("%w: %q sits in the ledger %q, and this one keeps its accounts in %q",
-			wallet.ErrUnknownAccount, id, balance.LedgerID, ledgerID)
-	}
-
-	kind, named, ok := parseIndicator(ledgerID, balance.Indicator)
-	if !ok {
-		return account{}, fmt.Errorf("%w: %q is a ledger balance this port did not create", wallet.ErrUnknownAccount, id)
-	}
-	held, err := money.ParseCurrency(balance.Currency)
-	if err != nil {
-		return account{}, fmt.Errorf("blnk: account %q: %w", id, err)
-	}
-	if held != named {
-		return account{}, fmt.Errorf("blnk: account %q is named for %s but holds %s", id, named, held)
+		return acct, nil
 	}
 
 	// The one place a ledger figure becomes an Amount. A balance too large
@@ -904,7 +882,9 @@ func (l *Ledger) readAccount(ctx context.Context, id wallet.LedgerAccountID) (ac
 	if err != nil {
 		return account{}, fmt.Errorf("blnk: the balance of account %q: %w", id, err)
 	}
-	return account{id: id, kind: kind, currency: held, held: money.Amount{Minor: minor, Currency: held}}, nil
+	acct.held = money.Amount{Minor: minor, Currency: currency}
+	acct.balanceID = balance.BalanceID
+	return acct, nil
 }
 
 // Balance returns what Blnk says the account holds as of the call: the
@@ -916,8 +896,11 @@ func (l *Ledger) readAccount(ctx context.Context, id wallet.LedgerAccountID) (ac
 // (C-6): an account of a different currency is refused wrapping
 // [money.ErrCurrencyMismatch], an id EnsureAccount never issued wrapping
 // [wallet.ErrUnknownAccount]. An account with no postings is zero in its
-// currency. A figure too large for an int64 is refused wrapping
-// [money.ErrOverflow] rather than wrapped around.
+// currency - including one Blnk has no balance row for at all, because a
+// row appears only when a transfer names the account and its absence means
+// no money has moved rather than that the account is unknown. A figure too
+// large for an int64 is refused wrapping [money.ErrOverflow] rather than
+// wrapped around.
 func (l *Ledger) Balance(ctx context.Context, id wallet.LedgerAccountID, currency money.Currency) (money.Amount, error) {
 	acct, err := l.readAccount(ctx, id)
 	if err != nil {
@@ -962,6 +945,15 @@ type decomposition struct {
 // currency, so recording one would take several transactions, and several
 // transactions are not one atomic act. Refusing is the contract; splitting
 // would be promising an atomicity this package could not deliver.
+//
+// A transfer with several accounts giving AND several receiving is refused
+// the same way, and for the same reason: Blnk splits one side of a
+// transaction into a child per leg, taking the sources when there are
+// sources and the destinations otherwise, and gives every child the other
+// side's single account. A transaction split on both sides has no such
+// account to give them, so the ledger cannot record it - not wrongly, at
+// all. Refusing here names the shape in the port's own vocabulary rather
+// than passing the ledger a request it will fail to resolve.
 //
 // Within one currency the postings are netted per account, in the order the
 // transfer introduced them, and an account whose postings cancel is dropped
@@ -1026,6 +1018,11 @@ func decompose(postings []wallet.Posting) (decomposition, error) {
 		return decomposition{}, fmt.Errorf("%w: it has %d account(s) giving and %d receiving",
 			wallet.ErrNoMovement, len(out.sources), len(out.destinations))
 	}
+	if len(out.sources) > 1 && len(out.destinations) > 1 {
+		return decomposition{}, fmt.Errorf(
+			"%w: %d accounts give and %d receive, and this ledger splits one side of a transaction into a leg each while handing every leg the other side's single account; post one transfer per side, each with its own key",
+			wallet.ErrUnsupportedTransfer, len(out.sources), len(out.destinations))
+	}
 	out.total = total.Minor
 	return out, nil
 }
@@ -1060,11 +1057,14 @@ func legsOf(movements []movement) ([]blnkgo.Source, error) {
 //     refused wrapping [wallet.ErrUnsupportedTransfer] with no I/O, because
 //     no key could ever have recorded one - a Blnk transaction carries a
 //     single currency, and several transactions are not one atomic act. A
-//     transfer in which a house account that must go below nothing gives
-//     beside a member's stage account is refused the same way, once the
-//     accounts have been read: the overdraft this ledger grants covers a
-//     whole transaction, so recording that shape would mean giving up the
-//     member's protection. See below.
+//     transfer with several accounts giving and several receiving is
+//     refused the same way and as early, because this ledger splits one
+//     side of a transaction and has nothing to give the legs of a transfer
+//     split on both. A transfer in which a house account that must go
+//     below nothing gives beside a member's stage account is refused the
+//     same way too, once the accounts have been read: the overdraft this
+//     ledger grants covers a whole transaction, so recording that shape
+//     would mean giving up the member's protection. See below.
 //  2. The idempotency key, before anything the ledger knows about
 //     accounts. A key already recorded answers about what it recorded: the
 //     same transfer returns the original reference and records nothing, a
@@ -1116,14 +1116,20 @@ func legsOf(movements []movement) ([]blnkgo.Source, error) {
 // was recorded and must be read back rather than re-keyed, because minting
 // a fresh key for the correction would record both.
 //
-// The reference returned is Blnk's transaction id, and it is readable the
-// moment Post returns. Blnk queues transactions by default, which would
-// make a wallet recomputed straight after a transition show the total from
-// before it, so every transaction this package creates asks to skip the
-// queue and Post does not return until the ledger reports it applied. If it
-// has not applied inside the settle window the call fails rather than
-// claiming a visibility it does not have - and because the key is already
-// recorded, the caller's retry is a replay, not a second movement.
+// The reference returned is Blnk's transaction id for the whole transfer,
+// and it is readable the moment Post returns. For a transfer the ledger
+// split it is the id every child points at, which is the id the create
+// answered with and the id History reports for each of them, so all a
+// transfer's postings carry one reference whatever shape it had - which is
+// what the audit join from a domain row to the money needs (D7).
+//
+// Blnk queues transactions by default, which would make a wallet recomputed
+// straight after a transition show the total from before it, so every
+// transaction this package creates asks to skip the queue and Post does not
+// return until the ledger reports it applied. If it has not applied inside
+// the settle window the call fails rather than claiming a visibility it
+// does not have - and because the key is already recorded, the caller's
+// retry is a replay, not a second movement.
 func (l *Ledger) Post(ctx context.Context, transfer wallet.Transfer) (wallet.TransferRef, error) {
 	if err := transfer.Validate(); err != nil {
 		return "", err
@@ -1152,7 +1158,7 @@ func (l *Ledger) Post(ctx context.Context, transfer wallet.Transfer) (wallet.Tra
 		if err := l.awaitApplied(ctx, transfer.IdempotencyKey, replay); err != nil {
 			return "", l.explainRefusal(ctx, transfer, err)
 		}
-		return wallet.TransferRef(replay.TransactionID), nil
+		return wallet.TransferRef(replay.id), nil
 	}
 
 	accounts, err := l.checkAccounts(ctx, transfer.Postings)
@@ -1192,15 +1198,16 @@ func (l *Ledger) Post(ctx context.Context, transfer wallet.Transfer) (wallet.Tra
 		if err := l.awaitApplied(ctx, transfer.IdempotencyKey, winner); err != nil {
 			return "", l.explainRefusal(ctx, transfer, err)
 		}
-		return wallet.TransferRef(winner.TransactionID), nil
+		return wallet.TransferRef(winner.id), nil
 	}
 	if created == nil || created.TransactionID == "" {
 		return "", fmt.Errorf("blnk: the transfer under key %q was accepted but no transaction id came back", transfer.IdempotencyKey)
 	}
-	if err := l.awaitApplied(ctx, transfer.IdempotencyKey, created); err != nil {
+	accepted := recordedTransfer{id: created.TransactionID, status: created.Status, metadata: created.MetaData}
+	if err := l.awaitApplied(ctx, transfer.IdempotencyKey, &accepted); err != nil {
 		return "", l.explainRefusal(ctx, transfer, err)
 	}
-	return wallet.TransferRef(created.TransactionID), nil
+	return wallet.TransferRef(accepted.id), nil
 }
 
 // explainRefusal turns a transaction the ledger declined to apply into the
@@ -1238,10 +1245,17 @@ func (l *Ledger) explainRefusal(ctx context.Context, transfer wallet.Transfer, e
 // buildRequest renders the transfer as the transaction Blnk will record.
 //
 // A side with one account travels as the scalar source or destination and a
-// side with several as legs, because the SDK refuses a request carrying
-// both spellings of one side. A transfer with more than one leg anywhere is
-// marked atomic, which is what makes the split legs succeed or fail
-// together rather than one at a time.
+// side with several as legs, because the ledger refuses a request carrying
+// both spellings of one side. Exactly one side can carry legs - decompose
+// refuses the rest - and that side's transaction is marked atomic, which is
+// what makes its legs succeed or fail together rather than one at a time.
+//
+// The description is the transfer's Reference, or the idempotency key when
+// the caller named nothing: the ledger requires a description and the port
+// does not require a Reference, so a blank one would make every transfer
+// with no domain pointer unpostable. The key is the truest pointer there is
+// in that case, and what a replay compares is the annotation rather than
+// this.
 //
 // allowOverdraft is asked for only when a house account gives: see
 // [Ledger.Post] on why that permission cannot simply always be granted.
@@ -1257,7 +1271,10 @@ func (l *Ledger) buildRequest(transfer wallet.Transfer, shape decomposition, rec
 		ParentTransaction: blnkgo.ParentTransaction{
 			// Blnk's reference IS the idempotency key: a second
 			// transaction under it is refused by the ledger, which is what
-			// makes a replayed dispatch safe (C-5).
+			// makes a replayed dispatch safe (C-5). A split rewrites it
+			// into one reference per child, and the rewriting is
+			// deterministic, so the guard survives the shape - see
+			// [splitOrdinals].
 			Reference: transfer.IdempotencyKey,
 			Currency:  string(shape.currency),
 			Precision: l.precision,
@@ -1265,7 +1282,7 @@ func (l *Ledger) buildRequest(transfer wallet.Transfer, shape decomposition, rec
 			// value: Blnk refuses a request carrying both, and a float in
 			// a money position is a rounding error waiting for an audit.
 			PreciseAmount: big.NewInt(shape.total),
-			Description:   transfer.Reference,
+			Description:   cmp.Or(strings.TrimSpace(transfer.Reference), transfer.IdempotencyKey),
 			// Inline rather than queued. The port requires what Post
 			// recorded to be readable the moment it returns, and a queued
 			// transaction is readable when a worker gets to it.
@@ -1300,7 +1317,7 @@ func (l *Ledger) buildRequest(transfer wallet.Transfer, shape decomposition, rec
 // back to the message - older responses carry only a flat string, and the
 // SDK maps those to the code UNKNOWN, so a package that read the code alone
 // would stop recognising an overdraft the day the server was downgraded.
-func (l *Ledger) explainCreateFailure(transfer wallet.Transfer, recorded record, err error) (*blnkgo.Transaction, error) {
+func (l *Ledger) explainCreateFailure(transfer wallet.Transfer, recorded record, err error) (*recordedTransfer, error) {
 	switch {
 	case isConflict(err):
 		winner, state, judged := l.judgeRecordedKey(transfer, recorded)
@@ -1316,7 +1333,7 @@ func (l *Ledger) explainCreateFailure(transfer wallet.Transfer, recorded record,
 			// decide it has seen.
 			return nil, fmt.Errorf(
 				"blnk: idempotency key %q is held by transaction %q, which the ledger refused to apply and will not accept again; nothing moved, but this key cannot be re-used and the transfer needs a decision outside this process: %w",
-				transfer.IdempotencyKey, winner.TransactionID, err)
+				transfer.IdempotencyKey, winner.id, err)
 		case state == keyUnclaimed:
 			return nil, fmt.Errorf("blnk: the ledger refused idempotency key %q as already used, but no transfer is recorded under it: %w", transfer.IdempotencyKey, err)
 		default:
@@ -1523,18 +1540,18 @@ func refused(status blnkgo.PryTransactionStatus) bool {
 // under key applied, which is what makes the port's read-your-writes
 // promise true over a substrate that queues by default.
 //
-// The transaction the create returned is passed in when there is one, so
-// the ordinary case - skip_queue accepted, applied inline - costs no extra
+// The transfer the create returned is passed in when there is one, so the
+// ordinary case - skip_queue accepted, applied inline - costs no extra
 // round trip. Anything else is re-read until it applies or the settle
 // window closes. A transaction the ledger declined to apply is reported as
 // a [refusedTransfer] for Post to answer for, and a status this package
 // does not know is reported immediately rather than polled for: the money
 // question behind an unrecognised answer does not get clearer by asking the
 // same question again for fifteen seconds.
-func (l *Ledger) awaitApplied(ctx context.Context, key string, created *blnkgo.Transaction) error {
+func (l *Ledger) awaitApplied(ctx context.Context, key string, created *recordedTransfer) error {
 	status := blnkgo.PryTransactionStatus("")
 	if created != nil {
-		status = created.Status
+		status = created.status
 	}
 	if status == blnkgo.PryTransactionStatusApplied {
 		return nil
@@ -1563,13 +1580,12 @@ func (l *Ledger) awaitApplied(ctx context.Context, key string, created *blnkgo.T
 		if err := sleep(ctx, l.settleInterval); err != nil {
 			return fmt.Errorf("blnk: waiting for transfer %q to be readable: %w", key, err)
 		}
-		found, resp, err := l.client.Transaction.GetByReference(key)
-		closeResponse(resp)
-		switch {
-		case err != nil && !isNotFound(err):
+		found, err := l.transferUnder(key)
+		if err != nil {
 			return fmt.Errorf("blnk: waiting for transfer %q to be readable: %w", key, err)
-		case err == nil && found != nil:
-			status = found.Status
+		}
+		if found != nil {
+			status = found.status
 		}
 	}
 }
@@ -1693,11 +1709,10 @@ const (
 )
 
 // judgeRecordedKey answers for an idempotency key that may already be in
-// the ledger: the recorded transaction for a true replay, a conflict for
-// the same key carrying a different transfer, and keyUnclaimed when the key
-// is not recorded at all. The transaction is handed back rather than only
-// its id, so the caller can see whether it has applied without asking
-// again.
+// the ledger: the recorded transfer for a true replay, a conflict for the
+// same key carrying a different transfer, and keyUnclaimed when the key is
+// not recorded at all. The transfer is handed back rather than only its id,
+// so the caller can see whether it has applied without asking again.
 //
 // A transaction the ledger refused is judged before its contents are, and
 // answers keyRefused whatever it was carrying. Nothing was recorded under
@@ -1706,23 +1721,19 @@ const (
 // transfer, and reporting the refusal again would strand one that simply
 // retried it. Keys are derived from the domain fact that caused the
 // transfer (D8), so neither caller can escape by minting a new one.
-func (l *Ledger) judgeRecordedKey(transfer wallet.Transfer, incoming record) (*blnkgo.Transaction, keyState, error) {
-	found, resp, err := l.client.Transaction.GetByReference(transfer.IdempotencyKey)
-	closeResponse(resp)
-	if isNotFound(err) {
-		return nil, keyUnclaimed, nil
-	}
+func (l *Ledger) judgeRecordedKey(transfer wallet.Transfer, incoming record) (*recordedTransfer, keyState, error) {
+	found, err := l.transferUnder(transfer.IdempotencyKey)
 	if err != nil {
 		return nil, keyUnclaimed, fmt.Errorf("blnk: reading idempotency key %q: %w", transfer.IdempotencyKey, err)
 	}
-	if found == nil || found.TransactionID == "" {
-		return nil, keyUnclaimed, fmt.Errorf("blnk: idempotency key %q reads back with no transaction id", transfer.IdempotencyKey)
+	if found == nil {
+		return nil, keyUnclaimed, nil
 	}
-	if refused(found.Status) {
+	if refused(found.status) {
 		return found, keyRefused, nil
 	}
 
-	stored, err := recordedOn(found)
+	stored, err := recordedOn(found.metadata)
 	if err != nil {
 		return nil, keyClaimed, fmt.Errorf("blnk: the transfer recorded under key %q: %w", transfer.IdempotencyKey, err)
 	}
@@ -1732,13 +1743,95 @@ func (l *Ledger) judgeRecordedKey(transfer wallet.Transfer, incoming record) (*b
 	return found, keyClaimed, nil
 }
 
+// recordedTransfer is one transfer as the ledger holds it, whatever number
+// of rows it kept for it: the id every caller of this key must be told, the
+// status that says whether it moved money, and the annotation that decides
+// what a replay of the key means.
+//
+// It exists because a split transfer has no row of its own. Its id is the
+// id its children point at, its status and its annotation are read from one
+// of them, and nothing above this type needs to know which of the two
+// shapes it came from.
+type recordedTransfer struct {
+	id       string
+	status   blnkgo.PryTransactionStatus
+	metadata map[string]any
+}
+
+// splitOrdinals are the suffixes the ledger appends to a transfer's
+// reference when it splits it, in the order transferUnder probes them.
+//
+// A split rewrites the reference of every child and records no row under
+// the original, so a key that recorded a split cannot be found by asking
+// for it. The children are numbered from one, which makes the first child's
+// reference deterministic - but the ledger spells the join differently
+// depending on which path recorded the transaction, and the two paths are
+// not distinguishable from here with certainty. The synchronous path, which
+// is the only one this package asks for, writes the hyphen; the queued path
+// rewrites it to the underscore. Both are probed, cheapest first, because a
+// key whose transfer this package failed to find would be posted a second
+// time - which is the one mistake idempotency exists to prevent.
+var splitOrdinals = []string{"-1", "_1"}
+
+// transferUnder answers with the transfer recorded under an idempotency
+// key, or nil when nothing is recorded under it.
+//
+// The key itself is asked for first, which is the whole answer for a
+// transfer the ledger did not split. A split records no row under the key,
+// so the first child is probed for instead, and the transfer's id is the
+// parent the child names.
+//
+// A row found under a probed reference that names no parent is somebody
+// else's transfer whose key happens to spell this one's first child, and it
+// is skipped rather than read: it belongs to a different key, and answering
+// with it would replay a movement this caller never made.
+func (l *Ledger) transferUnder(key string) (*recordedTransfer, error) {
+	found, err := l.transactionByReference(key)
+	if err != nil {
+		return nil, err
+	}
+	if found != nil {
+		return &recordedTransfer{id: found.TransactionID, status: found.Status, metadata: found.MetaData}, nil
+	}
+
+	for _, ordinal := range splitOrdinals {
+		child, err := l.transactionByReference(key + ordinal)
+		switch {
+		case err != nil:
+			return nil, err
+		case child == nil, child.ParentTransactionID == "":
+			continue
+		}
+		return &recordedTransfer{id: child.ParentTransactionID, status: child.Status, metadata: child.MetaData}, nil
+	}
+	return nil, nil
+}
+
+// transactionByReference reads the one transaction carrying a reference,
+// answering with nil where there is none. The lookup is an exact match, so
+// "none" is genuinely none rather than a prefix that missed.
+func (l *Ledger) transactionByReference(reference string) (*blnkgo.Transaction, error) {
+	found, resp, err := l.client.Transaction.GetByReference(reference)
+	closeResponse(resp)
+	if isNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if found == nil || found.TransactionID == "" {
+		return nil, fmt.Errorf("blnk: the reference %q reads back with no transaction id", reference)
+	}
+	return found, nil
+}
+
 // recordedOn reads back the identity document this package wrote on a
 // transaction. A transaction under one of this port's keys that carries no
 // document was written behind this package's back, and is reported loudly
 // rather than treated as matching nothing: answering "conflict" would
 // invite a caller to mint a new key for money that may already have moved.
-func recordedOn(txn *blnkgo.Transaction) (record, error) {
-	raw, ok := txn.MetaData[metaKeyTransfer]
+func recordedOn(metadata map[string]any) (record, error) {
+	raw, ok := metadata[metaKeyTransfer]
 	if !ok {
 		return record{}, errors.New("carries none of this port's annotations, so it was not recorded through this package")
 	}
@@ -1766,21 +1859,25 @@ func recordedOn(txn *blnkgo.Transaction) (record, error) {
 // because the contract's ordering is this port's: ascending PostedAt, ties
 // broken so that two reads of one window yield the same sequence.
 //
-// A posting is one movement the caller wrote, not one leg on the wire. The
-// legs are netted per account before a transaction is created, so they
-// cannot answer for a transfer that named an account twice; the postings
-// come from the document this package records on the transaction, and the
-// two are required to agree to the minor unit. That is what makes a History
-// read here the same shape as the in-memory and Postgres ledgers answer
-// with, which is what the shared conformance suite compares.
+// A posting is one movement the caller wrote, not one row the ledger kept.
+// The movements are netted per account before a transaction is created, so
+// what the ledger stored cannot answer for a transfer that named an account
+// twice; the postings come from the document this package records on the
+// transaction, and the two are required to agree to the minor unit. That is
+// what makes a History read here the same shape as the in-memory and
+// Postgres ledgers answer with, which is what the shared conformance suite
+// compares.
+//
+// An account that never received a transfer has no balance row and no
+// history: the answer is an empty sequence, not a refusal, because the row
+// appears when money first moves and its absence says only that none has.
 //
 // Two divergences from the in-memory reference are worth stating rather
-// than discovering. Ties are broken by the ledger's transaction id, which
-// is stable across repeated reads - which is what a watermark resume needs
-// - but is not the order the ledger recorded them in, because Blnk's ids
-// are not ordered. And only applied transactions are yielded: a queued,
-// inflight or rejected transaction has not moved the balance, so it is not
-// a posting.
+// than discovering. Ties are broken by the transfer's id, which is stable
+// across repeated reads - which is what a watermark resume needs - but is
+// not the order the ledger recorded them in, because Blnk's ids are not
+// ordered. And only applied transactions are yielded: a queued, inflight or
+// rejected transaction has not moved the balance, so it is not a posting.
 func (l *Ledger) History(ctx context.Context, id wallet.LedgerAccountID, window wallet.Window) (iter.Seq2[wallet.Posting, error], error) {
 	if err := window.Validate(); err != nil {
 		return nil, err
@@ -1813,12 +1910,15 @@ func (l *Ledger) History(ctx context.Context, id wallet.LedgerAccountID, window 
 
 // postingsOn collects every posting the account carries inside the window,
 // in the order the port promises.
+//
+// An account no transfer has named yet has no balance row, so there is no
+// id for the filter to match on and nothing to read: the answer is no
+// postings, which is what an account holding nothing has.
 func (l *Ledger) postingsOn(ctx context.Context, acct account, window wallet.Window) ([]wallet.Posting, error) {
-	rows, err := l.transactionsTouching(ctx, acct.id)
-	if err != nil {
-		return nil, err
+	if acct.balanceID == "" {
+		return nil, nil
 	}
-	transfers, err := l.transfersAmong(ctx, rows)
+	rows, err := l.transactionsTouching(ctx, acct)
 	if err != nil {
 		return nil, err
 	}
@@ -1826,22 +1926,20 @@ func (l *Ledger) postingsOn(ctx context.Context, acct account, window wallet.Win
 	// Ordered before the postings are built, so the tie-break is over the
 	// ledger's own record rather than over whatever order two filter
 	// queries happened to answer in.
-	slices.SortStableFunc(transfers, func(a, b blnkgo.Transaction) int {
-		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+	transfers := groupIntoTransfers(rows)
+	slices.SortStableFunc(transfers, func(a, b transferGroup) int {
+		if c := a.at.Compare(b.at); c != 0 {
 			return c
 		}
-		return cmp.Compare(a.TransactionID, b.TransactionID)
+		return cmp.Compare(a.id, b.id)
 	})
 
 	postings := make([]wallet.Posting, 0, len(transfers))
-	for _, txn := range transfers {
-		if txn.Status != blnkgo.PryTransactionStatusApplied {
+	for _, transfer := range transfers {
+		if !transfer.applied || !window.Contains(transfer.at) {
 			continue
 		}
-		if !window.Contains(txn.CreatedAt) {
-			continue
-		}
-		on, err := postingsOfTransfer(txn, acct)
+		on, err := postingsOfTransfer(transfer, acct)
 		if err != nil {
 			return nil, err
 		}
@@ -1850,71 +1948,63 @@ func (l *Ledger) postingsOn(ctx context.Context, acct account, window wallet.Win
 	return postings, nil
 }
 
-// transfersAmong reduces the rows a filter answered with to one transaction
-// per transfer: the one this package created.
+// transferGroup is one transfer as the ledger kept it: every row belonging
+// to it, the id they all answer to, and when it happened.
+type transferGroup struct {
+	// id is what History reports as the posting's TransferRef: the row's
+	// own id for a transfer the ledger did not split, and the id the
+	// children point at for one it did - which is the id Post returned in
+	// both cases, so the domain's join lands on the same value (D7).
+	id string
+	// rows are the ledger's own records of this transfer, in the order the
+	// filter answered with them.
+	rows []blnkgo.Transaction
+	// at is the earliest instant any of the rows carries. The children of
+	// one split are written one at a time, so they can carry instants a
+	// microsecond apart; taking the earliest makes the transfer's instant a
+	// property of the transfer rather than of which row a page happened to
+	// start with, which is what keeps two reads of one window identical.
+	at time.Time
+	// applied is true only when every row applied. A transfer half of whose
+	// rows the ledger did not apply moved part of the money it was asked
+	// to, and postingsOfTransfer refuses it by name rather than answering
+	// with a fraction of a movement - see there.
+	applied bool
+}
+
+// groupIntoTransfers reduces the rows a filter answered with to one group
+// per transfer.
 //
-// Blnk records a transfer whose legs are split across several balances as a
-// parent transaction carrying the legs, with one child transaction beneath
-// it per leg (that is what the SDK's parent_transaction field is for). Both
-// are ordinary rows, so a filter on an account that travelled as the scalar
-// end of a split answers with the parent AND with every child - and reading
-// each of them as a posting would count that account's movement twice over.
-// Grouping by parent is what makes that impossible: the transfer is one
-// thing however many rows the ledger keeps for it.
-//
-// The parent is the row that matters. It carries the reference, the
-// annotation that says which postings the caller wrote, and both ends of
-// the movement, so a child is only ever a way of finding it - which is
-// exactly what a filter on a leg account answers with. Where the filter did
-// not return the parent it is fetched by id, once per transfer, which costs
-// a round trip on the split shapes and none on the rest.
-func (l *Ledger) transfersAmong(ctx context.Context, rows []blnkgo.Transaction) ([]blnkgo.Transaction, error) {
-	parents := make(map[string]blnkgo.Transaction, len(rows))
+// A transfer the ledger split has no row of its own: it is recorded as one
+// child per leg, each naming the transfer it belongs to and carrying a copy
+// of its annotation, and the parent is never persisted. So a group is the
+// rows sharing a parent, or a single unsplit row, and the account's
+// movement in that transfer is the sum over the group - which counts every
+// leg once and the transfer's other end once, because each child names that
+// end for its own share and no row names it for the whole.
+func groupIntoTransfers(rows []blnkgo.Transaction) []transferGroup {
+	groups := make(map[string]*transferGroup, len(rows))
 	order := make([]string, 0, len(rows))
 	for _, row := range rows {
 		id := cmp.Or(row.ParentTransactionID, row.TransactionID)
-		if _, seen := parents[id]; !seen {
+		group, seen := groups[id]
+		if !seen {
+			group = &transferGroup{id: id, at: row.CreatedAt, applied: true}
+			groups[id] = group
 			order = append(order, id)
-			parents[id] = blnkgo.Transaction{}
 		}
-		if row.TransactionID == id {
-			parents[id] = row
+		group.rows = append(group.rows, row)
+		if row.CreatedAt.Before(group.at) {
+			group.at = row.CreatedAt
 		}
+		group.applied = group.applied && row.Status == blnkgo.PryTransactionStatusApplied
 	}
 
-	out := make([]blnkgo.Transaction, 0, len(order))
+	out := make([]transferGroup, 0, len(order))
 	for _, id := range order {
-		txn := parents[id]
-		if txn.TransactionID == "" {
-			fetched, err := l.transactionByID(ctx, id)
-			if err != nil {
-				return nil, err
-			}
-			txn = *fetched
-		}
-		out = append(out, txn)
+		out = append(out, *groups[id])
 	}
-	return out, nil
-}
-
-// transactionByID reads the transfer a split leg belongs to. A leg that
-// names a parent the ledger will not hand back is reported rather than
-// worked around: the parent is where the transfer's identity lives, and
-// answering from the leg alone would report a movement under a reference
-// the domain cannot join on (D7).
-func (l *Ledger) transactionByID(ctx context.Context, id string) (*blnkgo.Transaction, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("blnk: %w", err)
-	}
-	txn, resp, err := l.client.Transaction.Get(id)
-	closeResponse(resp)
-	if err != nil {
-		return nil, fmt.Errorf("blnk: reading the transfer %q that a split leg belongs to: %w", id, err)
-	}
-	if txn == nil || txn.TransactionID == "" {
-		return nil, fmt.Errorf("blnk: the transfer %q that a split leg belongs to reads back with no transaction id", id)
-	}
-	return txn, nil
+	return out
 }
 
 // transactionsTouching reads every transaction naming the account at either
@@ -1927,13 +2017,18 @@ func (l *Ledger) transactionByID(ctx context.Context, id string) (*blnkgo.Transa
 // default - would otherwise end the read after one page, and a member's
 // history would silently lose everything past it while Balance, which is
 // the ledger's own figure, went on being right.
-func (l *Ledger) transactionsTouching(ctx context.Context, id wallet.LedgerAccountID) ([]blnkgo.Transaction, error) {
+//
+// The filter asks about the balance id and not about the name. Blnk
+// resolves an "@" name to its balance before it records anything, and the
+// column it stores is a foreign key into the balances table, so the name
+// this package addresses the account by never appears in a recorded row.
+func (l *Ledger) transactionsTouching(ctx context.Context, acct account) ([]blnkgo.Transaction, error) {
 	seen := make(map[string]bool)
 	var found []blnkgo.Transaction
 	for _, field := range []string{fieldSource, fieldDestination} {
 		offset := 0
 		for page := range historyMaxPages {
-			batch, err := l.filterTransactions(ctx, field, string(id), offset)
+			batch, err := l.filterTransactions(ctx, field, acct.balanceID, offset)
 			if err != nil {
 				return nil, err
 			}
@@ -1949,7 +2044,7 @@ func (l *Ledger) transactionsTouching(ctx context.Context, id wallet.LedgerAccou
 				found = append(found, txn)
 			}
 			if page == historyMaxPages-1 {
-				return nil, fmt.Errorf("blnk: reading the history of account %q: still paging after %d pages", id, historyMaxPages)
+				return nil, fmt.Errorf("blnk: reading the history of account %q: still paging after %d pages", acct.id, historyMaxPages)
 			}
 		}
 	}
@@ -2029,27 +2124,33 @@ func decodePage(page json.RawMessage) ([]blnkgo.Transaction, error) {
 // The answer is the postings the CALLER wrote, read back from the identity
 // document this package records on every transaction it creates - one
 // wallet.Posting per input posting, in the order they were written, exactly
-// as the in-memory and Postgres ledgers answer. The legs on the wire cannot
-// answer it: they are netted per account, so a transfer written as 100 out
-// and 200 out on one account reaches Blnk as a single leg of 300, and the
-// port is explicit that those are different records.
+// as the in-memory and Postgres ledgers answer. What the ledger stored
+// cannot answer it: the movements are netted per account before anything is
+// sent, so a transfer written as 100 out and 200 out on one account reaches
+// Blnk as a single movement of 300, and the port is explicit that those are
+// different records.
 //
 // What the ledger stored is still read, and the two are required to agree
-// to the minor unit. The document says what was asked for and the legs say
+// to the minor unit. The document says what was asked for and the rows say
 // what was recorded; a transfer where they differ is a transfer this
-// package did not send the way it thinks it did, and that is worth stopping
-// on rather than reporting either figure as the truth.
+// package did not send the way it thinks it did - a split half applied,
+// most of all - and that is worth stopping on rather than reporting either
+// figure as the truth.
 //
-// A transaction carrying no such document was written behind this package's
+// The document is read from ONE row of the group. Every child of a split
+// carries a copy of the whole transfer's annotation, so reading it per row
+// would report a rounded earning once per leg.
+//
+// A transfer carrying no such document was written behind this package's
 // back - a neighbouring system posting on one of these balances - and there
 // is nothing to read but what the ledger recorded, so it yields the one
-// netted posting the legs describe.
-func postingsOfTransfer(txn blnkgo.Transaction, acct account) ([]wallet.Posting, error) {
-	written, annotated, err := writtenPostings(txn, acct)
+// netted posting the rows describe.
+func postingsOfTransfer(transfer transferGroup, acct account) ([]wallet.Posting, error) {
+	written, annotated, err := writtenPostings(transfer, acct)
 	if err != nil {
 		return nil, err
 	}
-	net, touched, err := netOf(txn, acct)
+	net, touched, err := netOf(transfer, acct)
 	if err != nil {
 		return nil, err
 	}
@@ -2059,17 +2160,19 @@ func postingsOfTransfer(txn blnkgo.Transaction, acct account) ([]wallet.Posting,
 	case !annotated && (!touched || net.IsZero()):
 		return nil, nil
 	}
-	if txn.Currency != string(acct.currency) {
-		return nil, fmt.Errorf("blnk: transfer %q moves %s on account %q, which holds %s: %w",
-			txn.TransactionID, txn.Currency, acct.id, acct.currency, money.ErrCurrencyMismatch)
+	for _, row := range transfer.rows {
+		if row.Currency != string(acct.currency) {
+			return nil, fmt.Errorf("blnk: transfer %q moves %s on account %q, which holds %s: %w",
+				transfer.id, row.Currency, acct.id, acct.currency, money.ErrCurrencyMismatch)
+		}
 	}
 
 	posting := func(a money.Amount) wallet.Posting {
 		return wallet.Posting{
 			Account:     acct.id,
 			Amount:      a,
-			TransferRef: wallet.TransferRef(txn.TransactionID),
-			PostedAt:    txn.CreatedAt,
+			TransferRef: wallet.TransferRef(transfer.id),
+			PostedAt:    transfer.at,
 		}
 	}
 	if !annotated {
@@ -2083,28 +2186,36 @@ func postingsOfTransfer(txn blnkgo.Transaction, acct account) ([]wallet.Posting,
 	out := make([]wallet.Posting, 0, len(written))
 	for _, amount := range written {
 		if sum, err = sum.Add(amount); err != nil {
-			return nil, fmt.Errorf("blnk: totalling what transfer %q did to account %q: %w", txn.TransactionID, acct.id, err)
+			return nil, fmt.Errorf("blnk: totalling what transfer %q did to account %q: %w", transfer.id, acct.id, err)
 		}
 		out = append(out, posting(amount))
 	}
 	if !sum.Equal(net) {
 		return nil, fmt.Errorf(
-			"blnk: transfer %q says it moved %s on account %q but the ledger recorded %s; the transfer this package sent and the transaction the ledger kept are not the same movement",
-			txn.TransactionID, sum, acct.id, net)
+			"blnk: transfer %q says it moved %s on account %q but the ledger recorded %s across the %d row(s) it kept for it; the transfer this package sent and what the ledger kept are not the same movement",
+			transfer.id, sum, acct.id, net, len(transfer.rows))
 	}
 	return out, nil
 }
 
 // writtenPostings reads the account's own postings out of the identity
 // document this package records on the transactions it creates, reporting
-// annotated false for a transaction that carries none.
-func writtenPostings(txn blnkgo.Transaction, acct account) (written []money.Amount, annotated bool, err error) {
-	if _, carried := txn.MetaData[metaKeyTransfer]; !carried {
+// annotated false for a transfer that carries none.
+//
+// One row of the group is read and the rest ignored, because a split's
+// children each carry a copy of the same document - see
+// [postingsOfTransfer]. The first row is as good as any: they are copies.
+func writtenPostings(transfer transferGroup, acct account) (written []money.Amount, annotated bool, err error) {
+	if len(transfer.rows) == 0 {
 		return nil, false, nil
 	}
-	stored, err := recordedOn(&txn)
+	row := transfer.rows[0]
+	if _, carried := row.MetaData[metaKeyTransfer]; !carried {
+		return nil, false, nil
+	}
+	stored, err := recordedOn(row.MetaData)
 	if err != nil {
-		return nil, false, fmt.Errorf("blnk: the transfer recorded as transaction %q: %w", txn.TransactionID, err)
+		return nil, false, fmt.Errorf("blnk: the transfer recorded as transaction %q: %w", transfer.id, err)
 	}
 	for _, p := range stored.Postings {
 		if p.Account != string(acct.id) {
@@ -2112,97 +2223,73 @@ func writtenPostings(txn blnkgo.Transaction, acct account) (written []money.Amou
 		}
 		if p.Currency != string(acct.currency) {
 			return nil, false, fmt.Errorf("blnk: transfer %q records %s on account %q, which holds %s: %w",
-				txn.TransactionID, p.Currency, acct.id, acct.currency, money.ErrCurrencyMismatch)
+				transfer.id, p.Currency, acct.id, acct.currency, money.ErrCurrencyMismatch)
 		}
 		written = append(written, money.Amount{Minor: p.Minor, Currency: acct.currency})
 	}
 	return written, true, nil
 }
 
-// netOf sums what one transaction records against one account, reporting
-// touched false when it names the account nowhere - which is how a
-// transaction the filter returned but that names the account at neither end
-// is dropped rather than trusted.
+// netOf sums what one transfer's rows record against one account, reporting
+// touched false when none of them names the account - which is how a row
+// the filter returned but that names the account at neither end is dropped
+// rather than trusted.
 //
-// Both spellings of a side are read: the scalar source and destination, and
-// the legs a split transaction carries. A leg's amount is read from
-// precise_distribution and never from the SDK's distribution, which is a
-// percentage or a decimal number; a leg carrying only that is refused
-// rather than parsed through a float (C-6).
-func netOf(txn blnkgo.Transaction, acct account) (money.Amount, bool, error) {
-	id := string(acct.id)
+// Every row of the group counts, and that is what makes a split add up: a
+// split is recorded as one child per leg, each naming its own leg account
+// for its own share and the transfer's other end for the same share, so
+// summing the children gives every account exactly what the transfer moved
+// on it. There is no parent row to count a second time.
+//
+// A row is matched against the account by the balance id the ledger
+// resolved the name to, and by the name itself. The recorded row carries
+// the id; the name is accepted too because a row is persisted before the
+// resolution is written back, so a read racing a write can see either.
+func netOf(transfer transferGroup, acct account) (money.Amount, bool, error) {
 	touched := false
 	net, err := money.Zero(acct.currency)
 	if err != nil {
 		return money.Amount{}, false, err
 	}
 
-	apply := func(magnitude int64, negative bool) error {
-		if negative {
-			magnitude = -magnitude
-		}
-		sum, addErr := net.Add(money.Amount{Minor: magnitude, Currency: acct.currency})
-		if addErr != nil {
-			return fmt.Errorf("blnk: totalling what transfer %q did to account %q: %w", txn.TransactionID, id, addErr)
-		}
-		net = sum
-		touched = true
-		return nil
+	names := func(end string) bool {
+		return end != "" && (end == acct.balanceID || end == string(acct.id))
 	}
-
-	for _, side := range []struct {
-		scalar   string
-		legs     []blnkgo.Source
-		negative bool
-	}{
-		{scalar: txn.Source, legs: txn.Sources, negative: true},
-		{scalar: txn.Destination, legs: txn.Destinations, negative: false},
-	} {
-		if side.scalar == id {
-			if txn.PreciseAmount == nil {
+	for _, row := range transfer.rows {
+		for _, side := range []struct {
+			end      string
+			negative bool
+		}{
+			{end: row.Source, negative: true},
+			{end: row.Destination, negative: false},
+		} {
+			if !names(side.end) {
+				continue
+			}
+			if row.PreciseAmount == nil {
 				// The other spelling of the amount is a float, and a
 				// float is never read as money here (C-6). A transfer
 				// this package recorded always carries the integer, so
 				// one that does not was written behind its back.
 				return money.Amount{}, false, fmt.Errorf(
-					"blnk: transfer %q on account %q carries no integer amount, and no float is read as money here", txn.TransactionID, id)
+					"blnk: transaction %q on account %q carries no integer amount, and no float is read as money here", row.TransactionID, acct.id)
 			}
-			magnitude, err := exactInt64(txn.PreciseAmount)
+			magnitude, err := exactInt64(row.PreciseAmount)
 			if err != nil {
-				return money.Amount{}, false, fmt.Errorf("blnk: the amount of transfer %q: %w", txn.TransactionID, err)
+				return money.Amount{}, false, fmt.Errorf("blnk: the amount of transaction %q: %w", row.TransactionID, err)
 			}
-			if err := apply(magnitude, side.negative); err != nil {
-				return money.Amount{}, false, err
+			if side.negative {
+				magnitude = -magnitude
 			}
-		}
-		for _, leg := range side.legs {
-			if leg.Identifier != id {
-				continue
-			}
-			magnitude, err := legAmount(leg)
+			sum, err := net.Add(money.Amount{Minor: magnitude, Currency: acct.currency})
 			if err != nil {
-				return money.Amount{}, false, fmt.Errorf("blnk: a leg of transfer %q on account %q: %w", txn.TransactionID, id, err)
+				return money.Amount{}, false, fmt.Errorf("blnk: totalling what transfer %q did to account %q: %w", transfer.id, acct.id, err)
 			}
-			if err := apply(magnitude, side.negative); err != nil {
-				return money.Amount{}, false, err
-			}
+			net = sum
+			touched = true
 		}
 	}
 	return net, touched, nil
-}
-
-// legAmount reads one leg's integer amount. A leg with no
-// precise_distribution is refused: the other spelling is a percentage or a
-// decimal number, and this package will not turn a float into money.
-func legAmount(leg blnkgo.Source) (int64, error) {
-	if leg.PreciseDistribution == "" {
-		return 0, fmt.Errorf("carries the distribution %q rather than an integer amount, and no float is read as money here", string(leg.Distribution))
-	}
-	magnitude, ok := new(big.Int).SetString(leg.PreciseDistribution, 10)
-	if !ok {
-		return 0, fmt.Errorf("carries the amount %q, which is not an integer", leg.PreciseDistribution)
-	}
-	return exactInt64(magnitude)
 }
 
 // exactInt64 narrows a ledger integer to the port's minor units, refusing
@@ -2265,14 +2352,9 @@ func apiStatus(err error) (int, bool) {
 	return apiErr.Status, true
 }
 
-// isNotFound reports whether the thing asked for does not exist - because
-// the ledger said so, or because what it answered with belongs to another
-// ledger and so is not there to be found from here.
+// isNotFound reports whether the ledger said the thing asked for does not
+// exist.
 func isNotFound(err error) bool {
-	var scoped notFoundError
-	if errors.As(err, &scoped) {
-		return true
-	}
 	status, ok := apiStatus(err)
 	return ok && status == http.StatusNotFound
 }
@@ -2318,12 +2400,13 @@ func errorCode(apiErr *blnkgo.ApiErrorResponse) (string, bool) {
 // exists. For a transaction that is a reference already used - the
 // idempotency key - which is judged rather than assumed to be a replay.
 //
-// The status alone is not enough. Blnk has no unique index on the reference
-// and refuses a duplicate in application code (spike S2), so which status
-// that code chooses is the server's business; a refusal naming the
-// duplicate in its structured code is a duplicate whatever status carried
-// it. Reading only the status would hand the caller that lost the race a
-// hard error instead of the winner's reference.
+// The status alone is not enough. Blnk refuses a duplicate reference in
+// application code as well as at a unique index, and the two failures reach
+// the handler by different routes, so which status either chooses is the
+// server's business; a refusal naming the duplicate in its structured code
+// is a duplicate whatever status carried it. Reading only the status would
+// hand the caller that lost the race a hard error instead of the winner's
+// reference.
 func isConflict(err error) bool {
 	apiErr, ok := blnkgo.AsApiErrorResponse(err)
 	if !ok {
@@ -2393,39 +2476,4 @@ func isInsufficientFunds(err error) bool {
 		}
 	}
 	return false
-}
-
-// cachedAccount answers with an account id this process has already
-// resolved.
-func (l *Ledger) cachedAccount(indicator string) (wallet.LedgerAccountID, bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	id, ok := l.accounts[indicator]
-	return id, ok
-}
-
-// cacheAccount remembers a resolved account id. The mapping is immutable -
-// Blnk deletes no balance and renames no indicator - so an entry can never
-// go stale.
-func (l *Ledger) cacheAccount(indicator string, id wallet.LedgerAccountID) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.accounts[indicator] = id
-}
-
-// lockAccount takes the lock guarding one account name and returns the
-// release. One lock per name, so two goroutines ensuring one account cannot
-// both create it while two ensuring different accounts never wait on each
-// other.
-func (l *Ledger) lockAccount(indicator string) func() {
-	l.mu.Lock()
-	lock, ok := l.ensuring[indicator]
-	if !ok {
-		lock = new(sync.Mutex)
-		l.ensuring[indicator] = lock
-	}
-	l.mu.Unlock()
-
-	lock.Lock()
-	return lock.Unlock
 }

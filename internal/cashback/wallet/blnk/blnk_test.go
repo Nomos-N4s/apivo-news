@@ -10,12 +10,14 @@ package blnk_test
 // ledger. This one asks them of the wire.
 
 import (
+	"cmp"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -147,19 +149,19 @@ func TestEnsureAccountRefusesUnusableInput(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("EnsureAccount error = %v, want one wrapping %v", err, tc.want)
 			}
-			if got := len(fake.balanceCreates); got != 0 {
-				t.Errorf("%d account(s) were created for a reference that names none", got)
+			if got := fake.accounts(); got != 0 {
+				t.Errorf("%d balance(s) exist after a reference that names none", got)
 			}
 		})
 	}
 }
 
 // TestEnsureAccountNamesAccountsInjectively is the account-naming test. The
-// name derived from (ref, currency) is this adapter's entire account
-// identity, so two different accounts sharing one name would be two
-// members' money in one balance - and the pairs below are the ones a naive
-// derivation gets wrong: a house name holding the separator, a house name
-// spelling a member prefix, and one reference across two currencies.
+// name derived from (ref, currency) IS this adapter's account id, so two
+// different accounts sharing one name would be two members' money in one
+// balance - and the pairs below are the ones a naive derivation gets wrong:
+// a house name holding the separator, a house name spelling a member
+// prefix, and one reference across two currencies.
 func TestEnsureAccountNamesAccountsInjectively(t *testing.T) {
 	t.Parallel()
 
@@ -187,31 +189,75 @@ func TestEnsureAccountNamesAccountsInjectively(t *testing.T) {
 	fake := newFakeBlnk(t)
 	ledger := newLedger(t, fake)
 
-	names := make(map[string]string, len(pairs))
 	ids := make(map[wallet.LedgerAccountID]string, len(pairs))
 	for _, pair := range pairs {
 		id := ensure(t, ledger, pair.ref, pair.currency)
-		name := fake.indicatorOf(string(id))
-		if name == "" {
-			t.Fatalf("%s: the account was created with no name", pair.name)
-		}
-		if other, clash := names[name]; clash {
-			t.Fatalf("%s and %s are both named %q; two accounts sharing one name is two members' money in one balance", pair.name, other, name)
+		if !strings.HasPrefix(string(id), "@") {
+			t.Fatalf("%s resolved to %q, which this ledger would read as a balance id rather than a name", pair.name, id)
 		}
 		if other, clash := ids[id]; clash {
-			t.Fatalf("%s and %s resolved to the same balance %q", pair.name, other, id)
+			t.Fatalf("%s and %s are both named %q; two accounts sharing one name is two members' money in one balance", pair.name, other, id)
 		}
-		names[name], ids[id] = pair.name, pair.name
+		ids[id] = pair.name
 
-		// Ensuring again must answer the same id, and must not create a
-		// second account - the whole point of a derived name.
+		// Ensuring again must answer the same id - the whole point of a
+		// derived name, and what makes the call idempotent with nothing
+		// stored on either side.
 		if again := ensure(t, ledger, pair.ref, pair.currency); again != id {
 			t.Fatalf("%s: ensuring twice gave %q then %q", pair.name, id, again)
 		}
 	}
 
-	if got := len(fake.balanceCreates); got != len(pairs) {
-		t.Errorf("%d account(s) were created for %d distinct references", got, len(pairs))
+	if got := fake.accounts(); got != 0 {
+		t.Errorf("%d balance(s) exist after ensuring %d accounts; a balance appears when a transfer names one, not before", got, len(pairs))
+	}
+}
+
+// TestEnsureAccountCreatesNothing is the fact the whole design turns on.
+// The create-a-balance endpoint takes no name, so a balance made through it
+// could never be found again; the only writer of a name is the transaction
+// path. So EnsureAccount derives a name and stops, and the balance behind
+// it appears when the first transfer names it - which is when this test
+// looks for it.
+func TestEnsureAccountCreatesNothing(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeBlnk(t)
+	ledger := newLedger(t, fake)
+	house := ensure(t, ledger, wallet.HouseAccount("commission"), eur)
+	holder := ensure(t, ledger, member(wallet.StagePending), eur)
+
+	if got := fake.accounts(); got != 0 {
+		t.Fatalf("ensuring two accounts left %d balance(s) behind; the ledger has no endpoint that could have made one", got)
+	}
+	// Reading one costs nothing and answers zero: an account with no
+	// balance row holds nothing, which is not the same as not existing.
+	held, err := ledger.Balance(context.Background(), holder, eur)
+	if err != nil {
+		t.Fatalf("reading an account nothing has been posted to: %v", err)
+	}
+	if !held.IsZero() {
+		t.Errorf("an account no transfer has named holds %s, want nothing", held)
+	}
+
+	if _, err := ledger.Post(context.Background(), wallet.Transfer{
+		IdempotencyKey: "key-first-touch",
+		Reference:      "entry-1",
+		Postings: []wallet.Posting{
+			{Account: house, Amount: amount(-2500, eur)},
+			{Account: holder, Amount: amount(2500, eur)},
+		},
+	}); err != nil {
+		t.Fatalf("posting: %v", err)
+	}
+
+	for _, id := range []wallet.LedgerAccountID{house, holder} {
+		if !fake.knows(string(id)) {
+			t.Errorf("no balance is named %q after a transfer named it; every later read of the account would find nothing", id)
+		}
+	}
+	if got := fake.balanceOf(string(holder)); got != 2500 {
+		t.Errorf("the account the transfer created holds %d, want 2500", got)
 	}
 }
 
@@ -223,22 +269,22 @@ func TestEnsureAccountCarriesNoMemberIdentity(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeBlnk(t)
-	ledger := newLedger(t, fake)
-	id := uuid.New()
+	ledger := newLedger(t, fake, blnk.WithLedgerID("ldg_pinned"))
+	memberID := uuid.New()
 
-	ensure(t, ledger, wallet.MemberAccount(id, wallet.StageConfirmed), eur)
-	name := fake.balanceCreates[0].Indicator
+	id := ensure(t, ledger, wallet.MemberAccount(memberID, wallet.StageConfirmed), eur)
 
-	// The name is scoped to the Blnk ledger the balance was created in, so
-	// two deployments over one server cannot resolve each other's
-	// accounts; everything after that scope is the account itself.
-	want := "member." + id.String() + ".confirmed.EUR"
-	scope, account, cut := strings.Cut(name, ".")
+	// The name is scoped to the Blnk ledger this deployment is configured
+	// for, because a name is unique across the whole server and two
+	// deployments must not resolve each other's accounts; everything after
+	// that scope is the account itself.
+	want := "member." + memberID.String() + ".confirmed.EUR"
+	scope, account, cut := strings.Cut(string(id), ".")
 	if !cut || account != want {
-		t.Fatalf("the account was named %q, want a ledger scope followed by %q", name, want)
+		t.Fatalf("the account is named %q, want a ledger scope followed by %q", id, want)
 	}
-	if scope != hex.EncodeToString([]byte(fake.balanceCreates[0].LedgerID)) {
-		t.Fatalf("the account was scoped to %q, want the ledger it was created in, %q", scope, fake.balanceCreates[0].LedgerID)
+	if scope != "@"+hex.EncodeToString([]byte("ldg_pinned")) {
+		t.Fatalf("the account is scoped to %q, want the configured ledger", scope)
 	}
 }
 
@@ -313,29 +359,8 @@ func TestEnsureAccountIsIdempotentUnderConcurrency(t *testing.T) {
 			t.Fatalf("caller %d resolved %q, caller 0 resolved %q", i, ids[i], ids[0])
 		}
 	}
-	if got := len(fake.balanceCreates); got != 1 {
-		t.Errorf("%d accounts were created for one reference under %d racing callers, want 1", got, callers)
-	}
-}
-
-// TestEnsureAccountRefusesALedgerThatForgetsTheName is the loud failure
-// that stops a silent one. If the server does not record the name an
-// account is found by, every call creates another balance and a member's
-// money ends up split across all of them - so the adapter checks, and
-// refuses.
-func TestEnsureAccountRefusesALedgerThatForgetsTheName(t *testing.T) {
-	t.Parallel()
-
-	fake := newFakeBlnk(t)
-	fake.dropIndicator = true
-	ledger := newLedger(t, fake)
-
-	_, err := ledger.EnsureAccount(context.Background(), member(wallet.StageConfirmed), eur)
-	if err == nil {
-		t.Fatal("an account the ledger did not record a name for was accepted; every call would create another one")
-	}
-	if !strings.Contains(err.Error(), "split") {
-		t.Errorf("the refusal does not say what goes wrong: %v", err)
+	if got := fake.accounts(); got != 0 {
+		t.Errorf("%d balance(s) exist after %d racing callers ensured one account; there is nothing for them to race for", got, callers)
 	}
 }
 
@@ -410,6 +435,9 @@ func TestBalanceRefusesAFigureItCannotCarry(t *testing.T) {
 			fake := newFakeBlnk(t)
 			ledger := newLedger(t, fake)
 			holder := ensure(t, ledger, member(wallet.StageConfirmed), eur)
+			// Opened first: a figure can only come back wrong for an
+			// account some transfer has already named.
+			fake.seed(string(holder), 0)
 			fake.balanceOverride[string(holder)] = tc.balance
 
 			got, err := ledger.Balance(context.Background(), holder, eur)
@@ -463,67 +491,275 @@ func TestPostRefusesACrossCurrencyTransfer(t *testing.T) {
 	}
 }
 
-// TestPostDecomposesManyToMany covers the shape this ledger CAN record:
-// any number of accounts giving and any number receiving, in one currency,
-// as one transaction. The legs must carry integer amounts summing to the
+// TestPostDecomposesOneSide covers the split this ledger CAN record: one
+// account on one side and any number on the other, in one currency, as one
+// transaction. The legs must carry integer amounts summing to the
 // transaction's total, and the transaction must be marked atomic - a split
 // that succeeded a leg at a time would not be one movement of money.
-func TestPostDecomposesManyToMany(t *testing.T) {
+func TestPostDecomposesOneSide(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		wants map[string]int64
+	}{
+		{name: "one gives and two receive", wants: map[string]int64{"commission": -1000, "holder": 999, "rounding": 1}},
+		{name: "two give and one receives", wants: map[string]int64{"commission": -700, "float": -300, "holder": 1000}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fake := newFakeBlnk(t)
+			ledger := newLedger(t, fake)
+			ids := map[string]wallet.LedgerAccountID{
+				"commission": ensure(t, ledger, wallet.HouseAccount("commission"), eur),
+				"float":      ensure(t, ledger, wallet.HouseAccount("float"), eur),
+				"rounding":   ensure(t, ledger, wallet.HouseAccount("rounding"), eur),
+				"holder":     ensure(t, ledger, member(wallet.StagePending), eur),
+			}
+
+			wantLegs := make(map[string]string, len(tc.wants))
+			postings := make([]wallet.Posting, 0, len(tc.wants))
+			for name, minor := range tc.wants {
+				postings = append(postings, wallet.Posting{Account: ids[name], Amount: amount(minor, eur)})
+				wantLegs[string(ids[name])] = strconv.FormatInt(max(minor, -minor), 10)
+			}
+			if _, err := ledger.Post(context.Background(), wallet.Transfer{
+				IdempotencyKey: "key-split-" + tc.name,
+				Reference:      "entry-" + tc.name,
+				Postings:       postings,
+			}); err != nil {
+				t.Fatalf("posting: %v", err)
+			}
+
+			got := fake.onlyCreate()
+			if !got.txn.Atomic {
+				t.Error("a split transaction was not marked atomic, so its legs could land one at a time")
+			}
+			// Exactly one side travels as legs; the other is the scalar
+			// every child of the split will be given.
+			legs := append(append([]wireLeg{}, got.txn.Sources...), got.txn.Destinations...)
+			if len(legs) != 2 {
+				t.Fatalf("the transaction carries %d leg(s), want the 2 accounts on the split side", len(legs))
+			}
+			if (got.txn.Source == "") == (got.txn.Destination == "") {
+				t.Errorf("the transaction has source %q and destination %q; exactly one side is split and the other is a single account", got.txn.Source, got.txn.Destination)
+			}
+			scalar := cmp.Or(got.txn.Source, got.txn.Destination)
+			delete(wantLegs, scalar)
+
+			for _, leg := range legs {
+				want, known := wantLegs[leg.Identifier]
+				if !known {
+					t.Errorf("the transaction carries a leg on %q, which the transfer does not name as a leg", leg.Identifier)
+					continue
+				}
+				if leg.PreciseDistribution != want {
+					t.Errorf("the leg on %q carries %q, want %q", leg.Identifier, leg.PreciseDistribution, want)
+				}
+				if leg.Distribution != "" {
+					t.Errorf("the leg on %q carries the distribution %q; money must travel as an integer", leg.Identifier, leg.Distribution)
+				}
+				delete(wantLegs, leg.Identifier)
+			}
+			if len(wantLegs) != 0 {
+				t.Errorf("the transaction is missing legs for %v", wantLegs)
+			}
+
+			// Every balance moved by exactly what the transfer said.
+			for name, want := range tc.wants {
+				if got := fake.balanceOf(string(ids[name])); got != want {
+					t.Errorf("account %q holds %d, want %d", name, got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestPostRefusesASplitOnBothSides is the second shape this ledger cannot
+// record in one atomic act. It splits ONE side of a transaction into a
+// child per leg and hands every child the other side's single account; a
+// transfer split on both sides has no such account, so the children are
+// built with an end naming nothing and the ledger fails to resolve it.
+//
+// Refusing before anything is sent is the contract, and it is also the only
+// way the caller learns what to do instead: the port's own sentinel says
+// the shape is unrecordable, where whatever the ledger answers about an
+// unresolvable account would not.
+func TestPostRefusesASplitOnBothSides(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeBlnk(t)
 	ledger := newLedger(t, fake)
-	first := ensure(t, ledger, wallet.HouseAccount("commission"), eur)
-	second := ensure(t, ledger, wallet.HouseAccount("float"), eur)
+	commission := ensure(t, ledger, wallet.HouseAccount("commission"), eur)
+	float := ensure(t, ledger, wallet.HouseAccount("float"), eur)
 	holder := ensure(t, ledger, member(wallet.StagePending), eur)
 	rounding := ensure(t, ledger, wallet.HouseAccount("rounding"), eur)
 
-	if _, err := ledger.Post(context.Background(), wallet.Transfer{
-		IdempotencyKey: "key-split",
+	_, err := ledger.Post(context.Background(), wallet.Transfer{
+		IdempotencyKey: "key-both-sides",
+		Reference:      "entry-both-sides",
 		Postings: []wallet.Posting{
-			{Account: first, Amount: amount(-700, eur)},
-			{Account: second, Amount: amount(-300, eur)},
+			{Account: commission, Amount: amount(-700, eur)},
+			{Account: float, Amount: amount(-300, eur)},
 			{Account: holder, Amount: amount(999, eur)},
 			{Account: rounding, Amount: amount(1, eur)},
 		},
+	})
+	if !errors.Is(err, wallet.ErrUnsupportedTransfer) {
+		t.Fatalf("Post error = %v, want one wrapping %v", err, wallet.ErrUnsupportedTransfer)
+	}
+	if got := len(fake.createdRequests()); got != 0 {
+		t.Errorf("%d transaction(s) were sent for a transfer that was refused; a refusal must record nothing", got)
+	}
+
+	// And the way out the refusal names works: one transfer per side, each
+	// with its own key, each recordable on its own.
+	if _, err := ledger.Post(context.Background(), wallet.Transfer{
+		IdempotencyKey: "key-both-sides-in",
+		Reference:      "entry-both-sides-in",
+		Postings: []wallet.Posting{
+			{Account: commission, Amount: amount(-700, eur)},
+			{Account: float, Amount: amount(-300, eur)},
+			{Account: holder, Amount: amount(1000, eur)},
+		},
 	}); err != nil {
-		t.Fatalf("posting: %v", err)
+		t.Fatalf("the first half of the split transfer: %v", err)
 	}
-
-	got := fake.onlyCreate()
-	if got.txn.Source != "" || got.txn.Destination != "" {
-		t.Errorf("a transfer with several accounts on each side used the single-account spelling: source %q, destination %q", got.txn.Source, got.txn.Destination)
+	if _, err := ledger.Post(context.Background(), wallet.Transfer{
+		IdempotencyKey: "key-both-sides-out",
+		Reference:      "entry-both-sides-out",
+		Postings: []wallet.Posting{
+			{Account: holder, Amount: amount(-1, eur)},
+			{Account: rounding, Amount: amount(1, eur)},
+		},
+	}); err != nil {
+		t.Fatalf("the second half of the split transfer: %v", err)
 	}
-	if !got.txn.Atomic {
-		t.Error("a split transaction was not marked atomic, so its legs could land one at a time")
-	}
-	wantLegs := map[string]string{
-		string(first): "700", string(second): "300",
-		string(holder): "999", string(rounding): "1",
-	}
-	for _, leg := range append(append([]wireLeg{}, got.txn.Sources...), got.txn.Destinations...) {
-		want, known := wantLegs[leg.Identifier]
-		if !known {
-			t.Errorf("the transaction carries a leg on %q, which the transfer does not name", leg.Identifier)
-			continue
-		}
-		if leg.PreciseDistribution != want {
-			t.Errorf("the leg on %q carries %q, want %q", leg.Identifier, leg.PreciseDistribution, want)
-		}
-		if leg.Distribution != "" {
-			t.Errorf("the leg on %q carries the distribution %q; money must travel as an integer", leg.Identifier, leg.Distribution)
-		}
-		delete(wantLegs, leg.Identifier)
-	}
-	if len(wantLegs) != 0 {
-		t.Errorf("the transaction is missing legs for %v", wantLegs)
-	}
-
-	// Every balance moved by exactly what the transfer said.
-	for id, want := range map[wallet.LedgerAccountID]int64{first: -700, second: -300, holder: 999, rounding: 1} {
+	for id, want := range map[wallet.LedgerAccountID]int64{commission: -700, float: -300, holder: 999, rounding: 1} {
 		if got := fake.balanceOf(string(id)); got != want {
 			t.Errorf("account %q holds %d, want %d", id, got, want)
 		}
+	}
+}
+
+// TestPostFindsTheKeyOfASplitTransfer is the idempotency contract over the
+// shape that hides the key. A split rewrites the reference of every child
+// and records no row under the transfer's own, so a key that recorded a
+// split cannot be found by asking for it - and a Post that failed to find
+// it would move the money a second time, which is the one mistake
+// idempotency exists to prevent.
+//
+// The children are numbered from one, so the first child's reference is
+// derivable; what is not certain is which character the ledger joins it
+// with. The synchronous path writes the hyphen and the queued path the
+// underscore, so both are held to here.
+func TestPostFindsTheKeyOfASplitTransfer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		join string
+	}{
+		{name: "the reference the synchronous path writes", join: splitJoinSynchronous},
+		{name: "the reference the queued path writes", join: splitJoinQueued},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fake := newFakeBlnk(t)
+			fake.splitJoin = tc.join
+			ledger := newLedger(t, fake)
+			house := ensure(t, ledger, wallet.HouseAccount("commission"), eur)
+			holder := ensure(t, ledger, member(wallet.StagePending), eur)
+			rounding := ensure(t, ledger, wallet.HouseAccount("rounding"), eur)
+
+			transfer := wallet.Transfer{
+				IdempotencyKey: "key-rounded-earning",
+				Reference:      "entry-transition-1",
+				Postings: []wallet.Posting{
+					{Account: house, Amount: amount(-1000, eur)},
+					{Account: holder, Amount: amount(999, eur)},
+					{Account: rounding, Amount: amount(1, eur)},
+				},
+			}
+			first, err := ledger.Post(context.Background(), transfer)
+			if err != nil {
+				t.Fatalf("posting a rounded earning: %v", err)
+			}
+
+			// The same movements in another order: representation, not
+			// identity, so this is a replay and must move nothing.
+			reordered := transfer
+			reordered.Postings = []wallet.Posting{
+				{Account: rounding, Amount: amount(1, eur)},
+				{Account: holder, Amount: amount(999, eur)},
+				{Account: house, Amount: amount(-1000, eur)},
+			}
+			again, err := ledger.Post(context.Background(), reordered)
+			if err != nil {
+				t.Fatalf("the replay of a split transfer's key was refused: %v", err)
+			}
+			if again != first {
+				t.Errorf("the replay answered %q, want the transfer's own reference %q", again, first)
+			}
+			if got := fake.balanceOf(string(holder)); got != 999 {
+				t.Errorf("the member holds %d after one key was posted twice, want 999", got)
+			}
+
+			// And a different transfer under that key is the collision the
+			// key exists to surface, not a second movement.
+			conflicting := transfer
+			conflicting.Postings = []wallet.Posting{
+				{Account: house, Amount: amount(-1000, eur)},
+				{Account: holder, Amount: amount(1000, eur)},
+			}
+			if _, err := ledger.Post(context.Background(), conflicting); !errors.Is(err, wallet.ErrIdempotencyConflict) {
+				t.Errorf("a different transfer under a split's key gave %v, want one wrapping %v", err, wallet.ErrIdempotencyConflict)
+			}
+		})
+	}
+}
+
+// TestPostDescribesEveryTransferItSends keeps a transfer with no domain
+// pointer postable. The ledger requires a description and the port does not
+// require a Reference, so a blank one travels as the idempotency key - the
+// truest pointer there is when the caller named nothing - rather than as a
+// blank the ledger refuses.
+func TestPostDescribesEveryTransferItSends(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeBlnk(t)
+	ledger := newLedger(t, fake)
+	house := ensure(t, ledger, wallet.HouseAccount("commission"), eur)
+	holder := ensure(t, ledger, member(wallet.StagePending), eur)
+
+	if _, err := ledger.Post(context.Background(), wallet.Transfer{
+		IdempotencyKey: "key-undescribed",
+		Postings: []wallet.Posting{
+			{Account: house, Amount: amount(-2500, eur)},
+			{Account: holder, Amount: amount(2500, eur)},
+		},
+	}); err != nil {
+		t.Fatalf("posting a transfer naming no domain record: %v", err)
+	}
+	if got := fake.onlyCreate().txn.Description; got != "key-undescribed" {
+		t.Errorf("the transaction is described as %q, want the idempotency key", got)
+	}
+
+	// The document replay identity is judged by still records the blank
+	// Reference, so the description standing in for it cannot turn a
+	// replay into a conflict.
+	raw, ok := fake.onlyCreate().txn.MetaData["wallet_transfer"].(string)
+	if !ok {
+		t.Fatalf("the transaction carries no identity document: %v", fake.onlyCreate().txn.MetaData)
+	}
+	if strings.Contains(raw, "key-undescribed") {
+		t.Errorf("the identity document records the description in place of the transfer's own reference: %s", raw)
 	}
 }
 
@@ -818,7 +1054,7 @@ func TestPostMapsTheLedgersRefusals(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("Post error = %v, want one wrapping %v", err, tc.want)
 			}
-			if got := fake.balanceOf(string(house)); got != 0 {
+			if got := fake.holds(string(house)); got != 0 {
 				t.Errorf("a refused transfer moved the house account to %d; a refusal must change no balance", got)
 			}
 		})
@@ -1185,21 +1421,31 @@ func TestBalanceAnswersWhatTheLedgerHolds(t *testing.T) {
 }
 
 // TestBalanceRefusesAnAccountThisPortDidNotCreate keeps the port's promise
-// exact. A balance somebody else created in the same ledger is not an
-// account EnsureAccount issued, and answering for it would let money be
+// exact. A name is unique across the whole Blnk server rather than within a
+// ledger, so a neighbour's balance is one lookup away at all times -
+// including one holding real money. Answering for it would let money be
 // posted where this port's rules - which account may go negative, above all
 // - were never applied.
+//
+// The judgement is made by reading the name, so it costs no round trip and
+// holds for a name whose balance exists as well as for one whose does not.
 func TestBalanceRefusesAnAccountThisPortDidNotCreate(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeBlnk(t)
 	ledger := newLedger(t, fake)
-	// Created straight on the fake, with a name this package never writes.
-	foreign := ensure(t, ledger, wallet.HouseAccount("commission"), eur)
-	fake.balances[string(foreign)].indicator = "somebody-elses-account"
+	// A funded balance, named the way something else on this server would
+	// name one.
+	fake.seed("@somebody-elses-account.EUR", 999999)
 
-	if _, err := ledger.Balance(context.Background(), foreign, eur); !errors.Is(err, wallet.ErrUnknownAccount) {
-		t.Fatalf("Balance error = %v, want one wrapping %v", err, wallet.ErrUnknownAccount)
+	for _, id := range []wallet.LedgerAccountID{
+		"@somebody-elses-account.EUR",
+		"bln_never-issued",
+		"",
+	} {
+		if _, err := ledger.Balance(context.Background(), id, eur); !errors.Is(err, wallet.ErrUnknownAccount) {
+			t.Errorf("Balance over %q gave %v, want one wrapping %v", id, err, wallet.ErrUnknownAccount)
+		}
 	}
 }
 
@@ -1277,10 +1523,15 @@ func TestHistoryStreamsThePostingsOnAnAccount(t *testing.T) {
 }
 
 // TestHistoryReadsTheShapesOnlyTheLedgerProduces covers what History makes
-// of records this adapter did not write: a split recorded as a parent with
-// a child transaction per leg, an account that both gives and receives
-// inside one transaction, a transaction that never applied, and a leg
-// carrying a decimal distribution rather than an integer amount.
+// of records this adapter did not write: a split, which the ledger keeps as
+// children and nothing else, a transaction that never applied, and a
+// transaction carrying none of this package's annotations.
+//
+// The split is the case that matters. Its scalar side is named by EVERY
+// child, once for each child's own share, so a reader that took each row it
+// was handed as a posting of its own would report that account as having
+// given several times - and a reader that looked for a parent row to read
+// instead would find nothing at all, because the ledger never wrote one.
 func TestHistoryReadsTheShapesOnlyTheLedgerProduces(t *testing.T) {
 	t.Parallel()
 
@@ -1291,38 +1542,16 @@ func TestHistoryReadsTheShapesOnlyTheLedgerProduces(t *testing.T) {
 	rounding := ensure(t, ledger, wallet.HouseAccount("rounding"), eur)
 	at := time.Now().UTC()
 
-	// A split: the transfer itself, carrying its legs, and one child
-	// transaction beneath it per leg. The member is named only by its
-	// child, so this is the shape that decides whether a leg account has a
-	// history at all - and every posting of one transfer must come back
-	// under that transfer's reference, never under a leg's.
+	// A split of 1000 out of the house account into 900 for the member and
+	// 100 for the rounding remainder: two children pointing at a parent
+	// that is not a row, each naming the house account for its own share.
 	fake.record(&txnRow{
-		id: "txn_parent", reference: "key-split", currency: "EUR", precise: big.NewInt(1000),
-		source: string(house),
-		dests: []wireLeg{
-			{Identifier: string(holder), PreciseDistribution: "900"},
-			{Identifier: string(rounding), PreciseDistribution: "100"},
-		},
-		createdAt: at,
-	})
-	fake.record(&txnRow{
-		id: "txn_child_a", parent: "txn_parent", currency: "EUR", precise: big.NewInt(900),
+		id: "txn_child_a", parent: "txn_parent", reference: "key-split-1", currency: "EUR", precise: big.NewInt(900),
 		source: string(house), dest: string(holder), createdAt: at,
 	})
 	fake.record(&txnRow{
-		id: "txn_child_b", parent: "txn_parent", currency: "EUR", precise: big.NewInt(100),
-		source: string(house), dest: string(rounding), createdAt: at,
-	})
-	// One account on both sides of one transaction: 1000 out, 400 of it
-	// straight back, so the posting is what it actually left behind.
-	fake.record(&txnRow{
-		id: "txn_both", reference: "key-both", currency: "EUR", precise: big.NewInt(1000),
-		source: string(holder),
-		dests: []wireLeg{
-			{Identifier: string(holder), PreciseDistribution: "400"},
-			{Identifier: string(house), PreciseDistribution: "600"},
-		},
-		createdAt: at.Add(time.Millisecond),
+		id: "txn_child_b", parent: "txn_parent", reference: "key-split-2", currency: "EUR", precise: big.NewInt(100),
+		source: string(house), dest: string(rounding), createdAt: at.Add(time.Microsecond),
 	})
 	// A transaction that never applied moved no balance, so it is no
 	// posting.
@@ -1330,6 +1559,13 @@ func TestHistoryReadsTheShapesOnlyTheLedgerProduces(t *testing.T) {
 		id: "txn_queued", reference: "key-queued", currency: "EUR", precise: big.NewInt(1),
 		source: string(house), dest: string(holder), status: statusQueued,
 		createdAt: at.Add(2 * time.Millisecond),
+	})
+	// An unannotated transfer this package did not write: there is nothing
+	// to read but what the ledger recorded.
+	fake.record(&txnRow{
+		id: "txn_foreign", reference: "key-foreign", currency: "EUR", precise: big.NewInt(50),
+		source: string(holder), dest: string(house),
+		createdAt: at.Add(3 * time.Millisecond),
 	})
 
 	got := readHistory(t, ledger, holder, wallet.Window{})
@@ -1342,64 +1578,103 @@ func TestHistoryReadsTheShapesOnlyTheLedgerProduces(t *testing.T) {
 	if got[0].Amount.Minor != 900 {
 		t.Errorf("the split leg moved %d, want 900", got[0].Amount.Minor)
 	}
-	if got[1].Amount.Minor != -600 || got[1].TransferRef != "txn_both" {
-		t.Errorf("the transaction that gave and took back read as %+v, want -600 under txn_both", got[1])
+	if !got[0].PostedAt.Equal(at) {
+		t.Errorf("the split's instant is %s, want the earliest of its children's, %s", got[0].PostedAt, at)
+	}
+	if got[1].Amount.Minor != -50 || got[1].TransferRef != "txn_foreign" {
+		t.Errorf("the unannotated transfer read as %+v, want -50 under txn_foreign", got[1])
 	}
 
-	// The account that travelled as the scalar end of the split is named by
-	// the parent AND by both of its children. It moved 1000 once.
+	// The account that travelled as the split's scalar end is named by both
+	// children. It gave 1000 once, under one reference.
+	scalar := readHistory(t, ledger, house, wallet.Window{})
 	var total int64
-	for _, p := range readHistory(t, ledger, house, wallet.Window{}) {
+	var refs int
+	for _, p := range scalar {
 		if p.TransferRef == "txn_parent" {
 			total += p.Amount.Minor
+			refs++
 		}
 	}
-	if total != -1000 {
-		t.Errorf("the split's scalar side sums to %d, want -1000; a parent and its children are one transfer", total)
-	}
-
-	// A leg with only the SDK's float-shaped distribution is refused
-	// rather than parsed: no float is read as money here (C-6).
-	fake.record(&txnRow{
-		id: "txn_float", reference: "key-float", currency: "EUR", precise: big.NewInt(100),
-		source:    string(holder),
-		dests:     []wireLeg{{Identifier: string(holder), Distribution: "50%"}},
-		createdAt: at.Add(3 * time.Millisecond),
-	})
-	_, err := collectHistory(ledger, holder, wallet.Window{})
-	if err == nil {
-		t.Fatal("a leg carrying a decimal distribution was read as money")
-	}
-	if !strings.Contains(err.Error(), "float") {
-		t.Errorf("the refusal does not say what is wrong: %v", err)
+	if total != -1000 || refs != 1 {
+		t.Errorf("the split's scalar side reads as %d posting(s) summing to %d, want 1 summing to -1000; the children are one transfer", refs, total)
 	}
 }
 
-// TestHistoryRefusesALegWhoseTransferItCannotRead is the loud failure that
-// keeps a silent one away. A child transaction points at the transfer it
-// belongs to; that transfer is where the reference and the postings live,
-// so a parent the ledger will not hand back leaves the leg unreadable
-// rather than readable under the wrong reference.
-func TestHistoryRefusesALegWhoseTransferItCannotRead(t *testing.T) {
+// TestHistoryRefusesASplitTheLedgerOnlyHalfRecorded is the loud failure
+// that keeps a silent one away. A split is recorded a child at a time, so a
+// failure part-way leaves some of the transfer's legs on the ledger and the
+// rest nowhere - and the transfer's own annotation, copied onto every
+// child, still says what the whole of it was meant to move.
+//
+// The two are cross-checked for exactly this reason. Reporting the
+// annotation would report money that did not move; reporting the rows would
+// report a transfer the caller never wrote, under a reference the domain
+// stored as proof of the whole (D7). Neither is the truth, so neither is
+// answered with.
+func TestHistoryRefusesASplitTheLedgerOnlyHalfRecorded(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeBlnk(t)
 	ledger := newLedger(t, fake)
 	holder := ensure(t, ledger, member(wallet.StagePending), eur)
 	house := ensure(t, ledger, wallet.HouseAccount("commission"), eur)
+	rounding := ensure(t, ledger, wallet.HouseAccount("rounding"), eur)
 
+	// The house account gave 1000 according to the document, and only the
+	// 900 leg reached the ledger.
+	document := annotation(t, wallet.Transfer{
+		Reference: "entry-half",
+		Postings: []wallet.Posting{
+			{Account: house, Amount: amount(-1000, eur)},
+			{Account: holder, Amount: amount(999, eur)},
+			{Account: rounding, Amount: amount(1, eur)},
+		},
+	})
 	fake.record(&txnRow{
-		id: "txn_orphan", parent: "txn_missing", currency: "EUR", precise: big.NewInt(900),
+		id: "txn_half", parent: "txn_parent", reference: "key-half-1", currency: "EUR", precise: big.NewInt(999),
 		source: string(house), dest: string(holder), createdAt: time.Now().UTC(),
+		metadata: map[string]any{"wallet_transfer": document},
 	})
 
-	_, err := collectHistory(ledger, holder, wallet.Window{})
+	_, err := collectHistory(ledger, house, wallet.Window{})
 	if err == nil {
-		t.Fatal("a leg whose transfer cannot be read was answered for anyway")
+		t.Fatal("a split the ledger recorded half of was answered for anyway")
 	}
-	if !strings.Contains(err.Error(), "txn_missing") {
-		t.Errorf("the refusal does not name the transfer it could not read: %v", err)
+	if !strings.Contains(err.Error(), "txn_parent") {
+		t.Errorf("the refusal does not name the transfer it could not answer for: %v", err)
 	}
+}
+
+// annotation renders the identity document this package records on the
+// transactions it creates, so a test can put one on a row the adapter did
+// not write. It is built here rather than exported from the package,
+// because a test that reached into the adapter to build it would be
+// checking the adapter against itself.
+func annotation(t *testing.T, transfer wallet.Transfer) string {
+	t.Helper()
+	type posting struct {
+		Account  string `json:"account"`
+		Minor    int64  `json:"minor"`
+		Currency string `json:"currency"`
+	}
+	document := struct {
+		Reference string            `json:"reference"`
+		Metadata  map[string]string `json:"metadata,omitempty"`
+		Postings  []posting         `json:"postings"`
+	}{Reference: transfer.Reference, Metadata: transfer.Metadata}
+	for _, p := range transfer.Postings {
+		document.Postings = append(document.Postings, posting{
+			Account:  string(p.Account),
+			Minor:    p.Amount.Minor,
+			Currency: string(p.Amount.Currency),
+		})
+	}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("rendering an identity document: %v", err)
+	}
+	return string(raw)
 }
 
 // TestHistoryReadsEitherShapeOfAPage keeps the read side working over the
@@ -1870,52 +2145,16 @@ func TestPostReadsADuplicateReferenceByItsCode(t *testing.T) {
 	}
 }
 
-// TestEnsureAccountConvergesWhenACreateLosesARace is the cold-start race
-// between two replicas. Both look the account up, both find nothing, both
-// create it; one of them is refused. The refusal is not the answer - the
-// account is there now - and an EnsureAccount that failed here would fail
-// the first transfer of a fresh deployment.
-func TestEnsureAccountConvergesWhenACreateLosesARace(t *testing.T) {
-	t.Parallel()
-
-	fake := newFakeBlnk(t)
-	fake.balanceCreateLosesRace = true
-	ledger := newLedger(t, fake)
-	ref := member(wallet.StageConfirmed)
-
-	id := ensure(t, ledger, ref, eur)
-	if again := ensure(t, newLedger(t, fake), ref, eur); again != id {
-		t.Fatalf("the losing create resolved %q and a later call resolved %q; one reference must be one account", id, again)
-	}
-}
-
-// TestEnsureAccountRefusesTwoBalancesUnderOneName is the loud failure that
-// stops a silent one. This package's whole account identity is that a name
-// finds one balance; a server that let a second be created under it has
-// already split one account's money in two, and memoising either id would
-// leave half of it unreachable.
-func TestEnsureAccountRefusesTwoBalancesUnderOneName(t *testing.T) {
-	t.Parallel()
-
-	fake := newFakeBlnk(t)
-	fake.balanceCreateDuplicates = true
-	ledger := newLedger(t, fake)
-
-	_, err := ledger.EnsureAccount(context.Background(), member(wallet.StageConfirmed), eur)
-	if err == nil {
-		t.Fatal("two balances under one account name were accepted")
-	}
-	if !strings.Contains(err.Error(), "split") {
-		t.Errorf("the refusal does not say what goes wrong: %v", err)
-	}
-}
-
 // TestHistoryReadsBackEverySideOfASplit is the read-back the fake exists to
 // make possible. Every split shape this ledger can record is posted through
 // Post and read back on every account it names, because a history that
 // silently omitted a leg - or counted one twice - would misreport a
 // member's total while Balance, which is the ledger's own figure, went on
 // being right.
+//
+// The shape with several accounts on both sides is not here because it is
+// not one this ledger can record; it has its own test, which is that it is
+// refused.
 func TestHistoryReadsBackEverySideOfASplit(t *testing.T) {
 	t.Parallel()
 
@@ -1925,7 +2164,6 @@ func TestHistoryReadsBackEverySideOfASplit(t *testing.T) {
 	}{
 		{name: "one account gives and two receive", wants: map[string]int64{"house": -1000, "holder": 999, "rounding": 1}},
 		{name: "two accounts give and one receives", wants: map[string]int64{"house": -600, "float": -400, "holder": 1000}},
-		{name: "two give and two receive", wants: map[string]int64{"house": -700, "float": -300, "holder": 999, "rounding": 1}},
 	}
 
 	for _, tc := range tests {

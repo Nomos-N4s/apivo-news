@@ -10,16 +10,34 @@ package blnk_test
 // endpoints the adapter calls, decodes each request into the shape the SDK
 // is documented to send, and lets a test assert on what arrived.
 //
-// It is deliberately strict. A fake that accepts anything proves nothing: a
-// request naming a balance it does not hold is a 404 here, a duplicate
-// reference is a 409, and a source it would leave negative without
-// permission is a refusal - because those are the three refusals the port's
+// It models what the server SOURCE does, not what would be convenient here.
+// That distinction is the whole reason this file has its present shape: an
+// earlier version modelled balances as things a client creates by name,
+// which is what the adapter wished were true, and every test here passed
+// while the first run against a real ledger failed sixteen times over. So
+// the four facts that version had wrong are modelled deliberately:
+//
+//   - a balance cannot be created by name. The create-a-balance endpoint
+//     refuses outright here, because the real one silently drops the
+//     indicator and hands back a balance nothing can find again.
+//   - a balance is created by naming it as an "@" source or destination in
+//     a transaction, and the name it is stored under keeps the "@".
+//   - a recorded transaction stores the balance ids the names resolved to,
+//     never the names.
+//   - a split records ONLY children: one per leg, each carrying a copy of
+//     the whole transfer's annotation and a reference with an ordinal
+//     appended. The parent is answered in the response and never stored.
+//
+// It is deliberately strict beyond that. A fake that accepts anything
+// proves nothing: a transaction with no description is a 400 here, a
+// duplicate reference is a 409, and a source it would leave negative
+// without permission is a refusal - because those are refusals the port's
 // error mapping is built on, and a fake that waved them through would let a
 // mis-mapped error pass as correct.
 //
 // What it is NOT is evidence about Blnk. It encodes this repository's
-// reading of the SDK and of spike S2; only the integration suite, against a
-// real ledger in the cashback CI job, can confirm that reading.
+// reading of the server source at v0.15.2; only the integration suite,
+// against a real ledger in the cashback CI job, can confirm that reading.
 
 import (
 	"cmp"
@@ -30,6 +48,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -65,13 +85,6 @@ type wireTransaction struct {
 	MetaData       map[string]any `json:"meta_data"`
 }
 
-// wireCreateBalance is a create-a-balance request, decoded.
-type wireCreateBalance struct {
-	LedgerID  string `json:"ledger_id"`
-	Currency  string `json:"currency"`
-	Indicator string `json:"indicator"`
-}
-
 // wireRefusal is a refusal written back verbatim: a status and the exact
 // body that carries it. The body is raw rather than built here because the
 // point of most of these is a body no ledger would send - an authenticating
@@ -81,7 +94,8 @@ type wireRefusal struct {
 	body   string
 }
 
-// balanceRow is one account inside the fake.
+// balanceRow is one account inside the fake. It exists only because some
+// transaction named it, which is the only way the real ledger makes one.
 type balanceRow struct {
 	id        string
 	ledgerID  string
@@ -90,7 +104,10 @@ type balanceRow struct {
 	minor     *big.Int
 }
 
-// txnRow is one recorded transaction inside the fake.
+// txnRow is one recorded transaction inside the fake. source and dest hold
+// balance ids: the server resolves an "@" name before it stores anything,
+// and the column is a foreign key into the balances table, so a name can
+// never be in one.
 type txnRow struct {
 	id        string
 	parent    string
@@ -99,8 +116,6 @@ type txnRow struct {
 	precise   *big.Int
 	source    string
 	dest      string
-	sources   []wireLeg
-	dests     []wireLeg
 	status    string
 	createdAt time.Time
 	metadata  map[string]any
@@ -131,16 +146,10 @@ type fakeBlnk struct {
 
 	// creates records every create-a-transaction request, in order.
 	creates []createRecord
-	// balanceCreates records every create-a-balance request, in order.
-	balanceCreates []wireCreateBalance
-	// requests counts calls per method-and-path, so a test can prove a
-	// second EnsureAccount cost no round trip.
+	// requests counts calls per method-and-path, so a test can prove an
+	// operation cost the round trips it should and no others.
 	requests map[string]int
 
-	// dropIndicator makes created balances come back nameless, which is
-	// the shape of a server that does not support the field the adapter's
-	// whole account identity rests on.
-	dropIndicator bool
 	// createdStatus is the status a create answers with. Blnk applies a
 	// skip-queue transaction inline; a server that queued it anyway is
 	// what the settle wait exists for.
@@ -149,8 +158,9 @@ type fakeBlnk struct {
 	// transaction reports itself applied. Zero means it never does.
 	settleAfter int
 	settleReads int
-	// balanceOverride replaces what a balance read answers with, verbatim,
-	// so a figure larger than an int64 can be put on the wire.
+	// balanceOverride replaces what a balance lookup answers with, keyed by
+	// account name and written verbatim, so a figure larger than an int64
+	// can be put on the wire.
 	balanceOverride map[string]string
 	// beforeCreate runs inside the create handler, before anything is
 	// recorded, so a test can make two posts of one key genuinely race.
@@ -159,28 +169,19 @@ type fakeBlnk struct {
 	// verbatim, so a test can put any refusal a server or anything between
 	// it and this process might send on the wire.
 	refusal *wireRefusal
-	// balanceCreateLosesRace makes the first create of each account record
-	// the balance and then answer as though another process had got there
-	// first. It is how the cold-start race between two replicas is played
-	// out without two replicas.
-	balanceCreateLosesRace bool
-	// balanceCreateDuplicates makes a create record a SECOND balance under
-	// the same name and leave the lookup pointing at it, which is what a
-	// server that does not enforce the uniqueness this package's account
-	// identity assumes would do.
-	balanceCreateDuplicates bool
-	// pageCap caps how many rows a filtered page answers with, whatever
-	// limit was asked for. A server free to cap its own pages is ordinary,
-	// and a reader that treats a short page as the last one loses
-	// everything past it. Zero honours the limit.
+	// splitJoin is what a split puts between the transfer's reference and
+	// the child's ordinal. The server spells it "-" on the synchronous path
+	// - the only one this adapter asks for - and "_" on the queued one, and
+	// the adapter has to find its own key under either.
+	splitJoin string
+	// pageCap caps how many rows a filtered page answers with, on top of
+	// the ceiling the server already imposes. Zero applies only that.
 	pageCap int
 	// freesRejectedReference chooses what the duplicate-reference check
 	// does with a reference held only by a transaction the ledger refused.
-	// Blnk has no unique index on the column and refuses duplicates in
-	// application code (spike S2), so which of the two it does is not
-	// settled here; the strict answer is the default, because a fake more
-	// forgiving than the server is how a defect reaches CI instead of the
-	// desk.
+	// Which of the two the server does is not settled here; the strict
+	// answer is the default, because a fake more forgiving than the server
+	// is how a defect reaches CI instead of the desk.
 	freesRejectedReference bool
 	// filterShape chooses how a filtered page is written back. Servers
 	// answer a list in more than one shape and an empty page in more than
@@ -203,6 +204,7 @@ func newFakeBlnk(t *testing.T) *fakeBlnk {
 		requests:        make(map[string]int),
 		createdStatus:   statusApplied,
 		balanceOverride: make(map[string]string),
+		splitJoin:       splitJoinSynchronous,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ledgers", f.listLedgers)
@@ -228,6 +230,28 @@ const (
 	statusQueued   = "QUEUED"
 	statusRejected = "REJECTED"
 )
+
+// The two spellings a split puts between a transfer's reference and a
+// child's ordinal, one per path through the server.
+const (
+	// splitJoinSynchronous is what the skip-queue path writes, and the
+	// adapter asks for nothing else - so it is the default here.
+	splitJoinSynchronous = "-"
+	// splitJoinQueued is what the queued path rewrites it to. The adapter
+	// probes for it as well, because a key whose transfer it failed to find
+	// would be posted a second time.
+	splitJoinQueued = "_"
+)
+
+// generalLedgerID is the ledger Blnk creates an "@"-named balance in,
+// whatever ledger the client is configured for. It is deliberately NOT one
+// of the ledgers this fake hands out, so an adapter that judged a balance
+// by which ledger it sat in would fail every read.
+const generalLedgerID = "general_ledger_id"
+
+// indicatorPrefix marks a source or destination as a name to resolve rather
+// than a balance id, and is kept in the name the balance is stored under.
+const indicatorPrefix = "@"
 
 // URL is the endpoint to point a ledger at.
 func (f *fakeBlnk) URL() string { return f.server.URL }
@@ -272,37 +296,96 @@ func (f *fakeBlnk) onlyCreate() createRecord {
 	return got[0]
 }
 
-// indicatorOf answers with the name a balance was created under.
-func (f *fakeBlnk) indicatorOf(id string) string {
+// accounts answers how many balances exist. EnsureAccount must leave the
+// count where it found it: an account is a name here, and the balance
+// behind it appears when a transfer names it.
+func (f *fakeBlnk) accounts() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if row, ok := f.balances[id]; ok {
-		return row.indicator
-	}
-	return ""
+	return len(f.balances)
 }
 
-// balanceOf answers with what a balance holds.
-func (f *fakeBlnk) balanceOf(id string) int64 {
+// knows reports whether a balance exists under an account name.
+func (f *fakeBlnk) knows(indicator string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	row, ok := f.balances[id]
-	if !ok {
-		f.t.Fatalf("no balance %q", id)
-	}
-	return row.minor.Int64()
+	_, ok := f.byIndicator[indicatorKey(indicator)]
+	return ok
 }
 
-// seed puts money on a balance without going through a transaction, so a
-// test that is about spending does not have to be about funding first.
-func (f *fakeBlnk) seed(id string, minor int64) {
+// balanceOf answers what an account holds, failing the test when no
+// transfer has ever named it.
+func (f *fakeBlnk) balanceOf(indicator string) int64 {
+	f.t.Helper()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	row, ok := f.balances[id]
+	id, ok := f.byIndicator[indicatorKey(indicator)]
 	if !ok {
-		f.t.Fatalf("no balance %q", id)
+		f.t.Fatalf("no balance is named %q; nothing has been posted to it", indicator)
 	}
-	row.minor = big.NewInt(minor)
+	return f.balances[id].minor.Int64()
+}
+
+// holds answers what an account holds, treating one no transfer has named
+// as holding nothing - which is what it holds. It is the assertion for a
+// balance that must not have moved, where balanceOf is the assertion for
+// one that must have.
+func (f *fakeBlnk) holds(indicator string) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id, ok := f.byIndicator[indicatorKey(indicator)]
+	if !ok {
+		return 0
+	}
+	return f.balances[id].minor.Int64()
+}
+
+// seed puts money on an account without going through a transaction,
+// opening the balance if nothing has named it yet, so a test that is about
+// spending does not have to be about funding first.
+func (f *fakeBlnk) seed(indicator string, minor int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.open(indicator).minor = big.NewInt(minor)
+}
+
+// open returns the balance an account name refers to, creating it exactly
+// as the transaction path does: in the General Ledger, under the name with
+// its "@" kept. Called with the lock held.
+func (f *fakeBlnk) open(indicator string) *balanceRow {
+	key := indicatorKey(indicator)
+	if id, ok := f.byIndicator[key]; ok {
+		return f.balances[id]
+	}
+	row := &balanceRow{
+		id:        f.nextID("bln"),
+		ledgerID:  generalLedgerID,
+		currency:  currencyOf(indicator),
+		indicator: indicator,
+		minor:     big.NewInt(0),
+	}
+	f.balances[row.id] = row
+	f.byIndicator[key] = row.id
+	return row
+}
+
+// indicatorKey is how a balance is looked up: by name and currency, with no
+// ledger anywhere in it. Uniqueness is global for that reason, which is
+// what the ledger id inside the adapter's names exists to work around.
+func indicatorKey(indicator string) string {
+	return indicator + "/" + currencyOf(indicator)
+}
+
+// currencyOf reads the currency out of an account name, which ends with it.
+// The fake needs one wherever it opens a balance, and the name is the only
+// place it can come from - as it is for the server, which takes it from the
+// transaction that named the account.
+func currencyOf(indicator string) string {
+	at := strings.LastIndex(indicator, ".")
+	if at < 0 {
+		return ""
+	}
+	return indicator[at+1:]
 }
 
 func (f *fakeBlnk) nextID(prefix string) string {
@@ -336,62 +419,25 @@ func (f *fakeBlnk) createLedger(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"ledger_id": id, "name": body.Name, "created_at": time.Unix(0, 0).UTC()})
 }
 
+// createBalance fails the test. The real endpoint accepts a body carrying
+// no indicator field at all, so it answers with a nameless balance the
+// lookup by name will never find again - and an adapter that called it
+// would make one of those per call and split an account's money across all
+// of them. There is nothing here to model but the refusal.
 func (f *fakeBlnk) createBalance(w http.ResponseWriter, r *http.Request) {
 	f.count(r)
-	var body wireCreateBalance
-	if !decode(f.t, w, r, &body) {
-		return
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.balanceCreates = append(f.balanceCreates, body)
-
-	key := body.Indicator + "/" + body.Currency
-	if _, taken := f.byIndicator[key]; taken && body.Indicator != "" {
-		// Two balances under one name would be one account's money in two
-		// places, so this server refuses rather than obliges. Whether the
-		// real one does is unproven, which is why the adapter converges on
-		// the lookup either way.
-		writeError(w, http.StatusConflict, "BAL_DUPLICATE_INDICATOR", "indicator already exists")
-		return
-	}
-
-	row := &balanceRow{
-		id:        f.nextID("bln"),
-		ledgerID:  body.LedgerID,
-		currency:  body.Currency,
-		indicator: body.Indicator,
-		minor:     big.NewInt(0),
-	}
-	if f.dropIndicator {
-		row.indicator = ""
-	}
-	f.balances[row.id] = row
-	if row.indicator != "" {
-		f.byIndicator[key] = row.id
-	}
-	if f.balanceCreateDuplicates {
-		shadow := &balanceRow{
-			id:        f.nextID("bln"),
-			ledgerID:  row.ledgerID,
-			currency:  row.currency,
-			indicator: row.indicator,
-			minor:     big.NewInt(0),
-		}
-		f.balances[shadow.id] = shadow
-		f.byIndicator[key] = shadow.id
-	}
-	if f.balanceCreateLosesRace {
-		f.balanceCreateLosesRace = false
-		writeError(w, http.StatusConflict, "BAL_DUPLICATE_INDICATOR", "indicator already exists")
-		return
-	}
-	writeJSON(w, http.StatusCreated, f.renderBalance(row))
+	f.t.Error("the adapter tried to create a balance; this ledger creates one only when a transaction names it, and a balance created any other way carries no name to find it by")
+	writeError(w, http.StatusBadRequest, "BAL_VALIDATION", "balances are not created this way")
 }
 
 func (f *fakeBlnk) getBalanceByIndicator(w http.ResponseWriter, r *http.Request) {
 	f.count(r)
-	key := r.PathValue("indicator") + "/" + r.PathValue("currency")
+	indicator := r.PathValue("indicator")
+	if !strings.HasPrefix(indicator, indicatorPrefix) {
+		f.t.Errorf("the adapter looked up the account name %q, which carries no %q; the name is stored with it", indicator, indicatorPrefix)
+	}
+	key := indicator + "/" + r.PathValue("currency")
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	id, ok := f.byIndicator[key]
@@ -399,20 +445,8 @@ func (f *fakeBlnk) getBalanceByIndicator(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "BAL_NOT_FOUND", "balance not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, f.renderBalance(f.balances[id]))
-}
-
-func (f *fakeBlnk) getBalance(w http.ResponseWriter, r *http.Request) {
-	f.count(r)
-	id := r.PathValue("id")
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	row, ok := f.balances[id]
-	if !ok {
-		writeError(w, http.StatusNotFound, "BAL_NOT_FOUND", "balance not found")
-		return
-	}
-	if override, ok := f.balanceOverride[id]; ok {
+	row := f.balances[id]
+	if override, ok := f.balanceOverride[row.indicator]; ok {
 		// Written as raw JSON so a figure no int64 can hold reaches the
 		// adapter exactly as a real ledger would send it.
 		w.Header().Set("Content-Type", "application/json")
@@ -421,6 +455,15 @@ func (f *fakeBlnk) getBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, f.renderBalance(row))
+}
+
+// getBalance fails the test. An account id is a name here, so nothing holds
+// a Blnk balance id to read a balance by - and one that reached this
+// endpoint would be an id the adapter had let escape into a port type.
+func (f *fakeBlnk) getBalance(w http.ResponseWriter, r *http.Request) {
+	f.count(r)
+	f.t.Errorf("the adapter read a balance by id (%q); accounts are addressed by name here", r.PathValue("id"))
+	writeError(w, http.StatusNotFound, "BAL_NOT_FOUND", "balance not found")
 }
 
 // renderBalance is called with the lock held.
@@ -436,6 +479,18 @@ func (f *fakeBlnk) renderBalance(row *balanceRow) map[string]any {
 	}
 }
 
+// createTransaction records one transfer the way the server does.
+//
+// The order of the steps is the server's: validate the request, split it
+// into the transactions that will actually be recorded, then record each of
+// them in turn - resolving its ends, refusing an overdraft it was not given
+// permission for, and moving the balances. A failure part-way leaves the
+// children before it recorded, because that is what the server does and a
+// fake that rolled back would hide it.
+//
+// What comes back is the PARENT: the id this call minted and the reference
+// the request carried, with the status the transfer ended in. No row is
+// stored under either.
 func (f *fakeBlnk) createTransaction(w http.ResponseWriter, r *http.Request) {
 	f.count(r)
 	raw, body, ok := decodeRaw[wireTransaction](f.t, w, r)
@@ -456,138 +511,188 @@ func (f *fakeBlnk) createTransaction(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprint(w, f.refusal.body)
 		return
 	}
-
-	if held, taken := f.byReference[body.Reference]; taken {
-		if !f.freesRejectedReference || f.transactions[held].status != statusRejected {
-			writeError(w, http.StatusConflict, "TXN_DUPLICATE_REFERENCE", "reference already exists")
-			return
-		}
+	// Both are required by the server's own validation, and the
+	// description is the one the port does not require of its callers.
+	if strings.TrimSpace(body.Description) == "" {
+		writeError(w, http.StatusBadRequest, "TXN_VALIDATION", "description: cannot be blank")
+		return
 	}
-
-	if f.createdStatus == statusRejected {
-		// A ledger that accepts the request and then refuses the movement
-		// answers 2xx with a rejected transaction and moves no balance.
-		// The row still exists, and it still holds the reference.
-		row := &txnRow{
-			id:        f.nextID("txn"),
-			reference: body.Reference,
-			currency:  body.Currency,
-			precise:   big.NewInt(0),
-			source:    body.Source,
-			dest:      body.Destination,
-			sources:   body.Sources,
-			dests:     body.Destinations,
-			status:    statusRejected,
-			createdAt: time.Now().UTC(),
-			metadata:  body.MetaData,
-		}
-		f.transactions[row.id] = row
-		f.byReference[row.reference] = row.id
-		writeJSON(w, http.StatusCreated, f.renderTransaction(row))
+	if strings.TrimSpace(body.Reference) == "" {
+		writeError(w, http.StatusBadRequest, "TXN_VALIDATION", "reference: cannot be blank")
 		return
 	}
 
-	moves, err := movementsOf(body)
+	parentID := f.nextID("txn")
+	recording, err := f.splitTransaction(parentID, body)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "TXN_INVALID", err.Error())
+		writeError(w, http.StatusBadRequest, "TXN_VALIDATION", err.Error())
 		return
 	}
-	for id := range moves {
-		if _, known := f.balances[id]; !known {
-			writeError(w, http.StatusNotFound, "BAL_NOT_FOUND", "balance "+id+" not found")
-			return
-		}
-	}
-	if !body.AllowOverdraft {
-		for id, delta := range moves {
-			after := new(big.Int).Add(f.balances[id].minor, delta)
-			if after.Sign() < 0 {
-				writeError(w, http.StatusBadRequest, "TXN_INSUFFICIENT_FUNDS",
-					"insufficient funds in balance "+id)
+
+	// The duplicate check runs per recorded transaction, on the reference
+	// that transaction will carry - so a split is guarded by its children's
+	// references and never by the transfer's own, which no row holds.
+	for _, row := range recording {
+		if held, taken := f.byReference[row.reference]; taken {
+			if !f.freesRejectedReference || f.transactions[held].status != statusRejected {
+				writeError(w, http.StatusConflict, "TXN_DUPLICATE_REFERENCE", "reference already exists")
 				return
 			}
 		}
 	}
-	for id, delta := range moves {
-		f.balances[id].minor = new(big.Int).Add(f.balances[id].minor, delta)
-	}
 
-	precise := new(big.Int)
-	if body.PreciseAmount != nil {
-		precise.SetString(body.PreciseAmount.String(), 10)
-	}
-	row := &txnRow{
-		id:        f.nextID("txn"),
-		reference: body.Reference,
-		currency:  body.Currency,
-		precise:   precise,
-		source:    body.Source,
-		dest:      body.Destination,
-		sources:   body.Sources,
-		dests:     body.Destinations,
-		status:    f.createdStatus,
-		createdAt: time.Now().UTC(),
-		metadata:  body.MetaData,
-	}
-	f.transactions[row.id] = row
-	f.byReference[row.reference] = row.id
-	f.splitIntoChildren(row)
-	writeJSON(w, http.StatusCreated, f.renderTransaction(row))
-}
-
-// splitIntoChildren records the child transaction the ledger keeps for each
-// leg of a split: a row of its own, naming one account at one end and
-// pointing back at the transfer it belongs to.
-//
-// This is the model the adapter is written against, and modelling it here
-// is the whole point of the fake. The filter below matches on the scalar
-// source and destination columns and on nothing else, so a leg account is
-// found through its child and never through the parent, while the account
-// that travelled as the scalar end is found through BOTH - which is exactly
-// the shape that double-counts a movement if a reader takes each row it is
-// handed as a posting of its own.
-//
-// Children carry neither the reference nor the annotation: the transfer's
-// identity lives on the parent, and a fake that copied it down would let a
-// reader that never looks at the parent pass.
-func (f *fakeBlnk) splitIntoChildren(parent *txnRow) {
-	for _, side := range []struct {
-		legs     []wireLeg
-		asSource bool
-	}{{parent.sources, true}, {parent.dests, false}} {
-		for _, leg := range side.legs {
-			amount, ok := new(big.Int).SetString(leg.PreciseDistribution, 10)
-			if !ok {
-				continue
-			}
-			child := &txnRow{
-				id:        f.nextID("txn"),
-				parent:    parent.id,
-				currency:  parent.currency,
-				precise:   amount,
-				status:    parent.status,
-				createdAt: parent.createdAt,
-			}
-			if side.asSource {
-				child.source, child.dest = leg.Identifier, parent.dest
-			} else {
-				child.source, child.dest = parent.source, leg.Identifier
-			}
-			f.transactions[child.id] = child
+	for _, row := range recording {
+		if failure := f.recordTransaction(row, body.AllowOverdraft); failure != nil {
+			writeError(w, failure.status, failure.code, failure.message)
+			return
 		}
 	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"transaction_id": parentID,
+		"reference":      body.Reference,
+		"currency":       body.Currency,
+		"precise_amount": preciseOf(body),
+		"amount":         999999.99,
+		"precision":      body.Precision,
+		"status":         f.createdStatus,
+		"created_at":     time.Now().UTC(),
+		"meta_data":      body.MetaData,
+	})
 }
 
+// splitTransaction turns one create request into the transactions the
+// server will actually record.
+//
+// Exactly one side is split, and which is not a choice: the sources are
+// taken when there are any and the destinations otherwise. Every child is a
+// copy of the whole transfer - annotation and all - carrying one leg at one
+// end and the transfer's scalar at the other, under the parent's id and the
+// transfer's reference with an ordinal appended. A transfer split on BOTH
+// sides has no scalar to give its children, so they are built with an empty
+// end and the recording below fails on it: that is what the server does,
+// and the adapter is expected to refuse the shape before it gets here.
+//
+// A request with no legs is recorded as itself, under its own reference and
+// the parent's id, and is the only shape leaving a row a reader can find by
+// the transfer's own reference.
+func (f *fakeBlnk) splitTransaction(parentID string, body wireTransaction) ([]*txnRow, error) {
+	base := func() *txnRow {
+		return &txnRow{
+			currency:  body.Currency,
+			status:    f.createdStatus,
+			createdAt: time.Now().UTC(),
+			metadata:  body.MetaData,
+		}
+	}
+
+	legs, asSource := body.Sources, true
+	if len(legs) == 0 {
+		legs, asSource = body.Destinations, false
+	}
+	if len(legs) == 0 {
+		row := base()
+		row.id, row.reference = parentID, body.Reference
+		row.precise = preciseOf(body)
+		row.source, row.dest = body.Source, body.Destination
+		return []*txnRow{row}, nil
+	}
+
+	children := make([]*txnRow, 0, len(legs))
+	total := new(big.Int)
+	for i, leg := range legs {
+		share, ok := new(big.Int).SetString(leg.PreciseDistribution, 10)
+		if !ok {
+			return nil, fmt.Errorf("leg %q carries precise_distribution %q, which is not an integer", leg.Identifier, leg.PreciseDistribution)
+		}
+		total.Add(total, share)
+
+		row := base()
+		row.id = f.nextID("txn")
+		row.parent = parentID
+		row.reference = fmt.Sprintf("%s%s%d", body.Reference, f.splitJoin, i+1)
+		row.precise = share
+		if asSource {
+			row.source, row.dest = leg.Identifier, body.Destination
+		} else {
+			row.source, row.dest = body.Source, leg.Identifier
+		}
+		children = append(children, row)
+	}
+	if total.Cmp(preciseOf(body)) != 0 {
+		return nil, fmt.Errorf("the legs sum to %s but the transaction is for %s", total, preciseOf(body))
+	}
+	return children, nil
+}
+
+// recordFailure is a refusal the recording step makes, in the shape the
+// endpoint writes it back in.
+type recordFailure struct {
+	status  int
+	code    string
+	message string
+}
+
+// recordTransaction resolves one transaction's ends, applies it and stores
+// it. Called with the lock held.
+//
+// An end beginning with "@" is a name: the balance behind it is created if
+// there is none, and what is STORED is the balance id it resolved to. An
+// end that is neither a name nor a balance this server holds is a refusal,
+// which is how an empty end - the shape a both-sides split produces -
+// arrives.
+func (f *fakeBlnk) recordTransaction(row *txnRow, allowOverdraft bool) *recordFailure {
+	ends := make(map[string]*balanceRow, 2)
+	for _, end := range []string{row.source, row.dest} {
+		if _, done := ends[end]; done {
+			continue
+		}
+		if strings.HasPrefix(end, indicatorPrefix) {
+			ends[end] = f.open(end)
+			continue
+		}
+		held, known := f.balances[end]
+		if !known {
+			return &recordFailure{http.StatusNotFound, "BAL_NOT_FOUND", "balance " + strconv.Quote(end) + " not found"}
+		}
+		ends[end] = held
+	}
+
+	source, dest := ends[row.source], ends[row.dest]
+	if row.status != statusRejected {
+		if !allowOverdraft {
+			if after := new(big.Int).Sub(source.minor, row.precise); after.Sign() < 0 {
+				return &recordFailure{http.StatusBadRequest, "TXN_INSUFFICIENT_FUNDS", "insufficient funds in balance " + source.id}
+			}
+		}
+		source.minor = new(big.Int).Sub(source.minor, row.precise)
+		dest.minor = new(big.Int).Add(dest.minor, row.precise)
+	}
+
+	row.source, row.dest = source.id, dest.id
+	f.transactions[row.id] = row
+	f.byReference[row.reference] = row.id
+	return nil
+}
+
+// preciseOf reads the integer amount off a create request, treating an
+// absent one as zero.
+func preciseOf(body wireTransaction) *big.Int {
+	total := new(big.Int)
+	if body.PreciseAmount != nil {
+		total.SetString(body.PreciseAmount.String(), 10)
+	}
+	return total
+}
+
+// getTransaction fails the test. The adapter reads a transfer by reference
+// and gathers a split from the rows a filter answers with, so nothing needs
+// this endpoint - and a split's parent, the one id it might be tempted to
+// ask for, is not a row that exists.
 func (f *fakeBlnk) getTransaction(w http.ResponseWriter, r *http.Request) {
 	f.count(r)
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	row, ok := f.transactions[r.PathValue("id")]
-	if !ok {
-		writeError(w, http.StatusNotFound, "TXN_NOT_FOUND", "transaction not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, f.renderTransaction(row))
+	f.t.Errorf("the adapter read a transaction by id (%q); a split's parent is no row, so an id read cannot answer for one", r.PathValue("id"))
+	writeError(w, http.StatusNotFound, "TXN_NOT_FOUND", "transaction not found")
 }
 
 func (f *fakeBlnk) getTransactionByReference(w http.ResponseWriter, r *http.Request) {
@@ -640,6 +745,15 @@ func (f *fakeBlnk) filterTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 	field, value := body.Filters[0].Field, fmt.Sprint(body.Filters[0].Value)
 
+	// The server's own clamp, modelled because it is silent: a page asked
+	// for above the ceiling is not refused, it is answered with the default
+	// instead - so a reader that stopped at a short page would lose a
+	// member's record without a word about it.
+	limit := body.Limit
+	if limit <= 0 || limit > filterPageCeiling {
+		limit = filterPageDefault
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	matched := make([]map[string]any, 0, len(f.transactions))
@@ -653,8 +767,8 @@ func (f *fakeBlnk) filterTransactions(w http.ResponseWriter, r *http.Request) {
 	} else {
 		matched = matched[body.Offset:]
 	}
-	if body.Limit > 0 && len(matched) > body.Limit {
-		matched = matched[:body.Limit]
+	if len(matched) > limit {
+		matched = matched[:limit]
 	}
 	if f.pageCap > 0 && len(matched) > f.pageCap {
 		matched = matched[:f.pageCap]
@@ -670,6 +784,15 @@ func (f *fakeBlnk) filterTransactions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"data": matched})
 	}
 }
+
+// What a filtered page answers with, whatever was asked for.
+const (
+	// filterPageCeiling is the largest page the server honours.
+	filterPageCeiling = 100
+	// filterPageDefault is what it answers with instead of a page above the
+	// ceiling - quietly, which is the part that matters.
+	filterPageDefault = 20
+)
 
 // The shapes a filtered page can arrive in.
 const (
@@ -687,7 +810,7 @@ const (
 )
 
 // matchesField is the fake's whole filter language: equality on the two
-// columns the adapter asks about.
+// columns the adapter asks about, both of which hold balance ids.
 func matchesField(row *txnRow, field, value string) bool {
 	switch field {
 	case "source":
@@ -745,18 +868,17 @@ func (f *fakeBlnk) renderTransaction(row *txnRow) map[string]any {
 	if row.dest != "" {
 		out["destination"] = row.dest
 	}
-	if len(row.sources) > 0 {
-		out["sources"] = row.sources
-	}
-	if len(row.dests) > 0 {
-		out["destinations"] = row.dests
-	}
 	return out
 }
 
 // record adds a transaction the adapter did not create, so History can be
-// shown what it does with a shape only a real ledger produces - a split
-// child pointing at its parent, or a leg carrying a decimal distribution.
+// shown a shape no Post of its own would produce: a row carrying no
+// annotation, a child whose siblings are missing, a transaction that never
+// applied.
+//
+// source and dest are given as account NAMES and stored as the balance ids
+// they resolve to, exactly as a recorded transaction holds them; the
+// balances are opened if nothing has named them yet.
 func (f *fakeBlnk) record(row *txnRow) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -769,58 +891,15 @@ func (f *fakeBlnk) record(row *txnRow) {
 	if row.precise == nil {
 		row.precise = big.NewInt(0)
 	}
+	for _, end := range []*string{&row.source, &row.dest} {
+		if strings.HasPrefix(*end, indicatorPrefix) {
+			*end = f.open(*end).id
+		}
+	}
 	f.transactions[row.id] = row
 	if row.reference != "" {
 		f.byReference[row.reference] = row.id
 	}
-}
-
-// movementsOf works out what a create request would do to each balance,
-// which is what lets the fake refuse an overdraft it was not given
-// permission for.
-func movementsOf(body wireTransaction) (map[string]*big.Int, error) {
-	total := new(big.Int)
-	if body.PreciseAmount != nil {
-		if _, ok := total.SetString(body.PreciseAmount.String(), 10); !ok {
-			return nil, fmt.Errorf("precise_amount %q is not an integer", body.PreciseAmount.String())
-		}
-	}
-	moves := make(map[string]*big.Int)
-	add := func(id string, delta *big.Int) {
-		if existing, ok := moves[id]; ok {
-			moves[id] = new(big.Int).Add(existing, delta)
-			return
-		}
-		moves[id] = delta
-	}
-
-	if body.Source != "" {
-		add(body.Source, new(big.Int).Neg(total))
-	}
-	if body.Destination != "" {
-		add(body.Destination, new(big.Int).Set(total))
-	}
-	for _, side := range []struct {
-		legs     []wireLeg
-		negative bool
-	}{{body.Sources, true}, {body.Destinations, false}} {
-		sum := new(big.Int)
-		for _, leg := range side.legs {
-			amount, ok := new(big.Int).SetString(leg.PreciseDistribution, 10)
-			if !ok {
-				return nil, fmt.Errorf("leg %q carries precise_distribution %q, which is not an integer", leg.Identifier, leg.PreciseDistribution)
-			}
-			sum.Add(sum, amount)
-			if side.negative {
-				amount = new(big.Int).Neg(amount)
-			}
-			add(leg.Identifier, amount)
-		}
-		if len(side.legs) > 0 && sum.Cmp(total) != 0 {
-			return nil, fmt.Errorf("the legs sum to %s but the transaction is for %s", sum, total)
-		}
-	}
-	return moves, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

@@ -136,8 +136,8 @@ func TestLiveEnsureAccountIsIdempotent(t *testing.T) {
 
 	// A second ledger value over the same ledger - a second process, as
 	// far as anything here can tell - must resolve the same account. The
-	// derivation is the identity; the memo only saves a round trip, and a
-	// derivation that needed the memo would strand every restart.
+	// derivation is the identity, and one that needed anything held in
+	// this process would strand every restart.
 	if again := ensure(t, liveLedgerNamed(t, name), ref, eur); again != first {
 		t.Fatalf("a second ledger value resolved %q, want the same account %q", again, first)
 	}
@@ -154,6 +154,64 @@ func TestLiveEnsureAccountIsIdempotent(t *testing.T) {
 	} {
 		if got := ensure(t, ledger, pair.ref, pair.cur); got == first {
 			t.Errorf("%s resolved to the same balance %q", pair.name, got)
+		}
+	}
+}
+
+// TestLiveAnAccountExistsOnceATransferNamesIt is the fact the whole design
+// turns on, held to the real server. Blnk creates a balance only when a
+// transaction names it with an "@", and it stores the name with the "@"
+// kept; the create-a-balance endpoint takes no name at all, which is why
+// this adapter never calls it.
+//
+// Both halves are checked because a failure in either is silent. If naming
+// an account did not create it, the transfer below would be refused. If the
+// name were stored without its "@", the transfer would succeed and the
+// balance read afterwards would come back as an empty account - a member's
+// money reported as absent while the ledger's own figure was right.
+func TestLiveAnAccountExistsOnceATransferNamesIt(t *testing.T) {
+	t.Parallel()
+
+	ledger := liveLedger(t)
+	tag := suffix(t)
+	house := ensure(t, ledger, wallet.HouseAccount("commission-"+tag), eur)
+	holder := ensure(t, ledger, wallet.MemberAccount(uuid.New(), wallet.StagePending), eur)
+
+	// Before anything is posted: an account this port issued, holding
+	// nothing and answering an empty history. Not an unknown account - the
+	// port must let the first transfer into a bucket through.
+	for _, id := range []wallet.LedgerAccountID{house, holder} {
+		held, err := ledger.Balance(context.Background(), id, eur)
+		if err != nil {
+			t.Fatalf("reading %q before anything was posted to it: %v", id, err)
+		}
+		if !held.IsZero() {
+			t.Errorf("account %q holds %s before anything was posted to it", id, held)
+		}
+		if got := readHistory(t, ledger, id, wallet.Window{}); len(got) != 0 {
+			t.Errorf("account %q has %d posting(s) before anything was posted to it", id, len(got))
+		}
+	}
+
+	if _, err := ledger.Post(context.Background(), wallet.Transfer{
+		IdempotencyKey: "first-touch-" + tag,
+		Reference:      "entry-transition-" + tag,
+		Postings: []wallet.Posting{
+			{Account: house, Amount: amount(-4200, eur)},
+			{Account: holder, Amount: amount(4200, eur)},
+		},
+	}); err != nil {
+		t.Fatalf("the transfer that must create both accounts: %v", err)
+	}
+
+	for id, want := range map[wallet.LedgerAccountID]int64{house: -4200, holder: 4200} {
+		held, err := ledger.Balance(context.Background(), id, eur)
+		if err != nil {
+			t.Fatalf("reading %q after the transfer that created it: %v", id, err)
+		}
+		if held.Minor != want {
+			t.Errorf("account %q holds %s after the transfer that created it, want %d; the name the balance was created under is not the name it is looked up by",
+				id, held, want)
 		}
 	}
 }
@@ -548,112 +606,23 @@ func TestLiveReversalReturnsTheMoney(t *testing.T) {
 	}
 }
 
-// TestLiveManyToManyIsOneTransfer is the shape this ledger claims it can
-// record atomically, held to the claim: several accounts giving and several
-// receiving, in one currency, as one movement - and every posting of it
-// readable afterwards under one reference.
+// TestLiveRoundedEarningReadsBackWhole is D6's shape held to the substrate:
+// one funding account giving, a member bucket and a rounding remainder
+// receiving. It is the split the cashback domain posts most, and it is
+// where every reading this adapter has of how a split is recorded has to be
+// right at once.
 //
-// The history assertions are the important ones. The adapter finds a
-// posting by the account being one end of a recorded transaction, which is
-// what a split leg is; if this substrate recorded a split some other way, a
-// member's history would silently omit legs while Balance went on being
-// right, and this is where that shows up.
-func TestLiveManyToManyIsOneTransfer(t *testing.T) {
-	t.Parallel()
-
-	ledger := liveLedger(t)
-	tag := suffix(t)
-	memberID := uuid.New()
-	commission := ensure(t, ledger, wallet.HouseAccount("commission-"+tag), eur)
-	float := ensure(t, ledger, wallet.HouseAccount("float-"+tag), eur)
-	pending := ensure(t, ledger, wallet.MemberAccount(memberID, wallet.StagePending), eur)
-	rounding := ensure(t, ledger, wallet.HouseAccount("rounding-"+tag), eur)
-
-	ref, err := ledger.Post(context.Background(), wallet.Transfer{
-		IdempotencyKey: "split-" + tag,
-		Reference:      "commission-split-" + tag,
-		Postings: []wallet.Posting{
-			{Account: commission, Amount: amount(-700, eur)},
-			{Account: float, Amount: amount(-300, eur)},
-			{Account: pending, Amount: amount(999, eur)},
-			{Account: rounding, Amount: amount(1, eur)},
-		},
-	})
-	if err != nil {
-		t.Fatalf("posting a many-to-many transfer: %v", err)
-	}
-
-	for id, want := range map[wallet.LedgerAccountID]money.Amount{
-		commission: amount(-700, eur),
-		float:      amount(-300, eur),
-		pending:    amount(999, eur),
-		rounding:   amount(1, eur),
-	} {
-		held, err := ledger.Balance(context.Background(), id, eur)
-		if err != nil {
-			t.Fatalf("reading %q: %v", id, err)
-		}
-		if !held.Equal(want) {
-			t.Errorf("account %q holds %s, want %s", id, held, want)
-		}
-	}
-
-	for id, want := range map[wallet.LedgerAccountID]int64{
-		commission: -700, float: -300, pending: 999, rounding: 1,
-	} {
-		postings := readHistory(t, ledger, id, wallet.Window{})
-		if len(postings) != 1 {
-			t.Errorf("account %q has %d posting(s) from a many-to-many transfer, want 1", id, len(postings))
-			continue
-		}
-		if postings[0].Amount.Minor != want {
-			t.Errorf("account %q recorded %d, want %d", id, postings[0].Amount.Minor, want)
-		}
-		if postings[0].TransferRef != ref {
-			t.Errorf("account %q recorded reference %q, want the transfer's own %q", id, postings[0].TransferRef, ref)
-		}
-	}
-
-	// A split is the one shape where the reference a second caller learns
-	// could differ from the first's: if the ledger answers the key with a
-	// leg rather than with the transfer, the two callers store different
-	// references for one movement and the audit join breaks (D7).
-	replay, err := ledger.Post(context.Background(), wallet.Transfer{
-		IdempotencyKey: "split-" + tag,
-		Reference:      "commission-split-" + tag,
-		Postings: []wallet.Posting{
-			{Account: commission, Amount: amount(-700, eur)},
-			{Account: float, Amount: amount(-300, eur)},
-			{Account: pending, Amount: amount(999, eur)},
-			{Account: rounding, Amount: amount(1, eur)},
-		},
-	})
-	if err != nil {
-		t.Fatalf("replaying the key of a split transfer: %v", err)
-	}
-	if replay != ref {
-		t.Errorf("replaying a split transfer's key answered %q, want the transfer's own reference %q", replay, ref)
-	}
-	_, err = ledger.Post(context.Background(), wallet.Transfer{
-		IdempotencyKey: "split-" + tag,
-		Reference:      "commission-split-" + tag,
-		Postings: []wallet.Posting{
-			{Account: commission, Amount: amount(-1000, eur)},
-			{Account: pending, Amount: amount(1000, eur)},
-		},
-	})
-	if !errors.Is(err, wallet.ErrIdempotencyConflict) {
-		t.Errorf("a different transfer under a split's key gave %v, want one wrapping %v", err, wallet.ErrIdempotencyConflict)
-	}
-}
-
-// TestLiveRoundedEarningReadsBackWhole is D6's shape held to the
-// substrate: one funding account giving, a member bucket and a rounding
-// remainder receiving. It is the split the cashback domain posts most, and it is the
-// one where the account travelling as the scalar end of the transaction is
-// also named by every child row the ledger keeps for the legs - so a reader
-// that took each row as a posting of its own would report the funding
-// account as having given twice over.
+// The ledger records a split as one child per leg and no parent row at all,
+// each child naming the funding account for its own share. So a reader that
+// took each row as a posting of its own would report that account as having
+// given twice; a reader that looked for a parent to read instead would find
+// nothing; and a reader that took the annotation once per child would
+// report the whole earning once per leg. All three come out here.
+//
+// The replay is the other half, and the one only a live server settles. A
+// split rewrites the reference of every child, so no row carries the
+// transfer's key: the adapter probes for the first child instead, and if
+// that probe misses, this Post moves the money a second time.
 func TestLiveRoundedEarningReadsBackWhole(t *testing.T) {
 	t.Parallel()
 
@@ -663,7 +632,7 @@ func TestLiveRoundedEarningReadsBackWhole(t *testing.T) {
 	rounding := ensure(t, ledger, wallet.HouseAccount("rounding-"+tag), eur)
 	pending := ensure(t, ledger, wallet.MemberAccount(uuid.New(), wallet.StagePending), eur)
 
-	ref, err := ledger.Post(context.Background(), wallet.Transfer{
+	earning := wallet.Transfer{
 		IdempotencyKey: "earning-" + tag,
 		Reference:      "entry-transition-" + tag,
 		Postings: []wallet.Posting{
@@ -671,7 +640,8 @@ func TestLiveRoundedEarningReadsBackWhole(t *testing.T) {
 			{Account: pending, Amount: amount(999, eur)},
 			{Account: rounding, Amount: amount(1, eur)},
 		},
-	})
+	}
+	ref, err := ledger.Post(context.Background(), earning)
 	if err != nil {
 		t.Fatalf("posting a rounded earning: %v", err)
 	}
@@ -699,6 +669,43 @@ func TestLiveRoundedEarningReadsBackWhole(t *testing.T) {
 		if held.Minor != want {
 			t.Errorf("account %q holds %s but its history sums to %d", id, held, want)
 		}
+	}
+
+	// The same movements in another order: representation, not identity,
+	// so this must replay rather than record. Every caller of one key is
+	// about to store the reference it learns as proof the money moved (D7),
+	// so the two must be the same reference as well as one movement.
+	reordered := earning
+	reordered.Postings = []wallet.Posting{
+		{Account: rounding, Amount: amount(1, eur)},
+		{Account: pending, Amount: amount(999, eur)},
+		{Account: commission, Amount: amount(-1000, eur)},
+	}
+	replay, err := ledger.Post(context.Background(), reordered)
+	if err != nil {
+		t.Fatalf("replaying the key of a split transfer: %v", err)
+	}
+	if replay != ref {
+		t.Errorf("replaying a split transfer's key answered %q, want the transfer's own reference %q", replay, ref)
+	}
+	held, err := ledger.Balance(context.Background(), pending, eur)
+	if err != nil {
+		t.Fatalf("reading the member's balance after the replay: %v", err)
+	}
+	if !held.Equal(amount(999, eur)) {
+		t.Fatalf("the member holds %s after a split's key was posted twice, want %s: the replay recorded a second earning",
+			held, amount(999, eur))
+	}
+
+	// And a different transfer under that key is the collision the key
+	// exists to surface, not a second movement.
+	conflicting := earning
+	conflicting.Postings = []wallet.Posting{
+		{Account: commission, Amount: amount(-1000, eur)},
+		{Account: pending, Amount: amount(1000, eur)},
+	}
+	if _, err := ledger.Post(context.Background(), conflicting); !errors.Is(err, wallet.ErrIdempotencyConflict) {
+		t.Errorf("a different transfer under a split's key gave %v, want one wrapping %v", err, wallet.ErrIdempotencyConflict)
 	}
 }
 
@@ -838,7 +845,7 @@ func TestLiveTwoLedgersOnOneServerShareNothing(t *testing.T) {
 	}
 }
 
-// TestLiveRefusesWhatTheLedgerCannotRecord holds the port's two structural
+// TestLiveRefusesWhatTheLedgerCannotRecord holds the port's structural
 // refusals against the real server, and proves each of them recorded
 // nothing.
 func TestLiveRefusesWhatTheLedgerCannotRecord(t *testing.T) {
@@ -863,6 +870,37 @@ func TestLiveRefusesWhatTheLedgerCannotRecord(t *testing.T) {
 	})
 	if !errors.Is(err, wallet.ErrUnsupportedTransfer) {
 		t.Fatalf("a cross-currency transfer gave %v, want one wrapping %v", err, wallet.ErrUnsupportedTransfer)
+	}
+
+	// Several accounts giving AND several receiving. The ledger splits one
+	// side of a transaction and gives every child the other side's single
+	// account, so a transfer split on both sides has nothing to give them;
+	// refusing it names the shape in the port's own vocabulary instead of
+	// leaving the caller whatever the ledger says about an end it cannot
+	// resolve. The balances below are what proves it recorded nothing -
+	// including no half of it.
+	floatEUR := ensure(t, ledger, wallet.HouseAccount("float-"+tag), eur)
+	roundingEUR := ensure(t, ledger, wallet.HouseAccount("rounding-"+tag), eur)
+	_, err = ledger.Post(context.Background(), wallet.Transfer{
+		IdempotencyKey: "both-sides-" + tag,
+		Postings: []wallet.Posting{
+			{Account: houseEUR, Amount: amount(-700, eur)},
+			{Account: floatEUR, Amount: amount(-300, eur)},
+			{Account: memberEUR, Amount: amount(999, eur)},
+			{Account: roundingEUR, Amount: amount(1, eur)},
+		},
+	})
+	if !errors.Is(err, wallet.ErrUnsupportedTransfer) {
+		t.Fatalf("a transfer split on both sides gave %v, want one wrapping %v", err, wallet.ErrUnsupportedTransfer)
+	}
+	for _, id := range []wallet.LedgerAccountID{floatEUR, roundingEUR} {
+		held, err := ledger.Balance(context.Background(), id, eur)
+		if err != nil {
+			t.Fatalf("reading %q: %v", id, err)
+		}
+		if !held.IsZero() {
+			t.Errorf("account %q holds %s after a refused transfer; a refusal must record no part of one", id, held)
+		}
 	}
 
 	_, err = ledger.Post(context.Background(), wallet.Transfer{
