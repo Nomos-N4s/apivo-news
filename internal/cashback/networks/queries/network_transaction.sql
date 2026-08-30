@@ -139,6 +139,35 @@ insert into cashback.network_transaction (
 on conflict on constraint network_transaction_unique_report do nothing
 returning id, content_digest, retrieved_at;
 
+-- name: GetCurrentNetworkTransaction :one
+-- The transaction's current row: what the network last said about it, and
+-- what a new report is judged against (T054).
+--
+-- "Current" is DERIVED rather than stamped, because the table is immutable
+-- (C-3): a superseding report cannot mark its predecessor superseded, since
+-- that would be an UPDATE the table refuses. 0012 builds the chain the other
+-- way round - the new row names the old one - and then constrains it so that
+-- exactly one row can be the tip: one root per transaction (a partial unique
+-- index) and no forks (supersedes_id is unique). One root plus one path
+-- means one tip, and the tip is the row nothing supersedes.
+--
+-- Which is what this asks. The NOT EXISTS is a single index probe rather
+-- than a scan, because supersedes_id carries a unique constraint of its own,
+-- so the question "is there a row superseding this one" has at most one
+-- answer to find.
+--
+-- No rows means the network has never reported this transaction, which is a
+-- first report rather than a failure.
+select nt.*
+from cashback.network_transaction nt
+where nt.network_id = sqlc.arg(network_id)
+  and nt.external_id = sqlc.arg(external_id)
+  and not exists (
+      select 1
+      from cashback.network_transaction superseding
+      where superseding.supersedes_id = nt.id
+  );
+
 -- name: GetNetworkTransaction :one
 -- One stored report, whole. Every column, because this is evidence: a read
 -- that returned a convenient subset would be the place a later question
