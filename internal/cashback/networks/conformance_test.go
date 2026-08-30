@@ -45,6 +45,7 @@
 package networks_test
 
 import (
+	"context"
 	"errors"
 	"iter"
 	"net/url"
@@ -669,6 +670,228 @@ func TestConformanceADeeplinkRefusesInputsItCannotUse(t *testing.T) {
 					t.Errorf("BuildDeeplink() refused and still returned %q; a half-built URL still redirects, and the member is never credited", built)
 				}
 			})
+		}
+	})
+}
+
+// TestConformanceAnAbandonedReadSaysSo is contract rule 8, and the port names
+// it the one thing an adapter must not get wrong.
+//
+// A range loop that ends having yielded no error is a caller's ONLY evidence
+// that a window was read to the end, and that evidence is what a durable
+// cursor advances on. An adapter that simply returned on ctx.Err() would let
+// a poller record a window it read half of - every member owed cashback on
+// the other half never credited, and nothing logged.
+func TestConformanceAnAbandonedReadSaysSo(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		adapter := a.open(t)
+		window := a.window(t, adapter)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		seq, err := adapter.FetchTransactions(ctx, window)
+		if err != nil {
+			t.Fatalf("FetchTransactions() refused the window rather than the context: %v", err)
+		}
+		got, err := conformCollect(seq)
+		if !errors.Is(err, networks.ErrIterationAbandoned) {
+			t.Fatalf("a cancelled read ended with %v, want one wrapping ErrIterationAbandoned", err)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("a cancelled read ended with %v, want one wrapping context.Canceled too; an operator reading a log has to know what stopped it", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("a read cancelled before it began yielded %d report(s)", len(got))
+		}
+
+		// The catalogue says it louder, because an import reads absence as
+		// departure: a quiet stop at retailer 400 of 5000 has it mark 4600
+		// live routes departed and members see an emptied catalogue.
+		catalogue, err := adapter.FetchCatalogue(ctx)
+		if err != nil {
+			t.Fatalf("FetchCatalogue() returned an immediate error, and a catalogue read has no precondition to refuse on: %v", err)
+		}
+		merchants, err := conformCollect(catalogue)
+		if !errors.Is(err, networks.ErrIterationAbandoned) {
+			t.Fatalf("a cancelled catalogue read ended with %v, want one wrapping ErrIterationAbandoned", err)
+		}
+		if len(merchants) != 0 {
+			t.Errorf("a catalogue read cancelled before it began yielded %d retailer(s)", len(merchants))
+		}
+	})
+}
+
+// TestConformanceACatalogueAbandonedMidPageSaysSo is rule 8 at the level a
+// read cancelled before it began cannot reach.
+//
+// A cancellation landing between an adapter's pages is caught before the next
+// one is touched. One landing while a page is still being walked is a
+// different branch, and a real catalogue page carries hundreds of retailers -
+// so an adapter that only looked between pages would hand out the rest of the
+// page it was already inside and then, on the last page, report nothing at
+// all. An import that read that as a whole answer would mark every retailer
+// it never reached departed.
+//
+// It needs a catalogue with more than one retailer in it to have a "during"
+// at all, and says so rather than passing vacuously when it does not.
+func TestConformanceACatalogueAbandonedMidPageSaysSo(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		adapter := a.open(t)
+
+		whole, err := conformCatalogue(t, adapter)
+		if err != nil {
+			t.Fatalf("reading the catalogue: %v", err)
+		}
+		if len(whole) < 2 {
+			t.Skipf("this adapter's catalogue holds %d retailer(s), so there is no point during a read to cancel at", len(whole))
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		seq, err := adapter.FetchCatalogue(ctx)
+		if err != nil {
+			t.Fatalf("FetchCatalogue(): %v", err)
+		}
+		seen, abandoned := 0, error(nil)
+		for _, err := range seq {
+			if err != nil {
+				abandoned = err
+				break
+			}
+			seen++
+			// Cancel after the first retailer and keep reading: the caller is
+			// still willing, and it is the adapter that has to notice.
+			cancel()
+		}
+		if seen == 0 {
+			t.Fatal("nothing was yielded before the cancellation, so this proves nothing about stopping during a read")
+		}
+		if seen == len(whole) {
+			t.Errorf("the whole catalogue arrived after the cancellation; the adapter finished the read it had been told to stop")
+		}
+		if !errors.Is(abandoned, networks.ErrIterationAbandoned) {
+			t.Fatalf("the cancelled catalogue read ended with %v, want one wrapping ErrIterationAbandoned", abandoned)
+		}
+	})
+}
+
+// TestConformanceAnAbandonedWindowRunsAgainFromTheBeginning is contract rule
+// 4, and the reason rule 8 is worth having.
+//
+// The port offers no resumption point inside a window: a cursor that could
+// sit mid-window would advance over transactions that were yielded but not
+// yet stored. So the only correct response to a read that stopped halfway is
+// to run the whole window again, and that is only safe if running it again
+// misses nothing. An adapter that treated a started read as consumed would
+// lose exactly the reports the interrupted caller had not yet written.
+//
+// What is asserted is that the transaction the abandoned read saw is there
+// again. Not that the answer is identical - re-issuing a window asks the same
+// question and does not promise the same answer, because that is the entire
+// mechanism by which a pending transaction is ever seen to become confirmed.
+func TestConformanceAnAbandonedWindowRunsAgainFromTheBeginning(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		adapter := a.open(t)
+		window := a.window(t, adapter)
+
+		seq, err := adapter.FetchTransactions(t.Context(), window)
+		if err != nil {
+			t.Fatalf("FetchTransactions(): %v", err)
+		}
+
+		// Stopped the way a poller whose write failed stops: the caller
+		// leaves the range at the first report it could not store.
+		//
+		// Breaking rather than cancelling, deliberately. A cancellation
+		// landing after the last report of a one-report window is not an
+		// abandonment at all - the window WAS read to the end - so a scenario
+		// built on it would assert the contract only against adapters whose
+		// windows happen to hold more than one transaction. A caller that
+		// breaks has stopped halfway by construction, whatever the window
+		// holds, and rule 4's promise is to exactly that caller.
+		first := ""
+		for report, err := range seq {
+			if err != nil {
+				t.Fatalf("an uncancelled read yielded %v before the caller had stopped anything", err)
+			}
+			first = report.ExternalID
+			break
+		}
+		if first == "" {
+			t.Fatal("the window this adapter offered yielded nothing, so there is no interrupted read to resume from")
+		}
+
+		// The same adapter, the same window, from the beginning. The same
+		// adapter matters: a fresh one would prove only that the network
+		// still holds the transaction, not that this adapter did not treat a
+		// started read as a consumed one.
+		again, err := conformTransactions(t, a, adapter)
+		if err != nil {
+			t.Fatalf("re-running the abandoned window failed: %v", err)
+		}
+		found := false
+		for _, report := range again {
+			if report.ExternalID == first {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("transaction %s was yielded by the read that was abandoned and is missing from the re-run; a caller that had not yet stored it has now lost it, with nothing to say so", first)
+		}
+	})
+}
+
+// TestConformanceACallerMayStopWithoutItBeingAFailure is the other way an
+// iteration ends early, and the one an adapter must NOT report.
+//
+// A caller that has seen enough - a spot check, a search, an import unwinding
+// from its own error - stops the range itself. Nothing is wrong. An adapter
+// that yielded an abandonment here would have every such caller log a failure
+// it caused on purpose, and an adapter that kept pushing values into a loop
+// that has gone is a panic rather than a wrong answer.
+func TestConformanceACallerMayStopWithoutItBeingAFailure(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		adapter := a.open(t)
+
+		seq, err := adapter.FetchTransactions(t.Context(), a.window(t, adapter))
+		if err != nil {
+			t.Fatalf("FetchTransactions(): %v", err)
+		}
+		seen := 0
+		for _, err := range seq {
+			if err != nil {
+				t.Fatalf("an uncancelled read yielded %v before the caller had stopped anything", err)
+			}
+			seen++
+			break
+		}
+		if seen != 1 {
+			t.Fatalf("the range ran %d time(s) after one break, want 1", seen)
+		}
+
+		catalogue, err := adapter.FetchCatalogue(t.Context())
+		if err != nil {
+			t.Fatalf("FetchCatalogue(): %v", err)
+		}
+		seen = 0
+		for _, err := range catalogue {
+			if err != nil {
+				t.Fatalf("an uncancelled catalogue read yielded %v before the caller had stopped anything", err)
+			}
+			seen++
+			break
+		}
+		if seen != 1 {
+			t.Fatalf("the catalogue range ran %d time(s) after one break, want 1", seen)
 		}
 	})
 }
