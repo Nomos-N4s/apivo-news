@@ -125,42 +125,114 @@ vocabulary (ADR-0003).
 ```text
 type Network interface {
     ID() NetworkID
-    BuildDeeplink(ctx, Offer, ClickRef) (string, error)
-    FetchTransactions(ctx, Window) (iterator over Reported, error)
+    Account() PublisherAccount            // which publisher account this adapter polls
+    BuildDeeplink(ctx, DeeplinkTarget, IssuedClickRef) (string, error)
+    FetchTransactions(ctx, QueryWindow) (iterator over Reported, error)
     FetchCatalogue(ctx) (iterator over ReportedMerchant, error)
     Limits() Limits   // max query window, requests per second
 }
 
 type Reported struct {
     ExternalID    string
-    ClickRef      string        // empty when the network reported none
+    ClickRef      ClickRef      // what the network echoed, or the definite absence of one
     StatusRaw     string        // verbatim
     Status        Status        // pending | confirmed | declined | reversed
     SaleAmount    Amount
-    Commission    Amount
+    Commission    Amount        // same currency as SaleAmount — one column stores both
     TransactedAt  time.Time
     RawPayload    json.RawMessage   // required, never empty
 }
 ```
 
+`ClickRef` and `IssuedClickRef` are deliberately two types. A `ClickRef` is
+what a network echoed back — arbitrary text, legitimately absent, refused
+only when it is present and blank — and it encodes as a JSON string or
+`null`, never as an empty string standing in for absence. An
+`IssuedClickRef` is the reference **Apivo** minted before the redirect, and
+it cannot be constructed unless it satisfies
+`click_ref_url_safe_and_long_enough` (FR-020). One type for both would let
+reconciliation code re-issue a redirect with a reference no `click` row can
+match.
+
+`DeeplinkTarget` is the four facts a redirect is assembled from — offer id,
+network id, click-reference parameter, template — and not the catalogue's
+`Offer`. The `Offer` is mapped out of a generated sqlc store, so a port
+taking one puts the Postgres driver in every adapter's dependency graph, and
+it carries the commercial band, which rule 6 says an adapter decides nothing
+from.
+
+`QueryWindow` is not called `Window`: `wallet.Window` exists in the same
+domain with the opposite zero value (there a zero bound is "unbounded", here
+either is refused), and the poller touches both.
+
 **Contract**
 
 1. `RawPayload` is the verbatim network response fragment for that
    transaction. An adapter returning an empty payload fails its conformance
-   test (FR-032).
+   test (FR-032). A JSON `null`, an empty object or array, and a bare scalar
+   are all refused as absence in costume, and so are bytes the `jsonb`
+   column will not take — not UTF-8, or a `\u0000` or lone-surrogate escape,
+   both of which `json.Valid` accepts.
 2. `Status` mapping is total: an unrecognised `StatusRaw` is an error, never
    a silent default. Unknown statuses must surface to an operator.
 3. `FetchTransactions` respects `Limits()`: it never issues a window wider
    than the network allows (31 days for Awin) and never exceeds the declared
-   request rate.
+   request rate. The width half is checked by the port
+   (`Limits.ValidateWindow`); the rate half belongs to the adapter's limiter
+   (T056) and is asserted by the conformance suite, not by a type.
 4. Iteration is resumable: a caller that stops mid-iteration and restarts
-   from the same `Window` sees the same set. Cursors advance only after a
-   window is fully persisted (FR-031).
-5. `BuildDeeplink` places `ClickRef` in the network's own click-reference
-   parameter (`clickref` for Awin) and returns an error rather than a
-   partially-formed URL.
+   from the same `QueryWindow` asks the same question and misses nothing.
+   Cursors advance only after a window is fully persisted (FR-031). This is
+   **not** a promise of an identical answer: a re-issued window returns the
+   network's account of that period as it stands now, and it must, because
+   the trailing re-read is the only mechanism by which a pending transaction
+   is ever seen to become confirmed (ADR-0003). An adapter that memoised a
+   window's pages would satisfy resumability to the letter and freeze every
+   member's money at pending.
+5. `BuildDeeplink` places the issued click reference in the network's own
+   click-reference parameter (`clickref` for Awin) and returns an absolute
+   http/https URL or an error, never a partially-formed URL. Every refusal
+   wraps `ErrDeeplinkNotFormed`; a refusal that is deterministic — our own
+   routing bug, or a route somebody has to fix — also wraps
+   `ErrDeeplinkInputsRefused`, so the click-out handler's 502 does not page
+   the on-call towards a network that is working perfectly.
 6. Adapters never write to the database and never decide credits. They
-   translate, and nothing else.
+   translate, and nothing else. Nothing in the port can hold an adapter to
+   this; what the port does is withhold the means — no signature speaks a
+   database type and the port file imports no driver and no generated store,
+   which a test in `internal/cashback/networks` refuses. The
+   repository-wide rule that seals an adapter inside its own package
+   (SC-008) is T109's and is not written yet.
+7. Every value an adapter yields has passed its own `Validate` before it is
+   yielded. Among those rules: a report's sale and commission carry the
+   **same** currency, because the evidence row stores one `currency` column
+   for both figures, so a report denominating them differently cannot be
+   stored without one of the two being silently restated.
+8. Iteration that ends early says so. An adapter that stops for its own
+   reason — a cancelled context, a spent retry budget — yields one final
+   pair carrying `ErrIterationAbandoned` and returns; only a caller's own
+   break ends a sequence silently. A range loop that ends having yielded no
+   error therefore means the answer was whole, which is what rule 4 lets a
+   cursor advance on, and what an import may reconcile an absent retailer to
+   `left_network` on.
+9. Failures against the network are classified, as `PayoutRail`'s are:
+   `ErrNetworkUnavailable` is retryable, `ErrNetworkRateLimited` is
+   retryable after waiting, `ErrNetworkRefused` is terminal until somebody
+   changes a credential. Rule 4 offers no resumption point inside a window,
+   so the only response to a mid-window failure is to re-run the whole
+   window — correct for the first two, an infinite loop with a frozen cursor
+   for the third. The immediate error of either iterator carries only what
+   is checkable **without** contacting the network; everything from
+   contacting it is yielded, so an eager adapter and a lazy one report an
+   expired credential through the same channel.
+10. One adapter serves one publisher account. `network_account` is unique on
+   `(network_id, external_publisher_id)` and each row carries its own
+   cursors, so a deployment with two Awin accounts wires two adapters and
+   the poller keys them by `Account().ID()` — never by `ID()`, which both
+   share. `Account().ID()` is also the `network_account_id` every evidence
+   row requires. `ValidateNetwork` holds an adapter to all of this at
+   wiring: a valid id, a real account, that account at this adapter's own
+   network, and usable limits.
 
 **Implementations**: `fixture` (recorded lifecycle: click → pending →
 approved → reversed) plus one real adapter once the founder answers Q1.
@@ -168,8 +240,10 @@ The `fixture` adapter is what un-blocks the build from the network decision.
 
 **Conformance suite** (runs against every adapter): status mapping totality,
 raw payload presence, window clamping, rate-limit adherence under
-concurrency, deeplink round-trip, resumable iteration, and a live contract
-test that is **skipped** unless credentials are present — the same posture
+concurrency, deeplink round-trip, resumable iteration, that every yielded
+value has passed its own `Validate` (rule 7), that a cancelled context ends
+iteration with `ErrIterationAbandoned` rather than quietly (rule 8), and a
+live contract test that is **skipped** unless credentials are present — the same posture
 the repository already takes with `DATABASE_URL`-keyed tests.
 
 ---
