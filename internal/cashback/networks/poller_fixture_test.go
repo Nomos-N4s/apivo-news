@@ -155,3 +155,115 @@ func currentReport(ctx context.Context, t *testing.T, tx pgx.Tx, externalID stri
 	}
 	return row
 }
+
+// TestPollingTheFixtureRecordsTheUnattributedWork walks the whole recorded
+// lifecycle and asserts what an operator is left holding (T058, FR-034).
+//
+// It is the case the design turns on, and the counts are exact rather than
+// "at least one": under-recording is the failure that looks exactly like a
+// quiet morning.
+//
+// The recording contains both halves of the problem. FIX-1001 arrives with
+// no click reference and GAINS one at the next observation - so a queue that
+// kept it would hand an operator a transaction the network has since
+// attributed itself. FIX-1002 never gains one and is restated later - so a
+// queue keyed to the first report would show money the network has since
+// withdrawn.
+func TestPollingTheFixtureRecordsTheUnattributedWork(t *testing.T) {
+	t.Parallel()
+	ctx, tx := pollerSchemaConnect(t)
+	account := fixturePollAccount(ctx, t, tx)
+
+	adapter, err := fixture.New(account)
+	if err != nil {
+		t.Fatalf("fixture.New(): %v", err)
+	}
+	// A window wide enough for the whole recording, and a clock that walks
+	// forward a day at a time so each poll reads a window of its own and the
+	// recording advances a stage per poll.
+	now := fixturePollNow
+	poller, err := networks.NewPoller(savepointBeginner{tx: tx},
+		networks.WithPollerClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatalf("NewPoller(): %v", err)
+	}
+
+	// Four polls, one per recorded observation.
+	//
+	// The cursor is put back between them, and that is the honest way to
+	// drive this recording rather than a shortcut. The four observations
+	// describe the SAME days seen four times, months apart - which in
+	// production is the trailing sweep's job, at a hundred days' remove. A
+	// forward cursor walks past those days after the first poll and never
+	// returns to them, so without the reset the later observations would be
+	// read over empty windows and the lifecycle would never play. What is
+	// under test here is what the queue does across that lifecycle; the
+	// cursor arithmetic has its own tests.
+	unattributed := 0
+	for stage := range 4 {
+		if stage > 0 {
+			if _, err := tx.Exec(ctx, `update cashback.network_account set cursor_at = null where id = $1`,
+				pgtype.UUID{Bytes: account.ID(), Valid: true}); err != nil {
+				t.Fatalf("putting the cursor back for observation %d: %v", stage, err)
+			}
+		}
+		poll, err := poller.PollForward(ctx, adapter)
+		if err != nil {
+			t.Fatalf("poll %d: %v", stage, err)
+		}
+		unattributed += poll.Outcome.Unattributed
+		now = now.Add(24 * time.Hour)
+	}
+
+	// Three observations recorded: FIX-1001 as first seen, FIX-1002 as first
+	// seen, and FIX-1002 again when the network restated it as declined.
+	// FIX-1001's later reports carry a reference and are never recorded.
+	if unattributed != 3 {
+		t.Errorf("the polls recorded %d observation(s), want 3", unattributed)
+	}
+	var recorded int
+	if err := tx.QueryRow(ctx, `select count(*) from cashback.unattributed_transaction`).Scan(&recorded); err != nil {
+		t.Fatalf("counting the recorded observations: %v", err)
+	}
+	if recorded != 3 {
+		t.Errorf("%d observation(s) are recorded, want 3", recorded)
+	}
+
+	// And exactly one of them is still work. Nothing was deleted and nothing
+	// was resolved: the other two stopped being work because a later report
+	// replaced the one they name.
+	queue, err := networks.NewUnattributedQueue(store.New(tx))
+	if err != nil {
+		t.Fatalf("NewUnattributedQueue(): %v", err)
+	}
+	open, err := queue.Open(ctx, networks.After{}, 20)
+	if err != nil {
+		t.Fatalf("Open(): %v", err)
+	}
+	if len(open) != 1 {
+		t.Fatalf("%d line(s) of work, want 1: %+v", len(open), open)
+	}
+	if open[0].ExternalID != "FIX-1002" {
+		t.Errorf("the work is %s, want FIX-1002 - the transaction the network never attributed", open[0].ExternalID)
+	}
+	// The restated figures, not the withdrawn ones: the open row IS the
+	// current report.
+	if open[0].Status != networks.StatusDeclined || open[0].Commission.Minor != 1125 {
+		t.Errorf("the work reads %s / %s, want declined and the restated 1125",
+			open[0].Status, open[0].Commission)
+	}
+	if !open[0].Attributable {
+		t.Error("a report the network attached no reference to was offered as one an operator may only dismiss")
+	}
+
+	// FIX-1001's observation is recorded and closed, with nobody named as
+	// having resolved it - which is the whole point of deriving the work
+	// rather than editing the row.
+	var resolved int
+	if err := tx.QueryRow(ctx, `select count(*) from cashback.unattributed_transaction where resolved_at is not null`).Scan(&resolved); err != nil {
+		t.Fatalf("counting resolutions: %v", err)
+	}
+	if resolved != 0 {
+		t.Errorf("%d observation(s) were resolved, want 0; the network attributing a transaction is not an operator's decision", resolved)
+	}
+}

@@ -171,7 +171,8 @@ func (s *Sweeps) report(ctx context.Context, job string, poll Poll, err error) e
 		s.log.InfoContext(ctx, "the sweep stored what the network reported",
 			"job", job, "account", s.adapter.Account().String(), "window", poll.Window.String(),
 			"first_reports", poll.Outcome.FirstReports, "superseded", poll.Outcome.Superseded,
-			"unchanged", poll.Outcome.Unchanged, "cursor_at", poll.CursorAdvancedTo)
+			"unchanged", poll.Outcome.Unchanged, "unattributed", poll.Outcome.Unattributed,
+			"cursor_at", poll.CursorAdvancedTo)
 	default:
 		s.log.DebugContext(ctx, "the sweep read a period in which nothing had changed",
 			"job", job, "account", s.adapter.Account().String(), "window", poll.Window.String(),
