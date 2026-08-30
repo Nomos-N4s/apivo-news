@@ -83,6 +83,42 @@ type CashbackConfig struct {
 	RedisURL string
 	// Network is the affiliate network adapter's selection and credentials.
 	Network NetworkConfig
+	// HouseAccounts is the configured names of the ledger's house
+	// accounts. The names live here because the design puts them in
+	// configuration and nowhere else (data-model.md 2.6): domain code
+	// takes them from this struct, never from a literal.
+	HouseAccounts HouseAccountsConfig
+}
+
+// HouseAccountsConfig names the house accounts the cashback design needs:
+// exactly the two the design names (data-model.md 2.6), one key per
+// purpose. There are no defaults, for the same reason LEDGER_DRIVER has
+// none - a house account is where members' money meets the business's, and
+// a name nobody chose would be an account nobody meant to open. Renaming
+// one after money has accrued strands the old balance under the old name,
+// so these are values an operator sets once and leaves alone.
+//
+// The keys are required only where money is real: every deployed
+// environment runs APP_ENV=prod and refuses to start without them
+// (requireCashbackComplete), while the documented no-Docker loop and the
+// CI jobs enable the product with four keys and no house names at all -
+// spike S3 pins that environment as complete, so the requirement must not
+// bite outside production.
+//
+// The names are not secrets - they are account labels, logged in clear -
+// but they are load-bearing: two purposes configured to one name would
+// merge two figures the design keeps separate, and parseCashback refuses
+// that outright, in every environment, whether or not the product is on.
+type HouseAccountsConfig struct {
+	// Rounding (HOUSE_ACCOUNT_ROUNDING) names the account the
+	// sub-minor-unit remainder of every percent earning accrues to, so
+	// each commission split still sums to zero and the rounding is never
+	// lost (D6, FR-040).
+	Rounding string
+	// Clawback (HOUSE_ACCOUNT_CLAWBACK) names the account an absorbed
+	// loss is recorded against when a transaction reverses after payout:
+	// the loss is absorbed, recorded, and the member is never chased (Q3).
+	Clawback string
 }
 
 // NetworkConfig is the affiliate network's adapter selection and its
@@ -160,6 +196,8 @@ func (c CashbackConfig) LogValue() slog.Value {
 		slog.String("blnk_url", redactedURL(c.BlnkURL)),
 		slog.Bool("blnk_secret_key_set", !c.BlnkSecretKey.IsZero()),
 		slog.String("redis_url", redactedURL(c.RedisURL)),
+		slog.String("house_account_rounding", c.HouseAccounts.Rounding),
+		slog.String("house_account_clawback", c.HouseAccounts.Clawback),
 		slog.String("network_driver", c.Network.Driver),
 		slog.String("network_account_id", c.Network.AccountID),
 		slog.Bool("network_api_key_set", !c.Network.APIKey.IsZero()),
@@ -202,6 +240,10 @@ func parseCashback(getenv func(string) string) (CashbackConfig, error) {
 			APIKey:    NewSecret(getenv("NETWORK_API_KEY")),
 			APISecret: NewSecret(getenv("NETWORK_API_SECRET")),
 		},
+		HouseAccounts: HouseAccountsConfig{
+			Rounding: strings.TrimSpace(getenv("HOUSE_ACCOUNT_ROUNDING")),
+			Clawback: strings.TrimSpace(getenv("HOUSE_ACCOUNT_CLAWBACK")),
+		},
 	}
 
 	if raw := getenv("CASHBACK_ENABLED"); raw != "" {
@@ -228,6 +270,20 @@ func parseCashback(getenv func(string) string) (CashbackConfig, error) {
 	}
 	if err := validateEndpoint("REDIS_URL", c.RedisURL, "redis", "rediss"); err != nil {
 		return CashbackConfig{}, err
+	}
+
+	// Two house purposes on one account name is one balance absorbing
+	// two meanings: the rounding remainder D6 keeps visible and the
+	// clawback losses Q3 says to record would merge into a single figure
+	// neither can be read back out of. The wallet refuses the same
+	// misconfiguration when the accounts are constructed; refusing it
+	// here as well - whether or not the product is enabled - is what
+	// lets the operator learn on this deploy instead of the one that
+	// turns cashback on.
+	if c.HouseAccounts.Rounding != "" && c.HouseAccounts.Rounding == c.HouseAccounts.Clawback {
+		return CashbackConfig{}, fmt.Errorf(
+			"config: HOUSE_ACCOUNT_ROUNDING and HOUSE_ACCOUNT_CLAWBACK both name %q; the rounding remainder (D6) and absorbed clawback losses (Q3) are two different figures, and a shared account would make each unreadable - give every purpose its own account name",
+			c.HouseAccounts.Rounding)
 	}
 
 	// A BLNK_URL beside a ledger that is not Blnk is an operator who
@@ -262,6 +318,29 @@ func requireCashbackComplete(c CashbackConfig, env string) error {
 	if env == EnvProd && c.LedgerDriver == LedgerDriverMemory {
 		return fmt.Errorf(
 			"config: LEDGER_DRIVER=%s and APP_ENV=%s: refusing to start. The in-process ledger persists nothing, so every balance it reports would vanish with the process", LedgerDriverMemory, EnvProd)
+	}
+	// The house account names are a production rule rather than part of
+	// Missing(), because the two audiences differ. The documented
+	// no-Docker loop and the CI jobs enable the product with four keys
+	// and no house names, and spike S3 holds that environment complete
+	// (ADR-0002). A deployed environment runs APP_ENV=prod, and there
+	// the first percent earning posts a remainder (D6) - a deployment
+	// that could not say where would learn so on its first commission
+	// rather than at startup, which is exactly the discovery order this
+	// function exists to prevent.
+	if env == EnvProd {
+		var unset []string
+		if c.HouseAccounts.Rounding == "" {
+			unset = append(unset, "HOUSE_ACCOUNT_ROUNDING")
+		}
+		if c.HouseAccounts.Clawback == "" {
+			unset = append(unset, "HOUSE_ACCOUNT_CLAWBACK")
+		}
+		if len(unset) > 0 {
+			return fmt.Errorf(
+				"config: %s %s unset and APP_ENV=%s: refusing to start. The house accounts are where the rounding remainder (D6) and absorbed clawback losses (Q3) live, and a production deployment that cannot name them would discover that on its first commission",
+				strings.Join(unset, ", "), plural(len(unset), "is", "are"), EnvProd)
+		}
 	}
 	return nil
 }
