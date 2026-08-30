@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -424,6 +425,109 @@ func TestConformanceRefusesAPostingInTheWrongCurrency(t *testing.T) {
 
 		if held := balance(t, ledger, member, conformEUR); !held.Equal(amount(0, conformEUR)) {
 			t.Errorf("the member holds %s after a refused transfer, want nothing", held)
+		}
+	})
+}
+
+// TestConformanceConcurrentPostsOfOneKeyRecordOnce is the race the port
+// exists to survive. Two retries of one domain fact reach the ledger at the
+// same moment - two dispatcher deliveries of one event, a caller and its
+// own timeout - and exactly one of them may record. Both must learn the
+// same reference, and the money must move once.
+//
+// A ledger that satisfied the sequential replay test and failed this one
+// would look correct in every unit test and double a member's earnings
+// under load, which is the failure this suite is for.
+func TestConformanceConcurrentPostsOfOneKeyRecordOnce(t *testing.T) {
+	t.Parallel()
+
+	eachLedger(t, func(t *testing.T, ledger wallet.Ledger) {
+		ctx := context.Background()
+		house := ensure(t, ledger, conformHouse(), conformEUR)
+		member := ensure(t, ledger, conformMember(wallet.StagePending), conformEUR)
+
+		transfer := wallet.Transfer{
+			IdempotencyKey: "conformance-race-" + uuid.NewString(),
+			Postings: []wallet.Posting{
+				{Account: house, Amount: amount(-2500, conformEUR)},
+				{Account: member, Amount: amount(2500, conformEUR)},
+			},
+		}
+
+		const callers = 8
+		refs := make([]wallet.TransferRef, callers)
+		errs := make([]error, callers)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := range callers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				refs[i], errs[i] = ledger.Post(ctx, transfer)
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("caller %d: posting one key from %d callers at once: %v", i, callers, err)
+			}
+		}
+		for i, ref := range refs {
+			if ref != refs[0] {
+				t.Errorf("caller %d learned transfer %q, caller 0 learned %q; one key recorded two transfers",
+					i, ref, refs[0])
+			}
+		}
+
+		if held := balance(t, ledger, member, conformEUR); !held.Equal(amount(2500, conformEUR)) {
+			t.Errorf("the member holds %s after %d concurrent posts of one key, want 2500 EUR", held, callers)
+		}
+		if held := balance(t, ledger, house, conformEUR); !held.Equal(amount(-2500, conformEUR)) {
+			t.Errorf("the house holds %s after %d concurrent posts of one key, want -2500 EUR", held, callers)
+		}
+	})
+}
+
+// TestConformanceConcurrentEnsureResolvesToOneAccount is the same race one
+// level down. Two callers ensuring one account must not end up with two:
+// an implementation that minted an id per call would split one member's
+// money across them, with nothing left to find it by.
+func TestConformanceConcurrentEnsureResolvesToOneAccount(t *testing.T) {
+	t.Parallel()
+
+	eachLedger(t, func(t *testing.T, ledger wallet.Ledger) {
+		ctx := context.Background()
+		ref := conformMember(wallet.StageConfirmed)
+
+		const callers = 8
+		ids := make([]wallet.LedgerAccountID, callers)
+		errs := make([]error, callers)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := range callers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				ids[i], errs[i] = ledger.EnsureAccount(ctx, ref, conformEUR)
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("caller %d: ensuring one account from %d callers at once: %v", i, callers, err)
+			}
+		}
+		for i, id := range ids {
+			if id != ids[0] {
+				t.Errorf("caller %d resolved the account to %q, caller 0 to %q; one account has two ids",
+					i, id, ids[0])
+			}
 		}
 	})
 }
