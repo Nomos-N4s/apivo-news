@@ -27,6 +27,7 @@ import (
 
 	"github.com/Nomos-N4s/apivo-news/internal/account"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
@@ -65,6 +66,15 @@ const editorialPrefix = "/api/v1/editorial/"
 // both need a verified bearer token, and a deployment that can verify one
 // can verify the other.
 const accountPrefix = "/api/v1/account/"
+
+// opsPrefix is where the cashback operator module's route table is
+// mounted. It is a subtree of the cashback base path, not the whole of it:
+// the member endpoints under /api/v1/cashback/ are a different surface with
+// a different gate, and the operator module must not claim their 404s.
+//
+// The module owns the string; naming it here would be a second copy, one
+// deployment away from a subtree whose catch-all nothing reaches.
+const opsPrefix = ops.Prefix
 
 // readerPrefix is where the content module's route table is mounted. It
 // covers the whole API namespace because the module also answers what nobody
@@ -334,7 +344,8 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 }
 
 // newAuthenticatedRoutes wires every module that needs a verified bearer
-// token: editorial, and account.
+// token: editorial, account, and - when cashback is on - the operator
+// surface.
 //
 // ONE verifier, shared. Each verifier keeps a background loop refreshing
 // the JWKS, so building one per module would mean two loops fetching the
@@ -342,10 +353,14 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 // caches that could disagree about which keys are current. The returned
 // func stops the one loop there is.
 //
-// Both routes are mounted together or not at all. They differ in what they
-// then require - editorial demands the editor role, account only that
+// The first two are mounted together or not at all. They differ in what
+// they then require - editorial demands the editor role, account only that
 // somebody is signed in - but neither can answer anything without a token
 // that verifies, so the condition for mounting is the same condition.
+//
+// The operator surface needs that token AND the feature flag: with
+// CASHBACK_ENABLED off, cashback does not exist in this process, and a
+// queue of work nothing is filling is not a surface to serve.
 func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool) ([]platformhttp.Route, func(), error) {
 	verifier, err := identity.NewVerifier(ctx, identity.VerifierConfig{
 		JWKSURL:  cfg.JWKSURL,
@@ -355,16 +370,76 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		return nil, nil, err
 	}
 	ids := identity.New(verifier, pool)
-	return []platformhttp.Route{
+	roles := identity.NewAccountRoles(pool)
+	stop := func() { _ = verifier.Close(context.Background()) }
+	routes := []platformhttp.Route{
 		{
 			Pattern: editorialPrefix,
-			Handler: editorial.NewHandler(log, editorial.NewPGStore(pool), newEditorAuth(ids, identity.NewAccountRoles(pool))),
+			Handler: editorial.NewHandler(log, editorial.NewPGStore(pool), newEditorAuth(ids, roles)),
 		},
 		{
 			Pattern: accountPrefix,
 			Handler: account.NewHandler(log, account.NewPGStore(pool), accountAuth{ids: ids}),
 		},
-	}, func() { _ = verifier.Close(context.Background()) }, nil
+	}
+
+	if !cfg.Cashback.Enabled {
+		// Named, not silent. An operator who cannot find the queue should
+		// read why in the first log line rather than deduce it from a 404.
+		log.InfoContext(ctx, "CASHBACK_ENABLED is off: every "+opsPrefix+" route is UNMOUNTED and will answer 404")
+		return routes, stop, nil
+	}
+	opsStore, err := ops.NewPGStore(pool)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	return append(routes, platformhttp.Route{
+		Pattern: opsPrefix,
+		Handler: ops.NewHandler(log, opsStore, newOperatorAuth(ids, roles)),
+	}), stop, nil
+}
+
+// newOperatorAuth builds the identity-to-ops adapter. It is the single
+// construction point for operatorAuth, so callers - production wiring and
+// tests alike - go through the same path and a new dependency cannot be
+// wired one way here and another way there.
+func newOperatorAuth(ids *identity.Service, roles identity.RoleLookup) operatorAuth {
+	return operatorAuth{ids: ids, roles: roles}
+}
+
+// operatorAuth adapts the identity module to the operator surface's
+// consumer-defined OperatorAuthenticator, exactly as editorAuth does for
+// editorial. Two adapters rather than one parameterised by a role, for the
+// reason identity keeps two gates: approving an article and releasing money
+// are separate authorities, and a shared adapter is where that separation
+// would quietly become a parameter somebody widened.
+type operatorAuth struct {
+	ids   *identity.Service
+	roles identity.RoleLookup
+}
+
+func (a operatorAuth) AuthenticateOperator(ctx context.Context, token string) (ops.Operator, error) {
+	id, err := a.ids.Authenticate(ctx, token)
+	switch {
+	case errors.Is(err, identity.ErrInvalidToken), errors.Is(err, identity.ErrUnknownAccount):
+		return ops.Operator{}, fmt.Errorf("%w: %w", ops.ErrUnauthenticated, err)
+	case err != nil:
+		return ops.Operator{}, err
+	}
+	switch err := identity.RequireOperator(ctx, id, a.roles); {
+	case errors.Is(err, identity.ErrNotOperator):
+		return ops.Operator{}, fmt.Errorf("%w: %w", ops.ErrNotOperator, err)
+	// Authentication and the role gate are two queries, so an account
+	// deleted between them surfaces as ErrUnknownAccount here as well. It
+	// means the same thing in both places - the caller holds no account -
+	// and so must map to the same 401, never a 500.
+	case errors.Is(err, identity.ErrUnknownAccount):
+		return ops.Operator{}, fmt.Errorf("%w: %w", ops.ErrUnauthenticated, err)
+	case err != nil:
+		return ops.Operator{}, err
+	}
+	return ops.Operator{ID: id.Subject, Email: id.Email, DisplayName: id.DisplayName}, nil
 }
 
 // accountAuth adapts the identity module to account's consumer-defined
