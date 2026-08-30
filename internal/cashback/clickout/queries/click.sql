@@ -54,3 +54,31 @@ select id, click_ref, account_id, offer_id, clicked_at,
        rate_snapshot, member_share_bps_snapshot, context_digest
   from cashback.click
  where click_ref = sqlc.arg(click_ref);
+
+-- name: CountRecentClicksByAccount :one
+-- How many clicks this member has made since a moment, and the oldest of
+-- them (US7 scenario 1).
+--
+-- Both answers in one statement, because the second is only meaningful
+-- beside the first: the count decides whether the rule is exceeded, and the
+-- oldest click in the window decides WHEN it stops being - which is the
+-- Retry-After a 429 owes the member. Asking twice would let the window move
+-- between them and quote a time that is already past.
+--
+-- Rides click_account_clicked_at_idx, which 0012 created for exactly this
+-- question.
+select count(*) as clicks, min(clicked_at)::timestamptz as oldest
+  from cashback.click
+ where account_id = sqlc.arg(account_id)
+   and clicked_at > sqlc.arg(since);
+
+-- name: CountRecentClicksByContext :one
+-- The same question about a device rather than a member.
+--
+-- Rides click_context_clicked_at_idx (0025). The digest is matched exactly,
+-- like every other identifier here: a context is the value that was
+-- digested, and nothing that merely resembles it.
+select count(*) as clicks, min(clicked_at)::timestamptz as oldest
+  from cashback.click
+ where context_digest = sqlc.arg(context_digest)
+   and clicked_at > sqlc.arg(since);
