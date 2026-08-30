@@ -369,3 +369,131 @@ func TestInsertNetworkTransactionAgainstSchema(t *testing.T) {
 		}
 	})
 }
+
+// ifNew is the insert's conflict-swallowing twin, built from the same
+// parameters so a case states one report rather than two shapes of it.
+func ifNew(p store.InsertNetworkTransactionParams) store.InsertNetworkTransactionIfNewParams {
+	return store.InsertNetworkTransactionIfNewParams(p)
+}
+
+// TestInsertNetworkTransactionIfNewAgainstSchema is where the ON CONFLICT
+// clause earns its constraint name (T053).
+//
+// Everything here is about which of two rules a duplicate trips and what
+// happens to the transaction afterwards. Neither can be read off the
+// migration: Postgres decides which unique rule to report when a row
+// violates several, and the fact that a swallowed conflict leaves the
+// transaction usable is the whole reason this query exists rather than a Go
+// error check.
+func TestInsertNetworkTransactionIfNewAgainstSchema(t *testing.T) {
+	t.Parallel()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise the networks store")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatalf("migrating: %v", err)
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("connecting: %v", err)
+	}
+	defer pool.Close()
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	each(ctx, t, tx, "a first report is written and reported back", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		networkID, accountID := account(ctx, t, tx)
+
+		row, err := queries.InsertNetworkTransactionIfNew(ctx, ifNew(report(networkID, accountID)))
+		if err != nil {
+			t.Fatalf("InsertNetworkTransactionIfNew(): %v", err)
+		}
+		if !row.ID.Valid || len(row.ContentDigest) != 64 {
+			t.Errorf("a written row came back as %+v, want an id and a 64-character digest", row)
+		}
+	})
+
+	each(ctx, t, tx, "an unchanged re-report writes nothing and leaves the transaction usable", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		networkID, accountID := account(ctx, t, tx)
+		first := report(networkID, accountID)
+
+		if _, err := queries.InsertNetworkTransactionIfNew(ctx, ifNew(first)); err != nil {
+			t.Fatalf("the first report: %v", err)
+		}
+
+		// The same facts under a different payload, which is what a real
+		// re-poll looks like: networks stamp their own response metadata in.
+		again := first
+		again.RawPayload = []byte(`{"transaction_id":"FIX-1001","status":"pending","page":7}`)
+		again.RetrievedAt = pgtype.Timestamptz{Time: first.RetrievedAt.Time.Add(time.Hour), Valid: true}
+
+		_, err := queries.InsertNetworkTransactionIfNew(ctx, ifNew(again))
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("the re-report returned %v, want pgx.ErrNoRows - no row written and no error raised", err)
+		}
+
+		// The half that a Go-side error check could never give: the
+		// transaction is still alive, so the other reports of this window can
+		// still be written. This is the whole reason the query exists.
+		var stored int
+		if err := tx.QueryRow(ctx, `select count(*) from cashback.network_transaction where network_id = $1`, networkID).Scan(&stored); err != nil {
+			t.Fatalf("the transaction was aborted by a conflict it was supposed to swallow: %v", err)
+		}
+		if stored != 1 {
+			t.Errorf("%d rows stored for one transaction, want 1", stored)
+		}
+	})
+
+	each(ctx, t, tx, "a changed report written as a root still raises", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		networkID, accountID := account(ctx, t, tx)
+
+		if _, err := queries.InsertNetworkTransactionIfNew(ctx, ifNew(report(networkID, accountID))); err != nil {
+			t.Fatalf("the first report: %v", err)
+		}
+
+		// A real status change, written without naming a predecessor. It is
+		// NOT a duplicate, and swallowing it would leave the member's
+		// confirmed transaction pending forever with nothing logged.
+		changed := report(networkID, accountID)
+		changed.StatusRaw = "validated"
+		changed.Status = "confirmed"
+
+		_, err := queries.InsertNetworkTransactionIfNew(ctx, ifNew(changed))
+		code, constraint := refusal(err)
+		if code != codeUniqueViolation {
+			t.Fatalf("a changed report written as a root was accepted (SQLSTATE %q, err %v)", code, err)
+		}
+		if constraint != "network_transaction_one_root" {
+			t.Errorf("it was refused by %q, want network_transaction_one_root; that name is what tells the ingestion path this should have superseded something rather than been discarded", constraint)
+		}
+	})
+
+	each(ctx, t, tx, "a superseding report is written rather than swallowed", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		networkID, accountID := account(ctx, t, tx)
+
+		root, err := queries.InsertNetworkTransactionIfNew(ctx, ifNew(report(networkID, accountID)))
+		if err != nil {
+			t.Fatalf("the first report: %v", err)
+		}
+
+		changed := report(networkID, accountID)
+		changed.StatusRaw = "validated"
+		changed.Status = "confirmed"
+		changed.SupersedesID = root.ID
+
+		superseding, err := queries.InsertNetworkTransactionIfNew(ctx, ifNew(changed))
+		if err != nil {
+			t.Fatalf("a superseding report was refused: %v", err)
+		}
+		if superseding.ContentDigest == root.ContentDigest {
+			t.Error("the superseding report carries the root's digest")
+		}
+	})
+}
