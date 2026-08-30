@@ -13,10 +13,41 @@ package db_test
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// wantImmutableRefusal is wantPgCode for C-3, and it asks one thing more.
+//
+// Every RAISE in the schema carries SQLSTATE P0001, so a bare code check
+// says "something refused this" rather than "the immutability guard refused
+// this". That distinction has teeth: raise_immutable() names the table and
+// the operation in its message, and a guard replaced by any other P0001 -
+// a check somebody added, a trigger that fires for a different reason -
+// would keep a code-only assertion green while the row became editable.
+//
+// The same argument the wallet's C-1 tests make (internal/cashback/wallet/
+// invariants_test.go), applied to the rule that keeps a member's evidence
+// from being rewritten.
+func wantImmutableRefusal(t *testing.T, err error, table, op string) {
+	t.Helper()
+	wantPgCode(t, err, codeRaiseException)
+
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("want *pgconn.PgError, got %T: %v", err, err)
+	}
+	// raise_immutable() says: table % is immutable: % is not allowed (...)
+	want := "table " + table + " is immutable: " + op + " is not allowed"
+	if !strings.Contains(pgErr.Message, want) {
+		t.Fatalf("the refusal was %q, want the immutability guard's own words %q; any other P0001 would satisfy a code-only check while the row became editable",
+			pgErr.Message, want)
+	}
+}
 
 // TestClickIsImmutable asserts the attribution evidence cannot be altered.
 // A rewritable rate snapshot would let a credit be recomputed at a rate the
@@ -24,15 +55,18 @@ import (
 func TestClickIsImmutable(t *testing.T) {
 	t.Parallel()
 
+	// op is the operation raise_immutable() will name in its refusal, so a
+	// case asserts the guard it meant to provoke rather than any P0001.
 	tests := []struct {
 		name string
+		op   string
 		stmt string
 	}{
-		{name: "reassign the member", stmt: `update cashback.click set account_id = gen_random_uuid() where id = $1`},
-		{name: "rewrite the rate snapshot", stmt: `update cashback.click set rate_snapshot = '{"rate_bps":9000}'::jsonb where id = $1`},
-		{name: "rewrite the member share", stmt: `update cashback.click set member_share_bps_snapshot = 10000 where id = $1`},
-		{name: "move the click in time", stmt: `update cashback.click set clicked_at = now() - interval '30 days' where id = $1`},
-		{name: "delete the click", stmt: `delete from cashback.click where id = $1`},
+		{name: "reassign the member", op: "UPDATE", stmt: `update cashback.click set account_id = gen_random_uuid() where id = $1`},
+		{name: "rewrite the rate snapshot", op: "UPDATE", stmt: `update cashback.click set rate_snapshot = '{"rate_bps":9000}'::jsonb where id = $1`},
+		{name: "rewrite the member share", op: "UPDATE", stmt: `update cashback.click set member_share_bps_snapshot = 10000 where id = $1`},
+		{name: "move the click in time", op: "UPDATE", stmt: `update cashback.click set clicked_at = now() - interval '30 days' where id = $1`},
+		{name: "delete the click", op: "DELETE", stmt: `delete from cashback.click where id = $1`},
 	}
 
 	for _, tt := range tests {
@@ -41,7 +75,7 @@ func TestClickIsImmutable(t *testing.T) {
 			tx := beginTx(t)
 			f := seedCashbackEvidence(t, tx)
 			_, err := tx.Exec(context.Background(), tt.stmt, f.clickID)
-			wantPgCode(t, err, codeRaiseException)
+			wantImmutableRefusal(t, err, "click", tt.op)
 		})
 	}
 }
@@ -54,14 +88,15 @@ func TestNetworkTransactionIsImmutable(t *testing.T) {
 
 	tests := []struct {
 		name string
+		op   string
 		stmt string
 	}{
-		{name: "promote the status", stmt: `update cashback.network_transaction set status = 'confirmed' where id = $1`},
-		{name: "rewrite the network's own status", stmt: `update cashback.network_transaction set status_raw = 'approved!' where id = $1`},
-		{name: "inflate the commission", stmt: `update cashback.network_transaction set commission_minor = 999999 where id = $1`},
-		{name: "reassign the click reference", stmt: `update cashback.network_transaction set click_ref = null where id = $1`},
-		{name: "rewrite the payload", stmt: `update cashback.network_transaction set raw_payload = '{}'::jsonb where id = $1`},
-		{name: "delete the evidence", stmt: `delete from cashback.network_transaction where id = $1`},
+		{name: "promote the status", op: "UPDATE", stmt: `update cashback.network_transaction set status = 'confirmed' where id = $1`},
+		{name: "rewrite the network's own status", op: "UPDATE", stmt: `update cashback.network_transaction set status_raw = 'approved!' where id = $1`},
+		{name: "inflate the commission", op: "UPDATE", stmt: `update cashback.network_transaction set commission_minor = 999999 where id = $1`},
+		{name: "reassign the click reference", op: "UPDATE", stmt: `update cashback.network_transaction set click_ref = null where id = $1`},
+		{name: "rewrite the payload", op: "UPDATE", stmt: `update cashback.network_transaction set raw_payload = '{}'::jsonb where id = $1`},
+		{name: "delete the evidence", op: "DELETE", stmt: `delete from cashback.network_transaction where id = $1`},
 	}
 
 	for _, tt := range tests {
@@ -70,7 +105,7 @@ func TestNetworkTransactionIsImmutable(t *testing.T) {
 			tx := beginTx(t)
 			f := seedCashbackEvidence(t, tx)
 			_, err := tx.Exec(context.Background(), tt.stmt, f.networkTxn)
-			wantPgCode(t, err, codeRaiseException)
+			wantImmutableRefusal(t, err, "network_transaction", tt.op)
 		})
 	}
 }
@@ -96,7 +131,7 @@ func TestCashbackEvidenceRejectsTruncate(t *testing.T) {
 				t.Fatalf("set lock_timeout: %v", err)
 			}
 			_, err := tx.Exec(ctx, tt.stmt)
-			wantPgCode(t, err, codeRaiseException)
+			wantImmutableRefusal(t, err, tt.name, "TRUNCATE")
 		})
 	}
 }
