@@ -645,3 +645,115 @@ func TestConformanceMemberAccountCannotGoNegative(t *testing.T) {
 		}
 	})
 }
+
+// TestConformanceAnInterruptedPostLeavesNoHalfTransfer is the crash
+// injection. A Post is cut off part-way - the caller's context expires, the
+// process is killed, the connection drops - and what the ledger is left
+// holding must still be a ledger: every posting of the transfer or none of
+// them, never one side of it.
+//
+// Half a transfer is the worst state this system can reach. It is money
+// created or destroyed, it satisfies no error path, and nothing downstream
+// can tell it from a correct balance - C-1 would catch it eventually, but
+// only after it had been paid out.
+//
+// The cut is walked across the whole operation rather than made at one
+// point: a clean post is timed first, then each attempt is given a slice of
+// that duration, from far too little to more than enough. Somewhere in that
+// sweep the deadline lands in the middle of the write, which is the moment
+// worth testing and the one a fixed timeout would miss.
+//
+// After each cut the invariants are checked with a clean context, and then
+// the same key is posted again as a retry would. The end state must be
+// exactly one transfer: an interrupted attempt that recorded must be found
+// by its key, and one that did not must be free to record now.
+func TestConformanceAnInterruptedPostLeavesNoHalfTransfer(t *testing.T) {
+	t.Parallel()
+
+	eachLedger(t, func(t *testing.T, ledger wallet.Ledger) {
+		clean := timeACleanPost(t, ledger)
+
+		// Twelve slices from nothing to a little over a whole post: the
+		// interesting deadlines are the ones inside the write.
+		const attempts = 12
+		for attempt := range attempts {
+			budget := clean * time.Duration(attempt) / (attempts - 2)
+
+			house := ensure(t, ledger, conformHouse(), conformEUR)
+			member := ensure(t, ledger, conformMember(wallet.StagePending), conformEUR)
+			transfer := wallet.Transfer{
+				IdempotencyKey: "conformance-interrupt-" + uuid.NewString(),
+				Postings: []wallet.Posting{
+					{Account: house, Amount: amount(-2500, conformEUR)},
+					{Account: member, Amount: amount(2500, conformEUR)},
+				},
+			}
+
+			cut, cancel := context.WithTimeout(context.Background(), budget)
+			_, postErr := ledger.Post(cut, transfer)
+			cancel()
+
+			// Whatever happened, the two sides must agree. This is the
+			// assertion the whole scenario exists for.
+			held := balance(t, ledger, member, conformEUR)
+			funded := balance(t, ledger, house, conformEUR)
+			total, err := held.Add(funded)
+			if err != nil {
+				t.Fatalf("attempt %d (cut at %s): totalling the two accounts: %v", attempt, budget, err)
+			}
+			if !total.IsZero() {
+				t.Fatalf("attempt %d (cut at %s): the member holds %s and the house %s, which sum to %s; half a transfer landed",
+					attempt, budget, held, funded, total)
+			}
+			switch {
+			case held.Equal(amount(0, conformEUR)), held.Equal(amount(2500, conformEUR)):
+			default:
+				t.Fatalf("attempt %d (cut at %s): the member holds %s, want either nothing or the whole 2500 EUR",
+					attempt, budget, held)
+			}
+			if postErr == nil && !held.Equal(amount(2500, conformEUR)) {
+				t.Fatalf("attempt %d (cut at %s): Post returned no error but the member holds %s",
+					attempt, budget, held)
+			}
+
+			// A retry of the same key, as the caller would make it. One
+			// transfer must exist afterwards, whichever way the cut fell.
+			if _, err := ledger.Post(context.Background(), transfer); err != nil {
+				t.Fatalf("attempt %d (cut at %s): retrying the key after an interrupted post: %v", attempt, budget, err)
+			}
+			if held := balance(t, ledger, member, conformEUR); !held.Equal(amount(2500, conformEUR)) {
+				t.Fatalf("attempt %d (cut at %s): the member holds %s after the retry, want exactly 2500 EUR",
+					attempt, budget, held)
+			}
+		}
+	})
+}
+
+// timeACleanPost measures one uninterrupted Post on throwaway accounts, so
+// the crash sweep can be scaled to the implementation in front of it rather
+// than to a constant that is far too long for the in-memory ledger and far
+// too short for a ledger across a network.
+func timeACleanPost(t *testing.T, ledger wallet.Ledger) time.Duration {
+	t.Helper()
+	ctx := context.Background()
+	house := ensure(t, ledger, conformHouse(), conformEUR)
+	member := ensure(t, ledger, conformMember(wallet.StagePending), conformEUR)
+
+	started := time.Now()
+	if _, err := ledger.Post(ctx, wallet.Transfer{
+		IdempotencyKey: "conformance-timing-" + uuid.NewString(),
+		Postings: []wallet.Posting{
+			{Account: house, Amount: amount(-100, conformEUR)},
+			{Account: member, Amount: amount(100, conformEUR)},
+		},
+	}); err != nil {
+		t.Fatalf("timing a clean post: %v", err)
+	}
+	took := time.Since(started)
+	// A floor, because an in-memory post can finish faster than the clock
+	// resolves and every slice of nothing is still nothing.
+	if took < time.Millisecond {
+		took = time.Millisecond
+	}
+	return took
+}
