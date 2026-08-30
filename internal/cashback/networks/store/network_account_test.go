@@ -216,6 +216,37 @@ func TestNetworkAccountCursorsAgainstSchema(t *testing.T) {
 		}
 	})
 
+	each(ctx, t, tx, "a start ahead of the cursor says the two disagree about what was read", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		_, accountID := account(ctx, t, tx)
+
+		if _, err := queries.AdvanceNetworkAccountCursor(ctx, store.AdvanceNetworkAccountCursorParams{
+			ID: accountID, AdvanceTo: stamp(anchor), AdvanceFrom: pgtype.Timestamptz{},
+		}); err != nil {
+			t.Fatalf("the first advance: %v", err)
+		}
+
+		// Behind the cursor is the ordinary case: the account started
+		// there and has been read forward since.
+		if _, err := tx.Exec(ctx, `update cashback.network_account set backfill_from = $2 where id = $1`,
+			accountID, anchor.Add(-72*time.Hour)); err != nil {
+			t.Fatalf("a start behind the cursor was refused: %v", err)
+		}
+
+		// Ahead of it is not. A floor the forward sweep has already walked
+		// past says the row disagrees with itself about what has been read,
+		// and the trailing sweep would then re-read from a point the
+		// forward one never covered.
+		_, err := tx.Exec(ctx, `update cashback.network_account set backfill_from = $2 where id = $1`,
+			accountID, anchor.Add(time.Hour))
+		code, constraint := refusal(err)
+		if code != codeCheckViolation {
+			t.Fatalf("a start ahead of the cursor was accepted (SQLSTATE %q, err %v)", code, err)
+		}
+		if constraint != "network_account_backfill_from_not_ahead" {
+			t.Errorf("it was refused by %q, want network_account_backfill_from_not_ahead", constraint)
+		}
+	})
+
 	each(ctx, t, tx, "a trailing cursor with no main cursor is a re-read of history never read", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
 		_, accountID := account(ctx, t, tx)
 
