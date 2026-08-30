@@ -273,6 +273,17 @@ const (
 // this would quietly cost five times the round trips.
 const historyPageSize = 100
 
+// ledgerPageSize is how many ledgers are asked for at a time when looking
+// one up by name. Larger than the endpoint's own default of ten, so a
+// modest server is one round trip, and named explicitly because the
+// default is what made an existing ledger invisible.
+const ledgerPageSize = 100
+
+// ledgerScanLimit bounds that walk. A ledger not found within it is
+// reported rather than assumed absent: assuming absence creates a second
+// ledger under one name, which is one account's money in two namespaces.
+const ledgerScanLimit = 10_000
+
 // historyMaxPages caps the paging loop. A server that ignored the offset
 // would otherwise return page one forever, and a wallet view that never
 // returns is worse than one that says why.
@@ -383,6 +394,12 @@ type Ledger struct {
 	now func() time.Time
 
 	// mu guards the resolved ledger below.
+	// resolving serialises the one-time resolution of the Blnk ledger.
+	// It is not mu: resolution makes network calls, and holding the lock
+	// that guards the resolved id across them would block every reader of
+	// an id that is already known.
+	resolving sync.Mutex
+
 	mu sync.Mutex
 	// ledgerID is the resolved Blnk ledger, empty until first resolved.
 	ledgerID string
@@ -637,10 +654,28 @@ func (l *Ledger) resolveLedgerID(ctx context.Context) (string, error) {
 		return id, err
 	}
 
+	// Only one goroutine may create the ledger. The server does not
+	// constrain a ledger's name - blnk.ledgers declares it plainly, with
+	// only the id unique - so concurrent creates of one name all succeed,
+	// each answering a different id. Every account name this package
+	// writes carries the ledger id as its namespace, so two ids for one
+	// name is one member holding two sets of accounts, with money posted
+	// through one invisible to the other.
+	l.resolving.Lock()
+	defer l.resolving.Unlock()
+
+	// Another goroutine may have resolved it while this one waited, in
+	// which case its answer is the answer: creating a second ledger now
+	// would be the very split this lock exists to prevent.
+	id, err = l.knownLedgerID(ctx)
+	if err != nil || id != "" {
+		return id, err
+	}
+
 	if err := l.createLedger(ctx); err != nil {
 		return "", err
 	}
-	if id, err = l.findLedger(); err != nil {
+	if id, err = l.findLedger(ctx); err != nil {
 		return "", err
 	}
 	if id == "" {
@@ -669,7 +704,7 @@ func (l *Ledger) knownLedgerID(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("blnk: %w", err)
 	}
-	id, err := l.findLedger()
+	id, err := l.findLedger(ctx)
 	if err != nil || id == "" {
 		return "", err
 	}
@@ -689,28 +724,54 @@ func (l *Ledger) rememberLedgerID(id string) {
 // empty when there is none. Where two carry it - two processes that raced a
 // create - the oldest wins, with the id breaking a tie, so every process
 // picks the same one.
-func (l *Ledger) findLedger() (string, error) {
-	ledgers, resp, err := l.client.Ledger.List()
-	closeResponse(resp)
-	if err != nil {
-		return "", fmt.Errorf("blnk: listing ledgers: %w", err)
-	}
+func (l *Ledger) findLedger(ctx context.Context) (string, error) {
 	winner := ""
 	var oldest time.Time
-	for _, candidate := range ledgers {
-		if candidate.Name != l.ledgerName || candidate.LedgerID == "" {
-			continue
+	for offset := 0; offset < ledgerScanLimit; offset += ledgerPageSize {
+		page, err := l.ledgerPage(ctx, offset)
+		if err != nil {
+			return "", err
 		}
-		switch {
-		case winner == "":
-		case candidate.CreatedAt.Before(oldest):
-		case candidate.CreatedAt.Equal(oldest) && candidate.LedgerID < winner:
-		default:
-			continue
+		for _, candidate := range page {
+			if candidate.Name != l.ledgerName || candidate.LedgerID == "" {
+				continue
+			}
+			switch {
+			case winner == "":
+			case candidate.CreatedAt.Before(oldest):
+			case candidate.CreatedAt.Equal(oldest) && candidate.LedgerID < winner:
+			default:
+				continue
+			}
+			winner, oldest = candidate.LedgerID, candidate.CreatedAt
 		}
-		winner, oldest = candidate.LedgerID, candidate.CreatedAt
+		if len(page) < ledgerPageSize {
+			return winner, nil
+		}
 	}
-	return winner, nil
+	// Stopping short would answer "there is no such ledger" for one that
+	// exists, and the caller's response to that is to create another - a
+	// second namespace for accounts that already have one. Saying so is
+	// the only safe answer.
+	return "", fmt.Errorf(
+		"blnk: looking for the ledger %q gave up after %d ledgers; it may exist beyond them, and creating another would split every account's money across two namespaces",
+		l.ledgerName, ledgerScanLimit)
+}
+
+// ledgerPage reads one page of ledgers.
+//
+// The SDK's List sends neither limit nor offset, and the endpoint defaults
+// the limit to ten when it is given none (api/ledger.go). That answered a
+// server's first ten ledgers and called it the set - so on any server
+// carrying more, an existing ledger was invisible and the adapter made a
+// new one beside it. The page is asked for explicitly here, and walked.
+func (l *Ledger) ledgerPage(ctx context.Context, offset int) ([]blnkgo.Ledger, error) {
+	endpoint := fmt.Sprintf("ledgers?limit=%d&offset=%d", ledgerPageSize, offset)
+	var page []blnkgo.Ledger
+	if err := l.call(ctx, endpoint, http.MethodGet, nil, &page); err != nil {
+		return nil, fmt.Errorf("blnk: listing ledgers from %d: %w", offset, err)
+	}
+	return page, nil
 }
 
 // createLedger creates the named ledger. A failure is reported rather than

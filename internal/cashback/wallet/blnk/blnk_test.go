@@ -2358,3 +2358,92 @@ func TestHistoryRefusesAPageItCannotRecognise(t *testing.T) {
 		t.Errorf("the refusal does not say what it looked for: %v", err)
 	}
 }
+
+// TestEnsureAccountResolvesOneLedgerUnderConcurrency is the money-safety
+// property behind every account name this package writes. The name carries
+// the resolved ledger's id as its namespace, so two ids for one ledger name
+// is one member holding two sets of accounts - and money posted through one
+// is invisible to the other.
+//
+// The server does not stop this happening: blnk.ledgers constrains only the
+// id, so concurrent creates of one name all succeed with different ids. The
+// adapter has to be the thing that creates it once.
+func TestEnsureAccountResolvesOneLedgerUnderConcurrency(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeBlnk(t)
+	ledger := newLedger(t, fake)
+	ref := member(wallet.StageConfirmed)
+
+	const callers = 8
+	ids := make([]wallet.LedgerAccountID, callers)
+	errs := make([]error, callers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ids[i], errs[i] = ledger.EnsureAccount(context.Background(), ref, eur)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("caller %d: ensuring one account from %d at once: %v", i, callers, err)
+		}
+	}
+	for i, id := range ids {
+		if id != ids[0] {
+			t.Errorf("caller %d resolved %q, caller 0 resolved %q; one reference must resolve to one account",
+				i, id, ids[0])
+		}
+	}
+	if made := fake.ledgersNamed(blnk.DefaultLedgerName); made != 1 {
+		t.Errorf("%d ledgers carry the configured name, want exactly 1; each one is a namespace of its own", made)
+	}
+}
+
+// TestEnsureAccountFindsItsLedgerBehindAFullPage is the failure a live CI
+// run found and every local run had missed. The endpoint that lists ledgers
+// answers a page - ten of them when the caller names no limit - so once a
+// server carries more ledgers than that, one asking for no page does not
+// see the ledger it is looking for, decides there is none, and creates
+// another. Every account name carries the ledger id, so that second ledger
+// is a second namespace: the member's money is in the first one, and the
+// adapter is now writing to the second.
+//
+// A shared Blnk reaches eleven ledgers quickly - CI's suites make one
+// apiece - which is why this surfaced against a real server and not here.
+func TestEnsureAccountFindsItsLedgerBehindAFullPage(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeBlnk(t)
+
+	// Ledgers this package did not create, enough of them to fill the page
+	// an unpaged read is given, so the one it does create lands behind
+	// them.
+	for range 3 * defaultLedgerPage {
+		fake.addLedger("someone-elses-ledger")
+	}
+
+	first := newLedger(t, fake)
+	ref := member(wallet.StageConfirmed)
+	settled := ensure(t, first, ref, eur)
+
+	// A second value, configured identically, must land on the same
+	// account: this is a fresh process reading a server that has moved on.
+	second := newLedger(t, fake)
+	again := ensure(t, second, ref, eur)
+
+	if again != settled {
+		t.Errorf("a second run resolved the account to %q, the first to %q; the ledger behind a full page was not found",
+			again, settled)
+	}
+	if made := fake.ledgersNamed(blnk.DefaultLedgerName); made != 1 {
+		t.Errorf("%d ledgers carry the configured name, want exactly 1; one was created because the other could not be seen", made)
+	}
+}
