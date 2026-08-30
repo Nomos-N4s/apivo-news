@@ -50,6 +50,7 @@ import (
 	"iter"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -892,6 +893,146 @@ func TestConformanceACallerMayStopWithoutItBeingAFailure(t *testing.T) {
 		}
 		if seen != 1 {
 			t.Fatalf("the catalogue range ran %d time(s) after one break, want 1", seen)
+		}
+	})
+}
+
+// TestConformanceAFailureSaysWhichKindItIs is contract rule 9, and the
+// classification decides what a poller does next rather than merely what it
+// logs.
+//
+// Two of the three mean run the window again; the third means stop, leave the
+// cursor where it is, and raise the account to an operator - because
+// re-running it loops forever against a credential nobody has fixed. An
+// adapter that collapsed them into one error would have a revoked credential
+// read as a network having a bad day, and ingestion would halt silently.
+//
+// The failure arrives through the SEQUENCE, not as the immediate error. The
+// immediate one covers only what is checkable without contacting the network,
+// so an eager adapter and a lazy one report an expired credential through the
+// same channel - which is what stops a caller needing to know which kind it
+// was given.
+func TestConformanceAFailureSaysWhichKindItIs(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		if a.openReporting == nil {
+			t.Skip("this adapter cannot be made unwell, so rule 9 is unproved for it")
+		}
+
+		// Every sentinel, and every other sentinel it must not be mistaken
+		// for. Reporting one of these as another is the whole failure this
+		// rule exists to prevent, so the scenario checks the confusions as
+		// well as the answer.
+		others := []error{networks.ErrNetworkUnavailable, networks.ErrNetworkRefused, networks.ErrNetworkRateLimited}
+		for _, want := range others {
+			t.Run(want.Error(), func(t *testing.T) {
+				t.Parallel()
+				adapter := a.openReporting(t, want)
+
+				seq, err := adapter.FetchTransactions(t.Context(), a.window(t, adapter))
+				if err != nil {
+					t.Fatalf("a network failure arrived as the immediate error, which is reserved for what is checkable without contacting the network: %v", err)
+				}
+				_, err = conformCollect(seq)
+				if !errors.Is(err, want) {
+					t.Fatalf("the read ended with %v, want one wrapping %v", err, want)
+				}
+				for _, other := range others {
+					if errors.Is(other, want) {
+						continue
+					}
+					if errors.Is(err, other) {
+						t.Errorf("the failure reads as both %v and %v; a caller cannot tell whether to re-run the window or stop and raise the account", want, other)
+					}
+				}
+			})
+		}
+	})
+}
+
+// conformPacingClock is a clock the rate limiter can be driven by without
+// anything sleeping. It advances only when the limiter asks it to, which is
+// what makes the assertion below about the limiter's arithmetic rather than
+// about how busy the machine running the test happens to be.
+type conformPacingClock struct {
+	mu     sync.Mutex
+	now    time.Time
+	waited time.Duration
+}
+
+func (c *conformPacingClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *conformPacingClock) Sleep(ctx context.Context, d time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+	c.waited += d
+	return nil
+}
+
+func (c *conformPacingClock) total() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.waited
+}
+
+// TestConformanceTheDeclaredRateCanHoldTheAdapter is the pacing half of
+// contract rule 3.
+//
+// An adapter declares RequestsPerSecond and the poller holds it to that with
+// a limiter; a rate that could not build one would leave the adapter unpaced,
+// which the network answers with the rate-limited refusals above until
+// somebody notices. So the declaration is checked by using it, and the
+// adapter is then driven through the limiter for real - because an adapter
+// that held a lock across a read would deadlock under pacing and pass every
+// scenario above.
+//
+// The limiter runs on an injected clock, so what is asserted is its
+// arithmetic rather than how busy this machine is. Nothing here re-proves the
+// limiter itself; what is being proved is that the pair works, which is the
+// arrangement the poller will actually run.
+func TestConformanceTheDeclaredRateCanHoldTheAdapter(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		adapter := a.open(t)
+		rate := float64(adapter.Limits().RequestsPerSecond)
+
+		clock := &conformPacingClock{now: time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)}
+		limiter, err := networks.NewRateLimiter(rate, 1, networks.WithRateLimiterClock(clock))
+		if err != nil {
+			t.Fatalf("the adapter declares %v requests a second, which builds no limiter: %v", rate, err)
+		}
+
+		const reads = 4
+		window := a.window(t, adapter)
+		read := limiter.Pace(func(ctx context.Context) error {
+			seq, err := adapter.FetchTransactions(ctx, window)
+			if err != nil {
+				return err
+			}
+			_, err = conformCollect(seq)
+			return err
+		})
+		for i := range reads {
+			if err := read(t.Context()); err != nil {
+				t.Fatalf("read %d through the limiter failed: %v", i+1, err)
+			}
+		}
+
+		// One token is granted immediately; the rest are paced. Anything less
+		// and the limiter is not holding the adapter to anything.
+		want := time.Duration(float64(reads-1) / rate * float64(time.Second))
+		if got := clock.total(); got < want {
+			t.Errorf("%d reads at %v a second waited %v in total, want at least %v", reads, rate, got, want)
 		}
 	})
 }
