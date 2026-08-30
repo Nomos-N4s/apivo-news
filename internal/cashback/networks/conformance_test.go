@@ -454,3 +454,120 @@ func TestConformanceEveryReportKeepsTheNetworksOwnWord(t *testing.T) {
 		}
 	})
 }
+
+// TestConformanceAWindowWiderThanTheLimitIsRefused is contract rule 3
+// (FR-031), and the refusal matters more than the limit does.
+//
+// A window is REFUSED rather than trimmed. A caller that asked for 90 days
+// and silently received 31 believes it has read a period it has not, and
+// advances its cursor past the 59 days it never saw - so every transaction in
+// them is never ingested, every member owed cashback on one is never
+// credited, and nothing anywhere reports a problem. Backfill splits the
+// period into windows the network allows and persists each before the cursor
+// moves; that is only possible because the adapter says no.
+//
+// The refusal is the IMMEDIATE error, not a yielded one. The two channels
+// mean different things to a caller: an immediate error is deterministic and
+// about the request, a yielded one came from contacting the network and may
+// clear on its own. A too-wide window reported through the sequence would be
+// retried forever.
+func TestConformanceAWindowWiderThanTheLimitIsRefused(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		adapter := a.open(t)
+		window := a.window(t, adapter)
+
+		// One nanosecond past what the adapter documents, anchored to the
+		// window it offered so the period is one its network could otherwise
+		// answer. Exactly MaxWindow must be accepted, so the boundary is
+		// checked from the wrong side of it rather than from a wide guess.
+		tooWide := networks.QueryWindow{
+			From: window.To.Add(-adapter.Limits().MaxWindow).Add(-time.Nanosecond),
+			To:   window.To,
+		}
+		seq, err := adapter.FetchTransactions(t.Context(), tooWide)
+		if !errors.Is(err, networks.ErrWindowTooWide) {
+			t.Fatalf("FetchTransactions(%s) returned %v, want an immediate error wrapping ErrWindowTooWide", tooWide, err)
+		}
+		if seq != nil {
+			t.Error("a refused window came back with an iterator; a caller that ranged over it would read a period the adapter said it could not answer")
+		}
+
+		// The boundary itself, from the other side: a window exactly as wide
+		// as the documented maximum is one the network answers, and an
+		// adapter that refused it would halve every backfill.
+		atTheLimit := networks.QueryWindow{
+			From: window.To.Add(-adapter.Limits().MaxWindow),
+			To:   window.To,
+		}
+		if _, err := adapter.FetchTransactions(t.Context(), atTheLimit); err != nil {
+			t.Errorf("FetchTransactions(%s) refused a window exactly as wide as the documented maximum: %v", atTheLimit, err)
+		}
+	})
+}
+
+// TestConformanceAnUnusableWindowIsRefused holds the other immediate refusal.
+// A window missing a bound or ending before it starts is not a period, and
+// both bounds are required because the window is the unit of resumption: an
+// open-ended one cannot be clamped against the limits, re-issued as the same
+// question, or recorded as fully persisted.
+func TestConformanceAnUnusableWindowIsRefused(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		adapter := a.open(t)
+		window := a.window(t, adapter)
+
+		for name, unusable := range map[string]networks.QueryWindow{
+			"no bounds at all":       {},
+			"no start":               {To: window.To},
+			"no end":                 {From: window.From},
+			"ending before it began": {From: window.To, To: window.From},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				seq, err := adapter.FetchTransactions(t.Context(), unusable)
+				if !errors.Is(err, networks.ErrInvalidQueryWindow) {
+					t.Fatalf("FetchTransactions() returned %v, want an immediate error wrapping ErrInvalidQueryWindow", err)
+				}
+				if seq != nil {
+					t.Error("a refused window came back with an iterator")
+				}
+			})
+		}
+	})
+}
+
+// TestConformanceAWindowIsJudgedBeforeTheNetworkIsTouched pins the order an
+// adapter does its work in, which is what keeps the two error channels
+// meaning what they say.
+//
+// A deterministic refusal reported as a network failure - because a network
+// failure happened to be waiting - would have a caller retry a window that
+// can never be answered, forever, against a network that was never asked.
+// The injected failure going unconsumed is the evidence that no request was
+// made.
+func TestConformanceAWindowIsJudgedBeforeTheNetworkIsTouched(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		if a.openReporting == nil {
+			t.Skip("this adapter cannot be made unwell, so the order it checks in is unproved for it")
+		}
+		adapter := a.openReporting(t, networks.ErrNetworkUnavailable)
+		window := a.window(t, adapter)
+
+		tooWide := networks.QueryWindow{
+			From: window.To.Add(-adapter.Limits().MaxWindow).Add(-time.Nanosecond),
+			To:   window.To,
+		}
+		_, err := adapter.FetchTransactions(t.Context(), tooWide)
+		if !errors.Is(err, networks.ErrWindowTooWide) {
+			t.Fatalf("FetchTransactions(%s) returned %v, want one wrapping ErrWindowTooWide", tooWide, err)
+		}
+		if errors.Is(err, networks.ErrNetworkUnavailable) {
+			t.Errorf("the adapter blamed the network for a window it could never answer: %v", err)
+		}
+	})
+}
