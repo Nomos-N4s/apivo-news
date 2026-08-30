@@ -89,27 +89,7 @@ func (d *Deduplicator) RecordIfNew(ctx context.Context, retrieval Retrieval, rep
 		return Recorded{}, false, err
 	}
 
-	clickRef := pgtype.Text{}
-	if ref, present := report.ClickRef.Ref(); present {
-		clickRef = pgtype.Text{String: ref, Valid: true}
-	}
-
-	row, err := d.store.InsertNetworkTransactionIfNew(ctx, store.InsertNetworkTransactionIfNewParams{
-		NetworkID:        string(retrieval.Account.Network()),
-		NetworkAccountID: pgtype.UUID{Bytes: retrieval.Account.ID(), Valid: true},
-		ExternalID:       report.ExternalID,
-		ClickRef:         clickRef,
-		StatusRaw:        report.StatusRaw,
-		Status:           string(report.Status),
-		SaleAmountMinor:  report.SaleAmount.Minor,
-		CommissionMinor:  report.Commission.Minor,
-		Currency:         string(report.SaleAmount.Currency),
-		TransactedAt:     pgtype.Timestamptz{Time: report.TransactedAt, Valid: true},
-		RetrievedAt:      pgtype.Timestamptz{Time: retrieval.RetrievedAt, Valid: true},
-		QueryWindowStart: pgtype.Timestamptz{Time: retrieval.Window.From, Valid: true},
-		QueryWindowEnd:   pgtype.Timestamptz{Time: retrieval.Window.To, Valid: true},
-		RawPayload:       report.RawPayload,
-	})
+	row, err := d.store.InsertNetworkTransactionIfNew(ctx, evidenceRowIfNew(retrieval, report, pgtype.UUID{}))
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		// The conflict the query swallows: no row was written because this
