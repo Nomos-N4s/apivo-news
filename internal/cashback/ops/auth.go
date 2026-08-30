@@ -82,6 +82,15 @@ func (h *Handler) requireOperator(next http.Handler) http.Handler {
 	})
 }
 
+// operatorFrom returns the authenticated operator requireOperator stored in
+// the request context. Every route sits behind that middleware, so a
+// handler reached at all has one; the zero value would fail the resolution
+// row's foreign key rather than pass unnoticed.
+func operatorFrom(ctx context.Context) Operator {
+	op, _ := ctx.Value(ctxKey{}).(Operator)
+	return op
+}
+
 // bearerToken extracts the token from an "Authorization: Bearer <token>"
 // header. The scheme comparison is case-insensitive per RFC 9110.
 func bearerToken(r *http.Request) (string, bool) {
