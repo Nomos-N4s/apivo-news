@@ -418,6 +418,50 @@ func TestCashbackEarningsRejectIllegalWrites(t *testing.T) {
 			wantCode: codeUniqueViolation,
 		},
 		{
+			name: "erasing a recorded resolution of an unattributed report",
+			rule: "FR-061",
+			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
+				// The all-or-none check admits zero non-nulls, precisely so
+				// an unresolved row is representable - which also let a
+				// recorded resolution be set back to nothing. FR-061 makes
+				// the audit record part of the action, and an action whose
+				// record can be erased is not audited.
+				var queued string
+				if err := tx.QueryRow(ctx,
+					`insert into cashback.unattributed_transaction (network_transaction_id, resolved_by, resolved_reason, resolved_at)
+					 values ($1, $2, 'dismissed: a test purchase of our own', now()) returning id`,
+					f.networkTxn, f.accountID).Scan(&queued); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx,
+					`update cashback.unattributed_transaction
+					    set resolved_by = null, resolved_reason = null, resolved_at = null
+					  where id = $1`, queued)
+				return err
+			},
+			wantCode: codeRaiseException,
+		},
+		{
+			name: "deleting the record that a report went unattributed",
+			rule: "FR-034",
+			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
+				// Every sibling in 0012 and 0013 refuses a delete, and this
+				// row is evidence in the same sense: it is the record of
+				// what an operator was shown. Without the guard, "delete the
+				// row that looks stale" is a legal repair for a row that was
+				// never wrong.
+				var queued string
+				if err := tx.QueryRow(ctx,
+					`insert into cashback.unattributed_transaction (network_transaction_id) values ($1) returning id`,
+					f.networkTxn).Scan(&queued); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx, `delete from cashback.unattributed_transaction where id = $1`, queued)
+				return err
+			},
+			wantCode: codeRaiseException,
+		},
+		{
 			name: "half-recorded resolution of an unattributed report",
 			rule: "FR-060",
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
@@ -636,6 +680,7 @@ func TestEarningsTablesRejectTruncate(t *testing.T) {
 		{name: "entry", stmt: `truncate cashback.entry cascade`},
 		{name: "entry_transition", stmt: `truncate cashback.entry_transition cascade`},
 		{name: "ledger_link", stmt: `truncate cashback.ledger_link cascade`},
+		{name: "unattributed_transaction", stmt: `truncate cashback.unattributed_transaction cascade`},
 	}
 
 	for _, tt := range tests {
