@@ -90,6 +90,7 @@ type ClickOuts struct {
 	clicks    *Clicks
 	minter    *Minter
 	deeplinks Deeplinks
+	limiter   *Limiter
 	now       func() time.Time
 }
 
@@ -100,6 +101,14 @@ type Option func(*ClickOuts)
 // pinned to. For tests; production reads the wall clock.
 func WithClock(now func() time.Time) Option {
 	return func(c *ClickOuts) { c.now = now }
+}
+
+// WithLimiter applies the click rule before anything is minted or recorded
+// (US7 scenario 1). A service built without one issues every redirect it is
+// asked for, which is what a deployment that has turned the rule off has
+// asked for; the composition root always passes one.
+func WithLimiter(l *Limiter) Option {
+	return func(c *ClickOuts) { c.limiter = l }
 }
 
 // NewClickOuts builds the service, refusing one that is missing a part.
@@ -147,6 +156,17 @@ func NewClickOuts(offers Offers, clicks *Clicks, deeplinks Deeplinks, opts ...Op
 // unattributed queue is measured against.
 func (c *ClickOuts) Issue(ctx context.Context, req Request) (Issued, error) {
 	at := c.now()
+
+	// The rule first, before the catalogue is read and long before anything
+	// is minted. It is the cheapest refusal there is, it is the one that
+	// protects every step after it, and a member who meets it is left in
+	// exactly the state they were in - nothing minted, nothing recorded, and
+	// a time they can come back at.
+	if c.limiter != nil {
+		if err := c.limiter.Allow(ctx, req.Member, req.Context, at); err != nil {
+			return Issued{}, err
+		}
+	}
 
 	offer, err := c.offers.LiveOffer(ctx, req.OfferID, at)
 	switch {
