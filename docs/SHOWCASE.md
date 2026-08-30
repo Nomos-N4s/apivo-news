@@ -22,6 +22,10 @@ TRANSLATION_INTERVAL=1m
 That is the only change, and it is configuration rather than a special demo mode:
 the same binary, the same code paths, a shorter clock. Set it back afterwards.
 
+Demoing on QA (`ra1ze.com`) instead: the same two keys, applied on the host the
+way every per-environment value is — see "Demo pacing on QA" in
+`docs/RUNBOOK.md`.
+
 **2. Reset to nothing.**
 
 ```bash

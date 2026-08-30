@@ -475,6 +475,39 @@ It refuses `prod`, and refuses any environment whose `web.env` has no
 `PUBLIC_SUPABASE_URL` — an editor with nothing to sign in to is not worth
 creating.
 
+### Demo pacing on QA
+
+The poll and translation loops default to fifteen minutes, which is right
+in production and fatal in front of an audience: a source added on camera
+sits untouched until the next cycle. `docs/SHOWCASE.md` sets both to `1m`
+for the local stack; on QA the same two keys go where every per-environment
+value goes — appended to `/etc/apivo/qa/api.env`, last occurrence winning:
+
+```sh
+printf 'POLL_INTERVAL=1m\nTRANSLATION_INTERVAL=1m\n' >> /etc/apivo/qa/api.env
+chmod 600 /etc/apivo/qa/api.env
+apivoctl deploy qa
+```
+
+The deploy recreates the api container with the new environment; waiting a
+minute for the next tick does the same, since every tick runs `up -d`.
+`TRANSLATION_INTERVAL` matters only where the translation pipeline is
+configured at all — unset provider keys keep it off whatever the interval
+says. Neither key costs anything on QA: nothing it fetches is published,
+and between changes its feeds answer the conditional GETs with 304s.
+
+Afterwards, put the defaults back the same way — a key appended back to
+empty returns to the binary's documented default, exactly as Docker reads
+the file:
+
+```sh
+printf 'POLL_INTERVAL=\nTRANSLATION_INTERVAL=\n' >> /etc/apivo/qa/api.env
+apivoctl deploy qa
+```
+
+Not on staging. It is production-shaped by design, and a cadence that
+differs from production's is exactly the kind of drift it exists to catch.
+
 ---
 
 ## Later: production
