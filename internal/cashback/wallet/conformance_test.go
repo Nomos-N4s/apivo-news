@@ -156,9 +156,18 @@ func implementations() []implementation {
 // fixedClock answers a clock that starts at the anchor and advances a
 // millisecond per reading, so postings within one scenario are ordered and
 // distinct without any scenario having to sleep.
+//
+// It is mutex-guarded because the concurrency scenarios post from several
+// goroutines at once and every one of them reads this clock. An unguarded
+// closure here is a data race in the test rather than in the ledger, which
+// is a worse failure than an honest one: it reports as a defect in whichever
+// implementation happened to be running.
 func fixedClock() func() time.Time {
+	var mu sync.Mutex
 	at := conformAnchor
 	return func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
 		at = at.Add(time.Millisecond)
 		return at
 	}
@@ -695,12 +704,7 @@ func TestConformanceAnInterruptedPostLeavesNoHalfTransfer(t *testing.T) {
 
 			// Whatever happened, the two sides must agree. This is the
 			// assertion the whole scenario exists for.
-			held := balance(t, ledger, member, conformEUR)
-			funded := balance(t, ledger, house, conformEUR)
-			total, err := held.Add(funded)
-			if err != nil {
-				t.Fatalf("attempt %d (cut at %s): totalling the two accounts: %v", attempt, budget, err)
-			}
+			held, funded, total := settledPair(t, ledger, member, house)
 			if !total.IsZero() {
 				t.Fatalf("attempt %d (cut at %s): the member holds %s and the house %s, which sum to %s; half a transfer landed",
 					attempt, budget, held, funded, total)
@@ -727,6 +731,46 @@ func TestConformanceAnInterruptedPostLeavesNoHalfTransfer(t *testing.T) {
 			}
 		}
 	})
+}
+
+// settledPair reads two accounts that a transfer moved between and answers
+// what they hold once the ledger has stopped moving, along with the sum
+// that must be zero.
+//
+// The port has no atomic read across two accounts, so the two balances are
+// two statements with a gap between them - and cutting a Post off does not
+// stop the write it started. A client that abandons a commit has told the
+// server to cancel, not undone anything: the commit may still land, and a
+// pair of reads straddling that moment sees one side of a transfer that is
+// wholly there a microsecond later. That is an artefact of reading, not a
+// ledger holding half a transfer.
+//
+// The two are told apart by whether the state settles. A straddled read
+// agrees on the next attempt; a ledger genuinely holding half a transfer
+// never does, however long it is asked. So the pair is re-read only while
+// it disagrees, briefly, and the last reading is returned either way - this
+// waits out an in-flight commit and cannot turn a real imbalance green.
+func settledPair(t *testing.T, ledger wallet.Ledger, member, house wallet.LedgerAccountID) (held, funded, total money.Amount) {
+	t.Helper()
+
+	const attempts = 50
+	for attempt := range attempts {
+		held = balance(t, ledger, member, conformEUR)
+		funded = balance(t, ledger, house, conformEUR)
+
+		var err error
+		total, err = held.Add(funded)
+		if err != nil {
+			t.Fatalf("totalling the two accounts: %v", err)
+		}
+		if total.IsZero() {
+			return held, funded, total
+		}
+		if attempt < attempts-1 {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	return held, funded, total
 }
 
 // timeACleanPost measures one uninterrupted Post on throwaway accounts, so
