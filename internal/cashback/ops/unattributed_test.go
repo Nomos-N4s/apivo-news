@@ -458,3 +458,15 @@ func TestEveryRegisteredRouteIsReachable(t *testing.T) {
 		})
 	}
 }
+
+// TestAStoreWithNoDatabaseIsRefusedAtConstruction keeps the failure at the
+// composition root rather than in a request. A surface built over nothing
+// answers 500 to an operator who is trying to decide money; refusing to
+// build it means the process says so at startup instead.
+func TestAStoreWithNoDatabaseIsRefusedAtConstruction(t *testing.T) {
+	t.Parallel()
+
+	if _, err := ops.NewPGStore(nil); err == nil {
+		t.Fatal("NewPGStore(nil) built a store over no database")
+	}
+}
