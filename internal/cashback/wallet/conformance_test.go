@@ -1,0 +1,231 @@
+// The shared ledger conformance suite (T045).
+//
+// [wallet.Ledger] is a contract, not an interface shape: its doc comments
+// say what every implementation must do, and three of them - in-memory,
+// Postgres and Blnk - are supposed to do it identically. Three separate
+// test suites cannot show that. Each was written by someone reading the
+// same prose and reaching their own reading of it, and the readings only
+// have to differ by a little for the wallet built on top to be right over
+// one substrate and wrong over another.
+//
+// So this file asserts the contract once and runs it against all three. A
+// scenario here is written against the port and never against an
+// implementation: it may not name a driver, reach for a pool, or know that
+// one of the three talks to a server at all. When a scenario cannot pass on
+// an implementation, that is a divergence to be named in that package's
+// documentation and reflected here deliberately - never a reason to soften
+// what the suite asks for.
+//
+// This is an external test package, which is what lets it import all three
+// implementations: they import [wallet], and nothing imports wallet_test.
+//
+// # What runs, and where
+//
+// The in-memory ledger always runs. Postgres runs when DATABASE_URL is set,
+// Blnk when BLNK_URL is, in the same words their own suites use - so a
+// developer without Docker gets the in-memory conformance for free and CI,
+// where both are up, gets all three. A skip is reported per implementation
+// rather than for the file, so a run that exercised one of the three cannot
+// read as a run that exercised them all.
+package wallet_test
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"runtime"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/blnk"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/memory"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/postgres"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/db"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
+)
+
+const (
+	conformEUR = money.Currency("EUR")
+	conformGBP = money.Currency("GBP")
+)
+
+// conformAnchor is the instant the conformance ledgers' clocks start from.
+// Whole seconds, because timestamptz keeps microseconds and an instant that
+// round-trips unchanged is one less difference between the implementations
+// than the suite has to reason about.
+var conformAnchor = time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+
+// implementation is one ledger under the shared suite: a name for the
+// subtest and a way to get a fresh one. The factory takes the testing.T so
+// it can skip when its backend is absent and fail when its backend is
+// present but broken - those are different outcomes and must not collapse
+// into one.
+type implementation struct {
+	name string
+	// open answers a ledger no other test is using. Isolation is by naming
+	// rather than by teardown: every account this suite touches is derived
+	// from a fresh uuid, so two runs against one database never meet.
+	open func(t *testing.T) wallet.Ledger
+}
+
+// conformPool is the Postgres pool the conformance suite shares, or nil
+// when DATABASE_URL is unset. It is opened once for the package.
+var conformPool *pgxpool.Pool
+
+func TestMain(m *testing.M) {
+	if url := os.Getenv("DATABASE_URL"); url != "" {
+		if err := db.Migrate(url); err != nil {
+			fmt.Fprintln(os.Stderr, "migrating the conformance database:", err)
+			os.Exit(1)
+		}
+		cfg, err := pgxpool.ParseConfig(url)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "parsing DATABASE_URL:", err)
+			os.Exit(1)
+		}
+		// The same headroom the Postgres ledger's own suite takes: a
+		// concurrent-post scenario holds a connection per racing caller
+		// while they wait out the winner's commit, and pgx's default pool
+		// is smaller than the race is wide.
+		if want := int32(runtime.GOMAXPROCS(0)) + 4; cfg.MaxConns < want {
+			cfg.MaxConns = want
+		}
+		pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "connecting the conformance database:", err)
+			os.Exit(1)
+		}
+		conformPool = pool
+	}
+	code := m.Run()
+	if conformPool != nil {
+		conformPool.Close()
+	}
+	os.Exit(code)
+}
+
+// implementations is the table every conformance scenario runs over.
+func implementations() []implementation {
+	return []implementation{
+		{
+			name: "memory",
+			open: func(*testing.T) wallet.Ledger {
+				return memory.New(memory.WithClock(fixedClock()))
+			},
+		},
+		{
+			name: "postgres",
+			open: func(t *testing.T) wallet.Ledger {
+				t.Helper()
+				if conformPool == nil {
+					t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set DATABASE_URL to exercise the postgres ledger")
+				}
+				return postgres.New(conformPool, postgres.WithClock(fixedClock()))
+			},
+		},
+		{
+			name: "blnk",
+			open: func(t *testing.T) wallet.Ledger {
+				t.Helper()
+				endpoint := os.Getenv("BLNK_URL")
+				if endpoint == "" {
+					t.Skip("BLNK_URL is unset: no ledger to post to (expected without Docker)")
+				}
+				// A ledger of its own per test: the Blnk adapter namespaces
+				// every account name by its ledger, and a shared name would
+				// have two scenarios meeting in one pool of accounts.
+				ledger, err := blnk.New(endpoint,
+					blnk.WithSecretKey(os.Getenv("BLNK_SECRET_KEY")),
+					blnk.WithLedgerName("conformance-"+uuid.NewString()),
+				)
+				if err != nil {
+					t.Fatalf("opening the blnk ledger: %v", err)
+				}
+				return ledger
+			},
+		},
+	}
+}
+
+// fixedClock answers a clock that starts at the anchor and advances a
+// millisecond per reading, so postings within one scenario are ordered and
+// distinct without any scenario having to sleep.
+func fixedClock() func() time.Time {
+	at := conformAnchor
+	return func() time.Time {
+		at = at.Add(time.Millisecond)
+		return at
+	}
+}
+
+// eachLedger runs scenario against every implementation, as a subtest per
+// implementation so a failure names which one diverged.
+func eachLedger(t *testing.T, scenario func(t *testing.T, ledger wallet.Ledger)) {
+	t.Helper()
+	for _, impl := range implementations() {
+		t.Run(impl.name, func(t *testing.T) {
+			t.Parallel()
+			scenario(t, impl.open(t))
+		})
+	}
+}
+
+// conformMember answers an account reference no other test shares.
+func conformMember(stage wallet.Stage) wallet.AccountRef {
+	return wallet.MemberAccount(uuid.New(), stage)
+}
+
+// conformHouse answers a house reference no other test shares.
+func conformHouse() wallet.AccountRef {
+	return wallet.HouseAccount("conformance-" + uuid.NewString())
+}
+
+// ensure resolves ref and fails the scenario if the ledger will not.
+func ensure(t *testing.T, ledger wallet.Ledger, ref wallet.AccountRef, currency money.Currency) wallet.LedgerAccountID {
+	t.Helper()
+	id, err := ledger.EnsureAccount(context.Background(), ref, currency)
+	if err != nil {
+		t.Fatalf("ensuring %s in %s: %v", ref, currency, err)
+	}
+	return id
+}
+
+// amount is the suite's only way of spelling money, so a scenario cannot
+// accidentally compare an amount against a bare integer.
+func amount(minor int64, currency money.Currency) money.Amount {
+	return money.Amount{Minor: minor, Currency: currency}
+}
+
+// balance reads what the ledger says an account holds.
+func balance(t *testing.T, ledger wallet.Ledger, id wallet.LedgerAccountID, currency money.Currency) money.Amount {
+	t.Helper()
+	held, err := ledger.Balance(context.Background(), id, currency)
+	if err != nil {
+		t.Fatalf("reading the balance of %q: %v", id, err)
+	}
+	return held
+}
+
+// TestConformanceEnsureAccountIsIdempotent is the suite's own smoke test:
+// every implementation must resolve one (ref, currency) pair to one id,
+// however many times it is asked. A ledger that fails this cannot be
+// trusted to fail the rest for the right reason.
+func TestConformanceEnsureAccountIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	eachLedger(t, func(t *testing.T, ledger wallet.Ledger) {
+		ref := conformMember(wallet.StageConfirmed)
+		first := ensure(t, ledger, ref, conformEUR)
+		second := ensure(t, ledger, ref, conformEUR)
+		if first != second {
+			t.Errorf("one account resolved to two ids, %q then %q", first, second)
+		}
+		if held := balance(t, ledger, first, conformEUR); !held.Equal(amount(0, conformEUR)) {
+			t.Errorf("a freshly ensured account holds %s, want nothing", held)
+		}
+	})
+}
