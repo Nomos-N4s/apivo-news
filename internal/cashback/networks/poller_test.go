@@ -125,23 +125,18 @@ func pollerTestAccount(t *testing.T) networks.PublisherAccount {
 	return account
 }
 
-// TestNewPollerRefusesWhatItCannotPollWith holds both halves of the
-// construction. A poller with nowhere to write has nothing to be; a poller
-// with no backfill start would have to invent one for the first account
-// nobody has polled, and every value it could invent is wrong in a way
-// nobody would notice - too recent silently skips history, too old asks a
-// network for years of it.
+// TestNewPollerRefusesWhatItCannotPollWith is now a short test, and the
+// shortness is the point: a poller needs somewhere to write and nothing
+// else. Where an account starts reading is a fact about that ACCOUNT and
+// lives on its row (0023), so one poller serves every account this process
+// polls and cannot be given the wrong one's start.
 func TestNewPollerRefusesWhatItCannotPollWith(t *testing.T) {
 	t.Parallel()
 
-	start := time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := networks.NewPoller(nil, start); !errors.Is(err, networks.ErrNoPollerStore) {
-		t.Errorf("NewPoller(nil, start) = %v, want one wrapping ErrNoPollerStore", err)
+	if _, err := networks.NewPoller(nil); !errors.Is(err, networks.ErrNoPollerStore) {
+		t.Errorf("NewPoller(nil) = %v, want one wrapping ErrNoPollerStore", err)
 	}
-	if _, err := networks.NewPoller(&pollerTestDB{}, time.Time{}); !errors.Is(err, networks.ErrNoBackfillStart) {
-		t.Errorf("NewPoller(db, zero) = %v, want one wrapping ErrNoBackfillStart", err)
-	}
-	if _, err := networks.NewPoller(&pollerTestDB{}, start); err != nil {
+	if _, err := networks.NewPoller(&pollerTestDB{}); err != nil {
 		t.Errorf("NewPoller() refused a usable poller: %v", err)
 	}
 }
@@ -191,7 +186,7 @@ func TestPollRefusesBeforeItOpensATransaction(t *testing.T) {
 			t.Parallel()
 
 			db := &pollerTestDB{}
-			poller, err := networks.NewPoller(db, time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC))
+			poller, err := networks.NewPoller(db)
 			if err != nil {
 				t.Fatalf("NewPoller(): %v", err)
 			}
@@ -221,7 +216,7 @@ func TestPollReportsAFailureToBegin(t *testing.T) {
 
 	broken := errors.New("connection refused")
 	account := pollerTestAccount(t)
-	poller, err := networks.NewPoller(&pollerTestDB{fail: broken}, time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC))
+	poller, err := networks.NewPoller(&pollerTestDB{fail: broken})
 	if err != nil {
 		t.Fatalf("NewPoller(): %v", err)
 	}

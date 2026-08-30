@@ -154,7 +154,7 @@ func TestAdvanceReportsACursorThatIsNoLongerWhereItWasRead(t *testing.T) {
 func TestPollerOptionsIgnoreWhatTheyCannotUse(t *testing.T) {
 	t.Parallel()
 
-	poller, err := NewPoller(pollerTestNoDB{}, pollTestStart,
+	poller, err := NewPoller(pollerTestNoDB{},
 		WithPollerClock(nil), WithTrailingLag(0), WithTrailingLag(-time.Hour), nil)
 	if err != nil {
 		t.Fatalf("NewPoller(): %v", err)
@@ -167,7 +167,7 @@ func TestPollerOptionsIgnoreWhatTheyCannotUse(t *testing.T) {
 	}
 
 	at := pollTestNow
-	poller, err = NewPoller(pollerTestNoDB{}, pollTestStart,
+	poller, err = NewPoller(pollerTestNoDB{},
 		WithPollerClock(func() time.Time { return at }), WithTrailingLag(48*time.Hour))
 	if err != nil {
 		t.Fatalf("NewPoller(): %v", err)

@@ -88,7 +88,7 @@ func TestNewSweepsRefusesWhatCannotRun(t *testing.T) {
 
 	account := pollerTestAccount(t)
 	adapter := pollerTestNetwork(account, pollerTestNothing)
-	poller, err := networks.NewPoller(&pollerTestDB{}, time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC))
+	poller, err := networks.NewPoller(&pollerTestDB{})
 	if err != nil {
 		t.Fatalf("NewPoller(): %v", err)
 	}

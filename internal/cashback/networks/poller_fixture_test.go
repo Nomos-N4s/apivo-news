@@ -50,9 +50,9 @@ func fixturePollAccount(ctx context.Context, t *testing.T, tx pgx.Tx) networks.P
 	}
 	var accountID pgtype.UUID
 	if err := tx.QueryRow(ctx, `
-		insert into cashback.network_account (network_id, external_publisher_id, credential_ref, active)
-		values ($1, 'publisher-1', 'config:networks.fixture.credential', true)
-		returning id`, string(fixture.ID)).Scan(&accountID); err != nil {
+		insert into cashback.network_account (network_id, external_publisher_id, credential_ref, active, backfill_from)
+		values ($1, 'publisher-1', 'config:networks.fixture.credential', true, $2)
+		returning id`, string(fixture.ID), fixturePollStart).Scan(&accountID); err != nil {
 		t.Fatalf("seeding the publisher account: %v", err)
 	}
 	account, err := networks.NewPublisherAccount(uuid.UUID(accountID.Bytes), fixture.ID, "publisher-1")
@@ -73,7 +73,7 @@ func TestPollingTheFixtureNetworkEndToEnd(t *testing.T) {
 	}
 	// A lag of an hour rather than the default hundred days, so the sweep
 	// has ground to re-read inside one test rather than one quarter.
-	poller, err := networks.NewPoller(savepointBeginner{tx: tx}, fixturePollStart,
+	poller, err := networks.NewPoller(savepointBeginner{tx: tx},
 		networks.WithPollerClock(func() time.Time { return fixturePollNow }),
 		networks.WithTrailingLag(time.Hour))
 	if err != nil {
