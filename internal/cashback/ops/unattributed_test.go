@@ -35,6 +35,10 @@ func (unreachableStore) Open(context.Context, networks.After, int) ([]networks.O
 	return nil, errors.New("this case must not reach the store")
 }
 
+func (unreachableStore) Dismiss(context.Context, ops.Dismissal) (ops.Dismissed, error) {
+	return ops.Dismissed{}, errors.New("this case must not reach the store")
+}
+
 // pageStore answers with a canned page and records what it was asked for.
 type pageStore struct {
 	rows []networks.OpenReport
@@ -42,6 +46,10 @@ type pageStore struct {
 
 	gotAfter networks.After
 	gotLimit int
+}
+
+func (*pageStore) Dismiss(context.Context, ops.Dismissal) (ops.Dismissed, error) {
+	return ops.Dismissed{}, errors.New("the listing cases must not dismiss anything")
 }
 
 func (s *pageStore) Open(_ context.Context, after networks.After, limit int) ([]networks.OpenReport, error) {

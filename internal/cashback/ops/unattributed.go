@@ -40,6 +40,15 @@ type UnattributedStore interface {
 	// Open returns one page of open work, oldest first, starting after the
 	// given position.
 	Open(ctx context.Context, after networks.After, limit int) ([]networks.OpenReport, error)
+	// Dismiss closes one row, recording who closed it and why, and
+	// publishing that fact - all in one transaction, because a resolution
+	// whose event was lost is a decision no other part of the system will
+	// ever hear about.
+	//
+	// It reports ErrNoSuchQueueRow for an id that names no row, and a
+	// ClosedError (which wraps networks.ErrNoLongerOpen) for one that is no
+	// longer the operator's to close.
+	Dismiss(ctx context.Context, d Dismissal) (Dismissed, error)
 }
 
 // unattributedItem is one line of the queue as a client reads it.

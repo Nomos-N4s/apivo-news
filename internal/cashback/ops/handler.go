@@ -55,7 +55,8 @@ func NewHandler(log *slog.Logger, store UnattributedStore, auth OperatorAuthenti
 // checked against the routes rather than against someone's memory of them.
 func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
-		"GET " + Prefix + "unattributed": h.listUnattributed,
+		"GET " + Prefix + "unattributed":               h.listUnattributed,
+		"POST " + Prefix + "unattributed/{id}/dismiss": h.dismissUnattributed,
 	}
 }
 

@@ -2,6 +2,8 @@ package ops
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -32,4 +34,28 @@ func (h *Handler) writeJSON(w http.ResponseWriter, r *http.Request, status int, 
 func (h *Handler) internalError(w http.ResponseWriter, r *http.Request, doing string, err error) {
 	h.log.ErrorContext(r.Context(), doing, "error", err, slog.String("operator", operatorFrom(r.Context()).ID.String()))
 	platformhttp.Problem(w, http.StatusInternalServerError, "")
+}
+
+// decodeJSON decodes the request body into dst, answering the 400 itself
+// when the body is not the expected shape. Unknown fields are rejected: on
+// a surface where every action records a reason, a misspelled field
+// silently ignored would read as acceptance of a decision nobody described.
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		platformhttp.Problem(w, http.StatusBadRequest, "request body is not valid JSON for this endpoint: "+err.Error())
+		return false
+	}
+	// Everything after the first document must be whitespace, and only a
+	// second Decode proves it. Decoder.More() answers a narrower question -
+	// "is another VALUE coming?" - so a stray closing delimiter (`}`, `]`)
+	// after a valid object reads as "no more values" and a malformed body
+	// would be accepted. Requiring io.EOF here rejects both a second
+	// document and trailing syntax errors.
+	if err := dec.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
+		platformhttp.Problem(w, http.StatusBadRequest, "request body must contain a single JSON document")
+		return false
+	}
+	return true
 }
