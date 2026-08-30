@@ -22,6 +22,16 @@ type PollOutcome struct {
 	// Unchanged is reports whose facts matched a row already stored. Nothing
 	// was written for them and nothing is wrong.
 	Unchanged int
+	// Unattributed is how many of this window's stored reports arrived with
+	// no click reference and are now recorded for an operator (FR-034).
+	//
+	// It counts a subset of FirstReports and Superseded rather than a fourth
+	// kind, so [PollOutcome.Reports] deliberately does not add it and
+	// [PollOutcome.Changed] deliberately does not mention it: every report
+	// counted here already changed what somebody may be owed. It is here so
+	// an operator reading one poll's line can see money arriving that
+	// nobody can be credited for yet.
+	Unattributed int
 }
 
 // Reports is how many the window carried in total.
@@ -33,8 +43,8 @@ func (o PollOutcome) Reports() int { return o.FirstReports + o.Superseded + o.Un
 func (o PollOutcome) Changed() bool { return o.FirstReports > 0 || o.Superseded > 0 }
 
 func (o PollOutcome) String() string {
-	return fmt.Sprintf("%d report(s): %d first, %d superseded, %d unchanged",
-		o.Reports(), o.FirstReports, o.Superseded, o.Unchanged)
+	return fmt.Sprintf("%d report(s): %d first, %d superseded, %d unchanged, %d unattributed",
+		o.Reports(), o.FirstReports, o.Superseded, o.Unchanged, o.Unattributed)
 }
 
 // Poll is what one poll decided and did. A poll that found nothing to read

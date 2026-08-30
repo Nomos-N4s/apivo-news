@@ -290,6 +290,15 @@ func persist(ctx context.Context, queries *store.Queries, adapter Network, retri
 	if err != nil {
 		return PollOutcome{}, err
 	}
+	// Detection shares the poll's transaction, and must: a report stored
+	// without its observation is never re-examined, because the digest makes
+	// every later re-report of the same facts an unchanged one that writes
+	// nothing. The hole would be permanent and silent, and it is exactly the
+	// money nobody can be credited for.
+	unattributed, err := NewUnattributedQueue(queries)
+	if err != nil {
+		return PollOutcome{}, err
+	}
 
 	seq, err := adapter.FetchTransactions(ctx, retrieval.Window)
 	if err != nil {
@@ -301,7 +310,7 @@ func persist(ctx context.Context, queries *store.Queries, adapter Network, retri
 		if err != nil {
 			return PollOutcome{}, fmt.Errorf("networks: %s: %w", retrieval, err)
 		}
-		_, what, err := superseder.Record(ctx, retrieval, report)
+		stored, what, err := superseder.Record(ctx, retrieval, report)
 		if err != nil {
 			return PollOutcome{}, err
 		}
@@ -311,7 +320,21 @@ func persist(ctx context.Context, queries *store.Queries, adapter Network, retri
 		case OutcomeSuperseded:
 			outcome.Superseded++
 		case OutcomeUnchanged:
+			// Nothing was written, so there is no row to record an
+			// observation about - and none is needed: whatever this report
+			// says about attribution, the row already stored says the same,
+			// which is what made it unchanged.
 			outcome.Unchanged++
+			continue
+		}
+		// The observation itself is not carried out of this loop. T062
+		// publishes an event per observation and will need it; counting is
+		// what this poll owes an operator now, and a field nothing reads is
+		// a field nothing keeps honest.
+		if _, wrote, err := unattributed.Record(ctx, stored); err != nil {
+			return PollOutcome{}, err
+		} else if wrote {
+			outcome.Unattributed++
 		}
 	}
 	return outcome, nil

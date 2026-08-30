@@ -84,6 +84,24 @@ func account(ctx context.Context, t *testing.T, tx pgx.Tx) (networkID string, ac
 	return networkID, accountID
 }
 
+// seedAccount makes an account in the given role, for the tests that need a
+// member to credit or an operator to resolve.
+func seedAccount(ctx context.Context, t *testing.T, tx pgx.Tx, role string) pgtype.UUID {
+	t.Helper()
+	suffix := make([]byte, 6)
+	if _, err := rand.Read(suffix); err != nil {
+		t.Fatalf("random suffix: %v", err)
+	}
+	var id pgtype.UUID
+	if err := tx.QueryRow(ctx, `
+		insert into public.account (email, display_name, role)
+		values ($1, 'Test Person', $2) returning id`,
+		hex.EncodeToString(suffix)+"@example.test", role).Scan(&id); err != nil {
+		t.Fatalf("seeding an account: %v", err)
+	}
+	return id
+}
+
 // report is one insert's worth of parameters, already valid. A case states
 // only what it changes, so the mutation under test is visible at the call
 // site rather than buried in a helper.
