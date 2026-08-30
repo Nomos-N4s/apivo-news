@@ -16,11 +16,11 @@ before its implementation lands.
   problem+json.
 - Auth: `Authorization: Bearer <Supabase JWT>` on **every** endpoint below —
   there is no anonymous cashback surface (FR-023).
-- **The operator role does not exist yet.** Migration 0002 constrains
-  `account.role` to `check (role in ('reader', 'editor'))`, so the authority
-  these `/ops/*` endpoints need is currently unrepresentable. **Migration
-  `0019_operator_role`** extends that constraint to
-  `('reader', 'editor', 'operator')` and adds the database enforcement:
+- **The operator role.** Migration 0002 constrained `account.role` to
+  `check (role in ('reader', 'editor'))`, so the authority these `/ops/*`
+  endpoints need was unrepresentable. **Migration `0019_operator_role`**
+  (landed) extends that constraint to `('reader', 'editor', 'operator')`
+  and adds the database enforcement:
   - a `BEFORE INSERT` trigger on `cashback.payout` requiring
     `approved_by` to hold the `operator` role — the direct analogue of
     `article_insert_guard` for editors, and it reads the role
@@ -28,7 +28,12 @@ before its implementation lands.
     slip past it (the PR #48 lesson);
   - an extension of `account_role_guard` so an operator who has approved a
     payout cannot be silently demoted out of that authority.
-  The HTTP role check mirrors the database rule; it never replaces it.
+  The HTTP role check mirrors the database rule; it never replaces it. It
+  is `identity.RequireOperator`, deliberately a second function beside
+  `RequireEditor` rather than one check parameterised by a role: an editor
+  is not an operator with fewer permissions, and a helper taking the
+  required role as an argument makes "operator or editor" as easy to write
+  as either one alone.
 - Pagination: `limit` (default 20, max 100) + opaque `cursor`; lists return
   `{ "items": [...], "next_cursor": string|null }`.
 - **Money is always** `{ "minor": <integer>, "currency": "EUR" }`. No
@@ -148,6 +153,24 @@ Member's own cashback history as JSON or CSV (FR-003).
 | `GET /ops/unattributed` | transactions with no matching click (FR-034, FR-060) |
 | `POST /ops/unattributed/{id}/attribute` | attach to an account with a reason; creates an entry with `click_id = null` |
 | `POST /ops/unattributed/{id}/dismiss` | close with a reason |
+
+Two notes on the unattributed queue, both consequences of rules stated
+elsewhere rather than new decisions.
+
+**`/attribute` is not lawful for every row.** `entry_evidence_guard`
+(migration 0013) requires an entry to cite the click the network named, so
+a null `click_id` is legal only where the network named no reference at
+all. A report whose reference matched no click can therefore only be
+dismissed, and the listing says which kind each row is in an `attributable`
+field so an operator interface never offers an action the database will
+refuse.
+
+**A row stops being work without anybody closing it.** "Still open" is
+derived, not stored: nobody has resolved it, the report it names is still
+what the network last said about the transaction, and nothing has been
+credited against it. A stale page acting on a row that has since moved gets
+409 with which of the three it is; an id that names no row gets 404,
+because a queue row is never deleted and so an unknown id was never issued.
 | `GET /ops/held` | entries in `held` with the rule that held them |
 | `POST /ops/held/{id}/release` · `/reject` | body `{ reason }`, required and non-blank (US7 scenario 3) |
 | `GET /ops/withdrawals?state=awaiting_approval` | approval queue |
