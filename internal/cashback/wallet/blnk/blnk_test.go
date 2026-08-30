@@ -2358,3 +2358,51 @@ func TestHistoryRefusesAPageItCannotRecognise(t *testing.T) {
 		t.Errorf("the refusal does not say what it looked for: %v", err)
 	}
 }
+
+// TestEnsureAccountResolvesOneLedgerUnderConcurrency is the money-safety
+// property behind every account name this package writes. The name carries
+// the resolved ledger's id as its namespace, so two ids for one ledger name
+// is one member holding two sets of accounts - and money posted through one
+// is invisible to the other.
+//
+// The server does not stop this happening: blnk.ledgers constrains only the
+// id, so concurrent creates of one name all succeed with different ids. The
+// adapter has to be the thing that creates it once.
+func TestEnsureAccountResolvesOneLedgerUnderConcurrency(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeBlnk(t)
+	ledger := newLedger(t, fake)
+	ref := member(wallet.StageConfirmed)
+
+	const callers = 8
+	ids := make([]wallet.LedgerAccountID, callers)
+	errs := make([]error, callers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ids[i], errs[i] = ledger.EnsureAccount(context.Background(), ref, eur)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("caller %d: ensuring one account from %d at once: %v", i, callers, err)
+		}
+	}
+	for i, id := range ids {
+		if id != ids[0] {
+			t.Errorf("caller %d resolved %q, caller 0 resolved %q; one reference must resolve to one account",
+				i, id, ids[0])
+		}
+	}
+	if made := fake.ledgersNamed(blnk.DefaultLedgerName); made != 1 {
+		t.Errorf("%d ledgers carry the configured name, want exactly 1; each one is a namespace of its own", made)
+	}
+}

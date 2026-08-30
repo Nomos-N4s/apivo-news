@@ -383,6 +383,12 @@ type Ledger struct {
 	now func() time.Time
 
 	// mu guards the resolved ledger below.
+	// resolving serialises the one-time resolution of the Blnk ledger.
+	// It is not mu: resolution makes network calls, and holding the lock
+	// that guards the resolved id across them would block every reader of
+	// an id that is already known.
+	resolving sync.Mutex
+
 	mu sync.Mutex
 	// ledgerID is the resolved Blnk ledger, empty until first resolved.
 	ledgerID string
@@ -633,6 +639,24 @@ func (l *Ledger) balanceByIndicator(indicator string, currency money.Currency) (
 // than each keeping its own.
 func (l *Ledger) resolveLedgerID(ctx context.Context) (string, error) {
 	id, err := l.knownLedgerID(ctx)
+	if err != nil || id != "" {
+		return id, err
+	}
+
+	// Only one goroutine may create the ledger. The server does not
+	// constrain a ledger's name - blnk.ledgers declares it plainly, with
+	// only the id unique - so concurrent creates of one name all succeed,
+	// each answering a different id. Every account name this package
+	// writes carries the ledger id as its namespace, so two ids for one
+	// name is one member holding two sets of accounts, with money posted
+	// through one invisible to the other.
+	l.resolving.Lock()
+	defer l.resolving.Unlock()
+
+	// Another goroutine may have resolved it while this one waited, in
+	// which case its answer is the answer: creating a second ledger now
+	// would be the very split this lock exists to prevent.
+	id, err = l.knownLedgerID(ctx)
 	if err != nil || id != "" {
 		return id, err
 	}

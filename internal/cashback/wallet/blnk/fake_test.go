@@ -393,6 +393,21 @@ func (f *fakeBlnk) nextID(prefix string) string {
 	return fmt.Sprintf("%s_%d", prefix, f.seq)
 }
 
+// ledgersNamed counts the ledgers carrying one name. The real server does
+// not constrain the name, so this is how a test asks whether the adapter
+// created more namespaces than it meant to.
+func (f *fakeBlnk) ledgersNamed(name string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	found := 0
+	for _, candidate := range f.ledgers {
+		if candidate == name {
+			found++
+		}
+	}
+	return found
+}
+
 func (f *fakeBlnk) listLedgers(w http.ResponseWriter, r *http.Request) {
 	f.count(r)
 	f.mu.Lock()
