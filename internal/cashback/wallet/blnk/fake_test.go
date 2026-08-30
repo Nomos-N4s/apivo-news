@@ -393,6 +393,16 @@ func (f *fakeBlnk) nextID(prefix string) string {
 	return fmt.Sprintf("%s_%d", prefix, f.seq)
 }
 
+// addLedger records a ledger this package did not create, so a test can
+// push the one it cares about off the first page.
+func (f *fakeBlnk) addLedger(name string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id := f.nextID("ldg")
+	f.ledgers[id] = name
+	return id
+}
+
 // ledgersNamed counts the ledgers carrying one name. The real server does
 // not constrain the name, so this is how a test asks whether the adapter
 // created more namespaces than it meant to.
@@ -408,15 +418,71 @@ func (f *fakeBlnk) ledgersNamed(name string) int {
 	return found
 }
 
+// listLedgers answers a PAGE of ledgers, because that is what the real
+// endpoint does: it reads limit and offset from the query and defaults the
+// limit to ten when none is given. A fake that answered every ledger would
+// hide the failure this models - an adapter that asks for no page finds
+// nothing once the eleventh ledger exists, and creates another namespace
+// for accounts that already have one.
+//
+// The order is by id, so paging is stable and a ledger cannot be seen twice
+// or missed entirely as pages are walked.
 func (f *fakeBlnk) listLedgers(w http.ResponseWriter, r *http.Request) {
 	f.count(r)
+
+	limit, err := pageParam(r, "limit", defaultLedgerPage)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid limit value"})
+		return
+	}
+	offset, err := pageParam(r, "offset", 0)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid offset value"})
+		return
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]map[string]any, 0, len(f.ledgers))
-	for id, name := range f.ledgers {
-		out = append(out, map[string]any{"ledger_id": id, "name": name, "created_at": time.Unix(0, 0).UTC()})
+
+	ids := make([]string, 0, len(f.ledgers))
+	for id := range f.ledgers {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+
+	out := make([]map[string]any, 0, limit)
+	for i := offset; i < len(ids) && len(out) < limit; i++ {
+		out = append(out, map[string]any{
+			"ledger_id":  ids[i],
+			"name":       f.ledgers[ids[i]],
+			"created_at": time.Unix(0, 0).UTC(),
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// defaultLedgerPage is the page size the real endpoint falls back to when a
+// caller names none: api/ledger.go reads c.DefaultQuery("limit", "10").
+const defaultLedgerPage = 10
+
+// pageParam reads one paging query parameter, refusing what the real
+// endpoint refuses - a value that is not a number, or is below one.
+func pageParam(r *http.Request, name string, fallback int) (int, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, err
+	}
+	if name == "limit" && value < 1 {
+		return 0, fmt.Errorf("limit below one")
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("offset below zero")
+	}
+	return value, nil
 }
 
 func (f *fakeBlnk) createLedger(w http.ResponseWriter, r *http.Request) {
