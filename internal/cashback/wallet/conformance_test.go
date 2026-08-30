@@ -31,6 +31,7 @@ package wallet_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -226,6 +227,102 @@ func TestConformanceEnsureAccountIsIdempotent(t *testing.T) {
 		}
 		if held := balance(t, ledger, first, conformEUR); !held.Equal(amount(0, conformEUR)) {
 			t.Errorf("a freshly ensured account holds %s, want nothing", held)
+		}
+	})
+}
+
+// TestConformanceReplayRecordsOnce is the port's central promise: a retry
+// cannot move money twice. Every implementation must answer a replayed key
+// with the reference it recorded the first time, record nothing further,
+// and leave the balances exactly where the first post left them.
+//
+// The replay deliberately rebuilds the transfer with its postings in the
+// other order. The port defines sameness as a multiset of movements, not as
+// the sequence a caller happened to assemble - a retry that rebuilt its
+// slice from a map would otherwise be refused as a conflict, which is
+// precisely the retry the key exists to make safe.
+func TestConformanceReplayRecordsOnce(t *testing.T) {
+	t.Parallel()
+
+	eachLedger(t, func(t *testing.T, ledger wallet.Ledger) {
+		ctx := context.Background()
+		house := ensure(t, ledger, conformHouse(), conformEUR)
+		member := ensure(t, ledger, conformMember(wallet.StagePending), conformEUR)
+
+		transfer := wallet.Transfer{
+			IdempotencyKey: "conformance-replay-" + uuid.NewString(),
+			Reference:      "an earning",
+			Postings: []wallet.Posting{
+				{Account: house, Amount: amount(-2500, conformEUR)},
+				{Account: member, Amount: amount(2500, conformEUR)},
+			},
+		}
+
+		first, err := ledger.Post(ctx, transfer)
+		if err != nil {
+			t.Fatalf("posting: %v", err)
+		}
+
+		// The same movements, written the other way round.
+		replay := transfer
+		replay.Postings = []wallet.Posting{
+			{Account: member, Amount: amount(2500, conformEUR)},
+			{Account: house, Amount: amount(-2500, conformEUR)},
+		}
+
+		second, err := ledger.Post(ctx, replay)
+		if err != nil {
+			t.Fatalf("replaying the key with the same movements in another order: %v", err)
+		}
+		if first != second {
+			t.Errorf("the replay answered with transfer %q, want the original %q", second, first)
+		}
+
+		if held := balance(t, ledger, member, conformEUR); !held.Equal(amount(2500, conformEUR)) {
+			t.Errorf("the member holds %s after one transfer and its replay, want 2500 EUR", held)
+		}
+		if held := balance(t, ledger, house, conformEUR); !held.Equal(amount(-2500, conformEUR)) {
+			t.Errorf("the house holds %s after one transfer and its replay, want -2500 EUR", held)
+		}
+	})
+}
+
+// TestConformanceReplayWithADifferentTransferConflicts is the other half of
+// idempotency: one key naming two different movements is the bug the key
+// exists to surface, so every implementation refuses it wrapping
+// ErrIdempotencyConflict rather than quietly answering with the first.
+func TestConformanceReplayWithADifferentTransferConflicts(t *testing.T) {
+	t.Parallel()
+
+	eachLedger(t, func(t *testing.T, ledger wallet.Ledger) {
+		ctx := context.Background()
+		house := ensure(t, ledger, conformHouse(), conformEUR)
+		member := ensure(t, ledger, conformMember(wallet.StagePending), conformEUR)
+		key := "conformance-conflict-" + uuid.NewString()
+
+		if _, err := ledger.Post(ctx, wallet.Transfer{
+			IdempotencyKey: key,
+			Postings: []wallet.Posting{
+				{Account: house, Amount: amount(-2500, conformEUR)},
+				{Account: member, Amount: amount(2500, conformEUR)},
+			},
+		}); err != nil {
+			t.Fatalf("posting: %v", err)
+		}
+
+		_, err := ledger.Post(ctx, wallet.Transfer{
+			IdempotencyKey: key,
+			Postings: []wallet.Posting{
+				{Account: house, Amount: amount(-9900, conformEUR)},
+				{Account: member, Amount: amount(9900, conformEUR)},
+			},
+		})
+		if !errors.Is(err, wallet.ErrIdempotencyConflict) {
+			t.Fatalf("posting a different transfer under a used key gave %v, want one wrapping ErrIdempotencyConflict", err)
+		}
+
+		if held := balance(t, ledger, member, conformEUR); !held.Equal(amount(2500, conformEUR)) {
+			t.Errorf("the member holds %s after a refused conflict, want the original 2500 EUR", held)
 		}
 	})
 }
