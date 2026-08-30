@@ -52,6 +52,21 @@ data:
   LEDGER_DRIVER: "blnk"
   BLNK_URL: "http://blnk:5001"
   REDIS_URL: "redis://redis:6379"
+  # The header this cluster's edge sets to carry the real client address,
+  # for the privacy-minimised context digest a click records (FR-022) and
+  # for the per-device half of the click rule (US7 scenario 1).
+  #
+  # Empty on purpose, and it stays empty until an ingress is configured to
+  # set it AND to strip any inbound copy of it. Until then the digest is the
+  # ingress's own address, which is still a context and is not one that
+  # tells devices apart - so the per-device half of the rule stays off
+  # rather than bracketing every member behind it. The per-member half is
+  # unaffected and always applies.
+  #
+  # A header a client can set is a context a client can choose, and a chosen
+  # context evades a per-device rule by changing on every request. Naming
+  # one the edge does not own would be worse than naming none.
+  CLICK_CONTEXT_HEADER: ""
   # The two house accounts the cashback design names: where the
   # sub-minor-unit rounding remainder of a percent earning accrues (D6) and
   # where an absorbed post-payout clawback loss is recorded (Q3). Both are
