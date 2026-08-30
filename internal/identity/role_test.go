@@ -113,3 +113,60 @@ func TestRequireEditor(t *testing.T) {
 		})
 	}
 }
+
+func TestRequireOperator(t *testing.T) {
+	t.Parallel()
+
+	id := identity.Identity{Subject: uuid.New(), Email: "ops@example.test", DisplayName: "Operator"}
+	errLookup := errors.New("role lookup timed out")
+
+	cases := []struct {
+		name    string
+		roles   staticRoles
+		wantErr error // sentinel matched with errors.Is; nil expects the gate to open
+	}{
+		{name: "operator passes", roles: staticRoles{role: identity.RoleOperator}},
+		{name: "reader is refused", roles: staticRoles{role: "reader"}, wantErr: identity.ErrNotOperator},
+		// The one refusal worth naming on its own: editorial authority is
+		// not money-releasing authority, and an /ops/* route that let an
+		// editor through would be a wider grant than any migration made.
+		{name: "editor is refused", roles: staticRoles{role: identity.RoleEditor}, wantErr: identity.ErrNotOperator},
+		{name: "empty role is refused", roles: staticRoles{role: ""}, wantErr: identity.ErrNotOperator},
+		{name: "lookup failure propagates", roles: staticRoles{err: errLookup}, wantErr: errLookup},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := identity.RequireOperator(t.Context(), id, tc.roles)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("RequireOperator: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("RequireOperator error = %v, want errors.Is(err, %v)", err, tc.wantErr)
+			}
+			if tc.roles.err != nil && errors.Is(err, identity.ErrNotOperator) {
+				t.Error("a failed lookup must not read as a 403 verdict")
+			}
+		})
+	}
+}
+
+// TestTheTwoRoleGatesDoNotOverlap states the property the two tables above
+// only imply one direction of: neither gate opens for the other's role. It
+// is asserted rather than reasoned about because the pair of them is the
+// whole separation between approving an article and releasing money.
+func TestTheTwoRoleGatesDoNotOverlap(t *testing.T) {
+	t.Parallel()
+
+	id := identity.Identity{Subject: uuid.New()}
+	if err := identity.RequireEditor(t.Context(), id, staticRoles{role: identity.RoleOperator}); !errors.Is(err, identity.ErrNotEditor) {
+		t.Errorf("RequireEditor for an operator = %v, want errors.Is(err, %v)", err, identity.ErrNotEditor)
+	}
+	if err := identity.RequireOperator(t.Context(), id, staticRoles{role: identity.RoleEditor}); !errors.Is(err, identity.ErrNotOperator) {
+		t.Errorf("RequireOperator for an editor = %v, want errors.Is(err, %v)", err, identity.ErrNotOperator)
+	}
+}
