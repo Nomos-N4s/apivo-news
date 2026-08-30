@@ -78,6 +78,60 @@ func (q *Queries) AdvanceNetworkAccountTrailingCursor(ctx context.Context, arg A
 	return i, err
 }
 
+const getNetworkAccountByPublisher = `-- name: GetNetworkAccountByPublisher :one
+select
+    na.id,
+    na.network_id,
+    na.external_publisher_id,
+    na.active
+from cashback.network_account na
+where na.network_id = $1
+  and na.external_publisher_id = $2
+`
+
+type GetNetworkAccountByPublisherParams struct {
+	NetworkID           string
+	ExternalPublisherID string
+}
+
+type GetNetworkAccountByPublisherRow struct {
+	ID                  pgtype.UUID
+	NetworkID           string
+	ExternalPublisherID string
+	Active              bool
+}
+
+// The account row an adapter's configuration names, found by the natural key
+// an operator actually holds.
+//
+// The composition root is handed a network and a publisher identifier - the
+// two an operator reads off the network's own dashboard - and the poller
+// needs the row id, because that is what owns the cursors and what every
+// evidence row carries in network_account_id. Nothing but the database can
+// make that translation, and it is made ONCE at wiring rather than at every
+// poll: an id that changed between polls would move a cursor belonging to
+// another account.
+//
+// No FOR UPDATE. This read decides whether to register a job, not what to
+// write, and holding a row lock for the life of the process would block
+// every poll the job then makes.
+//
+// `active` comes back so the caller can say what it found. The poller
+// refuses an inactive account on its own (migration 0011 makes an account
+// born inactive precisely so a half-configured one cannot fetch), so this is
+// for the log line at startup rather than for a decision here.
+func (q *Queries) GetNetworkAccountByPublisher(ctx context.Context, arg GetNetworkAccountByPublisherParams) (GetNetworkAccountByPublisherRow, error) {
+	row := q.db.QueryRow(ctx, getNetworkAccountByPublisher, arg.NetworkID, arg.ExternalPublisherID)
+	var i GetNetworkAccountByPublisherRow
+	err := row.Scan(
+		&i.ID,
+		&i.NetworkID,
+		&i.ExternalPublisherID,
+		&i.Active,
+	)
+	return i, err
+}
+
 const getNetworkAccountCursors = `-- name: GetNetworkAccountCursors :one
 
 select
