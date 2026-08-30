@@ -97,11 +97,18 @@ func standInLedger(t *testing.T, tx pgx.Tx, schema string, rows string) {
 	t.Helper()
 	ctx := context.Background()
 	ident := pgx.Identifier{schema}.Sanitize()
-	for _, stmt := range []string{
+	stmts := []string{
 		"create schema " + ident,
 		"create table " + ident + ".balances (balance bigint not null, currency text not null)",
-		"insert into " + ident + ".balances (balance, currency) values " + rows,
-	} {
+	}
+	// An empty rows string builds an empty ledger: a schema the check can
+	// resolve and read, holding nothing to sum. That is the vacuous case,
+	// and building it explicitly is what keeps the vacuous test honest on
+	// a database that also carries a real ledger.
+	if rows != "" {
+		stmts = append(stmts, "insert into "+ident+".balances (balance, currency) values "+rows)
+	}
+	for _, stmt := range stmts {
 		if _, err := tx.Exec(ctx, stmt); err != nil {
 			t.Fatalf("building the stand-in ledger (%s): %v", stmt, err)
 		}
@@ -260,7 +267,7 @@ func TestZeroSumCheckPinsTheWiredLedgerSchema(t *testing.T) {
 // TestZeroSumCheckStaysQuietWhenTheLedgerNetsToZero pins the other half of
 // the contract: a clean run returns nil and says nothing above DEBUG, in
 // both shapes a clean deployment takes - a ledger whose every currency
-// nets to zero, and no co-located ledger at all, where vacuously true is
+// nets to zero, and a ledger with nothing in it, where vacuously true is
 // the honest answer (0016). The two shapes must not share a sentence:
 // "verified N currencies" and "summed nothing" are different facts, and a
 // check that reports them identically cannot be told apart from one
@@ -298,14 +305,21 @@ func TestZeroSumCheckStaysQuietWhenTheLedgerNetsToZero(t *testing.T) {
 		}
 	})
 
-	t.Run("no co-located ledger", func(t *testing.T) {
+	t.Run("an empty ledger", func(t *testing.T) {
 		t.Parallel()
 		tx := zeroSumTx(t)
-		// Nothing pinned and nothing built: the check reads the ledger's
-		// real schema name, which this database does not carry.
+		// A stand-in schema the check resolves and reads, holding no
+		// balances at all. This is deliberately NOT "no schema anywhere":
+		// the first spelling of this test relied on the database carrying
+		// no ledger, and CI's shared database carries a populated Blnk
+		// schema - so the check truthfully verified one currency and the
+		// test failed on its own environmental assumption. An empty
+		// ledger reaches the same vacuous branch on any database.
+		schema := pinZeroSumSchema(t, tx)
+		standInLedger(t, tx, schema, "")
 		check, out := zeroSumCheck(tx)
 		if err := check.Run(context.Background()); err != nil {
-			t.Fatalf("Run() with no co-located ledger returned %v, want nil (vacuously true is honest here)", err)
+			t.Fatalf("Run() over an empty ledger returned %v, want nil (vacuously true is honest here)", err)
 		}
 		var vacuous bool
 		for _, record := range zeroSumRecords(t, out.String()) {
