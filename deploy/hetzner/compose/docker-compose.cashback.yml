@@ -390,11 +390,13 @@ services:
 
   # What loading this file tells the api.
   #
-  # These four are STRUCTURAL, not an operator's choice, so they are set here
+  # These six are STRUCTURAL, not an operator's choice, so they are set here
   # and not in api.env — the same reasoning that puts HTTP_ADDR and APP_ENV in
   # the base compose file. Listing this overlay in COMPOSE_FILE *is* the
-  # decision to run cashback on this environment, and the ledger's address is
-  # a container name this file chose.
+  # decision to run cashback on this environment, the ledger's address is a
+  # container name this file chose, and the two house account names are part
+  # of the books' layout rather than a per-environment preference: renaming
+  # one later strands whatever balance had accrued under the old name.
   #
   # NETWORK_DRIVER and the affiliate network credentials are the opposite:
   # they are an operator's choice against a founder question that is still
@@ -403,6 +405,13 @@ services:
     environment:
       CASHBACK_ENABLED: "true"
       LEDGER_DRIVER: blnk
+      # Where the sub-minor-unit rounding remainder of every percent earning
+      # accrues (D6) and where an absorbed post-payout clawback is recorded
+      # (Q3). Required here, where APP_ENV=prod puts the api's production
+      # rules in force; the api refuses to start anywhere if the two share a
+      # name, because one balance cannot carry two meanings.
+      HOUSE_ACCOUNT_ROUNDING: rounding-remainder
+      HOUSE_ACCOUNT_CLAWBACK: clawback-loss
       BLNK_URL: http://apivo-${APIVO_ENV}-blnk:5001
       REDIS_URL: redis://apivo-${APIVO_ENV}-redis:6379
     # `service_started` and NOT `service_healthy`, even though blnk now has a

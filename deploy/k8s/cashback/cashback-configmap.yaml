@@ -52,6 +52,16 @@ data:
   LEDGER_DRIVER: "blnk"
   BLNK_URL: "http://blnk:5001"
   REDIS_URL: "redis://redis:6379"
+  # The two house accounts the cashback design names: where the
+  # sub-minor-unit rounding remainder of a percent earning accrues (D6) and
+  # where an absorbed post-payout clawback loss is recorded (Q3). Both are
+  # required with CASHBACK_ENABLED=true in production, which every deployed
+  # environment is, and the api refuses to start anywhere if the two share a
+  # name - one balance cannot carry two meanings. Set once and left alone:
+  # renaming a house account strands whatever balance had accrued under the
+  # old name.
+  HOUSE_ACCOUNT_ROUNDING: "rounding-remainder"
+  HOUSE_ACCOUNT_CLAWBACK: "clawback-loss"
   # Which affiliate network adapter the poller uses. EMPTY means `fixture`:
   # a scripted click -> pending -> approved -> reversed lifecycle served from
   # recorded responses, needing no credentials (ADR-0003). That is the safe
