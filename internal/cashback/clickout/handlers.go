@@ -6,8 +6,10 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"math"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -148,7 +150,18 @@ func (h *Handler) createClickOut(w http.ResponseWriter, r *http.Request) {
 		OfferID: offerID,
 		Context: h.contextOf(r),
 	})
+	var tooMany TooManyClicks
 	switch {
+	// US7 scenario 1. Retry-After is seconds, rounded UP: rounding down
+	// would name an instant the rule has not yet lifted at, and a client
+	// that obeyed it would be refused again.
+	case errors.As(err, &tooMany):
+		h.log.InfoContext(r.Context(), "a click-out was refused by the click rule",
+			"rule", tooMany.Rule, "allowed", tooMany.Allowed, "retry_after", tooMany.RetryAfter)
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(tooMany.RetryAfter.Seconds()))))
+		platformhttp.Problem(w, http.StatusTooManyRequests,
+			"you have made a lot of click-outs recently; please wait a moment and try again")
+		return
 	// The band is not published at this moment - expired, not yet started,
 	// or with an inactive leg in its chain. A member looking at a stale page
 	// gets told, rather than being redirected to a rate nobody honours.
