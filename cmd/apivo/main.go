@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Nomos-N4s/apivo-news/internal/account"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
@@ -256,15 +257,51 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		if err := wallet.NewZeroSumCheck(log, pool, ledgerSchema).Register(jobs); err != nil {
 			return err
 		}
+		registered := 1
+
+		// The affiliate-network sweeps, which are opt-in in a way the
+		// zero-sum check is not: polling needs a publisher account row that
+		// only an operator can create, so a deployment configured ahead of
+		// that runs with ingestion off rather than not at all. It says so
+		// at ERROR, because "cashback is mounted and nothing is ingesting
+		// what the networks report" is a state somebody has to fix.
+		sweeps, err := newNetworkSweeps(ctx, log, cfg.Cashback.Network, pool)
+		var off *ingestionOff
+		switch {
+		case errors.As(err, &off):
+			log.ErrorContext(ctx, "NO AFFILIATE NETWORK IS BEING POLLED: "+off.reason+
+				". Cashback is enabled, so nothing will ingest what a network reports and no member can be credited")
+		case err != nil:
+			return err
+		default:
+			if err := sweeps.Register(jobs); err != nil {
+				return err
+			}
+			registered += 2
+			log.InfoContext(ctx, "affiliate network sweeps registered",
+				"account", sweeps.Account().String(),
+				"forward_job", networks.ForwardJobName(sweeps.Account()),
+				"forward_interval", networks.ForwardInterval,
+				"trailing_job", networks.TrailingJobName(sweeps.Account()),
+				"trailing_interval", networks.TrailingInterval,
+				"trailing_lag", networks.DefaultTrailingLag)
+		}
+
 		// The same refusal Run makes first, made here where it can still
 		// fail the deployment: from inside the goroutine below, a pool too
 		// small for its jobs would be one ERROR line under an already
 		// printed "started", and the process would then serve its whole
-		// life holding money with C-1 unwatched. One job is registered
-		// above; a second Register must raise this count with it - Run
-		// re-checks with the true count either way, but only this
-		// synchronous copy can refuse to start.
-		if err := locker.CheckCapacity(1); err != nil {
+		// life holding money with C-1 unwatched. Run re-checks with the
+		// true count either way, but only this synchronous copy can refuse
+		// to start - and the count is computed rather than written down, so
+		// a job registered above cannot be forgotten here.
+		//
+		// Two connections per job plus two reserved is the locker's
+		// arithmetic, so registering the sweeps takes the requirement from
+		// 4 to 8. pgx defaults MaxConns to max(4, NumCPU), which is why
+		// turning ingestion on may mean raising pool_max_conns in
+		// DATABASE_URL - the error below says so with the numbers in it.
+		if err := locker.CheckCapacity(registered); err != nil {
 			return err
 		}
 		jobsCtx, stopJobs := context.WithCancel(ctx)
