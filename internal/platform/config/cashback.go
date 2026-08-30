@@ -83,6 +83,23 @@ type CashbackConfig struct {
 	RedisURL string
 	// Network is the affiliate network adapter's selection and credentials.
 	Network NetworkConfig
+	// ClickContextHeader (CLICK_CONTEXT_HEADER) names the header this
+	// deployment's edge sets to carry the real client address, for the
+	// privacy-minimised context digest a click records (FR-022) and for the
+	// per-device half of the click rule (US7 scenario 1).
+	//
+	// Empty - the default - means the deployment names none, and then the
+	// digest is built from the connection's own peer. Behind a proxy that is
+	// the PROXY, which is still a context and is not one that tells devices
+	// apart, so the per-device half of the rule stays off rather than
+	// bracketing every member behind it. The per-member half is unaffected
+	// and always applies.
+	//
+	// It is a statement of trust and so it is a deployment's to make: a
+	// header a client can set is a context a client can choose, and a chosen
+	// context evades a per-device rule by changing on every request. Name
+	// only a header an edge sets itself and strips any inbound copy of.
+	ClickContextHeader string
 	// HouseAccounts is the configured names of the ledger's house
 	// accounts. The names live here because the design puts them in
 	// configuration and nowhere else (data-model.md 2.6): domain code
@@ -230,10 +247,11 @@ func redactedURL(raw string) string {
 // product is enabled. See CashbackConfig.
 func parseCashback(getenv func(string) string) (CashbackConfig, error) {
 	c := CashbackConfig{
-		LedgerDriver:  strings.TrimSpace(getenv("LEDGER_DRIVER")),
-		BlnkURL:       strings.TrimSpace(getenv("BLNK_URL")),
-		BlnkSecretKey: NewSecret(getenv("BLNK_SECRET_KEY")),
-		RedisURL:      strings.TrimSpace(getenv("REDIS_URL")),
+		LedgerDriver:       strings.TrimSpace(getenv("LEDGER_DRIVER")),
+		BlnkURL:            strings.TrimSpace(getenv("BLNK_URL")),
+		BlnkSecretKey:      NewSecret(getenv("BLNK_SECRET_KEY")),
+		RedisURL:           strings.TrimSpace(getenv("REDIS_URL")),
+		ClickContextHeader: strings.TrimSpace(getenv("CLICK_CONTEXT_HEADER")),
 		Network: NetworkConfig{
 			Driver:    strings.TrimSpace(getenv("NETWORK_DRIVER")),
 			AccountID: strings.TrimSpace(getenv("NETWORK_ACCOUNT_ID")),
