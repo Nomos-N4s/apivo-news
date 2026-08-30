@@ -251,7 +251,7 @@ func (p *Poller) poll(ctx context.Context, adapter Network, trailing bool) (Poll
 		return Poll{}, nil
 	}
 
-	outcome, err := persist(ctx, queries, adapter, Retrieval{Account: account, RetrievedAt: at, Window: window})
+	outcome, err := persist(ctx, tx, adapter, Retrieval{Account: account, RetrievedAt: at, Window: window})
 	if err != nil {
 		return Poll{}, err
 	}
@@ -285,7 +285,8 @@ func (p *Poller) window(cursors store.GetNetworkAccountCursorsRow, at time.Time,
 // transaction. It stops at the first refusal: a window half read is a window
 // whose cursor must not move, and continuing past an error would leave the
 // count saying more was stored than was.
-func persist(ctx context.Context, queries *store.Queries, adapter Network, retrieval Retrieval) (PollOutcome, error) {
+func persist(ctx context.Context, tx pgx.Tx, adapter Network, retrieval Retrieval) (PollOutcome, error) {
+	queries := store.New(tx)
 	superseder, err := NewSuperseder(queries, queries)
 	if err != nil {
 		return PollOutcome{}, err
@@ -296,6 +297,14 @@ func persist(ctx context.Context, queries *store.Queries, adapter Network, retri
 	// nothing. The hole would be permanent and silent, and it is exactly the
 	// money nobody can be credited for.
 	unattributed, err := NewUnattributedQueue(queries)
+	if err != nil {
+		return PollOutcome{}, err
+	}
+	// Appended through the transaction rather than the generated store,
+	// because the outbox writes a table this module does not own and the
+	// placement of that write - beside the evidence, in one commit - is the
+	// whole of the contract's atomicity guarantee (T062).
+	announcer, err := NewAnnouncer()
 	if err != nil {
 		return PollOutcome{}, err
 	}
@@ -327,14 +336,24 @@ func persist(ctx context.Context, queries *store.Queries, adapter Network, retri
 			outcome.Unchanged++
 			continue
 		}
-		// The observation itself is not carried out of this loop. T062
-		// publishes an event per observation and will need it; counting is
-		// what this poll owes an operator now, and a field nothing reads is
-		// a field nothing keeps honest.
-		if _, wrote, err := unattributed.Record(ctx, stored); err != nil {
+		// Announced per stored row, which is per new fact rather than per
+		// report read: an unchanged re-report writes nothing and says
+		// nothing new, which is what keeps a trailing sweep over a quiet
+		// period from republishing the same fact four times a day forever.
+		if err := announcer.Ingested(ctx, tx, retrieval.Account.Network(), report.Status, stored); err != nil {
 			return PollOutcome{}, err
-		} else if wrote {
-			outcome.Unattributed++
+		}
+
+		queued, wrote, err := unattributed.Record(ctx, stored)
+		if err != nil {
+			return PollOutcome{}, err
+		}
+		if !wrote {
+			continue
+		}
+		outcome.Unattributed++
+		if err := announcer.Unattributed(ctx, tx, queued); err != nil {
+			return PollOutcome{}, err
 		}
 	}
 	return outcome, nil
