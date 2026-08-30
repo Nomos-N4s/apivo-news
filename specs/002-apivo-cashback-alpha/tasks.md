@@ -83,7 +83,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 
 - [ ] T031 [P] Test that a non-zero per-currency sum in `cashback.ledger_zero_sum` fails the check (C-1) in `internal/cashback/wallet/invariants_test.go`
 - [ ] T032 [P] Test that inserting an `entry` without `network_transaction_id` is rejected by SQLSTATE (C-2) in `internal/cashback/earnings/invariants_test.go`
-- [ ] T033 [P] Test that UPDATE/DELETE/TRUNCATE on `network_transaction`, `click` and `reconciliation_run` raise (C-3) in `internal/cashback/networks/invariants_test.go`
+- [x] T033 [P] Test that UPDATE/DELETE/TRUNCATE on `network_transaction`, `click` and `reconciliation_run` raise (C-3) in `internal/cashback/networks/invariants_test.go` — landed in `internal/platform/db/cashback_evidence_test.go` and `cashback_reconciliation_test.go` instead, beside the other schema invariant tests and the seeding helpers they share
 - [ ] T034 [P] Test that inserting a `payout` without `approved_by` is rejected by SQLSTATE 23502 (C-4) in `internal/cashback/payout/invariants_test.go`
 - [ ] T035 [P] Test that a duplicate `idempotency_key` and a duplicate `request_id` are rejected under concurrency (C-5) in `internal/cashback/payout/idempotency_test.go`
 - [ ] T036 [P] Test that no `numeric`/`float`/`double` column exists in the `cashback` schema and every money column has its currency (C-6) in `internal/cashback/schema_money_test.go`
