@@ -531,3 +531,117 @@ func TestConformanceConcurrentEnsureResolvesToOneAccount(t *testing.T) {
 		}
 	})
 }
+
+// TestConformanceBalanceAfterAReversal is what a clawback has to leave
+// behind. An earning is reversed by a second transfer that moves the same
+// money back, and every implementation must land the member exactly at
+// nothing - not near it.
+//
+// The reversal is a transfer in its own right with a key of its own, never
+// a deletion: the port has no way to unrecord a posting, and a ledger that
+// let one be removed could not answer what it did last week. Both postings
+// stay, and the balance is their sum.
+func TestConformanceBalanceAfterAReversal(t *testing.T) {
+	t.Parallel()
+
+	eachLedger(t, func(t *testing.T, ledger wallet.Ledger) {
+		ctx := context.Background()
+		house := ensure(t, ledger, conformHouse(), conformEUR)
+		member := ensure(t, ledger, conformMember(wallet.StagePending), conformEUR)
+		suffix := uuid.NewString()
+
+		if _, err := ledger.Post(ctx, wallet.Transfer{
+			IdempotencyKey: "conformance-earning-" + suffix,
+			Reference:      "an earning",
+			Postings: []wallet.Posting{
+				{Account: house, Amount: amount(-2500, conformEUR)},
+				{Account: member, Amount: amount(2500, conformEUR)},
+			},
+		}); err != nil {
+			t.Fatalf("posting the earning: %v", err)
+		}
+
+		if _, err := ledger.Post(ctx, wallet.Transfer{
+			IdempotencyKey: "conformance-reversal-" + suffix,
+			Reference:      "the reversal of an earning",
+			Postings: []wallet.Posting{
+				{Account: member, Amount: amount(-2500, conformEUR)},
+				{Account: house, Amount: amount(2500, conformEUR)},
+			},
+		}); err != nil {
+			t.Fatalf("posting the reversal: %v", err)
+		}
+
+		if held := balance(t, ledger, member, conformEUR); !held.Equal(amount(0, conformEUR)) {
+			t.Errorf("the member holds %s after an earning and its reversal, want nothing", held)
+		}
+		if held := balance(t, ledger, house, conformEUR); !held.Equal(amount(0, conformEUR)) {
+			t.Errorf("the house holds %s after an earning and its reversal, want nothing", held)
+		}
+
+		// Both postings survive: the reversal is a fact, not an erasure.
+		seen := 0
+		history, err := ledger.History(ctx, member, wallet.Window{})
+		if err != nil {
+			t.Fatalf("reading the member's history: %v", err)
+		}
+		for posting, err := range history {
+			if err != nil {
+				t.Fatalf("reading the member's history: %v", err)
+			}
+			seen++
+			_ = posting
+		}
+		if seen != 2 {
+			t.Errorf("the member's history holds %d posting(s) after an earning and its reversal, want both", seen)
+		}
+	})
+}
+
+// TestConformanceMemberAccountCannotGoNegative is the double-spend defence
+// D9 leans on, and it is a requirement of the port rather than a courtesy:
+// a member's stage account may never hold less than nothing, judged at the
+// moment the transfer is applied.
+//
+// A house account is exempt in the same scenario, because it is the
+// boundary of the closed set of accounts - the place a commission arrives
+// from - and a ledger in which nothing may go negative has nothing able to
+// fund the first credit.
+func TestConformanceMemberAccountCannotGoNegative(t *testing.T) {
+	t.Parallel()
+
+	eachLedger(t, func(t *testing.T, ledger wallet.Ledger) {
+		ctx := context.Background()
+		house := ensure(t, ledger, conformHouse(), conformEUR)
+		member := ensure(t, ledger, conformMember(wallet.StageReserved), conformEUR)
+
+		// The house funds the closed set from nothing: this must be allowed.
+		if _, err := ledger.Post(ctx, wallet.Transfer{
+			IdempotencyKey: "conformance-fund-" + uuid.NewString(),
+			Postings: []wallet.Posting{
+				{Account: house, Amount: amount(-1000, conformEUR)},
+				{Account: member, Amount: amount(1000, conformEUR)},
+			},
+		}); err != nil {
+			t.Fatalf("the house could not fund a member from nothing: %v", err)
+		}
+		if held := balance(t, ledger, house, conformEUR); !held.Equal(amount(-1000, conformEUR)) {
+			t.Errorf("the house holds %s after funding, want -1000 EUR; house accounts may go negative", held)
+		}
+
+		// The member may not be spent past what it holds.
+		_, err := ledger.Post(ctx, wallet.Transfer{
+			IdempotencyKey: "conformance-overspend-" + uuid.NewString(),
+			Postings: []wallet.Posting{
+				{Account: member, Amount: amount(-1001, conformEUR)},
+				{Account: house, Amount: amount(1001, conformEUR)},
+			},
+		})
+		if !errors.Is(err, wallet.ErrInsufficientFunds) {
+			t.Fatalf("spending a member past its balance gave %v, want one wrapping ErrInsufficientFunds", err)
+		}
+		if held := balance(t, ledger, member, conformEUR); !held.Equal(amount(1000, conformEUR)) {
+			t.Errorf("the member holds %s after a refused overspend, want the 1000 EUR it had", held)
+		}
+	})
+}
