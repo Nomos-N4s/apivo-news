@@ -17,7 +17,7 @@ DATABASE_URL_TEST ?= postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
 # `make test RACE=` and let CI cover the race detection.
 RACE ?= -race
 
-.PHONY: setup db-up db-down test test-unit cover vet lint openapi-lint sqlc ts-types web-install web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status cashback-up cashback-seed cashback-scenario cashback-verify-ledger cashback-brand-check migration-lint
+.PHONY: setup db-up db-down test test-unit cover vet lint openapi-lint sqlc ts-types web-install web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status cashback-up cashback-seed cashback-scenario cashback-verify-ledger cashback-brand-check migration-lint ref-lint
 
 # ---------------------------------------------------------------------------
 # `missing` — how a cashback target behaves before its dependency has landed.
@@ -235,6 +235,19 @@ cashback-brand-check:
 	@test -f scripts/lint-brand-literals.sh || \
 		$(call missing,scripts/lint-brand-literals.sh,task T016 (issue #163) - the brand-literal lint,nothing - there is no other check for a hardcoded brand literal)
 	sh scripts/lint-brand-literals.sh
+
+## ref-lint: prove this branch's name may be merged
+# A merged branch name is written verbatim into the merge commit, and
+# Principle I forbids naming an assistant or a vendor there. The name is the
+# last moment at which that is free to fix (constitution, Principle I).
+#
+# Judges the branch alone. The names already in history are judged by
+# `sh scripts/lint-refs.sh --from-messages origin/main..HEAD`, which needs a
+# range and so cannot be the thing a bare target runs on `main`.
+ref-lint:
+	@BRANCH=$$(git symbolic-ref --short -q HEAD) || \
+		{ echo "ref-lint: detached HEAD - no branch name to judge"; exit 0; }; \
+	sh scripts/lint-refs.sh "$$BRANCH"
 
 ## migration-lint: prove no foreign key crosses a product schema boundary
 # A product domain may not reach into another product's schema, at any depth.
