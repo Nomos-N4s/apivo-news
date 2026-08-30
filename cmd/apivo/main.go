@@ -437,6 +437,10 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, err
 	}
+	clickOutOptions := []clickout.HandlerOption{}
+	if cfg.Cashback.ClickContextHeader != "" {
+		clickOutOptions = append(clickOutOptions, clickout.WithContextHeader(cfg.Cashback.ClickContextHeader))
+	}
 	return append(routes,
 		platformhttp.Route{
 			Pattern: opsPrefix,
@@ -447,11 +451,11 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		// ServeMux or handed to whatever else claims the namespace.
 		platformhttp.Route{
 			Pattern: clickoutPrefix,
-			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}),
+			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}, clickOutOptions...),
 		},
 		platformhttp.Route{
 			Pattern: clickoutPrefix + "/",
-			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}),
+			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}, clickOutOptions...),
 		},
 	), stop, nil
 }
