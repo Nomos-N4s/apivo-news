@@ -39,12 +39,13 @@ func TestReconciliationRunIsImmutable(t *testing.T) {
 
 	tests := []struct {
 		name string
+		op   string
 		stmt string
 	}{
-		{name: "rewrite the statement", stmt: `update cashback.reconciliation_run set raw_statement = '{}'::jsonb where id = $1`},
-		{name: "move the period", stmt: `update cashback.reconciliation_run set statement_period_end = now() + interval '30 days' where id = $1`},
-		{name: "reassign the importer", stmt: `update cashback.reconciliation_run set imported_by = gen_random_uuid() where id = $1`},
-		{name: "delete the import", stmt: `delete from cashback.reconciliation_run where id = $1`},
+		{name: "rewrite the statement", op: "UPDATE", stmt: `update cashback.reconciliation_run set raw_statement = '{}'::jsonb where id = $1`},
+		{name: "move the period", op: "UPDATE", stmt: `update cashback.reconciliation_run set statement_period_end = now() + interval '30 days' where id = $1`},
+		{name: "reassign the importer", op: "UPDATE", stmt: `update cashback.reconciliation_run set imported_by = gen_random_uuid() where id = $1`},
+		{name: "delete the import", op: "DELETE", stmt: `delete from cashback.reconciliation_run where id = $1`},
 	}
 
 	for _, tt := range tests {
@@ -54,7 +55,7 @@ func TestReconciliationRunIsImmutable(t *testing.T) {
 			f := seedCashbackWithdrawal(t, tx)
 			runID := seedReconciliationRun(t, tx, f)
 			_, err := tx.Exec(context.Background(), tt.stmt, runID)
-			wantPgCode(t, err, codeRaiseException)
+			wantImmutableRefusal(t, err, "reconciliation_run", tt.op)
 		})
 	}
 }
@@ -69,7 +70,7 @@ func TestReconciliationRunRejectsTruncate(t *testing.T) {
 		t.Fatalf("set lock_timeout: %v", err)
 	}
 	_, err := tx.Exec(ctx, `truncate cashback.reconciliation_run cascade`)
-	wantPgCode(t, err, codeRaiseException)
+	wantImmutableRefusal(t, err, "reconciliation_run", "TRUNCATE")
 }
 
 // TestCashbackReconciliationRejectsIllegalWrites is the rejection table for
