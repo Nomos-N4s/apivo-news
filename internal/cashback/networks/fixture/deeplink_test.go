@@ -213,3 +213,45 @@ func TestBuildDeeplinkChecksTheInputsBeforeTheNetwork(t *testing.T) {
 		t.Errorf("the injected failure was consumed by a call that never reached the network; it now reads as %s", kind)
 	}
 }
+
+// TestBuildDeeplinkAppendsToATemplateWithNoQuery is the branch the recorded
+// template deliberately does not take.
+//
+// The fixture's own route already carries a query parameter, because that is
+// the harder case and the one worth shipping - an adapter that only ever
+// appended to a bare path builds a working URL right up to the first operator
+// who pastes in a template with a campaign id on it. The consequence is that
+// nothing else here ever exercises the other side of that branch, where the
+// reference becomes the whole query rather than being appended to one. An
+// offer published on a bare path is perfectly ordinary, and a `?` written as
+// an `&` would break every click on it.
+func TestBuildDeeplinkAppendsToATemplateWithNoQuery(t *testing.T) {
+	t.Parallel()
+
+	adapter := fixtureTestAdapter(t)
+	target := adapter.DeeplinkTarget(uuid.New())
+	target.Template = "https://track.fixture.invalid/c/9f3"
+	ref := fixtureTestIssuedRef(t)
+
+	got, err := adapter.BuildDeeplink(t.Context(), target, ref)
+	if err != nil {
+		t.Fatalf("BuildDeeplink(): %v", err)
+	}
+
+	want := target.Template + "?" + clickRefParam + "=" + ref.Ref()
+	if got != want {
+		t.Fatalf("BuildDeeplink() = %q, want %q", got, want)
+	}
+
+	// And the reference survives the round trip, which is the property the
+	// whole redirect exists for: a deeplink that lost it would send the
+	// member to the shop, earn the commission, and leave nothing to say
+	// whose purchase it was.
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("BuildDeeplink() returned something that is not a URL: %v", err)
+	}
+	if carried := parsed.Query().Get(clickRefParam); carried != ref.Ref() {
+		t.Errorf("the deeplink carries %s=%q, want %q", clickRefParam, carried, ref.Ref())
+	}
+}
