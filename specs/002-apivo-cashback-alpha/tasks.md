@@ -131,7 +131,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 **Independent Test**: Point the ingester at recorded fixtures; verify complete retrieval evidence in one transaction, no duplicates on re-poll, a superseding row on status change, and that the database rejects any mutation.
 
 - [ ] T049 [US2] Define the `Network` port (`ID`, `BuildDeeplink`, `FetchTransactions`, `FetchCatalogue`, `Limits`) and `Reported`/`ReportedMerchant` types in `internal/cashback/networks/network.go` per [contracts/ports.md](contracts/ports.md) §2
-- [ ] T050 [P] [US2] Implement the `fixture` adapter with a scripted click→pending→approved→reversed lifecycle in `internal/cashback/networks/fixture/fixture.go` + `testdata/`
+- [x] T050 [P] [US2] Implement the `fixture` adapter with a scripted click→pending→approved→reversed lifecycle in `internal/cashback/networks/fixture/fixture.go` + `testdata/`
 - [ ] T051 [P] [US2] Write the adapter conformance suite (status-mapping totality, raw-payload presence, window clamping, rate-limit adherence, deeplink round-trip, resumable iteration) in `internal/cashback/networks/conformance_test.go`
 - [ ] T052 [US2] Implement evidence persistence writing the normalised record and verbatim raw payload in one transaction in `internal/cashback/networks/evidence.go` + `store/`
 - [ ] T053 [US2] Implement the database-computed content digest and the dedup path in `internal/cashback/networks/digest.go`

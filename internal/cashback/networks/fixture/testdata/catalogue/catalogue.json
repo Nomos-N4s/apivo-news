@@ -1,0 +1,35 @@
+[
+  {
+    "page": 1,
+    "pages": 2,
+    "merchants": [
+      {
+        "merchant_id": "FIXM-77",
+        "display_name": "Fixture Outdoor Co",
+        "country": "DE",
+        "status": "live",
+        "primary_url": "https://outdoor.fixture.invalid/"
+      },
+      {
+        "merchant_id": "FIXM-41",
+        "display_name": "Fixture Books Ltd",
+        "country": null,
+        "status": "suspended",
+        "primary_url": "https://books.fixture.invalid/"
+      }
+    ]
+  },
+  {
+    "page": 2,
+    "pages": 2,
+    "merchants": [
+      {
+        "merchant_id": "FIXM-12",
+        "display_name": "Fixture Bygone Ltd",
+        "country": "GB",
+        "status": "gone",
+        "primary_url": "https://bygone.fixture.invalid/"
+      }
+    ]
+  }
+]

@@ -1,0 +1,15 @@
+[
+  {
+    "page": 1,
+    "pages": 1,
+    "merchants": [
+      {
+        "merchant_id": "FIXM-99",
+        "display_name": "Fixture Under Review Ltd",
+        "country": "FR",
+        "status": "under_review",
+        "primary_url": "https://review.fixture.invalid/"
+      }
+    ]
+  }
+]

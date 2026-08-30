@@ -1,0 +1,48 @@
+[
+  {
+    "page": 1,
+    "pages": 2,
+    "transactions": [
+      {
+        "transaction_id": "FIX-1001",
+        "advertiser_id": "ADV-77",
+        "advertiser_name": "Fixture Outdoor Co",
+        "clickref": "Zml4dHVyZS1jbGljay0wMDAwMDAwMQ",
+        "status": "pending",
+        "sale": {
+          "minor_units": 4999,
+          "currency": "EUR"
+        },
+        "commission": {
+          "minor_units": 499,
+          "currency": "EUR"
+        },
+        "transacted_at": "2026-08-01T10:15:00Z",
+        "site_name": "fixture-publisher"
+      }
+    ]
+  },
+  {
+    "page": 2,
+    "pages": 2,
+    "transactions": [
+      {
+        "transaction_id": "FIX-1002",
+        "advertiser_id": "ADV-41",
+        "advertiser_name": "Fixture Books Ltd",
+        "clickref": null,
+        "status": "pending",
+        "sale": {
+          "minor_units": 12000,
+          "currency": "GBP"
+        },
+        "commission": {
+          "minor_units": 900,
+          "currency": "GBP"
+        },
+        "transacted_at": "2026-08-03T18:40:00Z",
+        "site_name": "fixture-publisher"
+      }
+    ]
+  }
+]
