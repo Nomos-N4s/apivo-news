@@ -269,6 +269,35 @@ func TestPollingTheFixtureRecordsTheUnattributedWork(t *testing.T) {
 		t.Error("a report the network attached no reference to was offered as one an operator may only dismiss")
 	}
 
+	// And the outbox carries one fact per new fact (T062). Six reports were
+	// stored across the four observations - FIX-1001 four times, FIX-1002
+	// twice - and three of them went unattributed. The seventh report,
+	// FIX-1002 re-read unchanged at the third observation, stored no row and
+	// so announced nothing: that is what keeps a trailing sweep over a quiet
+	// period from republishing the same fact four times a day forever.
+	announced := map[string]int{}
+	rows, err := tx.Query(ctx, `select type from domain_event where producer = $1`, networks.EventProducer)
+	if err != nil {
+		t.Fatalf("reading the outbox: %v", err)
+	}
+	for rows.Next() {
+		var eventType string
+		if err := rows.Scan(&eventType); err != nil {
+			t.Fatalf("scanning an event: %v", err)
+		}
+		announced[eventType]++
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading the outbox: %v", err)
+	}
+	if got := announced[networks.TypeTransactionIngested]; got != 6 {
+		t.Errorf("%d ingestion(s) were announced, want 6 - one per stored row, and none for the unchanged re-report", got)
+	}
+	if got := announced[networks.TypeTransactionUnattributed]; got != 3 {
+		t.Errorf("%d unattributed fact(s) were announced, want 3 - one per recorded observation", got)
+	}
+
 	// FIX-1001's observation is recorded and closed, with nobody named as
 	// having resolved it - which is the whole point of deriving the work
 	// rather than editing the row.
