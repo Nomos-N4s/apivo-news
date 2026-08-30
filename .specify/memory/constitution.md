@@ -1,7 +1,23 @@
 <!--
 Sync Impact Report
-- Version change: 1.0.0 → 1.1.0 (MINOR: principles added, constraints
-  expanded; none removed or redefined)
+- Version change: 1.1.0 → 1.1.1 (PATCH: Principle I's enforcement note now
+  describes the checks that exist; no principle added, removed or redefined,
+  and no rule changed for anyone)
+- Modified sections:
+  * Principle I, "Enforcement": the note listed the commit-msg hook and the
+    commit-hygiene job, and was written before either the author/committer
+    check or the session-start identity hook existed. It described neither,
+    so it understated what a commit is checked against and named none of the
+    ordering. It now lists all four in the order they bite, and says plainly
+    that only the CI job can refuse a commit - a local hook proves nothing
+    about a commit that is already pushed.
+- Rationale: authorship was violated in practice while this note was
+  accurate about the checks it named, because the identity fields, not the
+  trailers, were what carried the attribution. Recording what actually
+  guards the principle is the point of the note.
+
+Previous amendment (1.0.0 → 1.1.0, MINOR: principles added, constraints
+expanded; none removed or redefined)
 - Added principles: IX. Money Is Double Entry, Evidence-Backed and Exactly
   Once (invariants C-1 to C-7)
 - Added sections: "Products" and "Rebrandability" under Architecture
@@ -49,9 +65,27 @@ Conventional Commits format is mandatory, referencing the issue
 (`feat(ingestion): capture provenance at retrieval (#12)`). One PR per
 issue. Never commit directly to `main`.
 
-Enforcement: `.githooks/commit-msg` (wired via `core.hooksPath`) strips
-disallowed trailers locally; the `commit-hygiene` CI job re-checks every
-commit message on pull requests and pushes to `main`.
+Enforcement, in the order it bites:
+
+- `.claude/hooks/session-start.sh` sets the commit identity from the
+  checkout at every session start. An agent session runs in a container
+  that carries a git identity of its own and restores it on restart, so an
+  identity set by hand holds only until the next one; setting it from the
+  repository is what makes authorship survive a restart rather than depend
+  on somebody noticing.
+- `.githooks/commit-msg` (wired via `core.hooksPath`) strips disallowed
+  trailers locally.
+- `scripts/lint-commit-authors.sh` checks the **author and the committer**
+  of every commit on the branch against a blocklist of AI attribution
+  identities. A trailer is not the only way attribution reaches a commit,
+  and the identity fields are the way it reached one here.
+- The `commit-hygiene` CI job runs both the message check and the author
+  check on pull requests and on pushes to `main`.
+
+The first three are conveniences that keep a mistake from being made; only
+the CI job can refuse one. A local check that has been skipped, and a hook
+in a container that no longer exists, prove nothing about a commit that is
+already pushed.
 
 ### II. Invariant I-1 — Human Approval (NON-NEGOTIABLE)
 
@@ -319,4 +353,4 @@ This constitution supersedes all other practices in this repository.
 - Complexity must justify itself against the declared scope; when in
   doubt, the simpler structure that preserves the invariants wins.
 
-**Version**: 1.1.0 | **Ratified**: 2026-08-14 | **Last Amended**: 2026-08-24
+**Version**: 1.1.1 | **Ratified**: 2026-08-14 | **Last Amended**: 2026-08-30
