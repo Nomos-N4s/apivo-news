@@ -368,3 +368,89 @@ func TestConformanceAPayloadBelongsToItsCaller(t *testing.T) {
 		}
 	})
 }
+
+// TestConformanceStatusMappingIsTotal is contract rule 2 (FR-033), and the
+// one rule with no default branch anywhere.
+//
+// An unrecognised status word surfaces to an operator rather than being
+// guessed at, because the cheapest wrong answer - call it pending - silently
+// withholds a member's money, and the second cheapest - call it confirmed -
+// pays out money the network never approved. Neither leaves a trace. The
+// refusal does.
+//
+// What is asserted is the sentinel and the silence after it: a word nobody
+// mapped stops the window, and nothing carrying a guess is yielded in its
+// place. Reports that arrived BEFORE the unmappable one are ordinary and
+// stay - the network really did report them, and an adapter that threw away
+// a window's good reports because its last page held a surprise would make
+// every mapping gap cost more than it should.
+func TestConformanceStatusMappingIsTotal(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		if a.openUnmappable == nil {
+			t.Skip("this adapter cannot be made to meet a status word nobody mapped, so rule 2 is unproved for it")
+		}
+		adapter := a.openUnmappable(t)
+
+		got, err := conformTransactions(t, a, adapter)
+		if !errors.Is(err, networks.ErrUnmappableStatus) {
+			t.Fatalf("a word nobody mapped ended the read with %v, want one wrapping ErrUnmappableStatus", err)
+		}
+		for _, report := range got {
+			if !report.Status.Valid() {
+				t.Errorf("transaction %s arrived carrying %s, which is not a status this port has; the unmappable word was guessed at rather than refused",
+					report.ExternalID, report.Status)
+			}
+		}
+	})
+}
+
+// TestConformanceEveryReportKeepsTheNetworksOwnWord is the quieter half of
+// rule 2, and the one an operator needs on the day a mapping turns out to be
+// wrong.
+//
+// A mapped status is this repository's word; StatusRaw is the network's. Both
+// are stored, and the raw one is what a wrong mapping is re-derived from
+// without re-reading the network. An adapter that mapped and discarded would
+// leave every mis-mapped transaction indistinguishable from a correctly
+// mapped one.
+func TestConformanceEveryReportKeepsTheNetworksOwnWord(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		adapter := a.open(t)
+
+		reports, err := conformTransactions(t, a, adapter)
+		if err != nil {
+			t.Fatalf("reading a window this adapter says it has data for: %v", err)
+		}
+		if len(reports) == 0 {
+			t.Fatal("the window this adapter offered holds no transactions, so nothing here is proved")
+		}
+		for _, report := range reports {
+			if !report.Status.Valid() {
+				t.Errorf("transaction %s carries %s, which is not a status this port has", report.ExternalID, report.Status)
+			}
+			if report.StatusRaw == "" {
+				t.Errorf("transaction %s kept no word of its own; a wrong mapping could not be re-derived from it", report.ExternalID)
+			}
+		}
+
+		merchants, err := conformCatalogue(t, adapter)
+		if err != nil {
+			t.Fatalf("reading the catalogue: %v", err)
+		}
+		if len(merchants) == 0 {
+			t.Fatal("the catalogue is empty, so nothing here is proved")
+		}
+		for _, merchant := range merchants {
+			if !merchant.Status.Valid() {
+				t.Errorf("retailer %s carries %s, which is not a route status this port has", merchant.ExternalID, merchant.Status)
+			}
+			if merchant.StatusRaw == "" {
+				t.Errorf("retailer %s kept no word of its own", merchant.ExternalID)
+			}
+		}
+	})
+}
