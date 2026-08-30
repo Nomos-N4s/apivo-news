@@ -29,12 +29,19 @@
 # which is why this lint judges the name and not the commit.
 #
 # ---------------------------------------------------------------------------
-# WHAT THIS DOES NOT DO
+# TWO WAYS IN
 #
-# It does not read git. It judges the names it is handed, which is what lets
-# it run before a branch has any commits on it - in .githooks/pre-push, and in
-# CI against the head branch of a pull request. A check that needed history
-# could only fire after the history it was meant to prevent existed.
+# By default it judges the names it is handed and does not read git at all,
+# which is what lets it run before a branch has any commits on it - in
+# .githooks/pre-push, and in CI against the head branch of a pull request. A
+# check that needed history could only fire after the history it was meant to
+# prevent existed.
+#
+# With --from-messages it reads the ref names git has already written into
+# commit subjects, which is the shape this violation actually takes. It is
+# the second half of the same gate: the first half stops a name from being
+# merged, and this one notices if the first half was skipped, bypassed, or
+# never ran on the path a commit took.
 #
 # ---------------------------------------------------------------------------
 # TWO RULES
@@ -57,10 +64,31 @@
 #
 # ---------------------------------------------------------------------------
 # Usage: lint-refs.sh <ref-name>...
+#        lint-refs.sh --from-messages <git-log-argument>...
 #
 # Names may be given bare (`xcoder/cb-money`, which is what
 # `github.head_ref` holds) or fully qualified (`refs/heads/xcoder/cb-money`,
 # which is what a pre-push hook is handed). Both are read the same way.
+#
+# --from-messages takes the arguments `git log` takes, so both shapes the
+# commit-hygiene job produces work: a `base..head` range, and `<sha> -1` for
+# the first push to a ref. It reads the subject of every commit in the range
+# and pulls the ref names out of the three subjects that carry one:
+#
+#     Merge pull request #349 from <owner>/<branch>   (GitHub, server-side)
+#     Merge branch '<branch>' into <branch>           (git, locally)
+#     Merge remote-tracking branch '<remote>/<branch>'
+#
+# Only rule 1 applies there. In a commit subject the name is already
+# permanent, so refusing it for being off convention would refuse history
+# that cannot be changed and offer no remedy; the convention is enforced
+# where a rename is still free.
+#
+# The range must be what a branch ADDS, not what it inherits - `base..head`,
+# or `$(git merge-base base head)..head` on a branch that has merged its base
+# in. This repository's `main` already carries 32 merge commits this lint
+# refuses, and they cannot be corrected without rewriting shared history; a
+# range that reaches them reports a violation nobody can act on.
 #
 # Exit 0 when every name is acceptable, 1 when one is refused, and 2 when the
 # lint could not judge - no arguments, or an empty name. A run that examines
@@ -157,45 +185,52 @@ status=0
 examined=0
 refused=0
 
-for ref in "$@"; do
-    # An empty name is the way this lint goes quiet. On a push event
-    # `github.head_ref` is empty, and a workflow that passes it through
-    # unguarded would run this script with one blank argument, examine
-    # nothing, and report green.
-    if [ -z "$ref" ]; then
-        echo "::error::an empty ref name was given; there is nothing to judge, so this lint cannot report success. Pass the branch under test, or do not run this step." >&2
+# carries_blocked_token <name> — 0 when the name carries one, 1 when it does
+# not. Exits 2 rather than answering when the search itself could not run:
+# grep exits 1 on no match, which is the normal case, and anything above that
+# means a pattern this grep cannot compile. A gate that reports "clean"
+# because its search failed is worse than no gate, because everyone believes
+# it.
+carries_blocked_token() {
+    _found=0
+    printf '%s\n' "$1" | grep -q -i -E "$expression" || _found=$?
+    if [ "$_found" -gt 1 ]; then
+        echo "::error::the ref name lint could not search the name it was given (grep exited $_found); it went unjudged." >&2
         exit 2
     fi
-    examined=$((examined + 1))
+    return "$_found"
+}
 
-    # grep exits 1 when it finds nothing, which is the normal case; anything
-    # above that means a pattern this grep cannot compile. A gate that reports
-    # "clean" because its search failed is worse than no gate, because
-    # everyone believes it.
-    found=0
-    printf '%s\n' "$ref" | grep -q -i -E "$expression" || found=$?
-    if [ "$found" -gt 1 ]; then
-        echo "::error::the ref name lint could not search the name it was given (grep exited $found); it went unjudged." >&2
-        exit 2
-    fi
-    bad=0
-    if [ "$found" -eq 0 ]; then
-        bad=1
-        printf '::error::the ref name "%s" carries an assistant or vendor name. A merged branch name is written verbatim into the merge commit, and Principle I forbids naming one there.\n' \
-            "$(quote_untrusted "$ref")" >&2
+# judge_name <ref> <apply-rule-2: yes|no> <prefix>
+#
+# The prefix is written in front of every message, so a name read out of a
+# commit subject can name the commit it came from while a name given as an
+# argument says nothing extra. Sets `refused` and `status`; a name that breaks
+# both rules is one refusal reported twice, because it is one rename.
+judge_name() {
+    _ref=$1
+    _rule2=$2
+    _prefix=$3
+    _bad=0
+
+    if carries_blocked_token "$_ref"; then
+        _bad=1
+        printf '::error::%sthe ref name "%s" carries an assistant or vendor name. A merged branch name is written verbatim into the merge commit, and Principle I forbids naming one there.\n' \
+            "$_prefix" "$(quote_untrusted "$_ref")" >&2
     fi
 
     # Rule 2, branches only. `refs/tags/` is skipped rather than accepted:
     # tags have their own naming rule (release_semver.sh owns it), and rule 1
     # has already judged this one.
-    case "$ref" in
-        refs/tags/*) name='' ;;
-        refs/heads/*) name=${ref#refs/heads/} ;;
-        *) name=$ref ;;
+    case "$_ref" in
+        refs/tags/*) _name='' ;;
+        refs/heads/*) _name=${_ref#refs/heads/} ;;
+        *) _name=$_ref ;;
     esac
+    [ "$_rule2" = yes ] || _name=''
 
-    case "$name" in
-        # Nothing to judge: a tag, already handled above.
+    case "$_name" in
+        # Nothing to judge: a tag, or a name read out of a commit subject.
         '') ;;
         # The trunk.
         main) ;;
@@ -206,19 +241,123 @@ for ref in "$@"; do
         # paths; refusing them would mean refusing a button in the UI.
         revert-*|dependabot/*|renovate/*) ;;
         *)
-            bad=1
-            printf '::error::the branch "%s" is not named "%s<slug>". Every branch here is, and "main" is the only exception.\n' \
-                "$(quote_untrusted "$ref")" "$BRANCH_PREFIX" >&2
+            _bad=1
+            printf '::error::%sthe branch "%s" is not named "%s<slug>". Every branch here is, and "main" is the only exception.\n' \
+                "$_prefix" "$(quote_untrusted "$_ref")" "$BRANCH_PREFIX" >&2
             ;;
     esac
 
-    if [ "$bad" -ne 0 ]; then
+    if [ "$_bad" -ne 0 ]; then
         status=1
         refused=$((refused + 1))
     fi
-done
+}
 
-printf 'ref name lint: examined %d ref name(s); %d refused\n' "$examined" "$refused"
+if [ "$1" = --from-messages ]; then
+    shift
+    if [ "$#" -eq 0 ]; then
+        echo "::error::--from-messages needs a commit range; nothing was examined. Usage: $0 --from-messages <range> (for example origin/main..HEAD, or '<sha> -1')" >&2
+        exit 2
+    fi
+
+    work=$(mktemp -d)
+    trap 'rm -rf "$work"' EXIT INT TERM
+
+    # THIS FAILS CLOSED. The output is materialized to a file rather than
+    # piped, because POSIX sh has no pipefail: in `git log … | awk …` the
+    # status is awk's, and a git that could not resolve the range would
+    # produce an empty pipe, no names, and a green step. The trailing `--`
+    # keeps a range from being read as a path.
+    if ! git log --format='%H %s' "$@" -- > "$work/subjects"; then
+        echo "::error::git log could not read the range: $*. Nothing was examined, so this lint cannot report success." >&2
+        exit 2
+    fi
+    commits=$(wc -l < "$work/subjects" | tr -d ' ')
+    if [ "$commits" -eq 0 ]; then
+        echo "::error::the range $* holds no commits; this lint would have reported success without examining anything." >&2
+        exit 2
+    fi
+
+    # Written to a file rather than inlined so the program can use plain
+    # single quotes: the ref names git writes are quoted with them, and an awk
+    # program inside a shell string cannot say so without becoming unreadable.
+    cat > "$work/extract.awk" <<'AWK'
+# Pull ref names out of the three merge subjects that carry one. A squash
+# merge's subject is the pull request title and names no branch, which is why
+# nothing here looks for one.
+BEGIN { Q = "\047" }
+{
+    commit = $1
+    line = $0
+    sub(/^[^ ]+ /, "", line)
+
+    # GitHub, server-side: "Merge pull request #349 from <owner>/<branch>".
+    # The owner is a GitHub account, not part of the ref, so it is dropped -
+    # otherwise every fork's owner name would be judged as a branch prefix.
+    if (line ~ /^Merge pull request #[0-9]+ from [^ ]+/) {
+        ref = line
+        sub(/^Merge pull request #[0-9]+ from /, "", ref)
+        sub(/ .*$/, "", ref)
+        sub("^[^/]+/", "", ref)
+        if (ref != "") print commit " " ref
+        next
+    }
+
+    # git, locally: "Merge branch 'a'", optionally "… into b", and the
+    # remote-tracking form whose first segment is the remote rather than the
+    # ref. Both sides are printed: a merge names two branches and either can
+    # be the offending one.
+    if (line ~ /^Merge (remote-tracking )?branch /) {
+        remote = (line ~ /^Merge remote-tracking branch /)
+        rest = line
+        sub(/^Merge (remote-tracking )?branch /, "", rest)
+        if (substr(rest, 1, 1) == Q) {
+            rest = substr(rest, 2)
+            close_quote = index(rest, Q)
+            if (close_quote > 1) {
+                ref = substr(rest, 1, close_quote - 1)
+                if (remote) sub("^[^/]+/", "", ref)
+                if (ref != "") print commit " " ref
+                rest = substr(rest, close_quote + 1)
+            }
+        }
+        if (match(rest, / into .+$/)) {
+            into = substr(rest, RSTART + 6)
+            if (into != "") print commit " " into
+        }
+    }
+}
+AWK
+
+    if ! awk -f "$work/extract.awk" "$work/subjects" > "$work/refs"; then
+        echo "::error::the ref names could not be read out of $commits commit subject(s); they went unjudged." >&2
+        exit 2
+    fi
+
+    while IFS=' ' read -r commit ref; do
+        [ -n "$ref" ] || continue
+        examined=$((examined + 1))
+        judge_name "$ref" no "$commit: "
+    done < "$work/refs"
+
+    printf 'ref name lint: read %d commit subject(s) over %s, naming %d ref(s); %d refused\n' \
+        "$commits" "$*" "$examined" "$refused"
+else
+    for ref in "$@"; do
+        # An empty name is the way this lint goes quiet. On a push event
+        # `github.head_ref` is empty, and a workflow that passes it through
+        # unguarded would run this script with one blank argument, examine
+        # nothing, and report green.
+        if [ -z "$ref" ]; then
+            echo "::error::an empty ref name was given; there is nothing to judge, so this lint cannot report success. Pass the branch under test, or do not run this step." >&2
+            exit 2
+        fi
+        examined=$((examined + 1))
+        judge_name "$ref" yes ''
+    done
+
+    printf 'ref name lint: examined %d ref name(s); %d refused\n' "$examined" "$refused"
+fi
 
 if [ "$status" -ne 0 ]; then
     cat >&2 <<'EOF'
@@ -235,6 +374,11 @@ from the renamed branch. Neither rule has an exception worth taking: naming a
 vendor because the work integrates its API is answered by naming the branch
 for the capability instead, and a prefix that is not `xcoder/` is answered by
 the rename above.
+
+A name reported against a commit is already in history and cannot be renamed.
+If that commit is one this branch ADDS, the branch has to be rebuilt on a
+correctly named branch; if it is one the branch merely inherits, the range is
+wrong - this lint judges what a branch adds, not what it was cut from.
 EOF
     printf '::error::%d of %d ref name(s) refused\n' "$refused" "$examined"
     exit 1

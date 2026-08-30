@@ -9,8 +9,10 @@
 # list and an empty name, and both look exactly like a clean branch from the
 # outside, so each is asserted to FAIL rather than pass.
 #
-# Nothing here touches git. The lint judges names, which is what lets it run
-# before a branch has any commits on it.
+# The cases for the default mode touch no git at all - the lint judges names,
+# which is what lets it run before a branch has any commits on it. The
+# --from-messages cases build throwaway repositories under mktemp; the
+# repository this script lives in is only ever read.
 #
 # The two rules are proved separately. Rule 1 refuses a name nobody may use;
 # rule 2 refuses a name nobody has used, and a case that satisfies rule 2
@@ -24,6 +26,10 @@ ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+export HOME="$TMP"
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@invalid
+export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@invalid
 
 FAILS=0
 CASES=0
@@ -34,9 +40,10 @@ CR=$(printf '\r')
 
 # run_case <lint-argument>... — runs the lint and records both what it said
 # and what it returned.
+REPO="$TMP"
 run_case() {
     set +e
-    OUT=$(sh "$LINT" "$@" 2>&1)
+    OUT=$(cd "$REPO" && sh "$LINT" "$@" 2>&1)
     STATUS=$?
     set -e
 }
@@ -77,6 +84,33 @@ expect_accepted() {
     fi
 }
 
+# expect_accepted_messages <description> <git-log-argument>...
+#
+# Separate from expect_accepted because in --from-messages mode the summary
+# counts commit subjects read and refs found, not names given, and asserting
+# both is what keeps "found nothing" apart from "read nothing".
+expect_accepted_messages() {
+    CASES=$((CASES + 1))
+    _desc="$1"
+    shift
+    run_case --from-messages "$@"
+    if [ "$STATUS" -ne 0 ]; then
+        echo "FAIL: $_desc — the lint refused history it must accept (exit $STATUS):"
+        indent
+        FAILS=1
+    elif ! printf '%s' "$OUT" | grep -q -E 'read [1-9][0-9]* commit subject'; then
+        echo "FAIL: $_desc — accepted without reading any commit subject:"
+        indent
+        FAILS=1
+    elif ! refused_count 0; then
+        echo "FAIL: $_desc — accepted, but did not report zero refusals:"
+        indent
+        FAILS=1
+    else
+        echo "ok: $_desc"
+    fi
+}
+
 # expect_refused <description> <refusals> <ref-name>...
 expect_refused() {
     CASES=$((CASES + 1))
@@ -84,12 +118,15 @@ expect_refused() {
     _refused="$2"
     shift 2
     _want=$#
+    # In --from-messages mode the names are read out of history rather than
+    # given, so there is no argument count to check against.
+    if [ "$1" = --from-messages ]; then _want=''; fi
     run_case "$@"
     if [ "$STATUS" -ne 1 ]; then
         echo "FAIL: $_desc — expected exit 1, got $STATUS:"
         indent
         FAILS=1
-    elif ! examined "$_want"; then
+    elif [ -n "$_want" ] && ! examined "$_want"; then
         echo "FAIL: $_desc — expected it to examine $_want name(s):"
         indent
         FAILS=1
@@ -306,6 +343,130 @@ elif printf '%s' "$OUT" | grep -q -e "$CR"; then
 else
     echo "ok: a quoted name cannot forge a workflow command"
 fi
+
+# ---------------------------------------------------------------------------
+# --from-messages: the ref names git has already written into history. This
+# is the shape the violation actually took, so the fixtures are the literal
+# subjects git and GitHub produce.
+
+REPOS=0
+SEQ=0
+
+# fixture — a fresh repository. Subjects are written onto empty commits: this
+# lint reads a subject, and a subject that names a branch names it whether or
+# not the commit has two parents.
+fixture() {
+    REPOS=$((REPOS + 1))
+    REPO="$TMP/repo$REPOS"
+    SEQ=0
+    git init -q -b main "$REPO"
+    subject "chore: fixture base (#1)"
+    BASE=$(git -C "$REPO" rev-parse HEAD)
+}
+
+subject() {
+    SEQ=$((SEQ + 1))
+    git -C "$REPO" commit -q --allow-empty -m "$1"
+}
+
+# The exact subject GitHub wrote 32 times.
+fixture
+subject "Merge pull request #349 from Nomos-N4s/claude/cb-nw-t056"
+expect_refused "the merge subject GitHub wrote into main" 1 --from-messages "$BASE..HEAD"
+CASES=$((CASES + 1))
+if ! printf '%s' "$OUT" | grep -q -F -e "claude/cb-nw-t056"; then
+    echo "FAIL: the offending merge subject was refused without naming the branch:"
+    indent
+    FAILS=1
+elif ! printf '%s' "$OUT" | grep -q -E "^::error::[0-9a-f]{40}: "; then
+    echo "FAIL: the offending merge subject was refused without naming the commit:"
+    indent
+    FAILS=1
+else
+    echo "ok: a refused merge subject names both the commit and the branch"
+fi
+
+# The owner is a GitHub account, not part of the ref. If it were judged, every
+# fork's owner name would be read as a branch prefix.
+fixture
+subject "Merge pull request #350 from Nomos-N4s/xcoder/principle-i-refs"
+expect_accepted_messages "a merge of a correctly named branch" "$BASE..HEAD"
+
+# The two cases that pin the first segment being dropped. Both are contrived
+# and both are the point: an account we do not control, and a remote somebody
+# named locally, are not refs anybody here can rename - so refusing them would
+# report a violation with no remedy, which is how a gate loses its audience.
+# Without the strip these read as blocked names and go red.
+fixture
+subject "Merge pull request #5 from openai-labs/patch-1"
+expect_accepted_messages "a fork whose OWNER carries a blocked token" "$BASE..HEAD"
+fixture
+subject "Merge remote-tracking branch 'codex/xcoder/cb-money' into main"
+expect_accepted_messages "a REMOTE named after a blocked token" "$BASE..HEAD"
+
+# And the branch behind such an owner is still judged: dropping the first
+# segment must not drop the rest with it.
+fixture
+subject "Merge pull request #5 from openai-labs/claude/cb-nw-t056"
+expect_refused "a banned branch behind an owner that also carries one" 1 \
+    --from-messages "$BASE..HEAD"
+
+# Rule 2 must NOT reach a commit subject: the name there is permanent, so
+# refusing it for being off convention would refuse history nobody can change.
+fixture
+subject "Merge pull request #12 from someone-else/patch-1"
+expect_accepted_messages "a fork's branch, off this repository's convention" "$BASE..HEAD"
+fixture
+subject "Merge branch 'feature/ingest-window' into main"
+expect_accepted_messages "a local branch off convention" "$BASE..HEAD"
+
+# git's own merge subjects. A merge names two branches and either can be the
+# offending one.
+fixture
+subject "Merge branch 'claude/cb-nw-t056' into main"
+expect_refused "a local merge of a banned branch" 1 --from-messages "$BASE..HEAD"
+fixture
+subject "Merge branch 'xcoder/cb-money' into claude/cb-nw-t056"
+expect_refused "a banned branch on the receiving side of a merge" 1 \
+    --from-messages "$BASE..HEAD"
+fixture
+subject "Merge branch 'xcoder/cb-money' into main"
+expect_accepted_messages "an ordinary local merge, both sides clean" "$BASE..HEAD"
+
+# The remote-tracking form: the first segment is the remote, not the ref.
+fixture
+subject "Merge remote-tracking branch 'origin/claude/cb-nw-t056'"
+expect_refused "a remote-tracking merge of a banned branch" 1 \
+    --from-messages "$BASE..HEAD"
+fixture
+subject "Merge remote-tracking branch 'origin/xcoder/cb-money' into main"
+expect_accepted_messages "a remote-tracking merge of a clean branch" "$BASE..HEAD"
+
+# Subjects that name no branch at all. A squash merge is the common one: its
+# subject is the pull request title, and nothing in it can be judged.
+fixture
+subject "feat(ingestion): capture provenance at retrieval (#12)"
+subject "fix(api): correct the pagination cursor (#42)"
+expect_accepted_messages "ordinary commits, naming no ref" "$BASE..HEAD"
+fixture
+subject "chore(scripts): refuse a merge of the assistant's branch (#350)"
+expect_accepted_messages "a subject that merely mentions the word merge" "$BASE..HEAD"
+
+# The `<sha> -1` shape the commit-hygiene job falls back to on a first push.
+fixture
+subject "Merge pull request #349 from Nomos-N4s/claude/cb-nw-t056"
+expect_refused "the '<sha> -1' shape still judges" 1 --from-messages HEAD -1
+
+# The ways this mode could report success without judging anything.
+fixture
+expect_refused_to_judge "an empty range" "holds no commits" \
+    --from-messages "$BASE..$BASE"
+fixture
+expect_refused_to_judge "a range git cannot resolve" "could not read the range" \
+    --from-messages "no-such-ref..HEAD"
+fixture
+expect_refused_to_judge "--from-messages with no range" \
+    "needs a commit range" --from-messages
 
 # ---------------------------------------------------------------------------
 # The two blocklists must not drift.
