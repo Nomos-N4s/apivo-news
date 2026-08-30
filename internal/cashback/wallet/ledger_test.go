@@ -544,6 +544,7 @@ func TestSentinelsAreDistinct(t *testing.T) {
 		wallet.ErrIdempotencyConflict,
 		wallet.ErrInsufficientFunds,
 		wallet.ErrUnsupportedTransfer,
+		wallet.ErrOutOfBalance,
 	}
 	for i, a := range sentinels {
 		for j, b := range sentinels {
