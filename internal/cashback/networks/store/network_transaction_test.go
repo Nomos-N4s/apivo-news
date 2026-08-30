@@ -497,3 +497,171 @@ func TestInsertNetworkTransactionIfNewAgainstSchema(t *testing.T) {
 		}
 	})
 }
+
+// TestGetCurrentNetworkTransactionAgainstSchema is the derivation the whole
+// supersede path rests on: with an immutable table, "the current row" is not
+// a column anybody set but a consequence of two constraints, and a query is
+// where that consequence either holds or does not.
+func TestGetCurrentNetworkTransactionAgainstSchema(t *testing.T) {
+	t.Parallel()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise the networks store")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatalf("migrating: %v", err)
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("connecting: %v", err)
+	}
+	defer pool.Close()
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	each(ctx, t, tx, "a transaction nobody reported has no current row", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		networkID, _ := account(ctx, t, tx)
+
+		_, err := queries.GetCurrentNetworkTransaction(ctx, store.GetCurrentNetworkTransactionParams{
+			NetworkID:  networkID,
+			ExternalID: "NEVER-REPORTED",
+		})
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("GetCurrentNetworkTransaction() = %v, want pgx.ErrNoRows; a first report is not a failure", err)
+		}
+	})
+
+	each(ctx, t, tx, "one report is its own current row", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		networkID, accountID := account(ctx, t, tx)
+		root, err := queries.InsertNetworkTransaction(ctx, report(networkID, accountID))
+		if err != nil {
+			t.Fatalf("the first report: %v", err)
+		}
+
+		current, err := queries.GetCurrentNetworkTransaction(ctx, store.GetCurrentNetworkTransactionParams{
+			NetworkID:  networkID,
+			ExternalID: "FIX-1001",
+		})
+		if err != nil {
+			t.Fatalf("GetCurrentNetworkTransaction(): %v", err)
+		}
+		if current.ID != root.ID {
+			t.Errorf("the current row is %v, want the only row %v", current.ID, root.ID)
+		}
+	})
+
+	each(ctx, t, tx, "the tip moves to the superseding report and nowhere else", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		networkID, accountID := account(ctx, t, tx)
+		root, err := queries.InsertNetworkTransaction(ctx, report(networkID, accountID))
+		if err != nil {
+			t.Fatalf("the first report: %v", err)
+		}
+
+		// Three links, so the answer is the END of a chain rather than
+		// merely "not the root": a query that returned the second row would
+		// pass a two-link test and credit a member from a stale status.
+		previous := root.ID
+		var last pgtype.UUID
+		for i, status := range []string{"confirmed", "reversed"} {
+			changed := report(networkID, accountID)
+			changed.Status = status
+			changed.StatusRaw = status
+			changed.SupersedesID = previous
+			changed.RetrievedAt = pgtype.Timestamptz{Time: changed.RetrievedAt.Time.Add(time.Duration(i+1) * time.Hour), Valid: true}
+
+			written, err := queries.InsertNetworkTransaction(ctx, changed)
+			if err != nil {
+				t.Fatalf("the %s report: %v", status, err)
+			}
+			previous, last = written.ID, written.ID
+		}
+
+		current, err := queries.GetCurrentNetworkTransaction(ctx, store.GetCurrentNetworkTransactionParams{
+			NetworkID:  networkID,
+			ExternalID: "FIX-1001",
+		})
+		if err != nil {
+			t.Fatalf("GetCurrentNetworkTransaction(): %v", err)
+		}
+		if current.ID != last {
+			t.Errorf("the current row is %v, want the tip %v; anything else credits a member from a status the network has already moved past", current.ID, last)
+		}
+		if current.Status != "reversed" {
+			t.Errorf("the current row carries status %q, want reversed", current.Status)
+		}
+	})
+
+	each(ctx, t, tx, "two transactions at one network keep their own tips", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		networkID, accountID := account(ctx, t, tx)
+
+		first, err := queries.InsertNetworkTransaction(ctx, report(networkID, accountID))
+		if err != nil {
+			t.Fatalf("the first transaction: %v", err)
+		}
+		other := report(networkID, accountID)
+		other.ExternalID = "FIX-2002"
+		second, err := queries.InsertNetworkTransaction(ctx, other)
+		if err != nil {
+			t.Fatalf("the second transaction: %v", err)
+		}
+
+		for external, want := range map[string]pgtype.UUID{"FIX-1001": first.ID, "FIX-2002": second.ID} {
+			current, err := queries.GetCurrentNetworkTransaction(ctx, store.GetCurrentNetworkTransactionParams{
+				NetworkID:  networkID,
+				ExternalID: external,
+			})
+			if err != nil {
+				t.Fatalf("GetCurrentNetworkTransaction(%s): %v", external, err)
+			}
+			if current.ID != want {
+				t.Errorf("the current row for %s is %v, want %v", external, current.ID, want)
+			}
+		}
+	})
+
+	each(ctx, t, tx, "one network's chain is not another's", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		// The same external id at two networks is ordinary - a network's ids
+		// are its own - so the read is keyed by both or it answers with
+		// somebody else's transaction.
+		//
+		// BOTH sides are read, and that is what makes this decisive. Asking
+		// only for ours would pass whenever the row store happened to hand
+		// ours back first, which is exactly how this case passed against a
+		// query with network_id dropped from the key. Two reads with two
+		// different right answers cannot both be satisfied by a query that
+		// can only give one.
+		mine, myAccount := account(ctx, t, tx)
+		theirs, theirAccount := account(ctx, t, tx)
+
+		ours, err := queries.InsertNetworkTransaction(ctx, report(mine, myAccount))
+		if err != nil {
+			t.Fatalf("our report: %v", err)
+		}
+		notOurs, err := queries.InsertNetworkTransaction(ctx, report(theirs, theirAccount))
+		if err != nil {
+			t.Fatalf("their report: %v", err)
+		}
+
+		for networkID, want := range map[string]pgtype.UUID{mine: ours.ID, theirs: notOurs.ID} {
+			current, err := queries.GetCurrentNetworkTransaction(ctx, store.GetCurrentNetworkTransactionParams{
+				NetworkID:  networkID,
+				ExternalID: "FIX-1001",
+			})
+			if err != nil {
+				t.Fatalf("GetCurrentNetworkTransaction(%s): %v", networkID, err)
+			}
+			if current.ID != want {
+				t.Errorf("the current row at %s is %v, want %v; a read keyed on the transaction id alone answers with another network's transaction", networkID, current.ID, want)
+			}
+			if current.NetworkID != networkID {
+				t.Errorf("the row returned for %s belongs to %s", networkID, current.NetworkID)
+			}
+		}
+	})
+}
