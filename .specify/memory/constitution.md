@@ -1,6 +1,39 @@
 <!--
 Sync Impact Report
-- Version change: 1.1.0 → 1.1.1 (PATCH: Principle I's enforcement note now
+- Version change: 1.1.1 → 1.2.0 (MINOR: a rule is added - branches are named
+  `xcoder/<slug>` - and Principle I is extended to cover ref names. No
+  principle is removed or redefined, and nothing already permitted becomes
+  forbidden except the naming of a ref after an assistant or a vendor, which
+  the quoted authorship rule already forbade in the commit message a ref name
+  ends up inside.)
+- Modified sections:
+  * Principle I: ref names are brought under the principle explicitly. A
+    merged branch name is written verbatim into the merge commit, so
+    "never mention ... in commit messages" already reached it - but only
+    through a step nobody took, which is how `main` came to carry 32 commits
+    reading "Merge pull request #N from <owner>/<assistant>/<slug>".
+  * Principle I: the branch naming rule is stated - `xcoder/<slug>`, with
+    `main` and the refs GitHub and the dependency bots generate as the
+    exceptions. The repository had followed it 85 times without it being
+    written down anywhere, which is exactly how a tool's default prefix
+    leaked in 24 more times without anyone having to overrule anything.
+  * Principle I, "Enforcement": the pre-push hook and scripts/lint-refs.sh
+    are added to the list, in the order they bite. The note's closing
+    sentence already said only the CI job can refuse a commit; it now also
+    says which of these is the only one that can refuse a MERGE.
+  * Principle I: the carve-out is stated - a check may name what it refuses.
+    scripts/lint-commit-authors.sh has carried the blocked names since it was
+    written, and lint-refs.sh and CLAUDE.md now do too. A blocklist that
+    could not name what it blocks would be an empty file.
+- Rationale: the violation was recorded in shared history and cannot be
+  corrected there. What remains is to stop the next one, and the only moment
+  at which a ref name is free to change is before it is pushed - which is
+  earlier than anything this document previously described.
+- Follow-up: the 32 merge commits on `main` stay as they are. Rewriting them
+  would rewrite every commit after each one, and this repository's history is
+  shared. They are recorded as known violations rather than corrected ones.
+
+Previous amendment (1.1.0 → 1.1.1, PATCH: Principle I's enforcement note now
   describes the checks that exist; no principle added, removed or redefined,
   and no rule changed for anyone)
 - Modified sections:
@@ -16,7 +49,7 @@ Sync Impact Report
   trailers, were what carried the attribution. Recording what actually
   guards the principle is the point of the note.
 
-Previous amendment (1.0.0 → 1.1.0, MINOR: principles added, constraints
+Amendment before that (1.0.0 → 1.1.0, MINOR: principles added, constraints
 expanded; none removed or redefined)
 - Added principles: IX. Money Is Double Entry, Evidence-Backed and Exactly
   Once (invariants C-1 to C-7)
@@ -65,6 +98,29 @@ Conventional Commits format is mandatory, referencing the issue
 (`feat(ingestion): capture provenance at retrieval (#12)`). One PR per
 issue. Never commit directly to `main`.
 
+**The rule reaches ref names.** A merged branch name is written verbatim
+into the merge commit — `Merge pull request #349 from
+Nomos-N4s/<branch>` — so a branch named after an assistant or a vendor
+puts that name in a commit message, permanently and publicly. The name
+is the last moment at which this is free to fix: afterwards only a
+rewrite of shared history removes it, and shared history is not rewritten
+here. Tags are covered for the same reason.
+
+**Every branch is `xcoder/<slug>`.** `main` is the only exception, along
+with the refs nobody here chooses — GitHub's revert button, the
+dependency bots. The convention is stated because it was followed 85
+times without being written down anywhere, and an unwritten convention
+overrules nothing: a tool arriving with a default prefix of its own
+simply used it, 24 times, and nobody had to decide to allow it. A
+blocklist can only refuse what somebody thought to write down; requiring
+the prefix refuses the next default too.
+
+**A check may name what it refuses.** `scripts/lint-refs.sh`,
+`scripts/lint-commit-authors.sh` and `CLAUDE.md` carry the assistant and
+vendor names this principle forbids, because a blocklist that could not
+name what it blocks would be an empty file. The exception is theirs
+alone; it does not extend to any other code, comment or document.
+
 Enforcement, in the order it bites:
 
 - `.claude/hooks/session-start.sh` sets the commit identity from the
@@ -75,17 +131,32 @@ Enforcement, in the order it bites:
   on somebody noticing.
 - `.githooks/commit-msg` (wired via `core.hooksPath`) strips disallowed
   trailers locally.
+- `.githooks/pre-push` refuses a ref name before it reaches the remote,
+  which is the earliest point at which a rename costs nothing. Deletions
+  pass: removing a badly named branch is the remedy, not another
+  offence.
 - `scripts/lint-commit-authors.sh` checks the **author and the committer**
   of every commit on the branch against a blocklist of AI attribution
   identities. A trailer is not the only way attribution reaches a commit,
   and the identity fields are the way it reached one here.
-- The `commit-hygiene` CI job runs both the message check and the author
-  check on pull requests and on pushes to `main`.
+- `scripts/lint-refs.sh` refuses a ref that names an assistant or a
+  vendor, and a branch that is not `xcoder/<slug>`. It also reads the ref
+  names git has already written into commit subjects, which is the shape
+  the violation actually took.
+- The `commit-hygiene` CI job runs the message check, the author check
+  and both halves of the ref check on pull requests and on pushes to
+  `main`.
 
-The first three are conveniences that keep a mistake from being made; only
+The local hooks are conveniences that keep a mistake from being made; only
 the CI job can refuse one. A local check that has been skipped, and a hook
 in a container that no longer exists, prove nothing about a commit that is
-already pushed.
+already pushed — or about a branch name that is, since the merge commit
+quoting it is written server-side where no local hook runs at all.
+
+Every check here is proved by a suite of its own that CI runs before
+trusting its verdict. A gate is only as good as the proof that it closes,
+and each of these was written after a green gate had already let the thing
+it names through.
 
 ### II. Invariant I-1 — Human Approval (NON-NEGOTIABLE)
 
@@ -353,4 +424,4 @@ This constitution supersedes all other practices in this repository.
 - Complexity must justify itself against the declared scope; when in
   doubt, the simpler structure that preserves the invariants wins.
 
-**Version**: 1.1.1 | **Ratified**: 2026-08-14 | **Last Amended**: 2026-08-30
+**Version**: 1.2.0 | **Ratified**: 2026-08-14 | **Last Amended**: 2026-08-30
