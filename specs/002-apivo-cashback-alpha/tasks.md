@@ -130,14 +130,14 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 
 **Independent Test**: Point the ingester at recorded fixtures; verify complete retrieval evidence in one transaction, no duplicates on re-poll, a superseding row on status change, and that the database rejects any mutation.
 
-- [ ] T049 [US2] Define the `Network` port (`ID`, `BuildDeeplink`, `FetchTransactions`, `FetchCatalogue`, `Limits`) and `Reported`/`ReportedMerchant` types in `internal/cashback/networks/network.go` per [contracts/ports.md](contracts/ports.md) §2
+- [x] T049 [US2] Define the `Network` port (`ID`, `BuildDeeplink`, `FetchTransactions`, `FetchCatalogue`, `Limits`) and `Reported`/`ReportedMerchant` types in `internal/cashback/networks/network.go` per [contracts/ports.md](contracts/ports.md) §2
 - [x] T050 [P] [US2] Implement the `fixture` adapter with a scripted click→pending→approved→reversed lifecycle in `internal/cashback/networks/fixture/fixture.go` + `testdata/`
 - [x] T051 [P] [US2] Write the adapter conformance suite (status-mapping totality, raw-payload presence, window clamping, rate-limit adherence, deeplink round-trip, resumable iteration) in `internal/cashback/networks/conformance_test.go`
 - [x] T052 [US2] Implement evidence persistence writing the normalised record and verbatim raw payload in one transaction in `internal/cashback/networks/evidence.go` + `store/`
 - [x] T053 [US2] Implement the database-computed content digest and the dedup path in `internal/cashback/networks/digest.go`
 - [x] T054 [US2] Implement superseding-record logic for changed status or amount in `internal/cashback/networks/supersede.go`
-- [ ] T055 [US2] Implement the poller with durable primary and trailing cursors, advancing only after a window is fully persisted, in `internal/cashback/networks/poller.go`
-- [ ] T056 [US2] Implement the per-adapter rate limiter with exponential backoff and jitter in `internal/cashback/networks/limiter.go`
+- [x] T055 [US2] Implement the poller with durable primary and trailing cursors, advancing only after a window is fully persisted, in `internal/cashback/networks/poller.go`
+- [x] T056 [US2] Implement the per-adapter rate limiter with exponential backoff and jitter in `internal/cashback/networks/ratelimiter.go` + `backoff.go` + `retryable.go`
 - [ ] T057 [US2] Register the poll and trailing re-read jobs with the scheduler in `cmd/apivo/main.go`
 - [ ] T058 [US2] Record transactions with no matching click as unattributed in `internal/cashback/networks/unattributed.go`
 - [ ] T059 [US2] Implement `GET /ops/unattributed`, `POST /ops/unattributed/{id}/attribute` and `/dismiss` in `internal/cashback/ops/handlers.go` per [contracts/http-api.md](contracts/http-api.md)
