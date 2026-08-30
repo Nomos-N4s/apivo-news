@@ -46,6 +46,7 @@ package networks_test
 
 import (
 	"errors"
+	"iter"
 	"testing"
 	"time"
 
@@ -222,6 +223,148 @@ func TestConformanceAnAdapterIsWhatItSaysItIs(t *testing.T) {
 		}
 		if limits.RequestsPerSecond <= 0 {
 			t.Errorf("Limits().RequestsPerSecond is %d; a non-positive rate makes every request unpermitted", limits.RequestsPerSecond)
+		}
+	})
+}
+
+// conformCollect drains a sequence, returning what it yielded before any
+// error alongside that error. What arrived BEFORE a failure is half of what
+// these scenarios are about: an adapter that hands back reports and then
+// fails mid-window is the situation a cursor gets wrong.
+func conformCollect[V any](seq iter.Seq2[V, error]) ([]V, error) {
+	var values []V
+	for value, err := range seq {
+		if err != nil {
+			return values, err
+		}
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+// conformTransactions reads one window whole, failing the test on the
+// immediate error - which is about the window rather than about the network,
+// so a scenario that did not mean to test it wants it to stop the test rather
+// than be mistaken for an answer.
+func conformTransactions(t *testing.T, a conformAdapter, n networks.Network) ([]networks.Reported, error) {
+	t.Helper()
+	seq, err := n.FetchTransactions(t.Context(), a.window(t, n))
+	if err != nil {
+		t.Fatalf("FetchTransactions(): %v", err)
+	}
+	return conformCollect(seq)
+}
+
+// conformCatalogue reads the catalogue whole. It has no immediate error to
+// check for - a catalogue read has nothing checkable before contacting the
+// network - and that absence is itself part of the contract.
+func conformCatalogue(t *testing.T, n networks.Network) ([]networks.ReportedMerchant, error) {
+	t.Helper()
+	seq, err := n.FetchCatalogue(t.Context())
+	if err != nil {
+		t.Fatalf("FetchCatalogue(): %v", err)
+	}
+	return conformCollect(seq)
+}
+
+// TestConformanceEveryValueCarriesItsRawPayload is contract rule 1 (FR-032),
+// and it is the rule that makes every other one recoverable.
+//
+// The verbatim fragment stored beside the normalised columns is what a
+// normalisation bug is later re-derived from. Networks do not reliably serve
+// their history twice, so a payload not captured at retrieval is a payload
+// gone for good - and with it the ability to fix a member's credit without
+// the network's cooperation. An adapter that normalised perfectly and stored
+// nothing verbatim would look correct for exactly as long as it was correct.
+func TestConformanceEveryValueCarriesItsRawPayload(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		adapter := a.open(t)
+
+		reports, err := conformTransactions(t, a, adapter)
+		if err != nil {
+			t.Fatalf("reading a window this adapter says it has data for: %v", err)
+		}
+		if len(reports) == 0 {
+			t.Fatal("the window this adapter offered holds no transactions, so nothing here is proved; the table's window must name a period with data in it")
+		}
+		for _, report := range reports {
+			if len(report.RawPayload) == 0 {
+				t.Errorf("transaction %s arrived with no payload", report.ExternalID)
+			}
+		}
+
+		merchants, err := conformCatalogue(t, adapter)
+		if err != nil {
+			t.Fatalf("reading the catalogue: %v", err)
+		}
+		if len(merchants) == 0 {
+			t.Fatal("the catalogue is empty, so nothing here is proved")
+		}
+		for _, merchant := range merchants {
+			if len(merchant.RawPayload) == 0 {
+				t.Errorf("retailer %s arrived with no payload", merchant.ExternalID)
+			}
+		}
+	})
+}
+
+// TestConformanceAPayloadBelongsToItsCaller is the half of rule 1 that a
+// presence check cannot reach.
+//
+// A payload is evidence, and evidence a later caller can edit is not
+// evidence. An adapter that decoded its responses once and handed every
+// caller the same backing array would pass every assertion above while
+// letting one poll's write corrupt another's - and the corruption would
+// surface as a stored payload that does not match the row beside it, months
+// later, with nothing to say when it changed.
+//
+// Two adapters rather than two reads. Re-issuing a window asks the same
+// question and does NOT promise the same answer (rule 4), so comparing one
+// adapter's second read against its first would be asserting the opposite of
+// the contract; two adapters opened side by side are the aliasing hazard
+// itself, since a package-level decoded response is shared by every adapter
+// in the process.
+//
+// The bytes are edited in place rather than reassigned, because reassigning
+// tests only Go's value semantics and every adapter passes that.
+func TestConformanceAPayloadBelongsToItsCaller(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		mine, theirs := a.open(t), a.open(t)
+
+		fromMine, err := conformTransactions(t, a, mine)
+		if err != nil {
+			t.Fatalf("the first adapter's read failed: %v", err)
+		}
+		fromTheirs, err := conformTransactions(t, a, theirs)
+		if err != nil {
+			t.Fatalf("the second adapter's read failed: %v", err)
+		}
+		if len(fromMine) == 0 || len(fromTheirs) == 0 {
+			t.Fatal("the window this adapter offered holds no transactions, so nothing here is proved")
+		}
+		if fromMine[0].ExternalID != fromTheirs[0].ExternalID {
+			t.Skipf("two freshly opened adapters answered %s and %s for the same window, so there is no shared payload to corrupt",
+				fromMine[0].ExternalID, fromTheirs[0].ExternalID)
+		}
+
+		// Captured as a string, which copies, so the comparison below is
+		// against what the other caller was handed rather than against a view
+		// of the same bytes.
+		before := string(fromTheirs[0].RawPayload)
+		if string(fromMine[0].RawPayload) != before {
+			t.Skipf("two freshly opened adapters carried different payloads for %s, so there is no shared payload to corrupt", fromMine[0].ExternalID)
+		}
+
+		for i := range fromMine[0].RawPayload {
+			fromMine[0].RawPayload[i] = 'X'
+		}
+
+		if got := string(fromTheirs[0].RawPayload); got != before {
+			t.Errorf("editing one caller's payload changed what another caller was already holding:\n got %s\nwant %s", got, before)
 		}
 	})
 }
