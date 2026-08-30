@@ -141,6 +141,84 @@ func TestFetchCatalogueYieldsAbandonedWhenItStopsEarly(t *testing.T) {
 	}
 }
 
+// TestFetchCatalogueYieldsAbandonedMidPage is the same rule one level down,
+// and the level a page-shaped check cannot reach.
+//
+// A cancellation that lands between pages is caught before the next page is
+// touched; one that lands while a page is still being walked is not, and a
+// real catalogue page carries hundreds of retailers rather than the two here.
+// An adapter that only looked between pages would hand out the rest of the
+// page it was already inside and then report abandonment - or, on the last
+// page, report nothing at all. The recorded catalogue puts two retailers on
+// its first page for exactly this.
+func TestFetchCatalogueYieldsAbandonedMidPage(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	seq, err := fixtureTestAdapter(t).FetchCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("FetchCatalogue(): %v", err)
+	}
+
+	seen, abandoned := 0, error(nil)
+	for _, err := range seq {
+		if err != nil {
+			abandoned = err
+			break
+		}
+		seen++
+		// Cancel after the FIRST retailer of the first page, and keep
+		// reading: the caller is still willing, and it is the adapter that
+		// has to notice.
+		cancel()
+	}
+	if seen != 1 {
+		t.Fatalf("saw %d retailer(s) before the cancellation stopped the read, want exactly 1 - the check inside a page was not what stopped this", seen)
+	}
+	if !errors.Is(abandoned, networks.ErrIterationAbandoned) || !errors.Is(abandoned, context.Canceled) {
+		t.Fatalf("iteration ended with %v, want one wrapping both ErrIterationAbandoned and context.Canceled", abandoned)
+	}
+}
+
+// TestFetchCatalogueStopsWhenTheCallerBreaks is the other way an iteration
+// ends early, and the one an adapter must NOT report as a failure. A caller
+// that has seen enough - a search, a spot check, an import that hit its own
+// error and is unwinding - stops the range itself. Nothing is wrong, so
+// nothing is yielded after it, and the adapter simply stops walking rather
+// than pushing values into a loop that has gone.
+func TestFetchCatalogueStopsWhenTheCallerBreaks(t *testing.T) {
+	t.Parallel()
+
+	seq, err := fixtureTestAdapter(t).FetchCatalogue(t.Context())
+	if err != nil {
+		t.Fatalf("FetchCatalogue(): %v", err)
+	}
+
+	seen := 0
+	for _, err := range seq {
+		if err != nil {
+			t.Fatalf("an uncancelled read yielded %v", err)
+		}
+		seen++
+		break
+	}
+	if seen != 1 {
+		t.Fatalf("the range ran %d time(s) after one break, want 1", seen)
+	}
+
+	// The adapter is unharmed by having been stopped: a caller that breaks
+	// out of one read and then asks again gets the whole catalogue, because
+	// nothing about a catalogue read is consumed by reading it.
+	whole, err := fixtureTestCatalogue(t, fixtureTestAdapter(t))
+	if err != nil {
+		t.Fatalf("the read after a break failed: %v", err)
+	}
+	if len(whole) <= seen {
+		t.Errorf("the catalogue read after a break returned %d retailer(s), want more than the %d the broken read saw", len(whole), seen)
+	}
+}
+
 // TestFetchCatalogueYieldsAnInjectedFailure holds contract rule 9 for the one
 // method with no immediate error at all: a catalogue read has nothing
 // checkable before contacting the network, so every failure - including one
