@@ -10,9 +10,11 @@ package store_test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -121,6 +123,54 @@ func TestTheClickRuleCountsAndUsesItsIndexes(t *testing.T) {
 		}
 		if row.Clicks != 2 {
 			t.Errorf("counted %d clicks, want 2 - this context's only", row.Clicks)
+		}
+	})
+
+	each(ctx, t, tx, "both counts read an index rather than the whole table", func(t *testing.T, tx pgx.Tx, _ *store.Queries) {
+		// Planner choices depend on statistics, and an empty table is
+		// planned as a sequential scan whatever indexes exist. Disabling
+		// the sequential scan asks the question this test means: IS there
+		// an index that can answer this, at all.
+		if _, err := tx.Exec(ctx, `set local enable_seqscan = off`); err != nil {
+			t.Fatalf("disabling sequential scans: %v", err)
+		}
+
+		for _, probe := range []struct{ name, sql, index string }{
+			{
+				name:  "the member half",
+				sql:   `select count(*), min(clicked_at) from cashback.click where account_id = $1 and clicked_at > $2`,
+				index: "click_account_clicked_at_idx",
+			},
+			{
+				name:  "the context half",
+				sql:   `select count(*), min(clicked_at) from cashback.click where context_digest = $1 and clicked_at > $2`,
+				index: "click_context_clicked_at_idx",
+			},
+		} {
+			var arg any = uuid.New().String()
+			if probe.index == "click_context_clicked_at_idx" {
+				arg = "a-digest"
+			}
+			rows, err := tx.Query(ctx, "explain "+probe.sql, arg, time.Now().Add(-time.Hour))
+			if err != nil {
+				t.Fatalf("%s: explain: %v", probe.name, err)
+			}
+			var plan strings.Builder
+			for rows.Next() {
+				var line string
+				if err := rows.Scan(&line); err != nil {
+					rows.Close()
+					t.Fatalf("%s: scanning the plan: %v", probe.name, err)
+				}
+				plan.WriteString(line + "\n")
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				t.Fatalf("%s: reading the plan: %v", probe.name, err)
+			}
+			if !strings.Contains(plan.String(), probe.index) {
+				t.Errorf("%s does not use %s; plan was:\n%s", probe.name, probe.index, plan.String())
+			}
 		}
 	})
 }
