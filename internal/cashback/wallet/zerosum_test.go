@@ -44,8 +44,9 @@ import (
 // codeRaiseException is the SQLSTATE of the RAISE 0016/0020 designed for a
 // blinded check, the same constant the platform drills assert by. The code
 // matters: any wrapped error could contain the right words, but only the
-// database refusing carries its own SQLSTATE.
-const codeRaiseException = "P0001"
+// database refusing carries its own SQLSTATE. The constant itself is
+// declared beside wantPgCode in invariants_test.go - one package, one
+// spelling of the SQLSTATE both drills require.
 
 // zeroSumTx opens a transaction on the shared pool that is always rolled
 // back, so no stand-in ledger a test builds survives it, and skips - in
