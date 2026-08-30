@@ -138,7 +138,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [x] T054 [US2] Implement superseding-record logic for changed status or amount in `internal/cashback/networks/supersede.go`
 - [x] T055 [US2] Implement the poller with durable primary and trailing cursors, advancing only after a window is fully persisted, in `internal/cashback/networks/poller.go`
 - [x] T056 [US2] Implement the per-adapter rate limiter with exponential backoff and jitter in `internal/cashback/networks/ratelimiter.go` + `backoff.go` + `retryable.go`
-- [ ] T057 [US2] Register the poll and trailing re-read jobs with the scheduler in `cmd/apivo/main.go`
+- [x] T057 [US2] Register the poll and trailing re-read jobs with the scheduler in `cmd/apivo/main.go`
 - [ ] T058 [US2] Record transactions with no matching click as unattributed in `internal/cashback/networks/unattributed.go`
 - [ ] T059 [US2] Implement `GET /ops/unattributed`, `POST /ops/unattributed/{id}/attribute` and `/dismiss` in `internal/cashback/ops/handlers.go` per [contracts/http-api.md](contracts/http-api.md)
 - [ ] T060 [P] [US2] Integration test: re-polling an unchanged window creates no duplicate; a changed status creates a superseding row and both stay readable, in `internal/cashback/networks/ingest_integration_test.go`

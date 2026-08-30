@@ -211,7 +211,7 @@ to `/etc/apivo/<env>/`, and editing the template on a host edits nothing.
 | `BLNK_URL` | `http://localhost:5001` | the same overlay, from the container name | the `blnk` Service — `deploy/k8s/cashback/blnk-service.yaml` |
 | `REDIS_URL` | `redis://localhost:6379` | the same overlay, from the container name | the `redis` Service — `deploy/k8s/cashback/redis-service.yaml` |
 | `HOUSE_ACCOUNT_ROUNDING`, `HOUSE_ACCOUNT_CLAWBACK` | `rounding-remainder` / `clawback-loss` | the same overlay — the house account the sub-minor-unit rounding remainder accrues to (D6) and the one an absorbed post-payout clawback is recorded against (Q3). Required once `CASHBACK_ENABLED=true` in production, which every deployed environment is (`APP_ENV=prod`); the api refuses to start anywhere if the two share a name, and renaming one later strands whatever balance had accrued under the old name | `deploy/k8s/cashback/cashback-configmap.yaml` |
-| `NETWORK_ACCOUNT_ID` | empty | **`/etc/apivo/<env>/api.env`** | `deploy/k8s/cashback/cashback-configmap.yaml` — not a credential, and logged in clear |
+| `NETWORK_ACCOUNT_ID` | empty | **`/etc/apivo/<env>/api.env`** | `deploy/k8s/cashback/cashback-configmap.yaml` — not a credential, and logged in clear. **This is the key that turns ingestion on**, see below |
 | `NETWORK_API_KEY`, `NETWORK_API_SECRET` | empty | **`/etc/apivo/<env>/api.env`** — real credentials | the `apivo-secrets` Secret — structure in `deploy/k8s/examples/secret.example.yaml` |
 | `BLNK_SECRET_KEY` | empty (local ledger is unauthenticated) | **`/etc/apivo/<env>/api.env`** — **required**, see below | the `apivo-secrets` Secret |
 | `BLNK_SERVER_SECRET_KEY` | n/a | **`/etc/apivo/<env>/blnk.env`** — the value the ledger accepts | the `apivo-secrets` Secret |
@@ -238,6 +238,57 @@ is a real call against a real publisher account, counted against a real rate
 limit; QA reconciles on every merge to `main` and would spend that budget
 continuously. This is the same boundary the JWKS split draws for auth, for
 the same reason.
+
+### Turning ingestion on
+
+`CASHBACK_ENABLED=true` mounts the product. It does **not** start polling. A
+deployment with cashback enabled and no network being polled serves normally
+and says so at ERROR on every start:
+
+```
+NO AFFILIATE NETWORK IS BEING POLLED: NETWORK_ACCOUNT_ID names no publisher
+account at "fixture". Cashback is enabled, so nothing will ingest what a
+network reports and no member can be credited
+```
+
+Three things turn it on, and only the first is configuration.
+
+1. **`NETWORK_ACCOUNT_ID`**, which names a row of `cashback.network_account` —
+   the row that owns the two durable cursors. It is required for the
+   `fixture` adapter as much as for a live one: an adapter that needs no
+   credential still polls on behalf of somebody.
+
+2. **The account row**, which an operator creates. It is not created by the
+   binary and there is no seed command yet (T130):
+
+   ```sql
+   insert into cashback.network_account
+       (network_id, external_publisher_id, credential_ref, active, backfill_from)
+   values ('fixture', 'publisher-1', 'config:networks.fixture.credential',
+           true, '2026-06-01T00:00:00Z');
+   ```
+
+   `active` defaults to false so a half-configured account cannot start
+   fetching, and `backfill_from` is where an account nobody has polled starts
+   reading. Nothing invents that instant: too recent silently skips history
+   nobody notices is missing, too old asks a network for years of it. Until
+   both are set every sweep refuses by name, at ERROR, every interval — and
+   both are fixed with one `UPDATE` and no restart.
+
+3. **A bigger connection pool.** The scheduler holds one connection per
+   running job and one for its work, plus two reserved for the rest of the
+   application, so the three jobs a polling deployment registers need eight —
+   and pgx defaults `MaxConns` to `max(4, NumCPU)`. Add `pool_max_conns=8` to
+   `DATABASE_URL`. Without it the api refuses to start, with the numbers in
+   the error, rather than deadlocking its request handlers against its jobs
+   under load.
+
+Once polling, each account runs two jobs: a forward sweep every 15 minutes
+that reads the next period nobody has read, and a trailing sweep every 6
+hours that re-reads ground the forward cursor passed about a hundred days ago
+— which is the only way a transaction is ever seen to move from pending to
+confirmed (ADR-0003). Both advance their cursor only after a whole window is
+persisted, so a restart re-reads at most one window and skips none.
 
 ### The ledger runs as TWO database roles
 

@@ -5,7 +5,6 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"embed"
 	"errors"
 	"fmt"
@@ -14,7 +13,7 @@ import (
 	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgxpool"
-	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver used by the migration runner
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 //go:embed migrations/*.sql
@@ -40,10 +39,24 @@ func Migrate(databaseURL string) error {
 	if err != nil {
 		return fmt.Errorf("db: load migrations: %w", err)
 	}
-	sqlDB, err := sql.Open("pgx", databaseURL)
+	// Parsed as a POOL config and opened from the connection half of it,
+	// rather than handed to sql.Open whole.
+	//
+	// pool_max_conns and its siblings are pgxpool's own DSN parameters:
+	// pgxpool.ParseConfig understands them, and the database/sql driver does
+	// not - it forwards whatever it does not recognise to the server as a
+	// runtime setting, which answers FATAL: unrecognized configuration
+	// parameter. So the one DSN this process is given has to be read the
+	// same way in both places, or raising the pool size makes the migration
+	// that runs first refuse to connect at all. That is not hypothetical:
+	// registering the network sweeps takes the pool requirement past pgx's
+	// default of four (T057), and pool_max_conns in DATABASE_URL is the only
+	// way to raise it.
+	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
-		return fmt.Errorf("db: open: %w", err)
+		return fmt.Errorf("db: parse config: %w", err)
 	}
+	sqlDB := stdlib.OpenDB(*cfg.ConnConfig)
 	driver, err := pgxmigrate.WithInstance(sqlDB, &pgxmigrate.Config{})
 	if err != nil {
 		_ = sqlDB.Close()

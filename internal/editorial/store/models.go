@@ -215,6 +215,8 @@ type CashbackNetworkAccount struct {
 	// How far the slower trailing re-read has walked. Validation can take up to 90 days, so status changes are found by re-reading, not by waiting (ADR-0003).
 	TrailingCursorAt pgtype.Timestamptz
 	Active           bool
+	// The instant this account's first poll reads from, and the floor the trailing re-read walks from until its own cursor exists. Set by the operator who connects the account; NULL means nobody has said, and the poller refuses to guess (FR-031, ADR-0003).
+	BackfillFrom pgtype.Timestamptz
 }
 
 // IMMUTABLE (C-3). Exactly what a network reported, when, and for which query window. A status or amount change is a NEW row superseding the previous one; nothing here is ever edited, because a member's money rests on it.

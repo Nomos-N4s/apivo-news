@@ -122,6 +122,67 @@ func TestNetworkAccountCursorsAgainstSchema(t *testing.T) {
 		}
 	})
 
+	each(ctx, t, tx, "the account an operator names is found by its natural key", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		networkID, accountID := account(ctx, t, tx)
+
+		got, err := queries.GetNetworkAccountByPublisher(ctx, store.GetNetworkAccountByPublisherParams{
+			NetworkID: networkID, ExternalPublisherID: "publisher-1",
+		})
+		if err != nil {
+			t.Fatalf("GetNetworkAccountByPublisher(): %v", err)
+		}
+		if got.ID != accountID {
+			t.Errorf("the lookup found %v, want the seeded account %v; the id is what owns the cursors", got.ID, accountID)
+		}
+		if !got.Active {
+			t.Error("the lookup reports the account inactive, and the seed made it active")
+		}
+	})
+
+	each(ctx, t, tx, "a publisher identifier nobody holds is no rows, not an empty account", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		networkID, _ := account(ctx, t, tx)
+
+		// The caller has to be able to tell "this account is not connected"
+		// from "here it is, with a zero id" - the second would build a
+		// poller for the nil uuid and file evidence against nothing.
+		_, err := queries.GetNetworkAccountByPublisher(ctx, store.GetNetworkAccountByPublisherParams{
+			NetworkID: networkID, ExternalPublisherID: "publisher-nobody-connected",
+		})
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("looking up an unconnected publisher returned %v, want pgx.ErrNoRows", err)
+		}
+	})
+
+	each(ctx, t, tx, "the same publisher identifier at another network is another account", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		// Both networks issue the seed's own publisher identifier, which is
+		// the case a lookup keyed on the identifier alone gets wrong: it
+		// would answer with whichever row came first and poll one network's
+		// account against another's cursors.
+		firstNetwork, firstAccount := account(ctx, t, tx)
+		secondNetwork, secondAccount := account(ctx, t, tx)
+		if firstAccount == secondAccount {
+			t.Fatal("the seed made one account twice, so this case cannot tell the two apart")
+		}
+
+		for _, want := range []struct {
+			network string
+			account pgtype.UUID
+		}{{firstNetwork, firstAccount}, {secondNetwork, secondAccount}} {
+			got, err := queries.GetNetworkAccountByPublisher(ctx, store.GetNetworkAccountByPublisherParams{
+				NetworkID: want.network, ExternalPublisherID: "publisher-1",
+			})
+			if err != nil {
+				t.Fatalf("GetNetworkAccountByPublisher(%s): %v", want.network, err)
+			}
+			if got.ID != want.account {
+				t.Errorf("publisher-1 at %s resolved to %v, want %v", want.network, got.ID, want.account)
+			}
+			if got.NetworkID != want.network {
+				t.Errorf("the row came back naming %q, want %q", got.NetworkID, want.network)
+			}
+		}
+	})
+
 	each(ctx, t, tx, "the trailing cursor may not run ahead of the main one", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
 		_, accountID := account(ctx, t, tx)
 
@@ -152,6 +213,37 @@ func TestNetworkAccountCursorsAgainstSchema(t *testing.T) {
 		}
 		if constraint != "network_account_trailing_cursor_not_ahead" {
 			t.Errorf("it was refused by %q, want network_account_trailing_cursor_not_ahead", constraint)
+		}
+	})
+
+	each(ctx, t, tx, "a start ahead of the cursor says the two disagree about what was read", func(t *testing.T, tx pgx.Tx, queries *store.Queries) {
+		_, accountID := account(ctx, t, tx)
+
+		if _, err := queries.AdvanceNetworkAccountCursor(ctx, store.AdvanceNetworkAccountCursorParams{
+			ID: accountID, AdvanceTo: stamp(anchor), AdvanceFrom: pgtype.Timestamptz{},
+		}); err != nil {
+			t.Fatalf("the first advance: %v", err)
+		}
+
+		// Behind the cursor is the ordinary case: the account started
+		// there and has been read forward since.
+		if _, err := tx.Exec(ctx, `update cashback.network_account set backfill_from = $2 where id = $1`,
+			accountID, anchor.Add(-72*time.Hour)); err != nil {
+			t.Fatalf("a start behind the cursor was refused: %v", err)
+		}
+
+		// Ahead of it is not. A floor the forward sweep has already walked
+		// past says the row disagrees with itself about what has been read,
+		// and the trailing sweep would then re-read from a point the
+		// forward one never covered.
+		_, err := tx.Exec(ctx, `update cashback.network_account set backfill_from = $2 where id = $1`,
+			accountID, anchor.Add(time.Hour))
+		code, constraint := refusal(err)
+		if code != codeCheckViolation {
+			t.Fatalf("a start ahead of the cursor was accepted (SQLSTATE %q, err %v)", code, err)
+		}
+		if constraint != "network_account_backfill_from_not_ahead" {
+			t.Errorf("it was refused by %q, want network_account_backfill_from_not_ahead", constraint)
 		}
 	})
 

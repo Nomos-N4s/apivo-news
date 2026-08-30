@@ -19,12 +19,26 @@ import (
 var (
 	// ErrNoPollerStore reports a poller built with nothing to write to.
 	ErrNoPollerStore = errors.New("networks: a poller needs somewhere to persist what it reads")
-	// ErrNoBackfillStart reports a poller built without a first window to
-	// start from. An account that has never been polled has no cursor, and
-	// only an operator knows how far back this publisher account's history
-	// should be ingested: a poller that guessed would either skip history
-	// nobody notices is missing, or ask a network for years of it.
-	ErrNoBackfillStart = errors.New("networks: a poller needs a start for an account that has never been polled")
+	// ErrNoBackfillStart reports an account whose row does not say how far
+	// back to read. Only the operator who connected it knows: a poller that
+	// guessed would either skip history nobody notices is missing, or ask a
+	// network for years of it.
+	//
+	// It is refused on EVERY poll rather than only the first, because both
+	// sweeps read the start. The forward one stops needing it once its
+	// cursor exists; the trailing one walks from it until its own cursor
+	// does, which is a lag later - about a hundred days (0023). An account
+	// polled forward with no start would re-read from the zero instant.
+	ErrNoBackfillStart = errors.New("networks: the publisher account does not say how far back to read")
+	// ErrBackfillStartInFuture reports an account that has never been polled
+	// whose start has not happened yet - a mistyped year, most likely.
+	//
+	// It is a refusal rather than a quiet "nothing to read" because the two
+	// are indistinguishable from the outside and only one of them ever ends.
+	// A window never ends in the future, so a start that has not arrived
+	// produces no window on this tick or any other: silence, forever, from
+	// a deployment whose logs say it is polling.
+	ErrBackfillStartInFuture = errors.New("networks: the publisher account starts at an instant that has not happened yet")
 	// ErrAccountInactive reports a poll of an account nobody has switched
 	// on. An account is born inactive (migration 0011) precisely so a
 	// half-configured one cannot start fetching, and honouring that is the
@@ -89,10 +103,9 @@ type CursorStore interface {
 // and pacing its requests to RequestsPerSecond" - and a poller that paced as
 // well would hold every adapter to a rate its own network never documented.
 type Poller struct {
-	db           Beginner
-	backfillFrom time.Time
-	trailingLag  time.Duration
-	now          func() time.Time
+	db          Beginner
+	trailingLag time.Duration
+	now         func() time.Time
 }
 
 // DefaultTrailingLag is how far behind the main cursor the re-read sweep
@@ -124,19 +137,20 @@ func WithTrailingLag(lag time.Duration) PollerOption {
 	}
 }
 
-// NewPoller builds a poller that starts an unpolled account at backfillFrom.
-func NewPoller(db Beginner, backfillFrom time.Time, opts ...PollerOption) (*Poller, error) {
+// NewPoller builds a poller over the database its windows are persisted in.
+//
+// It takes no backfill start. Where an account begins is a fact about that
+// ACCOUNT and lives on its row beside the two cursors it seeds (0023), so
+// one poller serves every account this process polls and none of them can
+// be given another's start.
+func NewPoller(db Beginner, opts ...PollerOption) (*Poller, error) {
 	if db == nil {
 		return nil, ErrNoPollerStore
 	}
-	if backfillFrom.IsZero() {
-		return nil, ErrNoBackfillStart
-	}
 	p := &Poller{
-		db:           db,
-		backfillFrom: backfillFrom,
-		trailingLag:  DefaultTrailingLag,
-		now:          time.Now,
+		db:          db,
+		trailingLag: DefaultTrailingLag,
+		now:         time.Now,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -215,6 +229,23 @@ func (p *Poller) poll(ctx context.Context, adapter Network, trailing bool) (Poll
 	// would put rows outside the window they were read for.
 	at := p.now().UTC()
 
+	if !cursors.BackfillFrom.Valid {
+		return Poll{}, fmt.Errorf("%w: %s", ErrNoBackfillStart, account)
+	}
+	// Strictly after, not "not before": a start equal to now is an account
+	// connected this instant, which has nothing to read yet and will in a
+	// moment. Only a start that has genuinely not arrived is the mistake
+	// worth refusing.
+	//
+	// Only meaningful before the first poll: once a cursor exists the schema
+	// keeps the start behind it (network_account_backfill_from_not_ahead),
+	// and it is the cursor the forward sweep reads from anyway.
+	if !cursors.CursorAt.Valid && cursors.BackfillFrom.Time.After(at) {
+		return Poll{}, fmt.Errorf("%w: %s starts at %s and it is %s",
+			ErrBackfillStartInFuture, account,
+			cursors.BackfillFrom.Time.UTC().Format(time.RFC3339), at.Format(time.RFC3339))
+	}
+
 	window, found := p.window(cursors, at, adapter.Limits().MaxWindow, trailing)
 	if !found {
 		return Poll{}, nil
@@ -242,12 +273,12 @@ func (p *Poller) window(cursors store.GetNetworkAccountCursorsRow, at time.Time,
 	if trailing {
 		return nextTrailingWindow(
 			cursors.TrailingCursorAt.Time, cursors.TrailingCursorAt.Valid,
-			p.backfillFrom, cursors.CursorAt.Time, cursors.CursorAt.Valid,
+			cursors.BackfillFrom.Time, cursors.CursorAt.Time, cursors.CursorAt.Valid,
 			p.trailingLag, maxWindow)
 	}
 	return nextForwardWindow(
 		cursors.CursorAt.Time, cursors.CursorAt.Valid,
-		p.backfillFrom, at, maxWindow)
+		cursors.BackfillFrom.Time, at, maxWindow)
 }
 
 // persist reads the window and records every report in it, in the caller's

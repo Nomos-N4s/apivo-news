@@ -108,9 +108,9 @@ func pollerSchemaAccount(ctx context.Context, t *testing.T, tx pgx.Tx) networks.
 	}
 	var accountID pgtype.UUID
 	if err := tx.QueryRow(ctx, `
-		insert into cashback.network_account (network_id, external_publisher_id, credential_ref, active)
-		values ($1, 'publisher-1', 'config:networks.fixture.credential', true)
-		returning id`, networkID).Scan(&accountID); err != nil {
+		insert into cashback.network_account (network_id, external_publisher_id, credential_ref, active, backfill_from)
+		values ($1, 'publisher-1', 'config:networks.fixture.credential', true, $2)
+		returning id`, networkID, pollerSchemaStart).Scan(&accountID); err != nil {
 		t.Fatalf("seeding the publisher account: %v", err)
 	}
 
@@ -140,7 +140,7 @@ func eachPoll(ctx context.Context, t *testing.T, tx pgx.Tx, name string, scenari
 func pollerSchemaPoller(t *testing.T, tx pgx.Tx, opts ...networks.PollerOption) *networks.Poller {
 	t.Helper()
 	opts = append([]networks.PollerOption{networks.WithPollerClock(func() time.Time { return pollerSchemaNow })}, opts...)
-	poller, err := networks.NewPoller(savepointBeginner{tx: tx}, pollerSchemaStart, opts...)
+	poller, err := networks.NewPoller(savepointBeginner{tx: tx}, opts...)
 	if err != nil {
 		t.Fatalf("NewPoller(): %v", err)
 	}
@@ -342,6 +342,45 @@ func TestPollForwardAgainstTheRealSchema(t *testing.T) {
 		}
 	})
 
+	eachPoll(ctx, t, tx, "an account that does not say how far back to read is refused", func(t *testing.T, tx pgx.Tx) {
+		account := pollerSchemaAccount(ctx, t, tx)
+		if _, err := tx.Exec(ctx, `update cashback.network_account set backfill_from = null where id = $1`,
+			pgtype.UUID{Bytes: account.ID(), Valid: true}); err != nil {
+			t.Fatalf("clearing the backfill start: %v", err)
+		}
+		adapter := pollerTestNetwork(account, pollerTestReports(first, second))
+
+		_, err := pollerSchemaPoller(t, tx).PollForward(ctx, adapter)
+		if !errors.Is(err, networks.ErrNoBackfillStart) {
+			t.Fatalf("PollForward() = %v, want one wrapping ErrNoBackfillStart", err)
+		}
+		if len(adapter.windows) != 0 {
+			t.Errorf("the network was asked for %v before anybody had said where to start", adapter.windows)
+		}
+	})
+
+	eachPoll(ctx, t, tx, "an account whose start has not happened yet is refused, not left idle", func(t *testing.T, tx pgx.Tx) {
+		account := pollerSchemaAccount(ctx, t, tx)
+		adapter := pollerTestNetwork(account, pollerTestReports(first, second))
+		// A mistyped year. The forward sweep never ends a window in the
+		// future, so without this refusal the account would report "nothing
+		// to read" on this tick and every tick after it - silence that
+		// looks exactly like an account with no new transactions.
+		before := pollerSchemaPoller(t, tx,
+			networks.WithPollerClock(func() time.Time { return pollerSchemaStart.Add(-time.Hour) }))
+
+		_, err := before.PollForward(ctx, adapter)
+		if !errors.Is(err, networks.ErrBackfillStartInFuture) {
+			t.Fatalf("PollForward() = %v, want one wrapping ErrBackfillStartInFuture", err)
+		}
+		if errors.Is(err, networks.ErrNoBackfillStart) {
+			t.Error("a start in the future reads as a missing one; they are different mistakes with different fixes")
+		}
+		if len(adapter.windows) != 0 {
+			t.Errorf("the network was asked for %v", adapter.windows)
+		}
+	})
+
 	eachPoll(ctx, t, tx, "an adapter that is not the account it names is refused", func(t *testing.T, tx pgx.Tx) {
 		account := pollerSchemaAccount(ctx, t, tx)
 
@@ -442,6 +481,28 @@ func TestPollTrailingAgainstTheRealSchema(t *testing.T) {
 		}
 		if len(adapter.windows) != 0 {
 			t.Errorf("the network was asked for %v", adapter.windows)
+		}
+	})
+
+	eachPoll(ctx, t, tx, "a polled account that lost its start is refused rather than re-read from nothing", func(t *testing.T, tx pgx.Tx) {
+		account := pollerSchemaAccount(ctx, t, tx)
+		adapter := pollerTestNetwork(account, pollerTestReports(first, second))
+		poller := pollerSchemaPoller(t, tx, networks.WithTrailingLag(lag))
+		if _, err := poller.PollForward(ctx, adapter); err != nil {
+			t.Fatalf("the forward poll: %v", err)
+		}
+
+		// The state a row added before 0023 would be in: polled forward,
+		// with no start. The trailing sweep walks FROM the start until its
+		// own cursor exists, so without this refusal it would re-read from
+		// the zero instant - two thousand years of empty windows, four a
+		// day, reporting success.
+		if _, err := tx.Exec(ctx, `update cashback.network_account set backfill_from = null where id = $1`,
+			pgtype.UUID{Bytes: account.ID(), Valid: true}); err != nil {
+			t.Fatalf("clearing the backfill start: %v", err)
+		}
+		if _, err := poller.PollTrailing(ctx, adapter); !errors.Is(err, networks.ErrNoBackfillStart) {
+			t.Fatalf("PollTrailing() = %v, want one wrapping ErrNoBackfillStart", err)
 		}
 	})
 
