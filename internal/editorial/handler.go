@@ -41,7 +41,7 @@ type Handler struct {
 	auth  EditorAuthenticator
 	// allow is the 405 classifier, derived from routes() in NewHandler so
 	// it cannot drift from what is actually registered.
-	allow allowTable
+	allow platformhttp.AllowTable
 }
 
 // NewHandler builds the editorial route table as an http.Handler for the
@@ -50,7 +50,7 @@ type Handler struct {
 // added unauthenticated by omission.
 func NewHandler(log *slog.Logger, store Store, auth EditorAuthenticator) http.Handler {
 	h := &Handler{log: log, store: store, auth: auth}
-	h.allow = buildAllowTable(h.routes())
+	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
 	for pattern, handler := range h.routes() {
 		mux.HandleFunc(pattern, handler)
@@ -98,93 +98,13 @@ func Patterns() []string {
 // unknown path answers 401 before this runs. A known path reached with the
 // wrong method is 405 (with Allow, as HTTP requires); anything else is 404.
 func (h *Handler) handleUnrouted(w http.ResponseWriter, r *http.Request) {
-	if allow := h.allow.methodsFor(r.URL.Path); allow != "" {
+	if allow := h.allow.MethodsFor(r.URL.Path); allow != "" {
 		w.Header().Set("Allow", allow)
 		platformhttp.Problem(w, http.StatusMethodNotAllowed,
 			r.Method+" is not allowed on this endpoint; use "+allow)
 		return
 	}
 	platformhttp.Problem(w, http.StatusNotFound, "no such endpoint")
-}
-
-// allowTable answers what methods a known editorial path accepts - the
-// test for "wrong method" rather than "wrong address". It is derived from
-// routes() itself in NewHandler, never written by hand, so a route added
-// there is classified here by construction: drift between the mux and the
-// 405 classifier is unrepresentable rather than merely tested for.
-type allowTable []allowEntry
-
-// allowEntry is one registered path pattern, pre-split into segments (a
-// "{name}" segment matches any single non-empty path segment) beside the
-// Allow header its methods render to.
-type allowEntry struct {
-	segments []string
-	methods  string
-}
-
-// buildAllowTable groups the route table's "METHOD /path" keys by path and
-// renders each path's Allow header. GET implies HEAD, exactly as ServeMux
-// serves every "GET /path" pattern for HEAD requests too.
-func buildAllowTable(routes map[string]http.HandlerFunc) allowTable {
-	byPath := make(map[string][]string, len(routes))
-	for pattern := range routes {
-		method, path, ok := strings.Cut(pattern, " ")
-		if !ok {
-			// routes() keys are always "METHOD /path"; a bare path would
-			// register for every method and never reach the catch-all.
-			continue
-		}
-		byPath[path] = append(byPath[path], method)
-		if method == http.MethodGet {
-			byPath[path] = append(byPath[path], http.MethodHead)
-		}
-	}
-	table := make(allowTable, 0, len(byPath))
-	for path, methods := range byPath {
-		slices.Sort(methods)
-		table = append(table, allowEntry{
-			segments: strings.Split(path, "/"),
-			methods:  strings.Join(slices.Compact(methods), ", "),
-		})
-	}
-	return table
-}
-
-// methodsFor reports the Allow header for a path some registered pattern
-// matches, or "" for a path this module does not serve.
-func (t allowTable) methodsFor(path string) string {
-	segments := strings.Split(path, "/")
-	for _, entry := range t {
-		if matchesPattern(entry.segments, segments) {
-			return entry.methods
-		}
-	}
-	return ""
-}
-
-// matchesPattern reports whether a request path's segments satisfy a
-// registered pattern's, segment by segment: a "{name}" wildcard takes any
-// single non-empty segment, everything else matches literally. This mirrors
-// how ServeMux itself reads the pattern, minus the corners the catch-all
-// never sees (ServeMux canonicalises doubled slashes and dots away with a
-// redirect before any handler runs).
-func matchesPattern(pattern, path []string) bool {
-	if len(pattern) != len(path) {
-		return false
-	}
-	for i, want := range pattern {
-		wildcard := strings.HasPrefix(want, "{") && strings.HasSuffix(want, "}")
-		if wildcard {
-			if path[i] == "" {
-				return false
-			}
-			continue
-		}
-		if want != path[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // approvalRequest is the approval payload: exactly one origin, the
