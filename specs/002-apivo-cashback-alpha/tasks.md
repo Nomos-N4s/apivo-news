@@ -141,7 +141,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [x] T057 [US2] Register the poll and trailing re-read jobs with the scheduler in `cmd/apivo/main.go`
 - [x] T058 [US2] Record transactions with no matching click as unattributed in `internal/cashback/networks/unattributed.go`
 - [ ] T059 [US2] Implement `GET /ops/unattributed`, `POST /ops/unattributed/{id}/attribute` and `/dismiss` in `internal/cashback/ops/handlers.go` per [contracts/http-api.md](contracts/http-api.md)
-- [ ] T060 [P] [US2] Integration test: re-polling an unchanged window creates no duplicate; a changed status creates a superseding row and both stay readable, in `internal/cashback/networks/ingest_integration_test.go`
+- [x] T060 [P] [US2] Integration test: re-polling an unchanged window creates no duplicate; a changed status creates a superseding row and both stay readable, in `internal/cashback/networks/ingest_integration_test.go`
 - [ ] T061 [P] [US2] Integration test: rate-limit backoff, and no window lost or double-counted across a restart, in `internal/cashback/networks/poller_integration_test.go`
 - [x] T062 [P] [US2] Publish `cashback.transaction.ingested` and `.unattributed` events through the outbox in `internal/cashback/networks/events.go`
 
