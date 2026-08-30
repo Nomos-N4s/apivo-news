@@ -93,3 +93,34 @@ func TestMigrateSurfacesFailingMigration(t *testing.T) {
 		t.Fatal("Migrate() against sabotaged database: want error, got nil")
 	}
 }
+
+// TestMigrateAcceptsThePoolParametersConnectAccepts holds the one DSN
+// property that has to be true in both halves of this package. pool_max_conns
+// is pgxpool's own parameter: Connect understands it, and the database/sql
+// driver does not - it forwards what it does not recognise to the server as a
+// runtime setting, which answers FATAL.
+//
+// Migrate runs FIRST at startup, so if it could not read the same DSN, adding
+// pool_max_conns would take the whole process down before anything else was
+// tried - and pool_max_conns is the only way to raise a pool that the
+// scheduler's capacity check may demand (T057).
+func TestMigrateAcceptsThePoolParametersConnectAccepts(t *testing.T) {
+	t.Parallel()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise this test")
+	}
+
+	withPool := url + "&pool_max_conns=8"
+	if err := db.Migrate(withPool); err != nil {
+		t.Fatalf("Migrate() refused a DSN carrying pool_max_conns: %v", err)
+	}
+	pool, err := db.Connect(context.Background(), withPool)
+	if err != nil {
+		t.Fatalf("Connect() refused the same DSN: %v", err)
+	}
+	defer pool.Close()
+	if got := pool.Config().MaxConns; got != 8 {
+		t.Errorf("the pool allows MaxConns=%d, want the 8 the DSN asked for", got)
+	}
+}
