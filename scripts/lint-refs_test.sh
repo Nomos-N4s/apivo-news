@@ -11,6 +11,11 @@
 #
 # Nothing here touches git. The lint judges names, which is what lets it run
 # before a branch has any commits on it.
+#
+# The two rules are proved separately. Rule 1 refuses a name nobody may use;
+# rule 2 refuses a name nobody has used, and a case that satisfies rule 2
+# while breaking rule 1 (`xcoder/cb-claude-fix`) is what keeps the second from
+# quietly standing in for the first.
 set -eu
 
 LINT=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/lint-refs.sh
@@ -163,6 +168,58 @@ expect_refused "one bad name among good ones" 1 \
 expect_refused "two bad names" 2 "claude/a" "xcoder/ok" "copilot/b"
 
 # ---------------------------------------------------------------------------
+# Rule 2: the convention. This is the half that catches the NEXT tool's
+# default - a prefix no blocklist has heard of yet.
+
+expect_refused "a prefix this repository does not use" 1 "feature/ingest-window"
+expect_refused "another plausible prefix" 1 "fix/pagination-cursor"
+expect_refused "no prefix at all" 1 "my-working-branch"
+expect_refused "the prefix without a slug" 1 "xcoder/"
+expect_refused "the prefix as a bare name" 1 "xcoder"
+expect_refused "a prefix that merely starts the same way" 1 "xcoder-experiments/thing"
+
+# A name breaking BOTH rules is one refusal, not two, and says both things.
+CASES=$((CASES + 1))
+run_case "claude/cb-nw-t056"
+if [ "$STATUS" -ne 1 ]; then
+    echo "FAIL: a name breaking both rules — expected exit 1, got $STATUS:"
+    indent
+    FAILS=1
+elif ! refused_count 1; then
+    echo "FAIL: a name breaking both rules was counted more than once:"
+    indent
+    FAILS=1
+elif ! printf '%s' "$OUT" | grep -q -F -e "assistant or vendor name"; then
+    echo "FAIL: a name breaking both rules did not report the first:"
+    indent
+    FAILS=1
+elif ! printf '%s' "$OUT" | grep -q -F -e "is not named"; then
+    echo "FAIL: a name breaking both rules did not report the second:"
+    indent
+    FAILS=1
+else
+    echo "ok: a name breaking both rules is refused once and reported twice"
+fi
+
+# ---------------------------------------------------------------------------
+# Fully qualified names. A pre-push hook is handed `refs/heads/<branch>` on
+# stdin, so both spellings have to be read the same way.
+
+expect_accepted "a fully qualified branch" "refs/heads/xcoder/cb-money"
+expect_accepted "the fully qualified trunk" "refs/heads/main"
+expect_refused "a fully qualified branch under a banned name" 1 \
+    "refs/heads/claude/cb-nw-t056"
+expect_refused "a fully qualified branch off convention" 1 \
+    "refs/heads/feature/ingest-window"
+
+# A tag is judged by rule 1 alone: `v1.2.3` is not `xcoder/<slug>` and never
+# will be. Rule 1 still reaches it, because a tag name is quoted in a release
+# just as a branch name is quoted in a merge.
+expect_accepted "a release tag" "refs/tags/v1.2.3"
+expect_accepted "a prerelease tag" "refs/tags/v2.0.0-rc.1"
+expect_refused "a tag carrying a banned name" 1 "refs/tags/v1.2.3-claude"
+
+# ---------------------------------------------------------------------------
 # What must NOT be refused. These decide whether the gate stays switched on:
 # a lint that refuses a legitimate branch gets disabled, and then nothing
 # checks anything.
@@ -182,8 +239,11 @@ expect_accepted "'ai' as a syllable inside ordinary words" "xcoder/retail-email-
 expect_accepted "'agent' meaning a poller, not an assistant" "xcoder/agent-poller-backoff"
 expect_accepted "'bot' meaning automation" "xcoder/release-bot-guard"
 
-# GitHub's own revert button builds a name from the branch it reverts.
+# Refs whose names nobody here chooses. Refusing one would mean refusing a
+# button in the GitHub UI, or a dependency update nobody can rename.
 expect_accepted "a revert branch GitHub generated" "revert-349-xcoder/cb-nw-t056"
+expect_accepted "a dependency bot's branch" "dependabot/go_modules/github.com/lib/pq-1.10.9"
+expect_accepted "the other dependency bot's branch" "renovate/go-1.x"
 
 # ---------------------------------------------------------------------------
 # The ways this lint could report success without judging anything.

@@ -37,13 +37,41 @@
 # could only fire after the history it was meant to prevent existed.
 #
 # ---------------------------------------------------------------------------
+# TWO RULES
+#
+#   1. No name carries an assistant's or a vendor's name. This is Principle I
+#      and it applies to every ref, branch or tag.
+#   2. Every branch is `xcoder/<slug>`, with `main` and the refs GitHub and
+#      the dependency bots generate as the only exceptions. This is the
+#      repository's own convention, followed 85 times before it was ever
+#      written down - which is exactly how a tool's default prefix leaked in
+#      unnoticed 24 more.
+#
+# Rule 2 is not a milder restatement of rule 1. Rule 1 refuses a name nobody
+# may use; rule 2 refuses a name nobody has USED, and that is the one that
+# catches the next tool's default - a prefix this blocklist has never heard
+# of. A blocklist can only refuse what somebody thought to write down.
+#
+# Rule 2 is about branches, so a name given as `refs/tags/...` is judged by
+# rule 1 alone: a release tag is `v1.2.3` and always will be.
+#
+# ---------------------------------------------------------------------------
 # Usage: lint-refs.sh <ref-name>...
+#
+# Names may be given bare (`xcoder/cb-money`, which is what
+# `github.head_ref` holds) or fully qualified (`refs/heads/xcoder/cb-money`,
+# which is what a pre-push hook is handed). Both are read the same way.
 #
 # Exit 0 when every name is acceptable, 1 when one is refused, and 2 when the
 # lint could not judge - no arguments, or an empty name. A run that examines
 # nothing is an error, never a pass: on a push event `github.head_ref` is the
 # empty string, and a gate that reports success on it is a gate that is off.
 set -eu
+
+# The one prefix this repository's branches use. A constant rather than a
+# pattern because there is exactly one, and a list of prefixes invites a
+# second.
+BRANCH_PREFIX='xcoder/'
 
 # The tokens that must never appear in a ref name.
 #
@@ -150,11 +178,43 @@ for ref in "$@"; do
         echo "::error::the ref name lint could not search the name it was given (grep exited $found); it went unjudged." >&2
         exit 2
     fi
+    bad=0
     if [ "$found" -eq 0 ]; then
-        status=1
-        refused=$((refused + 1))
+        bad=1
         printf '::error::the ref name "%s" carries an assistant or vendor name. A merged branch name is written verbatim into the merge commit, and Principle I forbids naming one there.\n' \
             "$(quote_untrusted "$ref")" >&2
+    fi
+
+    # Rule 2, branches only. `refs/tags/` is skipped rather than accepted:
+    # tags have their own naming rule (release_semver.sh owns it), and rule 1
+    # has already judged this one.
+    case "$ref" in
+        refs/tags/*) name='' ;;
+        refs/heads/*) name=${ref#refs/heads/} ;;
+        *) name=$ref ;;
+    esac
+
+    case "$name" in
+        # Nothing to judge: a tag, already handled above.
+        '') ;;
+        # The trunk.
+        main) ;;
+        # The convention. `?*` requires a slug: `xcoder/` alone names nothing.
+        "$BRANCH_PREFIX"?*) ;;
+        # Refs whose names nobody here chooses. GitHub's revert button builds
+        # `revert-<pr>-<branch>`, and the dependency bots build their own
+        # paths; refusing them would mean refusing a button in the UI.
+        revert-*|dependabot/*|renovate/*) ;;
+        *)
+            bad=1
+            printf '::error::the branch "%s" is not named "%s<slug>". Every branch here is, and "main" is the only exception.\n' \
+                "$(quote_untrusted "$ref")" "$BRANCH_PREFIX" >&2
+            ;;
+    esac
+
+    if [ "$bad" -ne 0 ]; then
+        status=1
+        refused=$((refused + 1))
     fi
 done
 
@@ -171,9 +231,11 @@ history and only a rewrite removes it:
   git push origin --delete <old-name>
 
 If a pull request is already open for the old branch, close it and open one
-from the renamed branch. Naming a vendor because the work integrates its API
-is not an exception: name the branch for the capability instead.
+from the renamed branch. Neither rule has an exception worth taking: naming a
+vendor because the work integrates its API is answered by naming the branch
+for the capability instead, and a prefix that is not `xcoder/` is answered by
+the rename above.
 EOF
-    echo "::error::ref names carrying an assistant or vendor name"
+    printf '::error::%d of %d ref name(s) refused\n' "$refused" "$examined"
     exit 1
 fi
