@@ -326,3 +326,104 @@ func TestConformanceReplayWithADifferentTransferConflicts(t *testing.T) {
 		}
 	})
 }
+
+// TestConformanceRefusesATransferThatDoesNotSumToZero is C-1 at the port
+// boundary: money is conserved, so a transfer whose postings do not net to
+// nothing is not a transfer. Every implementation refuses it wrapping
+// ErrUnbalanced, before any I/O, and nothing moves.
+//
+// C-1 is also checked inside the ledger, deliberately twice - but a port
+// that let an unbalanced transfer through would be relying on a check the
+// substrate is free to weaken, and one of the three keeps its postings on a
+// server this repository does not own.
+func TestConformanceRefusesATransferThatDoesNotSumToZero(t *testing.T) {
+	t.Parallel()
+
+	eachLedger(t, func(t *testing.T, ledger wallet.Ledger) {
+		ctx := context.Background()
+		house := ensure(t, ledger, conformHouse(), conformEUR)
+		member := ensure(t, ledger, conformMember(wallet.StagePending), conformEUR)
+
+		_, err := ledger.Post(ctx, wallet.Transfer{
+			IdempotencyKey: "conformance-unbalanced-" + uuid.NewString(),
+			Postings: []wallet.Posting{
+				{Account: house, Amount: amount(-2500, conformEUR)},
+				{Account: member, Amount: amount(2400, conformEUR)},
+			},
+		})
+		if !errors.Is(err, wallet.ErrUnbalanced) {
+			t.Fatalf("posting 100 EUR of money from nowhere gave %v, want one wrapping ErrUnbalanced", err)
+		}
+
+		if held := balance(t, ledger, member, conformEUR); !held.Equal(amount(0, conformEUR)) {
+			t.Errorf("the member holds %s after a refused transfer, want nothing", held)
+		}
+		if held := balance(t, ledger, house, conformEUR); !held.Equal(amount(0, conformEUR)) {
+			t.Errorf("the house holds %s after a refused transfer, want nothing", held)
+		}
+	})
+}
+
+// TestConformanceRefusesCurrenciesNettingAgainstEachOther is C-6: two
+// currencies never cancel. A transfer whose euros and pounds happen to sum
+// to zero across the pair balances in neither, and no implementation may
+// convert between them, pick a rate, or record it anyway.
+//
+// This is the shape a rate would have to sneak in through, so the suite
+// asks for it explicitly rather than trusting that nobody would.
+func TestConformanceRefusesCurrenciesNettingAgainstEachOther(t *testing.T) {
+	t.Parallel()
+
+	eachLedger(t, func(t *testing.T, ledger wallet.Ledger) {
+		ctx := context.Background()
+		euros := ensure(t, ledger, conformHouse(), conformEUR)
+		pounds := ensure(t, ledger, conformHouse(), conformGBP)
+
+		_, err := ledger.Post(ctx, wallet.Transfer{
+			IdempotencyKey: "conformance-mixed-" + uuid.NewString(),
+			Postings: []wallet.Posting{
+				{Account: euros, Amount: amount(-2500, conformEUR)},
+				{Account: pounds, Amount: amount(2500, conformGBP)},
+			},
+		})
+		if !errors.Is(err, wallet.ErrMixedCurrency) {
+			t.Fatalf("posting euros against pounds gave %v, want one wrapping ErrMixedCurrency", err)
+		}
+
+		if held := balance(t, ledger, euros, conformEUR); !held.Equal(amount(0, conformEUR)) {
+			t.Errorf("the euro account holds %s after a refused transfer, want nothing", held)
+		}
+		if held := balance(t, ledger, pounds, conformGBP); !held.Equal(amount(0, conformGBP)) {
+			t.Errorf("the pound account holds %s after a refused transfer, want nothing", held)
+		}
+	})
+}
+
+// TestConformanceRefusesAPostingInTheWrongCurrency is the other way a rate
+// could enter: an account holds one currency by definition, so money of
+// another kind has no meaning on it. No implementation may convert the
+// amount or record it under the account's own currency instead.
+func TestConformanceRefusesAPostingInTheWrongCurrency(t *testing.T) {
+	t.Parallel()
+
+	eachLedger(t, func(t *testing.T, ledger wallet.Ledger) {
+		ctx := context.Background()
+		house := ensure(t, ledger, conformHouse(), conformEUR)
+		member := ensure(t, ledger, conformMember(wallet.StagePending), conformEUR)
+
+		_, err := ledger.Post(ctx, wallet.Transfer{
+			IdempotencyKey: "conformance-wrong-currency-" + uuid.NewString(),
+			Postings: []wallet.Posting{
+				{Account: house, Amount: amount(-2500, conformGBP)},
+				{Account: member, Amount: amount(2500, conformGBP)},
+			},
+		})
+		if !errors.Is(err, money.ErrCurrencyMismatch) {
+			t.Fatalf("posting pounds onto euro accounts gave %v, want one wrapping money.ErrCurrencyMismatch", err)
+		}
+
+		if held := balance(t, ledger, member, conformEUR); !held.Equal(amount(0, conformEUR)) {
+			t.Errorf("the member holds %s after a refused transfer, want nothing", held)
+		}
+	})
+}
