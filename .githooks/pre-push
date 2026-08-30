@@ -1,0 +1,66 @@
+#!/bin/sh
+# Refuse a ref name before it ever reaches the remote.
+#
+# This is the earliest of the four points at which a branch name is judged,
+# and the only one where a rename is still free: nothing has been pushed, no
+# pull request exists, and no merge commit quoting the name has been written.
+# By the time CI sees the name a pull request is already open under it; by the
+# time `main` sees it the name is permanent.
+#
+# It is a convenience, not the gate. A hook can be skipped with --no-verify,
+# and one in a container that no longer exists proves nothing about a branch
+# that is already pushed - which is why scripts/lint-refs.sh also runs in the
+# commit-hygiene job, on the head branch and on the ref names in the range's
+# commit subjects. This hook exists to make the mistake cheap to fix, not to
+# be the reason it cannot be made.
+#
+# Wired by `git config core.hooksPath .githooks`, which
+# .claude/hooks/session-start.sh sets at every session start.
+#
+# git hands a pre-push hook one line per ref on stdin:
+#
+#     <local ref> <local sha> <remote ref> <remote sha>
+#
+# The REMOTE ref is what is judged: that is the name the remote will carry,
+# and it is the name a merge commit will later quote. A local branch pushed
+# under a different name is judged by the name it lands under.
+set -eu
+
+# Resolved from the hook's own path rather than from the working directory,
+# so it holds under `core.hooksPath` whether that is set to a relative path or
+# an absolute one, and inside a worktree.
+#
+# Deliberately not `$(cd … && pwd)`: under `set -e` a command substitution
+# that fails takes the assignment - and the whole hook - down with it, exit 1
+# and not a word printed. The push would be refused for a reason nobody could
+# read, which is the failure this branch of the hook exists to avoid.
+LINT="$(dirname -- "$0")/../scripts/lint-refs.sh"
+if [ ! -f "$LINT" ]; then
+    echo "pre-push: scripts/lint-refs.sh is missing, so ref names cannot be judged." >&2
+    echo "pre-push: restore it or push with --no-verify, but do not assume the name is clean." >&2
+    exit 1
+fi
+
+# Built as positional arguments rather than a string: a ref name may not
+# contain a space, but a gate that would break if one did is a gate written
+# on an assumption nobody restated.
+# The two fields this hook does not use are read into `_` rather than named:
+# a name shellcheck cannot see used is a name it reports, and a suppression
+# comment would hide the next one that matters.
+set --
+while read -r _ local_sha remote_ref _; do
+    # A deletion carries an all-zero LOCAL sha and `(delete)` as the local
+    # ref. Deleting a badly named branch is the remedy this lint asks for, so
+    # refusing it would leave the branch there forever.
+    case "$local_sha" in
+        *[!0]*) ;;
+        *) continue ;;
+    esac
+    [ -n "$remote_ref" ] || continue
+    set -- "$@" "$remote_ref"
+done
+
+# Nothing to judge - an up-to-date push, or a push of deletions only.
+[ "$#" -gt 0 ] || exit 0
+
+exec sh "$LINT" "$@"
