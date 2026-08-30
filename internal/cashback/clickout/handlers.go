@@ -136,7 +136,10 @@ func (h *Handler) createClickOut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issued, err := h.clickouts.Issue(r.Context(), memberFrom(r.Context()).ID, offerID)
+	issued, err := h.clickouts.Issue(r.Context(), Request{
+		Member:  memberFrom(r.Context()).ID,
+		OfferID: offerID,
+	})
 	switch {
 	// The band is not published at this moment - expired, not yet started,
 	// or with an inactive leg in its chain. A member looking at a stale page
