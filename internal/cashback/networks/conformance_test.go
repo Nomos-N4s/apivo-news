@@ -47,6 +47,8 @@ package networks_test
 import (
 	"errors"
 	"iter"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -568,6 +570,105 @@ func TestConformanceAWindowIsJudgedBeforeTheNetworkIsTouched(t *testing.T) {
 		}
 		if errors.Is(err, networks.ErrNetworkUnavailable) {
 			t.Errorf("the adapter blamed the network for a window it could never answer: %v", err)
+		}
+	})
+}
+
+// conformIssuedRef mints a reference of the shape the click table requires:
+// URL-safe and long enough to be unguessable. It is built from a uuid rather
+// than written down so that two scenarios running at once never compare
+// against each other's.
+func conformIssuedRef(t *testing.T) networks.IssuedClickRef {
+	t.Helper()
+	ref, err := networks.NewIssuedClickRef(strings.ReplaceAll(uuid.NewString(), "-", ""))
+	if err != nil {
+		t.Fatalf("minting a click reference: %v", err)
+	}
+	return ref
+}
+
+// TestConformanceADeeplinkCarriesTheReferenceBack is contract rule 5
+// (FR-021), and the one failure on this list a member feels directly.
+//
+// A deeplink that lost the reference still redirects. The member reaches the
+// retailer, buys, and the commission is earned - and nothing anywhere can say
+// whose purchase it was, so nobody is credited and nothing looks wrong. That
+// is why the round trip is asserted rather than the URL: what an adapter
+// builds is its network's business, and the only thing this port promises is
+// that the reference comes back out of it under the name the route said.
+func TestConformanceADeeplinkCarriesTheReferenceBack(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		adapter := a.open(t)
+		target := a.deeplink(t, adapter)
+		ref := conformIssuedRef(t)
+
+		built, err := adapter.BuildDeeplink(t.Context(), target, ref)
+		if err != nil {
+			t.Fatalf("BuildDeeplink(): %v", err)
+		}
+
+		parsed, err := url.Parse(built)
+		if err != nil {
+			t.Fatalf("BuildDeeplink() returned something that is not a URL: %v", err)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			t.Errorf("BuildDeeplink() returned %q, which is not something a Location header can carry", built)
+		}
+		if parsed.Host == "" {
+			t.Errorf("BuildDeeplink() returned %q, which is relative; a redirect needs an absolute URL", built)
+		}
+		if carried := parsed.Query().Get(target.ClickRefParam); carried != ref.Ref() {
+			t.Errorf("the deeplink carries %s=%q, want %q; a redirect that loses the reference earns the commission and credits nobody",
+				target.ClickRefParam, carried, ref.Ref())
+		}
+	})
+}
+
+// TestConformanceADeeplinkRefusesInputsItCannotUse is the other half of rule
+// 5: a refusal rather than a half-built URL, and a refusal that says which
+// kind of problem it is.
+//
+// Everything here is deterministic - our own routing bug, or a route somebody
+// has to fix - so every one wraps both ErrDeeplinkNotFormed and
+// ErrDeeplinkInputsRefused. The pair is what decides whether the alert points
+// at a network or at us, and whether the offer is one to stop publishing.
+func TestConformanceADeeplinkRefusesInputsItCannotUse(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		adapter := a.open(t)
+		ref := conformIssuedRef(t)
+
+		relative := a.deeplink(t, adapter)
+		relative.Template = "/c/9f3"
+
+		elsewhere := a.deeplink(t, adapter)
+		elsewhere.NetworkID = networks.NetworkID("conformance-other-network")
+
+		refused := map[string]struct {
+			target networks.DeeplinkTarget
+			ref    networks.IssuedClickRef
+		}{
+			"a template that is not an absolute URL": {target: relative, ref: ref},
+			"a route published on another network":   {target: elsewhere, ref: ref},
+			"a reference that was never minted":      {target: a.deeplink(t, adapter), ref: networks.IssuedClickRef{}},
+		}
+		for name, refusal := range refused {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				built, err := adapter.BuildDeeplink(t.Context(), refusal.target, refusal.ref)
+				if !errors.Is(err, networks.ErrDeeplinkNotFormed) {
+					t.Fatalf("BuildDeeplink() error = %v, want one wrapping ErrDeeplinkNotFormed", err)
+				}
+				if !errors.Is(err, networks.ErrDeeplinkInputsRefused) {
+					t.Errorf("BuildDeeplink() error = %v, want one wrapping ErrDeeplinkInputsRefused too; without it an operator cannot tell a route to fix from a network having a bad day", err)
+				}
+				if built != "" {
+					t.Errorf("BuildDeeplink() refused and still returned %q; a half-built URL still redirects, and the member is never credited", built)
+				}
+			})
 		}
 	})
 }
