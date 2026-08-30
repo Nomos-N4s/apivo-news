@@ -367,3 +367,49 @@ func TestEveryRegisteredRouteIsReachable(t *testing.T) {
 		})
 	}
 }
+
+// TestAClickRefusedByTheRuleIsA429ThatSaysWhenToComeBack is US7 scenario 1
+// at the endpoint: a plain message the member can act on, and a Retry-After
+// they can obey. Nothing is minted and nothing is recorded, so waiting and
+// trying again leaves them exactly where they were.
+func TestAClickRefusedByTheRuleIsA429ThatSaysWhenToComeBack(t *testing.T) {
+	t.Parallel()
+
+	offer := anOffer()
+	offers, clicks := &fakeOffers{offer: offer}, &fakeStore{echo: true}
+	// Ninety seconds' worth: the header is whole seconds, and a fractional
+	// one has to round UP or a client that obeyed it would be refused again.
+	rates := &fakeRates{byAccount: counted(60, clickedAt.Add(-clickout.ClickWindow).Add(90500*time.Millisecond))}
+	limit, err := clickout.NewLimiter(rates, clickout.ClickRule{PerMember: 60})
+	if err != nil {
+		t.Fatalf("NewLimiter(): %v", err)
+	}
+	h := clickout.NewHandler(discardLogger(),
+		issuerWith(t, offers, clicks, &fakeDeeplinks{url: "https://x.test/go"}, clickout.WithLimiter(limit)),
+		stubMemberAuth{member: aMember})
+
+	rec := post(t, h, `{"offer_id":"`+offer.ID.String()+`"}`, "Bearer t")
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusTooManyRequests, rec.Body.String())
+	}
+	if got := rec.Header().Get("Retry-After"); got != "91" {
+		t.Errorf("Retry-After = %q, want %q - whole seconds, rounded up", got, "91")
+	}
+	// The rule is the cheapest refusal there is, and it protects everything
+	// after it: a refused click reads no catalogue and writes no row.
+	if offers.reads != 0 || clicks.inserts != 0 {
+		t.Errorf("a refused click read %d offer(s) and recorded %d click(s), want none", offers.reads, clicks.inserts)
+	}
+	status, detail := problemOf(t, rec)
+	if status != http.StatusTooManyRequests {
+		t.Errorf("the problem says %d, want %d", status, http.StatusTooManyRequests)
+	}
+	// Plain: nothing about rules, counts or windows, which a member can do
+	// nothing with and which tells an abuser what the limit is.
+	for _, leak := range []string{"rule", "60", "window"} {
+		if strings.Contains(strings.ToLower(detail), leak) {
+			t.Errorf("detail = %q, which tells the caller about %q", detail, leak)
+		}
+	}
+}
