@@ -170,3 +170,114 @@ func (q *Queries) InsertNetworkTransaction(ctx context.Context, arg InsertNetwor
 	err := row.Scan(&i.ID, &i.ContentDigest, &i.RetrievedAt)
 	return i, err
 }
+
+const insertNetworkTransactionIfNew = `-- name: InsertNetworkTransactionIfNew :one
+insert into cashback.network_transaction (
+    network_id,
+    network_account_id,
+    external_id,
+    click_ref,
+    status_raw,
+    status,
+    sale_amount_minor,
+    commission_minor,
+    currency,
+    transacted_at,
+    retrieved_at,
+    query_window_start,
+    query_window_end,
+    raw_payload,
+    supersedes_id
+) values (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13,
+    $14,
+    $15
+)
+on conflict on constraint network_transaction_unique_report do nothing
+returning id, content_digest, retrieved_at
+`
+
+type InsertNetworkTransactionIfNewParams struct {
+	NetworkID        string
+	NetworkAccountID pgtype.UUID
+	ExternalID       string
+	ClickRef         pgtype.Text
+	StatusRaw        string
+	Status           string
+	SaleAmountMinor  int64
+	CommissionMinor  int64
+	Currency         string
+	TransactedAt     pgtype.Timestamptz
+	RetrievedAt      pgtype.Timestamptz
+	QueryWindowStart pgtype.Timestamptz
+	QueryWindowEnd   pgtype.Timestamptz
+	RawPayload       []byte
+	SupersedesID     pgtype.UUID
+}
+
+type InsertNetworkTransactionIfNewRow struct {
+	ID            pgtype.UUID
+	ContentDigest string
+	RetrievedAt   pgtype.Timestamptz
+}
+
+// The same insert, with the one conflict that is not an error swallowed
+// (T053, US2 scenario 3). No rows back means the network re-reported a
+// transaction whose facts have not changed, and the row for it is already
+// stored.
+//
+// ON CONFLICT rather than catching the violation in Go, and that is not a
+// style choice. A poller persists a whole window and advances its durable
+// cursor only once the window is written (FR-031), so every report of one
+// window shares a transaction - and in Postgres a failed statement aborts
+// the transaction it ran in. A raw unique violation on the third of forty
+// reports would take the other thirty-seven down with it and leave the
+// cursor where it was, so the window would be re-read forever.
+//
+// The constraint is NAMED, and naming it is the whole correctness of this
+// query. An unchanged re-report violates two rules at once - the report is
+// already stored (unique_report) and it would be a second root for a
+// transaction that has one (one_root) - and only the first of those is
+// harmless. A bare `on conflict do nothing` would swallow both, so a report
+// whose status HAD changed, written as a root by mistake, would vanish
+// silently: the member's confirmed transaction would stay pending forever
+// with nothing logged. Targeting unique_report leaves one_root raising,
+// which is what says "this should have superseded something" (T054).
+//
+// Verified against the server rather than reasoned about: with both rules
+// violated, Postgres takes this ON CONFLICT path and the transaction stays
+// usable; with only one_root violated, it still raises.
+func (q *Queries) InsertNetworkTransactionIfNew(ctx context.Context, arg InsertNetworkTransactionIfNewParams) (InsertNetworkTransactionIfNewRow, error) {
+	row := q.db.QueryRow(ctx, insertNetworkTransactionIfNew,
+		arg.NetworkID,
+		arg.NetworkAccountID,
+		arg.ExternalID,
+		arg.ClickRef,
+		arg.StatusRaw,
+		arg.Status,
+		arg.SaleAmountMinor,
+		arg.CommissionMinor,
+		arg.Currency,
+		arg.TransactedAt,
+		arg.RetrievedAt,
+		arg.QueryWindowStart,
+		arg.QueryWindowEnd,
+		arg.RawPayload,
+		arg.SupersedesID,
+	)
+	var i InsertNetworkTransactionIfNewRow
+	err := row.Scan(&i.ID, &i.ContentDigest, &i.RetrievedAt)
+	return i, err
+}
