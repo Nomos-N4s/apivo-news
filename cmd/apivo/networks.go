@@ -52,24 +52,30 @@ type ingestionOff struct{ reason string }
 
 func (e *ingestionOff) Error() string { return "network ingestion is off: " + e.reason }
 
-// newNetworkSweeps builds the scheduled polls for the configured publisher
-// account.
+// connectNetwork resolves the one network this deployment integrates: the
+// adapter NETWORK_DRIVER names, and the publisher account row it acts for.
+//
+// It is a step of its own because two things need it and neither should look
+// it up separately. The poller acts for the account; the click-out endpoint
+// builds its redirects with the same adapter (FR-021), and a deployment
+// where those two disagreed about which network it is connected to would
+// issue clicks one code path could not reconcile.
 //
 // It returns an error wrapping [ingestionOff] when the deployment has not
-// been told enough to poll, and an ordinary error when it has been told
-// something wrong - an adapter this binary does not have, an account row that
-// cannot be read. The first is a state to report and carry on from; the
-// second is a deployment that would never work and should not start.
-func newNetworkSweeps(ctx context.Context, log *slog.Logger, cfg config.NetworkConfig, db pollerDB) (*networks.Sweeps, error) {
+// been told enough, and an ordinary error when it has been told something
+// wrong - an adapter this binary does not have, an account row that cannot
+// be read. The first is a state to report and carry on from; the second is a
+// deployment that would never work and should not start.
+func connectNetwork(ctx context.Context, cfg config.NetworkConfig, db pollerDB) (networks.Network, networks.ConnectedAccount, error) {
 	switch {
 	case cfg.Driver == "":
-		return nil, &ingestionOff{reason: "NETWORK_DRIVER names no adapter"}
+		return nil, networks.ConnectedAccount{}, &ingestionOff{reason: "NETWORK_DRIVER names no adapter"}
 	case cfg.AccountID == "":
 		// Required here even for the fixture adapter, which needs no
 		// credentials: the cursors live on a network_account row, and this
 		// is the only value that says which one. An adapter that needs no
 		// credential still polls on behalf of somebody.
-		return nil, &ingestionOff{reason: "NETWORK_ACCOUNT_ID names no publisher account at " + strconv.Quote(cfg.Driver)}
+		return nil, networks.ConnectedAccount{}, &ingestionOff{reason: "NETWORK_ACCOUNT_ID names no publisher account at " + strconv.Quote(cfg.Driver)}
 	}
 
 	connected, err := networks.FindPublisherAccount(ctx, db, networks.NetworkID(cfg.Driver), cfg.AccountID)
@@ -79,16 +85,25 @@ func newNetworkSweeps(ctx context.Context, log *slog.Logger, cfg config.NetworkC
 		// is an operator action against the database, and a deployment
 		// configured ahead of it is an ordinary order of events rather than
 		// a broken build.
-		return nil, &ingestionOff{reason: fmt.Sprintf("no publisher account %s is connected at %s",
+		return nil, networks.ConnectedAccount{}, &ingestionOff{reason: fmt.Sprintf("no publisher account %s is connected at %s",
 			strconv.Quote(cfg.AccountID), strconv.Quote(cfg.Driver))}
 	case err != nil:
-		return nil, err
+		return nil, networks.ConnectedAccount{}, err
 	}
 
 	adapter, err := networkAdapter(cfg.Driver, connected.Account)
 	if err != nil {
-		return nil, err
+		return nil, networks.ConnectedAccount{}, err
 	}
+	return adapter, connected, nil
+}
+
+// newNetworkSweeps builds the scheduled polls for the connected publisher
+// account.
+//
+// The adapter and the account row come from [connectNetwork], so what is
+// left here is only the poller and the two jobs over it.
+func newNetworkSweeps(ctx context.Context, log *slog.Logger, adapter networks.Network, connected networks.ConnectedAccount, db pollerDB) (*networks.Sweeps, error) {
 	poller, err := networks.NewPoller(db)
 	if err != nil {
 		return nil, err

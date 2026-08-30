@@ -26,6 +26,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Nomos-N4s/apivo-news/internal/account"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/catalogue"
+	cataloguestore "github.com/Nomos-N4s/apivo-news/internal/cashback/catalogue/store"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/clickout"
+	clickoutstore "github.com/Nomos-N4s/apivo-news/internal/cashback/clickout/store"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
@@ -75,6 +79,11 @@ const accountPrefix = "/api/v1/account/"
 // The module owns the string; naming it here would be a second copy, one
 // deployment away from a subtree whose catch-all nothing reaches.
 const opsPrefix = ops.Prefix
+
+// clickoutPrefix is the click-out endpoint's path. The module owns the
+// string; naming it here would be a second copy, one deployment away from a
+// path whose catch-all nothing reaches.
+const clickoutPrefix = clickout.Prefix
 
 // readerPrefix is where the content module's route table is mounted. It
 // covers the whole API namespace because the module also answers what nobody
@@ -131,6 +140,30 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 	}
 	defer pool.Close()
 
+	// The one network this deployment integrates, resolved once. Two things
+	// need it and neither may look it up separately: the poller acts for the
+	// account, and the click-out endpoint builds its redirects with the same
+	// adapter (FR-021). A deployment where those disagreed about which
+	// network it is connected to would issue clicks one code path could not
+	// reconcile. It is only asked for when cashback is on, because with
+	// cashback off neither consumer exists.
+	var (
+		adapter    networks.Network
+		connected  networks.ConnectedAccount
+		networkOff *ingestionOff
+	)
+	if cfg.Cashback.Enabled {
+		var err error
+		adapter, connected, err = connectNetwork(ctx, cfg.Cashback.Network, pool)
+		switch {
+		case errors.As(err, &networkOff):
+			log.ErrorContext(ctx, "NO AFFILIATE NETWORK IS CONNECTED: "+networkOff.reason+
+				". Cashback is enabled, so nothing will ingest what a network reports and every click-out will be refused")
+		case err != nil:
+			return err
+		}
+	}
+
 	var routes []platformhttp.Route
 	if cfg.JWKSURL == "" {
 		// Without a verification endpoint no bearer token can be checked, so
@@ -145,7 +178,7 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// rather than something to deduce from a 404 later.
 		log.ErrorContext(ctx, "JWKS_URL is not set: every /api/v1/editorial/ and /api/v1/account/ route is UNMOUNTED and will answer 404; reader endpoints are unaffected. Set JWKS_URL to the auth provider JWKS endpoint to enable them")
 	} else {
-		authenticated, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, log, pool)
+		authenticated, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, log, pool, adapter)
 		if err != nil {
 			return err
 		}
@@ -275,12 +308,10 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// that runs with ingestion off rather than not at all. It says so
 		// at ERROR, because "cashback is mounted and nothing is ingesting
 		// what the networks report" is a state somebody has to fix.
-		sweeps, err := newNetworkSweeps(ctx, log, cfg.Cashback.Network, pool)
-		var off *ingestionOff
-		switch {
-		case errors.As(err, &off):
-			log.ErrorContext(ctx, "NO AFFILIATE NETWORK IS BEING POLLED: "+off.reason+
-				". Cashback is enabled, so nothing will ingest what a network reports and no member can be credited")
+		switch sweeps, err := newNetworkSweeps(ctx, log, adapter, connected, pool); {
+		// Already reported above, where the network was resolved: saying it
+		// twice would read as two different problems.
+		case networkOff != nil:
 		case err != nil:
 			return err
 		default:
@@ -345,7 +376,7 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 
 // newAuthenticatedRoutes wires every module that needs a verified bearer
 // token: editorial, account, and - when cashback is on - the operator
-// surface.
+// surface and the member click-out.
 //
 // ONE verifier, shared. Each verifier keeps a background loop refreshing
 // the JWKS, so building one per module would mean two loops fetching the
@@ -358,10 +389,17 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 // somebody is signed in - but neither can answer anything without a token
 // that verifies, so the condition for mounting is the same condition.
 //
-// The operator surface needs that token AND the feature flag: with
-// CASHBACK_ENABLED off, cashback does not exist in this process, and a
-// queue of work nothing is filling is not a surface to serve.
-func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool) ([]platformhttp.Route, func(), error) {
+// The two cashback surfaces need that token AND the feature flag: with
+// CASHBACK_ENABLED off, cashback does not exist in this process, and a queue
+// of work nothing is filling is not a surface to serve.
+//
+// The adapter is whatever [connectNetwork] resolved, and may be nil: a
+// deployment with cashback on and no network connected still SERVES the
+// click-out endpoint, and refuses each request with the deterministic
+// refusal that names the network nothing can build a redirect for. Not
+// mounting it instead would answer 404, which tells a frontend the API does
+// not exist here when it does and is merely unable to send anybody anywhere.
+func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool, adapter networks.Network) ([]platformhttp.Route, func(), error) {
 	verifier, err := identity.NewVerifier(ctx, identity.VerifierConfig{
 		JWKSURL:  cfg.JWKSURL,
 		Audience: cfg.JWTAudience,
@@ -394,10 +432,73 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, err
 	}
-	return append(routes, platformhttp.Route{
-		Pattern: opsPrefix,
-		Handler: ops.NewHandler(log, opsStore, newOperatorAuth(ids, roles)),
-	}), stop, nil
+	clickouts, err := newClickOuts(pool, adapter)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	return append(routes,
+		platformhttp.Route{
+			Pattern: opsPrefix,
+			Handler: ops.NewHandler(log, opsStore, newOperatorAuth(ids, roles)),
+		},
+		// Mounted at the path AND at its subtree, so a stray sub-path is
+		// answered in problem+json by the module rather than redirected by
+		// ServeMux or handed to whatever else claims the namespace.
+		platformhttp.Route{
+			Pattern: clickoutPrefix,
+			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}),
+		},
+		platformhttp.Route{
+			Pattern: clickoutPrefix + "/",
+			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}),
+		},
+	), stop, nil
+}
+
+// newClickOuts assembles the click-out service: the catalogue read that says
+// what a band is, the recorder that writes the click, and the adapters that
+// can build a redirect.
+//
+// A nil adapter is passed through as an EMPTY registry rather than refused.
+// The endpoint is then served and every request answers 502 naming the
+// network nothing can build a redirect for - which is the truth, and is
+// findable, where a 404 would say the API is not here at all.
+func newClickOuts(pool *pgxpool.Pool, adapter networks.Network) (*clickout.ClickOuts, error) {
+	clicks, err := clickout.NewClicks(clickoutstore.New(pool))
+	if err != nil {
+		return nil, err
+	}
+	var adapters []clickout.Redirector
+	if adapter != nil {
+		adapters = append(adapters, adapter)
+	}
+	deeplinks, err := clickout.NewDeeplinks(adapters...)
+	if err != nil {
+		return nil, err
+	}
+	return clickout.NewClickOuts(catalogue.NewOfferReader(cataloguestore.New(pool)), clicks, deeplinks)
+}
+
+// memberAuth adapts the identity module to the click-out module's
+// consumer-defined MemberAuthenticator. Deliberately the thinnest of the
+// three adapters here: there is no role to require, because every route in
+// that module acts on the caller's own click and a reader owns theirs
+// exactly as an editor owns theirs. What it must NOT do is let a request
+// through without an account - that is FR-023.
+type memberAuth struct {
+	ids *identity.Service
+}
+
+func (a memberAuth) AuthenticateMember(ctx context.Context, token string) (clickout.Member, error) {
+	id, err := a.ids.Authenticate(ctx, token)
+	switch {
+	case errors.Is(err, identity.ErrInvalidToken), errors.Is(err, identity.ErrUnknownAccount):
+		return clickout.Member{}, fmt.Errorf("%w: %w", clickout.ErrUnauthenticated, err)
+	case err != nil:
+		return clickout.Member{}, err
+	}
+	return clickout.Member{ID: id.Subject}, nil
 }
 
 // newOperatorAuth builds the identity-to-ops adapter. It is the single

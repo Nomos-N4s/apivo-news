@@ -71,7 +71,7 @@ func TestOperatorWiringAgainstSchema(t *testing.T) {
 
 	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{Enabled: true}},
-		discardLogger(), pool)
+		discardLogger(), pool, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestTheOperatorSurfaceIsUnmountedWithoutTheFlag(t *testing.T) {
 
 	jwks := newJWKSServer(t, newSigningKey(t))
 	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
-		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool)
+		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestTheOperatorSurfaceAnswersProblemJSON(t *testing.T) {
 	jwks := newJWKSServer(t, key)
 	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{Enabled: true}},
-		discardLogger(), pool)
+		discardLogger(), pool, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}

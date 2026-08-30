@@ -37,6 +37,10 @@
     {
       "name": "cashback-ops",
       "description": "Cashback operator queues and decisions. Bearer JWT plus the operator role on the account behind the token - the same authority the database requires of a payout approver (migration 0019)."
+    },
+    {
+      "name": "cashback-member",
+      "description": "A signed-in member's own cashback actions. Bearer JWT and nothing more: every route acts on the caller's own click, so there is no role that could be insufficient - only an account, which FR-023 requires."
     }
   ],
   "paths": {
@@ -259,6 +263,79 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/cashback/clickouts": {
+      "post": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "createClickOut",
+        "summary": "Create a tracked click and get the redirect target",
+        "description": "Records the click and its rate snapshot, then answers where to send the member (FR-020, FR-021).\n\nThe click is committed before this response is written, and nothing is committed when the redirect cannot be built - so a 502 here means it is safe to try again. An anonymous click is never created: without a usable token the request is refused before anything is read (FR-023).\n\nThe whole path is unmounted when cashback is off, and then answers 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewClickOut"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The tracked redirect.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClickOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A body that is not this endpoint's shape, or an offer_id that is missing or not a UUID."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The offer is not published at this moment: expired, not yet started, or its retailer is no longer active."
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No redirect could be built for this offer's network, so nothing was recorded and trying again later is safe."
           }
         }
       }
@@ -2876,6 +2953,51 @@
             "type": "string",
             "format": "date-time",
             "description": "Stamped by the database, not supplied by the caller."
+          }
+        }
+      },
+      "NewClickOut": {
+        "type": "object",
+        "description": "Which published band the member is clicking through. The member comes from the token and the rate from the offer: a body that could name either would be a body that could claim somebody else's click or a rate nobody published.",
+        "required": [
+          "offer_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "offer_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The rate band to click through."
+          }
+        }
+      },
+      "ClickOut": {
+        "type": "object",
+        "description": "The tracked redirect. The click row and its rate snapshot are committed before this is written (FR-020), so the purchase that follows can always be matched back.",
+        "required": [
+          "click_ref",
+          "redirect_url",
+          "expires_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "click_ref": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{22,}$",
+            "description": "The unguessable reference the network will echo back against the purchase, and the value every reported transaction is matched on (FR-020, FR-021). Returned so a support conversation can quote the same value the evidence carries."
+          },
+          "redirect_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Where to send the member. Absolute, http or https."
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the rate band this click was issued against stops being published, or null for a band with no published end.\n\nAbout the OFFER, not the redirect: the credit this click earns is governed by the snapshot taken when it was issued, whatever happens to the band afterwards (FR-013), and no network expires a deeplink. It is the same window whose end makes a later click-out answer 409."
           }
         }
       }
