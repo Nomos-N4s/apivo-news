@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Nomos-N4s/apivo-news/internal/account"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
 	"github.com/Nomos-N4s/apivo-news/internal/identity"
@@ -34,6 +35,7 @@ import (
 	platformdb "github.com/Nomos-N4s/apivo-news/internal/platform/db"
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/logging"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/scheduler"
 	"github.com/Nomos-N4s/apivo-news/internal/translation"
 	"github.com/Nomos-N4s/apivo-news/internal/translation/providers/openaicompat"
 )
@@ -222,6 +224,67 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 			"prompt_version", translation.CurrentPromptVersion,
 			"article_ceiling_microusd", tc.ArticleCeilingMicroUSD,
 			"monthly_cap_microusd", tc.MonthlyCapMicroUSD)
+	}
+
+	// The continuous C-1 zero-sum check runs beside the poll and translation
+	// loops, in the same style and under the same lifetime: the deferred
+	// wait holds serve open until the scheduler has returned, so the pool
+	// its job reads with is never closed under it (the deferred pool.Close
+	// above runs after this defer, LIFO). It is gated exactly as the
+	// product is - CASHBACK_ENABLED off means cashback does not exist in
+	// this process, and neither does its watchdog - and on nothing else:
+	// the check's cadence is the wallet package's own constant, because
+	// the one continuous verification of C-1 (ADR-0002, SC-003) is not a
+	// tuning knob and gets no off switch. The check itself is registered
+	// in the wallet package (T046): this block gives it a scheduler, a
+	// lifetime, and the one fact only the composition root holds - which
+	// schema its ledger driver implies.
+	if cfg.Cashback.Enabled {
+		// LEDGER_DRIVER=postgres keeps the exit-route ledger in this
+		// database's own `ledger` schema (0022), which 0020's `blnk`
+		// default never resolves: a check left on the default would sum
+		// nothing over the one ledger it is guaranteed to share a database
+		// with, and pass vacuously while that ledger drifts. The other
+		// drivers stay on the default, which is right both when Blnk
+		// shares the database and when no ledger is co-located at all.
+		var ledgerSchema string
+		if cfg.Cashback.LedgerDriver == config.LedgerDriverPostgres {
+			ledgerSchema = "ledger"
+		}
+		locker := scheduler.NewAdvisoryLocker(pool, scheduler.LockerConfig{})
+		jobs := scheduler.New(log, locker, scheduler.Config{})
+		if err := wallet.NewZeroSumCheck(log, pool, ledgerSchema).Register(jobs); err != nil {
+			return err
+		}
+		// The same refusal Run makes first, made here where it can still
+		// fail the deployment: from inside the goroutine below, a pool too
+		// small for its jobs would be one ERROR line under an already
+		// printed "started", and the process would then serve its whole
+		// life holding money with C-1 unwatched. One job is registered
+		// above; a second Register must raise this count with it - Run
+		// re-checks with the true count either way, but only this
+		// synchronous copy can refuse to start.
+		if err := locker.CheckCapacity(1); err != nil {
+			return err
+		}
+		jobsCtx, stopJobs := context.WithCancel(ctx)
+		jobsDone := make(chan struct{})
+		go func() {
+			defer close(jobsDone)
+			// With capacity proven above, Run has no way back before
+			// jobsCtx ends: nil is a clean stop, and anything else - a
+			// shutdown grace that expired with a run still in flight - is
+			// a real event on the way down, worth its own line.
+			if err := jobs.Run(jobsCtx); err != nil {
+				log.ErrorContext(ctx, "the scheduled-job runner stopped", "error", err)
+			}
+		}()
+		defer func() {
+			stopJobs()
+			<-jobsDone
+		}()
+		log.InfoContext(ctx, "continuous ledger zero-sum check started",
+			"job", wallet.ZeroSumJobName, "interval", wallet.ZeroSumInterval, "ledger_schema", ledgerSchema)
 	}
 
 	srv := platformhttp.New(log, cfg.HTTPAddr, version, readiness(pool), routes...)
