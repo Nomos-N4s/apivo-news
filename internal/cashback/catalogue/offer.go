@@ -325,9 +325,13 @@ func fixedFromJSON(bpsRaw, amountRaw json.RawMessage) (money.Amount, error) {
 // Offer is one live rate band as the click-out flow consumes it: the band
 // itself plus the two facts the redirect needs from its neighbours - the
 // network's identity and click-reference parameter (FR-021), and the
-// merchant's identity. It is the value that crosses the Network port
-// (contracts/ports.md, BuildDeeplink) and the whole of it is snapshotted
-// onto the click, because the click-time band governs any credit (FR-013).
+// merchant's identity. The whole of it is snapshotted onto the click,
+// because the click-time band governs any credit (FR-013), and the click-out
+// flow builds the network port's deeplink target out of the redirect facts.
+// The band itself does not cross that port (contracts/ports.md section 2):
+// an Offer is mapped out of the generated store, so a port taking one would
+// put the driver into every adapter's dependency graph, and it carries a
+// commercial rate an adapter is required to decide nothing from.
 type Offer struct {
 	// ID is the offer's identity, the value POST /clickouts is called with
 	// and the click row references.
