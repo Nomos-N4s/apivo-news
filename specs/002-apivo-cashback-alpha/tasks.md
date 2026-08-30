@@ -139,7 +139,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [x] T055 [US2] Implement the poller with durable primary and trailing cursors, advancing only after a window is fully persisted, in `internal/cashback/networks/poller.go`
 - [x] T056 [US2] Implement the per-adapter rate limiter with exponential backoff and jitter in `internal/cashback/networks/ratelimiter.go` + `backoff.go` + `retryable.go`
 - [x] T057 [US2] Register the poll and trailing re-read jobs with the scheduler in `cmd/apivo/main.go`
-- [ ] T058 [US2] Record transactions with no matching click as unattributed in `internal/cashback/networks/unattributed.go`
+- [x] T058 [US2] Record transactions with no matching click as unattributed in `internal/cashback/networks/unattributed.go`
 - [ ] T059 [US2] Implement `GET /ops/unattributed`, `POST /ops/unattributed/{id}/attribute` and `/dismiss` in `internal/cashback/ops/handlers.go` per [contracts/http-api.md](contracts/http-api.md)
 - [ ] T060 [P] [US2] Integration test: re-polling an unchanged window creates no duplicate; a changed status creates a superseding row and both stay readable, in `internal/cashback/networks/ingest_integration_test.go`
 - [ ] T061 [P] [US2] Integration test: rate-limit backoff, and no window lost or double-counted across a restart, in `internal/cashback/networks/poller_integration_test.go`
@@ -161,14 +161,14 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T064 [US1] Implement `POST /clickouts` committing the click and its rate snapshot before the redirect is returned, in `internal/cashback/clickout/handlers.go`
 - [ ] T065 [US1] Implement the deeplink-failure path so nothing is committed and the member gets a plain problem document, in `internal/cashback/clickout/handlers.go`
 - [ ] T066 [US1] Implement per-member and per-context click rate limiting returning 429 with `Retry-After` in `internal/cashback/clickout/ratelimit.go`
-- [ ] T067 [US1] Implement the attribution matcher resolving a reported `click_ref` to a click in `internal/cashback/earnings/attribution.go`
+- [ ] T067 [US1] Implement the attribution matcher resolving a reported `click_ref` to a click in `internal/cashback/earnings/attribution.go`, and **queue a reference that matches no click as unattributed** — T058 records only the reports the network attached no reference to, because this module owns `cashback.click`, so FR-034's other half arrives here
 - [ ] T068 [US1] Implement member-share computation from the click-time snapshot with the rounding remainder posted to the house account, in `internal/cashback/earnings/share.go`
 - [ ] T069 [US1] Implement the entry state machine writing a ledger transfer and an `entry_transition` for every transition, in `internal/cashback/earnings/statemachine.go`
 - [ ] T070 [US1] Implement the confirmation path gated on network approval **and** reconciled receipt (FR-043) in `internal/cashback/earnings/confirm.go`
 - [ ] T071 [US1] Implement the reversal path inserting a reversing entry and posting pair, never editing history, in `internal/cashback/earnings/reversal.go`
 - [ ] T072 [P] [US1] Contract tests for `POST /clickouts` (401 unauthenticated, 409 expired offer, 429 rate limited, no click row after deeplink failure) in `internal/cashback/clickout/handlers_test.go`
 - [ ] T073 [P] [US1] Integration test: full earn journey with a mid-run published-rate change proving the click-time rate governs, in `internal/cashback/earnings/journey_integration_test.go`
-- [ ] T074 [P] [US1] Integration test: a transaction with an unknown click reference credits nobody, in `internal/cashback/earnings/unattributed_integration_test.go`
+- [ ] T074 [P] [US1] Integration test: a transaction with an unknown click reference credits nobody **and lands in the unattributed queue as work an operator may only dismiss**, in `internal/cashback/earnings/unattributed_integration_test.go`
 - [ ] T075 [P] [US1] Test the SC-002 orphan-credit query returns zero rows, in `internal/cashback/earnings/orphan_test.go`
 - [ ] T076 [P] [US1] Publish `cashback.click.created`, `cashback.entry.created` and `.state_changed` events in `internal/cashback/earnings/events.go`
 
