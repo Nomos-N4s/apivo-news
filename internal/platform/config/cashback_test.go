@@ -717,3 +717,37 @@ func TestCashbackLogValueOnAnUnparseableURL(t *testing.T) {
 		t.Fatalf("expected %q in the log line: %s", config.RedactedPlaceholder, out)
 	}
 }
+
+// TestClickContextHeaderIsOptionalAndTrimmed covers the one key whose
+// DEFAULT is the safe answer rather than the missing one.
+//
+// Empty means the deployment names no header it trusts, and the click rule
+// then leaves its per-device half off rather than bracketing every member
+// behind a proxy. So "unset" must parse to empty and never to something a
+// caller could have set - which is why the value is trimmed and why a header
+// name of nothing but spaces is the same as none.
+func TestClickContextHeaderIsOptionalAndTrimmed(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ name, raw, want string }{
+		{name: "unset is no header"},
+		{name: "spaces are no header", raw: "  "},
+		{name: "whitespace is no header", raw: "\t\n "},
+		{name: "a header name is kept", raw: "X-Client-IP", want: "X-Client-IP"},
+		{name: "a padded name is trimmed", raw: "  X-Forwarded-For  ", want: "X-Forwarded-For"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := withEnv(enabledCashbackEnv(), map[string]string{"CLICK_CONTEXT_HEADER": tc.raw})
+			cfg, err := config.FromEnv(func(k string) string { return env[k] })
+			if err != nil {
+				t.Fatalf("FromEnv(): %v", err)
+			}
+			if got := cfg.Cashback.ClickContextHeader; got != tc.want {
+				t.Errorf("ClickContextHeader = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

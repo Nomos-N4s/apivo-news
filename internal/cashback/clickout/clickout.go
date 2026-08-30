@@ -53,6 +53,23 @@ type Deeplinks interface {
 	Build(ctx context.Context, target networks.DeeplinkTarget, ref networks.IssuedClickRef) (string, error)
 }
 
+// Request is one member's attempt to click a band.
+//
+// A struct rather than three arguments, because the context digest is the
+// third and it is the one a caller can most easily forget - and forgetting
+// it silently turns the per-context half of the click rule off for that
+// call. A named field is harder to leave out by accident than a positional
+// [ContextDigest] among two uuids.
+type Request struct {
+	// Member is the signed-in caller. Never the nil uuid (FR-023).
+	Member uuid.UUID
+	// OfferID is the band being clicked through.
+	OfferID uuid.UUID
+	// Context is the privacy-minimised digest of where this click came
+	// from, or the zero value when the deployment digests none (FR-022).
+	Context ContextDigest
+}
+
 // Issued is a tracked redirect: the click that was recorded, where to send
 // the member, and when the band they clicked stops being published.
 type Issued struct {
@@ -73,6 +90,7 @@ type ClickOuts struct {
 	clicks    *Clicks
 	minter    *Minter
 	deeplinks Deeplinks
+	limiter   *Limiter
 	now       func() time.Time
 }
 
@@ -83,6 +101,14 @@ type Option func(*ClickOuts)
 // pinned to. For tests; production reads the wall clock.
 func WithClock(now func() time.Time) Option {
 	return func(c *ClickOuts) { c.now = now }
+}
+
+// WithLimiter applies the click rule before anything is minted or recorded
+// (US7 scenario 1). A service built without one issues every redirect it is
+// asked for, which is what a deployment that has turned the rule off has
+// asked for; the composition root always passes one.
+func WithLimiter(l *Limiter) Option {
+	return func(c *ClickOuts) { c.limiter = l }
 }
 
 // NewClickOuts builds the service, refusing one that is missing a part.
@@ -128,15 +154,26 @@ func NewClickOuts(offers Offers, clicks *Clicks, deeplinks Deeplinks, opts ...Op
 // It would satisfy FR-020 too, and it would leave a click row behind every
 // time a template was wrong - rows that match nothing, in the table the
 // unattributed queue is measured against.
-func (c *ClickOuts) Issue(ctx context.Context, member, offerID uuid.UUID) (Issued, error) {
+func (c *ClickOuts) Issue(ctx context.Context, req Request) (Issued, error) {
 	at := c.now()
 
-	offer, err := c.offers.LiveOffer(ctx, offerID, at)
+	// The rule first, before the catalogue is read and long before anything
+	// is minted. It is the cheapest refusal there is, it is the one that
+	// protects every step after it, and a member who meets it is left in
+	// exactly the state they were in - nothing minted, nothing recorded, and
+	// a time they can come back at.
+	if c.limiter != nil {
+		if err := c.limiter.Allow(ctx, req.Member, req.Context, at); err != nil {
+			return Issued{}, err
+		}
+	}
+
+	offer, err := c.offers.LiveOffer(ctx, req.OfferID, at)
 	switch {
 	case errors.Is(err, catalogue.ErrOfferNotLive):
-		return Issued{}, fmt.Errorf("%w: %s at %s", ErrOfferNotAvailable, offerID, at.UTC().Format(time.RFC3339))
+		return Issued{}, fmt.Errorf("%w: %s at %s", ErrOfferNotAvailable, req.OfferID, at.UTC().Format(time.RFC3339))
 	case err != nil:
-		return Issued{}, fmt.Errorf("clickout: reading offer %s: %w", offerID, err)
+		return Issued{}, fmt.Errorf("clickout: reading offer %s: %w", req.OfferID, err)
 	}
 
 	ref, err := c.minter.Mint()
@@ -156,12 +193,13 @@ func (c *ClickOuts) Issue(ctx context.Context, member, offerID uuid.UUID) (Issue
 
 	click, err := c.clicks.Record(ctx, NewClick{
 		Ref:       ref,
-		AccountID: member,
+		AccountID: req.Member,
 		OfferID:   offer.ID,
 		// The band and the share as published at `at`, snapshotted whole:
 		// this, and not the offer row as it stands when the money is finally
 		// paid, is what governs the credit (FR-013).
 		Promised: Promise{Rate: offer.Rate, MemberShare: offer.MemberShare},
+		Context:  req.Context,
 	})
 	if err != nil {
 		return Issued{}, err

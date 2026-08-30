@@ -11,6 +11,70 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countRecentClicksByAccount = `-- name: CountRecentClicksByAccount :one
+select count(*) as clicks, min(clicked_at)::timestamptz as oldest
+  from cashback.click
+ where account_id = $1
+   and clicked_at > $2
+`
+
+type CountRecentClicksByAccountParams struct {
+	AccountID pgtype.UUID
+	Since     pgtype.Timestamptz
+}
+
+type CountRecentClicksByAccountRow struct {
+	Clicks int64
+	Oldest pgtype.Timestamptz
+}
+
+// How many clicks this member has made since a moment, and the oldest of
+// them (US7 scenario 1).
+//
+// Both answers in one statement, because the second is only meaningful
+// beside the first: the count decides whether the rule is exceeded, and the
+// oldest click in the window decides WHEN it stops being - which is the
+// Retry-After a 429 owes the member. Asking twice would let the window move
+// between them and quote a time that is already past.
+//
+// Rides click_account_clicked_at_idx, which 0012 created for exactly this
+// question.
+func (q *Queries) CountRecentClicksByAccount(ctx context.Context, arg CountRecentClicksByAccountParams) (CountRecentClicksByAccountRow, error) {
+	row := q.db.QueryRow(ctx, countRecentClicksByAccount, arg.AccountID, arg.Since)
+	var i CountRecentClicksByAccountRow
+	err := row.Scan(&i.Clicks, &i.Oldest)
+	return i, err
+}
+
+const countRecentClicksByContext = `-- name: CountRecentClicksByContext :one
+select count(*) as clicks, min(clicked_at)::timestamptz as oldest
+  from cashback.click
+ where context_digest = $1
+   and clicked_at > $2
+`
+
+type CountRecentClicksByContextParams struct {
+	ContextDigest pgtype.Text
+	Since         pgtype.Timestamptz
+}
+
+type CountRecentClicksByContextRow struct {
+	Clicks int64
+	Oldest pgtype.Timestamptz
+}
+
+// The same question about a device rather than a member.
+//
+// Rides click_context_clicked_at_idx (0025). The digest is matched exactly,
+// like every other identifier here: a context is the value that was
+// digested, and nothing that merely resembles it.
+func (q *Queries) CountRecentClicksByContext(ctx context.Context, arg CountRecentClicksByContextParams) (CountRecentClicksByContextRow, error) {
+	row := q.db.QueryRow(ctx, countRecentClicksByContext, arg.ContextDigest, arg.Since)
+	var i CountRecentClicksByContextRow
+	err := row.Scan(&i.Clicks, &i.Oldest)
+	return i, err
+}
+
 const getClickByRef = `-- name: GetClickByRef :one
 select id, click_ref, account_id, offer_id, clicked_at,
        rate_snapshot, member_share_bps_snapshot, context_digest

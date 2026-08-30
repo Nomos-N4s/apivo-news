@@ -6,8 +6,10 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"math"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +43,10 @@ type Handler struct {
 	log       *slog.Logger
 	clickouts *ClickOuts
 	auth      MemberAuthenticator
+	// contextHeader is the header this deployment's edge sets to carry the
+	// real client address, or "" when it names none. See
+	// [WithContextHeader].
+	contextHeader string
 	// allow is the 405 classifier, derived from routes() in NewHandler so it
 	// cannot drift from what is actually registered.
 	allow platformhttp.AllowTable
@@ -48,8 +54,11 @@ type Handler struct {
 
 // NewHandler builds the click-out route table as an http.Handler for the
 // composition root to mount. Every route sits behind the requireMember gate.
-func NewHandler(log *slog.Logger, clickouts *ClickOuts, auth MemberAuthenticator) http.Handler {
+func NewHandler(log *slog.Logger, clickouts *ClickOuts, auth MemberAuthenticator, opts ...HandlerOption) http.Handler {
 	h := &Handler{log: log, clickouts: clickouts, auth: auth}
+	for _, opt := range opts {
+		opt(h)
+	}
 	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
 	for pattern, handler := range h.routes() {
@@ -136,8 +145,23 @@ func (h *Handler) createClickOut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issued, err := h.clickouts.Issue(r.Context(), memberFrom(r.Context()).ID, offerID)
+	issued, err := h.clickouts.Issue(r.Context(), Request{
+		Member:  memberFrom(r.Context()).ID,
+		OfferID: offerID,
+		Context: h.contextOf(r),
+	})
+	var tooMany TooManyClicks
 	switch {
+	// US7 scenario 1. Retry-After is seconds, rounded UP: rounding down
+	// would name an instant the rule has not yet lifted at, and a client
+	// that obeyed it would be refused again.
+	case errors.As(err, &tooMany):
+		h.log.InfoContext(r.Context(), "a click-out was refused by the click rule",
+			"rule", tooMany.Rule, "allowed", tooMany.Allowed, "retry_after", tooMany.RetryAfter)
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(tooMany.RetryAfter.Seconds()))))
+		platformhttp.Problem(w, http.StatusTooManyRequests,
+			"you have made a lot of click-outs recently; please wait a moment and try again")
+		return
 	// The band is not published at this moment - expired, not yet started,
 	// or with an inactive leg in its chain. A member looking at a stale page
 	// gets told, rather than being redirected to a rate nobody honours.

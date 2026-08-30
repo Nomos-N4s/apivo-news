@@ -432,10 +432,14 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, err
 	}
-	clickouts, err := newClickOuts(pool, adapter)
+	clickouts, err := newClickOuts(pool, adapter, cfg.Cashback.ClickContextHeader)
 	if err != nil {
 		stop()
 		return nil, nil, err
+	}
+	clickOutOptions := []clickout.HandlerOption{}
+	if cfg.Cashback.ClickContextHeader != "" {
+		clickOutOptions = append(clickOutOptions, clickout.WithContextHeader(cfg.Cashback.ClickContextHeader))
 	}
 	return append(routes,
 		platformhttp.Route{
@@ -447,11 +451,11 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		// ServeMux or handed to whatever else claims the namespace.
 		platformhttp.Route{
 			Pattern: clickoutPrefix,
-			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}),
+			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}, clickOutOptions...),
 		},
 		platformhttp.Route{
 			Pattern: clickoutPrefix + "/",
-			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}),
+			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}, clickOutOptions...),
 		},
 	), stop, nil
 }
@@ -464,8 +468,21 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 // The endpoint is then served and every request answers 502 naming the
 // network nothing can build a redirect for - which is the truth, and is
 // findable, where a 404 would say the API is not here at all.
-func newClickOuts(pool *pgxpool.Pool, adapter networks.Network) (*clickout.ClickOuts, error) {
+func newClickOuts(pool *pgxpool.Pool, adapter networks.Network, contextHeader string) (*clickout.ClickOuts, error) {
 	clicks, err := clickout.NewClicks(clickoutstore.New(pool))
+	if err != nil {
+		return nil, err
+	}
+	// Both halves of the click rule only where the deployment named a header
+	// it trusts to carry the real client address. Without one the digest is
+	// the proxy, and a per-device limit would bracket every member behind
+	// it - so that half stays off and the per-member half, which is keyed on
+	// the caller's own account, carries the rule alone.
+	rule := clickout.DefaultClickRule()
+	if contextHeader != "" {
+		rule = clickout.DefaultClickRuleWithContext()
+	}
+	limiter, err := clickout.NewLimiter(clickoutstore.New(pool), rule)
 	if err != nil {
 		return nil, err
 	}
@@ -477,7 +494,8 @@ func newClickOuts(pool *pgxpool.Pool, adapter networks.Network) (*clickout.Click
 	if err != nil {
 		return nil, err
 	}
-	return clickout.NewClickOuts(catalogue.NewOfferReader(cataloguestore.New(pool)), clicks, deeplinks)
+	return clickout.NewClickOuts(catalogue.NewOfferReader(cataloguestore.New(pool)), clicks, deeplinks,
+		clickout.WithLimiter(limiter))
 }
 
 // memberAuth adapts the identity module to the click-out module's

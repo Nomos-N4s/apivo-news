@@ -80,15 +80,22 @@ func anOffer() catalogue.Offer {
 	}
 }
 
-// issuer builds the service over the given parts, with the clock pinned.
+// issuer builds the service over the given parts, with the clock pinned and
+// no click rule.
 func issuer(t *testing.T, offers clickout.Offers, clicks clickout.ClickStore, deeplinks clickout.Deeplinks) *clickout.ClickOuts {
+	t.Helper()
+	return issuerWith(t, offers, clicks, deeplinks)
+}
+
+// issuerWith is the same, plus whatever options a case needs.
+func issuerWith(t *testing.T, offers clickout.Offers, clicks clickout.ClickStore, deeplinks clickout.Deeplinks, opts ...clickout.Option) *clickout.ClickOuts {
 	t.Helper()
 	recorder, err := clickout.NewClicks(clicks)
 	if err != nil {
 		t.Fatalf("NewClicks(): %v", err)
 	}
 	issue, err := clickout.NewClickOuts(offers, recorder, deeplinks,
-		clickout.WithClock(func() time.Time { return clickedAt }))
+		append([]clickout.Option{clickout.WithClock(func() time.Time { return clickedAt })}, opts...)...)
 	if err != nil {
 		t.Fatalf("NewClickOuts(): %v", err)
 	}
@@ -103,7 +110,7 @@ func TestIssuingARedirectSnapshotsTheBandTheMemberWasShown(t *testing.T) {
 	deeplinks := &fakeDeeplinks{url: "https://awin.example.test/go?merchant=42&clickref=abc"}
 	clicks := &fakeStore{echo: true}
 
-	issued, err := issuer(t, offers, clicks, deeplinks).Issue(t.Context(), member, offer.ID)
+	issued, err := issuer(t, offers, clicks, deeplinks).Issue(t.Context(), clickout.Request{Member: member, OfferID: offer.ID})
 	if err != nil {
 		t.Fatalf("Issue(): %v", err)
 	}
@@ -144,7 +151,7 @@ func TestTheRedirectIsBuiltFromTheBandsOwnRoute(t *testing.T) {
 	deeplinks := &fakeDeeplinks{url: "https://awin.example.test/go"}
 	clicks := &fakeStore{echo: true}
 
-	issued, err := issuer(t, &fakeOffers{offer: offer}, clicks, deeplinks).Issue(t.Context(), member, offer.ID)
+	issued, err := issuer(t, &fakeOffers{offer: offer}, clicks, deeplinks).Issue(t.Context(), clickout.Request{Member: member, OfferID: offer.ID})
 	if err != nil {
 		t.Fatalf("Issue(): %v", err)
 	}
@@ -178,7 +185,7 @@ func TestNothingIsRecordedWhenTheRedirectCannotBeBuilt(t *testing.T) {
 	clicks := &fakeStore{echo: true}
 	deeplinks := &fakeDeeplinks{err: networks.ErrDeeplinkNotFormed}
 
-	_, err := issuer(t, &fakeOffers{offer: offer}, clicks, deeplinks).Issue(t.Context(), member, offer.ID)
+	_, err := issuer(t, &fakeOffers{offer: offer}, clicks, deeplinks).Issue(t.Context(), clickout.Request{Member: member, OfferID: offer.ID})
 
 	if !errors.Is(err, clickout.ErrNoRedirect) {
 		t.Fatalf("Issue() error = %v, want one wrapping %v", err, clickout.ErrNoRedirect)
@@ -205,7 +212,7 @@ func TestARedirectIsOnlyBuiltForABandThatIsLive(t *testing.T) {
 	deeplinks := &fakeDeeplinks{url: "https://awin.example.test/go"}
 	offers := &fakeOffers{err: catalogue.ErrOfferNotLive}
 
-	_, err := issuer(t, offers, clicks, deeplinks).Issue(t.Context(), member, offerID)
+	_, err := issuer(t, offers, clicks, deeplinks).Issue(t.Context(), clickout.Request{Member: member, OfferID: offerID})
 
 	if !errors.Is(err, clickout.ErrOfferNotAvailable) {
 		t.Fatalf("Issue() error = %v, want one wrapping %v", err, clickout.ErrOfferNotAvailable)
@@ -223,7 +230,7 @@ func TestAFailedOfferReadIsNotAnUnavailableOffer(t *testing.T) {
 	t.Parallel()
 
 	offers := &fakeOffers{err: errors.New("connection reset")}
-	_, err := issuer(t, offers, &fakeStore{}, &fakeDeeplinks{}).Issue(t.Context(), uuid.New(), uuid.New())
+	_, err := issuer(t, offers, &fakeStore{}, &fakeDeeplinks{}).Issue(t.Context(), clickout.Request{Member: uuid.New(), OfferID: uuid.New()})
 
 	if errors.Is(err, clickout.ErrOfferNotAvailable) {
 		t.Fatal("a failed read reads as an unavailable offer")
@@ -242,7 +249,7 @@ func TestAFailedRecordingLeavesNoRedirectIssued(t *testing.T) {
 	offer := anOffer()
 	clicks := &fakeStore{insertErr: errors.New("connection reset")}
 	issued, err := issuer(t, &fakeOffers{offer: offer}, clicks, &fakeDeeplinks{url: "https://awin.example.test/go"}).
-		Issue(t.Context(), uuid.New(), offer.ID)
+		Issue(t.Context(), clickout.Request{Member: uuid.New(), OfferID: offer.ID})
 
 	if err == nil {
 		t.Fatal("Issue() returned no error although the click was not recorded")
@@ -262,7 +269,7 @@ func TestABandWithNoPublishedEndHasNoEnd(t *testing.T) {
 	clicks := &fakeStore{echo: true}
 
 	issued, err := issuer(t, &fakeOffers{offer: offer}, clicks, &fakeDeeplinks{url: "https://x.test/go"}).
-		Issue(t.Context(), member, offer.ID)
+		Issue(t.Context(), clickout.Request{Member: member, OfferID: offer.ID})
 	if err != nil {
 		t.Fatalf("Issue(): %v", err)
 	}
@@ -321,7 +328,7 @@ func TestAFixedBandIsSnapshottedWithItsCurrency(t *testing.T) {
 	clicks := &fakeStore{echo: true}
 
 	issued, err := issuer(t, &fakeOffers{offer: offer}, clicks, &fakeDeeplinks{url: "https://x.test/go"}).
-		Issue(t.Context(), member, offer.ID)
+		Issue(t.Context(), clickout.Request{Member: member, OfferID: offer.ID})
 	if err != nil {
 		t.Fatalf("Issue(): %v", err)
 	}
