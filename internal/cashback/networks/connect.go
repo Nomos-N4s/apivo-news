@@ -45,8 +45,9 @@ type ConnectRequest struct {
 	// missing, too old asks a network for years of it. Only the operator
 	// connecting the account knows.
 	//
-	// It is used ONLY when the account row is created. See the note on
-	// [Connection.BackfillFrom].
+	// Required only when the account row is created, and used only then:
+	// see [Connection.BackfillFrom] for why a re-run must not move it, and
+	// why that makes it optional on one.
 	BackfillFrom time.Time
 	// Active is whether this network and account should be live, and is the
 	// operator's intent expressed by running the command. It is written on
@@ -70,8 +71,19 @@ func (r ConnectRequest) Validate() error {
 		return fmt.Errorf("%w: account %s at %s names no configuration key its credential is read from",
 			ErrCannotConnect, strconv.Quote(r.ExternalPublisherID), strconv.Quote(r.Network.ID.String()))
 	}
+	return nil
+}
+
+// requireHistoryStart is the one rule that depends on whether the account
+// already exists, and so is checked in [ConnectPublisherAccount] rather than
+// here. A new account must say where its history starts because nothing else
+// in the system can work it out - too recent silently skips history nobody
+// notices is missing, too old asks a network for years of it (0023). An
+// account that already has one keeps it, so a re-run - pausing a network,
+// moving a credential key - does not have to restate a date it cannot change.
+func (r ConnectRequest) requireHistoryStart() error {
 	if r.BackfillFrom.IsZero() {
-		return fmt.Errorf("%w: account %s at %s says nothing about where its history starts, and nothing else can",
+		return fmt.Errorf("%w: account %s at %s is new and says nothing about where its history starts, which nothing else can work out",
 			ErrCannotConnect, strconv.Quote(r.ExternalPublisherID), strconv.Quote(r.Network.ID.String()))
 	}
 	return nil
@@ -139,6 +151,11 @@ func ConnectPublisherAccount(ctx context.Context, db store.DBTX, req ConnectRequ
 	if err != nil {
 		return Connection{}, err
 	}
+	if !accountExisted {
+		if err := req.requireHistoryStart(); err != nil {
+			return Connection{}, err
+		}
+	}
 
 	if _, err := q.EnsureNetwork(ctx, store.EnsureNetworkParams{
 		ID:                 req.Network.ID.String(),
@@ -156,8 +173,10 @@ func ConnectPublisherAccount(ctx context.Context, db store.DBTX, req ConnectRequ
 		NetworkID:           req.Network.ID.String(),
 		ExternalPublisherID: req.ExternalPublisherID,
 		CredentialRef:       req.CredentialRef,
-		BackfillFrom:        pgtype.Timestamptz{Time: req.BackfillFrom.UTC(), Valid: true},
-		Active:              req.Active,
+		// Valid only when one was given. It is unused on conflict, and a
+		// zero time written as a real instant would be the year 1.
+		BackfillFrom: pgtype.Timestamptz{Time: req.BackfillFrom.UTC(), Valid: !req.BackfillFrom.IsZero()},
+		Active:       req.Active,
 	})
 	if err != nil {
 		return Connection{}, fmt.Errorf("networks: connecting publisher account %s at %s: %w",

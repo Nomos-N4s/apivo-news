@@ -329,7 +329,6 @@ func TestARequestThatCouldNotProduceAWorkingAccountIsRefused(t *testing.T) {
 	}{
 		{name: "no publisher id", spoil: func(r *networks.ConnectRequest) { r.ExternalPublisherID = "  " }},
 		{name: "no key naming where the credential lives", spoil: func(r *networks.ConnectRequest) { r.CredentialRef = "" }},
-		{name: "nothing saying where history starts", spoil: func(r *networks.ConnectRequest) { r.BackfillFrom = time.Time{} }},
 		{name: "a declaration the network table would refuse", spoil: func(r *networks.ConnectRequest) { r.Network.ClickRefParam = "" }},
 	}
 
@@ -352,5 +351,41 @@ func TestARequestThatCouldNotProduceAWorkingAccountIsRefused(t *testing.T) {
 				t.Fatalf("Validate() = %v, want one wrapping ErrCannotConnect", err)
 			}
 		})
+	}
+}
+
+// TestANewAccountMustSayWhereItsHistoryStarts, and a re-run need not. The
+// first window has to start somewhere and nothing in the system can work out
+// where (0023); an account that already has one keeps it, so pausing a
+// network or moving a credential key does not have to restate a date the
+// command could not change anyway.
+func TestANewAccountMustSayWhereItsHistoryStarts(t *testing.T) {
+	ctx, tx := connectTestTx(t)
+	req := aConnectRequest(t)
+	req.BackfillFrom = time.Time{}
+
+	if _, err := networks.ConnectPublisherAccount(ctx, tx, req); !errors.Is(err, networks.ErrCannotConnect) {
+		t.Fatalf("connecting a new account with no history start = %v, want one wrapping ErrCannotConnect", err)
+	}
+
+	started := req
+	started.BackfillFrom = time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC)
+	first, err := networks.ConnectPublisherAccount(ctx, tx, started)
+	if err != nil {
+		t.Fatalf("connecting with a history start failed: %v", err)
+	}
+
+	// And now it is not needed: this is the pause case.
+	paused := req
+	paused.Active = false
+	again, err := networks.ConnectPublisherAccount(ctx, tx, paused)
+	if err != nil {
+		t.Fatalf("pausing an account without restating its history start failed: %v", err)
+	}
+	if !again.BackfillFrom.Equal(first.BackfillFrom) {
+		t.Errorf("the re-run left the history floor at %s, want %s", again.BackfillFrom, first.BackfillFrom)
+	}
+	if again.Active {
+		t.Errorf("the account is still active after a run that asked for inactive")
 	}
 }
