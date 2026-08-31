@@ -229,7 +229,7 @@ func TestTheUnmatchedReferenceStatementAgainstSchema(t *testing.T) {
 	// A row naming a report that does not exist is not something to swallow.
 	// The conflict clause names its constraint precisely so a foreign key
 	// failure still raises rather than being absorbed as "nothing to do".
-	each(ctx, t, tx, "a report that does not exist is not recorded", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+	each(ctx, t, tx, "a report that does not exist is not recorded", func(t *testing.T, _ pgx.Tx, q *store.Queries) {
 		_, err := q.RecordUnmatchedReference(ctx, pgtype.UUID{Bytes: [16]byte{9, 9, 9}, Valid: true})
 		if !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("RecordUnmatchedReference() = %v, want %v", err, pgx.ErrNoRows)

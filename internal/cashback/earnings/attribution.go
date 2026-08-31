@@ -1,9 +1,7 @@
 // Resolving what a network reported back to the click that earned it (T067).
 //
-// This is the step that decides whether a purchase belongs to a member. It
-// reads and records; it never credits. What a match is worth is T068's
-// question and what it becomes is T069's, and keeping those apart is what
-// stops a mis-resolved reference from being able to move money on its own.
+// The step that decides whether a purchase belongs to a member. It reads and
+// records; it never credits.
 
 package earnings
 
