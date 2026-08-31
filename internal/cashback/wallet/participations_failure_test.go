@@ -119,7 +119,7 @@ func TestAFailedDatabaseAnswers500WithNothingInIt(t *testing.T) {
 	t.Parallel()
 	member := uuid.New()
 	handler := wallet.NewHandler(slog.New(slog.DiscardHandler), nil, nil,
-		brokenService(t, brokenEnrolments{err: errBroken}),
+		brokenService(t, brokenEnrolments{err: errBroken}), nil,
 		fakeAuth{token: "a-token", member: member})
 
 	for _, tc := range []struct{ method, body string }{
