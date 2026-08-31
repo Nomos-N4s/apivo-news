@@ -189,7 +189,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T081 [US3] Implement `GET /export` for the member's own history as JSON and CSV in `internal/cashback/wallet/export.go`
 - [ ] T082 [P] [US3] Build the wallet page with island-rendered totals in `web/src/pages/[lang]/[place]/cashback/wallet.astro`
 - [ ] T083 [P] [US3] Add wallet, entry-state and empty-state copy to the translation catalogues in `web/src/i18n/`
-- [ ] T084 [P] [US3] Contract test: wallet totals equal independently computed ledger sums for every member (SC-006) in `internal/cashback/wallet/totals_test.go`
+- [x] T084 [P] [US3] Contract test: wallet totals equal independently computed ledger sums for every member (SC-006) in `internal/cashback/wallet/totals_test.go`
 - [ ] T085 [P] [US3] Frontend test: a reversed entry shows both the credit and the reversal with a reason, in `web/src/pages/[lang]/[place]/cashback/wallet.test.ts`
 
 **Checkpoint**: The member can see, and what they see is true.
