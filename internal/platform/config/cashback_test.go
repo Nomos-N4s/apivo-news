@@ -12,8 +12,9 @@ import (
 // The house account names enabledCashbackEnv configures, held as constants
 // so the envs and the wants below cannot drift apart by a typo.
 const (
-	houseRounding = "rounding-remainder"
-	houseClawback = "clawback-loss"
+	houseRounding   = "rounding-remainder"
+	houseClawback   = "clawback-loss"
+	houseReceivable = "network-receivable"
 )
 
 // enabledCashbackEnv fully configures cashback: the product on, a ledger,
@@ -23,20 +24,25 @@ const (
 // the ledger is the sidecar - where it lives.
 func enabledCashbackEnv() map[string]string {
 	return map[string]string{
-		"DATABASE_URL":           "postgres://x",
-		"CASHBACK_ENABLED":       "true",
-		"LEDGER_DRIVER":          config.LedgerDriverBlnk,
-		"BLNK_URL":               "http://blnk:5001",
-		"NETWORK_DRIVER":         config.NetworkDriverFixture,
-		"HOUSE_ACCOUNT_ROUNDING": houseRounding,
-		"HOUSE_ACCOUNT_CLAWBACK": houseClawback,
+		"DATABASE_URL":                     "postgres://x",
+		"CASHBACK_ENABLED":                 "true",
+		"LEDGER_DRIVER":                    config.LedgerDriverBlnk,
+		"BLNK_URL":                         "http://blnk:5001",
+		"NETWORK_DRIVER":                   config.NetworkDriverFixture,
+		"HOUSE_ACCOUNT_ROUNDING":           houseRounding,
+		"HOUSE_ACCOUNT_CLAWBACK":           houseClawback,
+		"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": houseReceivable,
 	}
 }
 
 // configuredHouseAccounts is what every enabled want below expects the
 // house names to parse to.
 func configuredHouseAccounts() config.HouseAccountsConfig {
-	return config.HouseAccountsConfig{Rounding: houseRounding, Clawback: houseClawback}
+	return config.HouseAccountsConfig{
+		Rounding:          houseRounding,
+		Clawback:          houseClawback,
+		NetworkReceivable: houseReceivable,
+	}
 }
 
 func withEnv(base map[string]string, overrides map[string]string) map[string]string {
@@ -123,11 +129,12 @@ func TestCashbackFromEnv(t *testing.T) {
 		{
 			name: "surrounding whitespace is trimmed",
 			env: withEnv(enabledCashbackEnv(), map[string]string{
-				"LEDGER_DRIVER":          "  " + config.LedgerDriverMemory + " ",
-				"BLNK_URL":               "",
-				"NETWORK_DRIVER":         " " + config.NetworkDriverFixture + "  ",
-				"HOUSE_ACCOUNT_ROUNDING": "  " + houseRounding + " ",
-				"HOUSE_ACCOUNT_CLAWBACK": " " + houseClawback + "  ",
+				"LEDGER_DRIVER":                    "  " + config.LedgerDriverMemory + " ",
+				"BLNK_URL":                         "",
+				"NETWORK_DRIVER":                   " " + config.NetworkDriverFixture + "  ",
+				"HOUSE_ACCOUNT_ROUNDING":           "  " + houseRounding + " ",
+				"HOUSE_ACCOUNT_CLAWBACK":           " " + houseClawback + "  ",
+				"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": "\t" + houseReceivable + " ",
 			}),
 			want: config.CashbackConfig{
 				Enabled:       true,
@@ -310,8 +317,9 @@ func TestCashbackFromEnv(t *testing.T) {
 			// TestCashbackProductionRefusals.
 			name: "enabled without house names is accepted outside production",
 			env: withEnv(enabledCashbackEnv(), map[string]string{
-				"HOUSE_ACCOUNT_ROUNDING": "",
-				"HOUSE_ACCOUNT_CLAWBACK": "",
+				"HOUSE_ACCOUNT_ROUNDING":           "",
+				"HOUSE_ACCOUNT_CLAWBACK":           "",
+				"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": "",
 			}),
 			want: config.CashbackConfig{
 				Enabled:      true,
@@ -319,6 +327,24 @@ func TestCashbackFromEnv(t *testing.T) {
 				BlnkURL:      "http://blnk:5001",
 				Network:      config.NetworkConfig{Driver: config.NetworkDriverFixture},
 			},
+		},
+		{
+			// The two pairings the third purpose added. Both are asserted
+			// because the pair a comparison forgets is exactly the pair that
+			// goes unchecked, and neither of these existed to be forgotten
+			// until the receivable did.
+			name: "the receivable sharing the rounding account is refused",
+			env: withEnv(enabledCashbackEnv(), map[string]string{
+				"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": houseRounding,
+			}),
+			wantErr: "HOUSE_ACCOUNT_ROUNDING and HOUSE_ACCOUNT_NETWORK_RECEIVABLE both name",
+		},
+		{
+			name: "the receivable sharing the clawback account is refused",
+			env: withEnv(enabledCashbackEnv(), map[string]string{
+				"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": houseClawback,
+			}),
+			wantErr: "HOUSE_ACCOUNT_CLAWBACK and HOUSE_ACCOUNT_NETWORK_RECEIVABLE both name",
 		},
 		{
 			name: "two house purposes on one name are refused",
@@ -411,11 +437,12 @@ func TestCashbackProductionRefusals(t *testing.T) {
 		{
 			name: "missing house accounts are refused in production",
 			env: prod(map[string]string{
-				"BLNK_SECRET_KEY":        "blnk-secret",
-				"HOUSE_ACCOUNT_ROUNDING": "",
-				"HOUSE_ACCOUNT_CLAWBACK": "",
+				"BLNK_SECRET_KEY":                  "blnk-secret",
+				"HOUSE_ACCOUNT_ROUNDING":           "",
+				"HOUSE_ACCOUNT_CLAWBACK":           "",
+				"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": "",
 			}),
-			wantErr: "HOUSE_ACCOUNT_ROUNDING, HOUSE_ACCOUNT_CLAWBACK are unset",
+			wantErr: "HOUSE_ACCOUNT_ROUNDING, HOUSE_ACCOUNT_CLAWBACK, HOUSE_ACCOUNT_NETWORK_RECEIVABLE are unset",
 		},
 		{
 			name: "one missing house account is refused in production naming its key",
@@ -462,12 +489,13 @@ func TestCashbackProductionRulesDoNotApplyInDev(t *testing.T) {
 	t.Parallel()
 
 	got, err := config.FromEnv(envFrom(map[string]string{
-		"DATABASE_URL":           "postgres://x?sslmode=disable",
-		"CASHBACK_ENABLED":       "true",
-		"LEDGER_DRIVER":          config.LedgerDriverMemory,
-		"NETWORK_DRIVER":         config.NetworkDriverFixture,
-		"HOUSE_ACCOUNT_ROUNDING": houseRounding,
-		"HOUSE_ACCOUNT_CLAWBACK": houseClawback,
+		"DATABASE_URL":                     "postgres://x?sslmode=disable",
+		"CASHBACK_ENABLED":                 "true",
+		"LEDGER_DRIVER":                    config.LedgerDriverMemory,
+		"NETWORK_DRIVER":                   config.NetworkDriverFixture,
+		"HOUSE_ACCOUNT_ROUNDING":           houseRounding,
+		"HOUSE_ACCOUNT_CLAWBACK":           houseClawback,
+		"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": houseReceivable,
 	}))
 	if err != nil {
 		t.Fatalf("FromEnv() error: %v", err)
