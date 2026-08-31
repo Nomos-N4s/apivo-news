@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
 
 // Ledger driver names. This is the whole set, fixed by ADR-0002 and
@@ -105,6 +107,20 @@ type CashbackConfig struct {
 	// configuration and nowhere else (data-model.md 2.6): domain code
 	// takes them from this struct, never from a literal.
 	HouseAccounts HouseAccountsConfig
+
+	// PayoutThreshold (PAYOUT_THRESHOLD_MINOR, PAYOUT_THRESHOLD_CURRENCY)
+	// is the confirmed balance a member must reach before a withdrawal may
+	// be requested (FR-050). Q5 left the figure to configuration, because
+	// it is a commercial decision that changes without a deploy.
+	//
+	// One value in two keys, and refused unless both are set. A threshold
+	// is money, and money without its currency is a number somebody
+	// compares a balance against and gets right until the day two
+	// currencies are published (C-6). Zero is a legitimate threshold - it
+	// means any confirmed balance may be withdrawn - so the amount alone
+	// cannot say whether one was configured, which is why the pair is
+	// checked rather than the number.
+	PayoutThreshold money.Amount
 }
 
 // HouseAccountsConfig names the house accounts the cashback design needs:
@@ -317,6 +333,12 @@ func parseCashback(getenv func(string) string) (CashbackConfig, error) {
 		},
 	}
 
+	threshold, err := parsePayoutThreshold(getenv)
+	if err != nil {
+		return CashbackConfig{}, err
+	}
+	c.PayoutThreshold = threshold
+
 	if raw := getenv("CASHBACK_ENABLED"); raw != "" {
 		enabled, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -408,10 +430,21 @@ func requireCashbackComplete(c CashbackConfig, env string) error {
 		if c.HouseAccounts.NetworkReceivable == "" {
 			unset = append(unset, "HOUSE_ACCOUNT_NETWORK_RECEIVABLE")
 		}
+
 		if len(unset) > 0 {
 			return fmt.Errorf(
 				"config: %s %s unset and APP_ENV=%s: refusing to start. The house accounts are where the rounding remainder (D6) and absorbed clawback losses (Q3) live and where an earning is paid out of (FR-040), and a production deployment that cannot name them would discover that on its first commission",
 				strings.Join(unset, ", "), plural(len(unset), "is", "are"), EnvProd)
+		}
+		// The threshold is its own refusal rather than a fourth name in the
+		// list above, because it is a different mistake with a different
+		// consequence: the house accounts are discovered missing by the first
+		// commission, and the threshold by the first member who asks to be
+		// paid. A merged message would explain neither.
+		if c.PayoutThreshold.Currency == "" {
+			return fmt.Errorf(
+				"config: PAYOUT_THRESHOLD_MINOR and PAYOUT_THRESHOLD_CURRENCY are unset and APP_ENV=%s: refusing to start. The threshold is the confirmed balance a withdrawal is checked against (FR-050), and a production deployment that cannot say what it is would answer every member's wallet with a figure it invented",
+				EnvProd)
 		}
 	}
 	return nil
@@ -486,4 +519,45 @@ func validateEndpoint(key, raw string, schemes ...string) error {
 	// happen.
 	return fmt.Errorf("config: %s must use one of the schemes %s (the value is not repeated here: it may carry a password)",
 		key, strings.Join(schemes, ", "))
+}
+
+// parsePayoutThreshold reads the withdrawal threshold as one amount.
+//
+// Neither key set is not a misconfiguration: outside production the product
+// runs without one, exactly as it runs without house account names, and the
+// zero Amount says plainly that none was configured. One key set is always a
+// misconfiguration, in every environment - PAYOUT_THRESHOLD_MINOR=2000 with
+// no currency is a number nobody can compare a balance against, and
+// PAYOUT_THRESHOLD_CURRENCY=EUR alone is a currency for a threshold that does
+// not exist.
+func parsePayoutThreshold(getenv func(string) string) (money.Amount, error) {
+	minor := strings.TrimSpace(getenv("PAYOUT_THRESHOLD_MINOR"))
+	currency := strings.TrimSpace(getenv("PAYOUT_THRESHOLD_CURRENCY"))
+	switch {
+	case minor == "" && currency == "":
+		return money.Amount{}, nil
+	case minor == "":
+		return money.Amount{}, fmt.Errorf(
+			"config: PAYOUT_THRESHOLD_CURRENCY is set to %q and PAYOUT_THRESHOLD_MINOR is not: a currency with no amount is not a threshold", currency)
+	case currency == "":
+		return money.Amount{}, fmt.Errorf(
+			"config: PAYOUT_THRESHOLD_MINOR is set to %q and PAYOUT_THRESHOLD_CURRENCY is not: an amount with no currency is a number nobody can compare a balance against (C-6)", minor)
+	}
+
+	value, err := strconv.ParseInt(minor, 10, 64)
+	if err != nil {
+		return money.Amount{}, fmt.Errorf("config: PAYOUT_THRESHOLD_MINOR %q is not a whole number of minor units: %w", minor, err)
+	}
+	// Negative is refused and zero is not. A threshold of nothing means
+	// every confirmed balance may be withdrawn, which is a deployment's to
+	// choose; a threshold below nothing is not a figure any balance could
+	// fail to reach.
+	if value < 0 {
+		return money.Amount{}, fmt.Errorf("config: PAYOUT_THRESHOLD_MINOR %d is negative: no balance can fail to reach it", value)
+	}
+	threshold, err := money.New(value, money.Currency(currency))
+	if err != nil {
+		return money.Amount{}, fmt.Errorf("config: PAYOUT_THRESHOLD_CURRENCY %q: %w", currency, err)
+	}
+	return threshold, nil
 }

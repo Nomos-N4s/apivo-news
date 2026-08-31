@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
 
 // The house account names enabledCashbackEnv configures, held as constants
@@ -32,7 +33,14 @@ func enabledCashbackEnv() map[string]string {
 		"HOUSE_ACCOUNT_ROUNDING":           houseRounding,
 		"HOUSE_ACCOUNT_CLAWBACK":           houseClawback,
 		"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": houseReceivable,
+		"PAYOUT_THRESHOLD_MINOR":           "2000",
+		"PAYOUT_THRESHOLD_CURRENCY":        "EUR",
 	}
+}
+
+// configuredThreshold is what the baseline's two threshold keys parse to.
+func configuredThreshold() money.Amount {
+	return money.Amount{Minor: 2000, Currency: "EUR"}
 }
 
 // configuredHouseAccounts is what every enabled want below expects the
@@ -94,11 +102,12 @@ func TestCashbackFromEnv(t *testing.T) {
 			name: "complete fixture-network environment",
 			env:  enabledCashbackEnv(),
 			want: config.CashbackConfig{
-				Enabled:       true,
-				HouseAccounts: configuredHouseAccounts(),
-				LedgerDriver:  config.LedgerDriverBlnk,
-				BlnkURL:       "http://blnk:5001",
-				Network:       config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Enabled:         true,
+				HouseAccounts:   configuredHouseAccounts(),
+				PayoutThreshold: configuredThreshold(),
+				LedgerDriver:    config.LedgerDriverBlnk,
+				BlnkURL:         "http://blnk:5001",
+				Network:         config.NetworkConfig{Driver: config.NetworkDriverFixture},
 			},
 		},
 		{
@@ -112,12 +121,13 @@ func TestCashbackFromEnv(t *testing.T) {
 				"NETWORK_API_SECRET": "network-secret",
 			}),
 			want: config.CashbackConfig{
-				Enabled:       true,
-				HouseAccounts: configuredHouseAccounts(),
-				LedgerDriver:  config.LedgerDriverBlnk,
-				BlnkURL:       "http://blnk:5001",
-				BlnkSecretKey: config.NewSecret("blnk-secret"),
-				RedisURL:      "redis://redis:6379/0",
+				Enabled:         true,
+				HouseAccounts:   configuredHouseAccounts(),
+				PayoutThreshold: configuredThreshold(),
+				LedgerDriver:    config.LedgerDriverBlnk,
+				BlnkURL:         "http://blnk:5001",
+				BlnkSecretKey:   config.NewSecret("blnk-secret"),
+				RedisURL:        "redis://redis:6379/0",
 				Network: config.NetworkConfig{
 					Driver:    "reference_network",
 					AccountID: "publisher-42",
@@ -137,10 +147,11 @@ func TestCashbackFromEnv(t *testing.T) {
 				"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": "\t" + houseReceivable + " ",
 			}),
 			want: config.CashbackConfig{
-				Enabled:       true,
-				HouseAccounts: configuredHouseAccounts(),
-				LedgerDriver:  config.LedgerDriverMemory,
-				Network:       config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Enabled:         true,
+				HouseAccounts:   configuredHouseAccounts(),
+				PayoutThreshold: configuredThreshold(),
+				LedgerDriver:    config.LedgerDriverMemory,
+				Network:         config.NetworkConfig{Driver: config.NetworkDriverFixture},
 			},
 		},
 		{
@@ -150,10 +161,11 @@ func TestCashbackFromEnv(t *testing.T) {
 				"BLNK_URL":      "",
 			}),
 			want: config.CashbackConfig{
-				Enabled:       true,
-				HouseAccounts: configuredHouseAccounts(),
-				LedgerDriver:  config.LedgerDriverMemory,
-				Network:       config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Enabled:         true,
+				HouseAccounts:   configuredHouseAccounts(),
+				PayoutThreshold: configuredThreshold(),
+				LedgerDriver:    config.LedgerDriverMemory,
+				Network:         config.NetworkConfig{Driver: config.NetworkDriverFixture},
 			},
 		},
 		{
@@ -163,10 +175,11 @@ func TestCashbackFromEnv(t *testing.T) {
 				"BLNK_URL":      "",
 			}),
 			want: config.CashbackConfig{
-				Enabled:       true,
-				HouseAccounts: configuredHouseAccounts(),
-				LedgerDriver:  config.LedgerDriverPostgres,
-				Network:       config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Enabled:         true,
+				HouseAccounts:   configuredHouseAccounts(),
+				PayoutThreshold: configuredThreshold(),
+				LedgerDriver:    config.LedgerDriverPostgres,
+				Network:         config.NetworkConfig{Driver: config.NetworkDriverFixture},
 			},
 		},
 		{
@@ -242,12 +255,13 @@ func TestCashbackFromEnv(t *testing.T) {
 				"REDIS_URL": "rediss://redis.example.test:6380",
 			}),
 			want: config.CashbackConfig{
-				Enabled:       true,
-				HouseAccounts: configuredHouseAccounts(),
-				LedgerDriver:  config.LedgerDriverBlnk,
-				BlnkURL:       "http://blnk:5001",
-				RedisURL:      "rediss://redis.example.test:6380",
-				Network:       config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Enabled:         true,
+				HouseAccounts:   configuredHouseAccounts(),
+				PayoutThreshold: configuredThreshold(),
+				LedgerDriver:    config.LedgerDriverBlnk,
+				BlnkURL:         "http://blnk:5001",
+				RedisURL:        "rediss://redis.example.test:6380",
+				Network:         config.NetworkConfig{Driver: config.NetworkDriverFixture},
 			},
 		},
 		{
@@ -298,10 +312,11 @@ func TestCashbackFromEnv(t *testing.T) {
 				"NETWORK_API_KEY":    "network-key",
 			}),
 			want: config.CashbackConfig{
-				Enabled:       true,
-				HouseAccounts: configuredHouseAccounts(),
-				LedgerDriver:  config.LedgerDriverBlnk,
-				BlnkURL:       "http://blnk:5001",
+				Enabled:         true,
+				HouseAccounts:   configuredHouseAccounts(),
+				PayoutThreshold: configuredThreshold(),
+				LedgerDriver:    config.LedgerDriverBlnk,
+				BlnkURL:         "http://blnk:5001",
 				Network: config.NetworkConfig{
 					Driver:    "reference_network",
 					AccountID: "publisher-42",
@@ -322,10 +337,11 @@ func TestCashbackFromEnv(t *testing.T) {
 				"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": "",
 			}),
 			want: config.CashbackConfig{
-				Enabled:      true,
-				LedgerDriver: config.LedgerDriverBlnk,
-				BlnkURL:      "http://blnk:5001",
-				Network:      config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Enabled:         true,
+				LedgerDriver:    config.LedgerDriverBlnk,
+				BlnkURL:         "http://blnk:5001",
+				Network:         config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				PayoutThreshold: configuredThreshold(),
 			},
 		},
 		{
@@ -679,12 +695,13 @@ func TestCashbackLogValue(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.CashbackConfig{
-		Enabled:       true,
-		HouseAccounts: configuredHouseAccounts(),
-		LedgerDriver:  config.LedgerDriverBlnk,
-		BlnkURL:       "http://blnk:5001",
-		BlnkSecretKey: config.NewSecret("blnk-secret-value"),
-		RedisURL:      "redis://apivo:redis-password-value@redis:6379/0",
+		Enabled:         true,
+		HouseAccounts:   configuredHouseAccounts(),
+		PayoutThreshold: configuredThreshold(),
+		LedgerDriver:    config.LedgerDriverBlnk,
+		BlnkURL:         "http://blnk:5001",
+		BlnkSecretKey:   config.NewSecret("blnk-secret-value"),
+		RedisURL:        "redis://apivo:redis-password-value@redis:6379/0",
 		Network: config.NetworkConfig{
 			Driver:    "reference_network",
 			AccountID: "publisher-42",
@@ -777,5 +794,99 @@ func TestClickContextHeaderIsOptionalAndTrimmed(t *testing.T) {
 				t.Errorf("ClickContextHeader = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestThePayoutThresholdIsOneValueInTwoKeys. An amount with no currency is a
+// number somebody compares a balance against and gets right until a second
+// currency is published (C-6), so half a threshold is refused in every
+// environment rather than only where money is real.
+func TestThePayoutThresholdIsOneValueInTwoKeys(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr string
+	}{
+		{
+			name:    "an amount with no currency is refused",
+			env:     map[string]string{"PAYOUT_THRESHOLD_CURRENCY": ""},
+			wantErr: "PAYOUT_THRESHOLD_CURRENCY is not",
+		},
+		{
+			name:    "a currency with no amount is refused",
+			env:     map[string]string{"PAYOUT_THRESHOLD_MINOR": ""},
+			wantErr: "PAYOUT_THRESHOLD_MINOR is not",
+		},
+		{
+			name:    "an amount that is not a whole number is refused",
+			env:     map[string]string{"PAYOUT_THRESHOLD_MINOR": "20.00"},
+			wantErr: "not a whole number of minor units",
+		},
+		{
+			// Not "invalid": a negative threshold is a figure no balance
+			// could fail to reach, which is a different mistake from a
+			// malformed one and reads better as itself.
+			name:    "a negative threshold is refused",
+			env:     map[string]string{"PAYOUT_THRESHOLD_MINOR": "-1"},
+			wantErr: "no balance can fail to reach it",
+		},
+		{
+			name:    "a currency that is not ISO 4217 is refused",
+			env:     map[string]string{"PAYOUT_THRESHOLD_CURRENCY": "euro"},
+			wantErr: "PAYOUT_THRESHOLD_CURRENCY",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := config.FromEnv(envFrom(withEnv(enabledCashbackEnv(), tc.env)))
+			if err == nil {
+				t.Fatalf("FromEnv() accepted %v", tc.env)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error %q does not contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestAThresholdOfNothingIsAThreshold. Zero means any confirmed balance may
+// be withdrawn, which is a deployment's decision to make - so the pair being
+// set is what says one was configured, never the number being non-zero.
+func TestAThresholdOfNothingIsAThreshold(t *testing.T) {
+	t.Parallel()
+
+	got, err := config.FromEnv(envFrom(withEnv(enabledCashbackEnv(), map[string]string{
+		"PAYOUT_THRESHOLD_MINOR": "0",
+	})))
+	if err != nil {
+		t.Fatalf("FromEnv(): %v", err)
+	}
+	want := money.Amount{Minor: 0, Currency: "EUR"}
+	if got.Cashback.PayoutThreshold != want {
+		t.Errorf("PayoutThreshold = %v, want %v", got.Cashback.PayoutThreshold, want)
+	}
+}
+
+// TestProductionNeedsAThreshold, discovered at startup rather than by the
+// first member who asks to be paid.
+func TestProductionNeedsAThreshold(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.FromEnv(envFrom(withEnv(enabledCashbackEnv(), map[string]string{
+		"DATABASE_URL":              "postgres://y?sslmode=verify-full",
+		"APP_ENV":                   config.EnvProd,
+		"BLNK_SECRET_KEY":           "a-secret",
+		"PAYOUT_THRESHOLD_MINOR":    "",
+		"PAYOUT_THRESHOLD_CURRENCY": "",
+	})))
+
+	if err == nil {
+		t.Fatal("FromEnv() started a production deployment with no withdrawal threshold")
+	}
+	if !strings.Contains(err.Error(), "PAYOUT_THRESHOLD_MINOR and PAYOUT_THRESHOLD_CURRENCY are unset") {
+		t.Errorf("error %q does not name the two keys", err)
 	}
 }
