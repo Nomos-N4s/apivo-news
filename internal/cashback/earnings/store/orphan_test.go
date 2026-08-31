@@ -108,7 +108,7 @@ func orphans(ctx context.Context, t *testing.T, q *store.Queries) []store.Orphan
 // and the retry below are for.
 func defeatTheSchema(ctx context.Context, t *testing.T, tx pgx.Tx) {
 	t.Helper()
-	lockEntriesExclusively(ctx, t, tx)
+	lockEvidenceExclusively(ctx, t, tx)
 	if _, err := tx.Exec(ctx, `alter table cashback.entry disable trigger entry_evidence_guard`); err != nil {
 		t.Fatalf("disabling the evidence guard: %v", err)
 	}
@@ -120,29 +120,46 @@ func defeatTheSchema(ctx context.Context, t *testing.T, tx pgx.Tx) {
 	}
 }
 
-// lockEntriesExclusively takes the lock the DDL below needs, bounded and
-// retried.
+// lockEvidenceExclusively takes every lock the DDL below needs, in one
+// statement, bounded and retried.
+//
+// BOTH tables, and that is the whole of it. entry_click_belongs_to_member is
+// a foreign key INTO cashback.click, so dropping it takes an ACCESS EXCLUSIVE
+// lock on the referenced table as well as on cashback.entry - a fact the
+// statement does not mention and the planner does not announce. Locking only
+// the entries left this transaction holding one table and reaching for the
+// other, which is half a deadlock cycle waiting for any parallel suite that
+// touches a click.
+//
+// One statement rather than two, because two would be the same hazard in
+// miniature: between them this transaction would hold the first lock while
+// asking for the second.
 //
 // Bounded, because an unbounded wait for a lock a parallel suite holds is a
 // hung test rather than a failing one. Retried, because contention is not a
 // verdict on the detector: the case asserts what the query sees, and taking
-// the lock a moment later asserts exactly the same thing.
-func lockEntriesExclusively(ctx context.Context, t *testing.T, tx pgx.Tx) {
+// the locks a moment later asserts exactly the same thing.
+//
+// It must be called before ANY fixture in the case. Holding nothing, this
+// transaction can only wait; holding a row somebody else wants, it can
+// deadlock - which is what happened when one case seeded its report first.
+func lockEvidenceExclusively(ctx context.Context, t *testing.T, tx pgx.Tx) {
 	t.Helper()
 	if _, err := tx.Exec(ctx, `set local lock_timeout = '5s'`); err != nil {
 		t.Fatalf("bounding the lock wait: %v", err)
 	}
 	var err error
 	for attempt := 1; attempt <= 6; attempt++ {
-		if _, err = tx.Exec(ctx, `lock table cashback.entry in access exclusive mode`); err == nil {
+		if _, err = tx.Exec(ctx,
+			`lock table cashback.entry, cashback.click in access exclusive mode`); err == nil {
 			return
 		}
 		var pgErr *pgconn.PgError
 		if !errors.As(err, &pgErr) || (pgErr.Code != pgerrcode.LockNotAvailable && pgErr.Code != pgerrcode.DeadlockDetected) {
-			t.Fatalf("locking the entries: %v", err)
+			t.Fatalf("locking the evidence: %v", err)
 		}
 	}
-	t.Fatalf("the entry table stayed locked by another suite for half a minute: %v", err)
+	t.Fatalf("the evidence tables stayed locked by another suite for half a minute: %v", err)
 }
 
 // onlyOrphan requires exactly one orphan and returns its reason.
@@ -216,9 +233,12 @@ func TestTheOrphanCreditQueryAgainstSchema(t *testing.T) {
 	})
 
 	each(ctx, t, tx, "a credit citing a click that does not exist is found", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		// Defeated FIRST, before any fixture. Seeding the report first left
+		// this transaction holding rows another suite wanted while it reached
+		// for the table locks, which is a deadlock rather than a wait.
+		defeatTheSchema(ctx, t, tx)
 		networkID, publisher, member, _ := world(ctx, t, tx)
 		report := reportAt(ctx, t, tx, networkID, publisher)
-		defeatTheSchema(ctx, t, tx)
 
 		if err := credit(ctx, tx, member, report, pgtype.UUID{Bytes: [16]byte{7, 7, 7}, Valid: true}); err != nil {
 			t.Fatalf("planting the orphan: %v", err)
