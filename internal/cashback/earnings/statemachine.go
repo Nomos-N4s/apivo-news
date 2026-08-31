@@ -22,11 +22,12 @@ import (
 
 var (
 	// ErrNoEntryStore reports a machine built with nowhere to record what it
-	// moved, and ErrNoLedger one built with nothing to move money in.
-	// Refused at construction, because either discovered later is discovered
-	// with a transfer already posted or an entry already created.
+	// moved. Refused at construction, because discovered later it is
+	// discovered with a transfer already posted.
 	ErrNoEntryStore = errors.New("earnings: an entry machine needs a store to write to")
-	ErrNoLedger     = errors.New("earnings: an entry machine needs a ledger to post in")
+	// ErrNoLedger reports a machine built with nothing to move money in,
+	// refused for the same reason and at the same moment.
+	ErrNoLedger = errors.New("earnings: an entry machine needs a ledger to post in")
 	// ErrNoReceivable reports a machine with no account to pay earnings out
 	// of. Refused rather than defaulted: a house account nobody named is an
 	// account nobody meant to open, and money credited from one would be
