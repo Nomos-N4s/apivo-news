@@ -42,10 +42,19 @@ func (f fakeAuth) AuthenticateMember(_ context.Context, token string) (wallet.Me
 }
 
 // serve builds the handler over the given parts and answers one request.
+// The history is a reader that answers nothing, which is what the wallet
+// cases need: they are about the totals, and an entries reader that could
+// fail would make a totals case fail for the wrong reason.
 func serve(t *testing.T, w *wallet.Wallets, auth wallet.MemberAuthenticator, req *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
+	return serveWith(t, w, history(t, &fakeEntries{}), auth, req)
+}
+
+// serveWith builds the handler over both readers.
+func serveWith(t *testing.T, w *wallet.Wallets, h *wallet.History, auth wallet.MemberAuthenticator, req *http.Request) *httptest.ResponseRecorder {
+	t.Helper()
 	rec := httptest.NewRecorder()
-	wallet.NewHandler(slog.New(slog.DiscardHandler), w, auth).ServeHTTP(rec, req)
+	wallet.NewHandler(slog.New(slog.DiscardHandler), w, h, auth).ServeHTTP(rec, req)
 	return rec
 }
 

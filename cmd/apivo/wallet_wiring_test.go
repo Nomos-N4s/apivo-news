@@ -164,3 +164,38 @@ func TestTheWiredWalletSaysWhenTheDeploymentIsIncomplete(t *testing.T) {
 		t.Fatalf("status = %d, want 503 (%s)", rec.Code, rec.Body)
 	}
 }
+
+// TestTheWiredHistoryAnswersItsOwnMember. The list is empty because nothing
+// has been earned - which is the answer a new member gets, and the one a
+// query whose joins could not resolve would fail to give at all.
+func TestTheWiredHistoryAnswersItsOwnMember(t *testing.T) {
+	t.Parallel()
+	ctx, pool := opsWiringPool(t)
+
+	key := newSigningKey(t)
+	jwks := newJWKSServer(t, key)
+	member := seedAccount(ctx, t, pool, "reader")
+	handler := walletRoutes(ctx, t, pool, jwks.URL, money.Amount{Minor: 2000, Currency: "EUR"})
+
+	req := httptest.NewRequest(http.MethodGet, wallet.Prefix+"/entries?lang=de", nil)
+	req.Header.Set("Authorization", "Bearer "+mintBearer(t, key, member.String()))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	var got struct {
+		Items      []map[string]any `json:"items"`
+		NextCursor *string          `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("the body is not a page: %v (%s)", err, rec.Body)
+	}
+	if len(got.Items) != 0 {
+		t.Errorf("returned %d entries, want none: nothing has been earned", len(got.Items))
+	}
+	if got.NextCursor != nil {
+		t.Errorf("next_cursor = %v on an empty page, want null", *got.NextCursor)
+	}
+}

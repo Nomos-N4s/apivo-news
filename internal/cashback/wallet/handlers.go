@@ -13,7 +13,13 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/url"
 	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 
@@ -26,10 +32,20 @@ import (
 // the namespace.
 const Prefix = "/api/v1/cashback/wallet"
 
-// Handler serves the member wallet endpoint. Build it with NewHandler.
+// timeFormat renders every timestamp in wallet responses: RFC 3339 with
+// sub-second precision, in UTC, so payloads are stable across the server's
+// local zone.
+const timeFormat = time.RFC3339Nano
+
+// entriesPath is the member's own history, under the wallet's prefix so one
+// auth gate and one error convention cover both.
+const entriesPath = Prefix + "/entries"
+
+// Handler serves the member wallet endpoints. Build it with NewHandler.
 type Handler struct {
 	log     *slog.Logger
 	wallets *Wallets
+	history *History
 	auth    MemberAuthenticator
 	// allow is the 405 classifier, derived from routes() in NewHandler so it
 	// cannot drift from what is actually registered.
@@ -38,8 +54,8 @@ type Handler struct {
 
 // NewHandler builds the wallet route table as an http.Handler for the
 // composition root to mount. Every route sits behind the requireMember gate.
-func NewHandler(log *slog.Logger, wallets *Wallets, auth MemberAuthenticator) http.Handler {
-	h := &Handler{log: log, wallets: wallets, auth: auth}
+func NewHandler(log *slog.Logger, wallets *Wallets, history *History, auth MemberAuthenticator) http.Handler {
+	h := &Handler{log: log, wallets: wallets, history: history, auth: auth}
 	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
 	for pattern, handler := range h.routes() {
@@ -56,7 +72,8 @@ func NewHandler(log *slog.Logger, wallets *Wallets, auth MemberAuthenticator) ht
 // checked against the routes rather than against someone's memory of them.
 func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
-		"GET " + Prefix: h.getWallet,
+		"GET " + Prefix:      h.getWallet,
+		"GET " + entriesPath: h.getEntries,
 	}
 }
 
@@ -156,4 +173,144 @@ func (h *Handler) writeJSON(w http.ResponseWriter, r *http.Request, status int, 
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		h.log.WarnContext(r.Context(), "writing a wallet response", "error", err)
 	}
+}
+
+// entryItem is one line of history as the contract spells it.
+type entryItem struct {
+	EntryID string `json:"entry_id"`
+	// MerchantName is the retailer, or null for an entry an operator
+	// attributed by hand: there was no click, so there is no route to a
+	// retailer to follow (FR-034).
+	MerchantName *string `json:"merchant_name"`
+	// MerchantNameLanguage is what MerchantName is written in, and
+	// MerchantNameIsFallback says it is not the language that was asked
+	// for. US5 scenario 2 requires the fallback to be LABELLED rather than
+	// passed off as the member's own language, and a client cannot label
+	// what it was not told.
+	MerchantNameLanguage   *string `json:"merchant_name_language"`
+	MerchantNameIsFallback bool    `json:"merchant_name_is_fallback"`
+	// TransactedAt is when the purchase happened, as the network reported
+	// it - the instant a member recognises.
+	TransactedAt   string     `json:"transacted_at"`
+	SaleAmount     amountJSON `json:"sale_amount"`
+	CashbackAmount amountJSON `json:"cashback_amount"`
+	State          string     `json:"state"`
+	// ExpectedConfirmationAt is when this entry is expected to confirm, and
+	// is ALWAYS null today. Nothing in the schema records a confirmation
+	// window - no column on the network or the route holds one - so there
+	// is no honest value to compute, and a plausible one invented here is a
+	// date a member would plan around. See the task notes: the natural home
+	// is a nullable window on cashback.merchant_network, filled by the
+	// catalogue import, and that is a migration rather than this endpoint's
+	// to guess.
+	ExpectedConfirmationAt *string `json:"expected_confirmation_at"`
+	// HoldRule names the rule holding this entry back, and is null unless
+	// the state is held. The totals do not show held money at all; a member
+	// looking at an entry they cannot count is owed the reason.
+	HoldRule *string `json:"hold_rule"`
+	// ReversalOfID names the entry this one undoes, and Reason why. Both
+	// null on an entry that undoes nothing.
+	ReversalOfID *string `json:"reversal_of_id"`
+	Reason       *string `json:"reason"`
+}
+
+// entriesPage is the body of GET /wallet/entries.
+type entriesPage struct {
+	Items []entryItem `json:"items"`
+	// NextCursor is null on the last page, so a client stops by reading the
+	// answer rather than by making one more request to discover it.
+	NextCursor *string `json:"next_cursor"`
+}
+
+// getEntries implements GET /api/v1/cashback/wallet/entries.
+func (h *Handler) getEntries(w http.ResponseWriter, r *http.Request) {
+	member := memberFrom(r.Context())
+	req, detail, ok := parseEntriesPage(r.URL.Query())
+	if !ok {
+		platformhttp.Problem(w, http.StatusBadRequest, detail)
+		return
+	}
+	req.Member = member.ID
+
+	page, err := h.history.Page(r.Context(), req)
+	switch {
+	case errors.Is(err, ErrBadCursor):
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"cursor is not one this endpoint issued; send back what next_cursor gave you, or omit it for the first page")
+		return
+	case errors.Is(err, ErrUnknownState):
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"state must be one of "+strings.Join(States, ", "))
+		return
+	case err != nil:
+		h.log.ErrorContext(r.Context(), "listing a member's entries", "error", err)
+		platformhttp.Problem(w, http.StatusInternalServerError, "")
+		return
+	}
+
+	body := entriesPage{Items: make([]entryItem, 0, len(page.Entries))}
+	for _, entry := range page.Entries {
+		body.Items = append(body.Items, itemFrom(entry))
+	}
+	if page.NextCursor != "" {
+		body.NextCursor = &page.NextCursor
+	}
+	h.writeJSON(w, r, http.StatusOK, body)
+}
+
+// itemFrom renders one entry.
+func itemFrom(entry Entry) entryItem {
+	item := entryItem{
+		EntryID:                entry.ID.String(),
+		TransactedAt:           entry.TransactedAt.UTC().Format(timeFormat),
+		SaleAmount:             figure(entry.Sale),
+		CashbackAmount:         figure(entry.Amount),
+		State:                  entry.State,
+		MerchantNameIsFallback: entry.Merchant.Name != "" && !entry.Merchant.Asked,
+	}
+	if entry.Merchant.Name != "" {
+		name, language := entry.Merchant.Name, entry.Merchant.Language
+		item.MerchantName, item.MerchantNameLanguage = &name, &language
+	}
+	if entry.HoldRule != "" {
+		rule := entry.HoldRule
+		item.HoldRule = &rule
+	}
+	if entry.ReversalOf != uuid.Nil {
+		of := entry.ReversalOf.String()
+		item.ReversalOfID = &of
+	}
+	if entry.Reason != "" {
+		reason := entry.Reason
+		item.Reason = &reason
+	}
+	return item
+}
+
+// parseEntriesPage reads the query parameters, refusing anything it does not
+// serve rather than ignoring it: a misspelled filter silently dropped would
+// answer with every entry, and a member who asked to see only their reversed
+// ones would read the whole list as reversals.
+func parseEntriesPage(values url.Values) (PageRequest, string, bool) {
+	for name := range values {
+		switch name {
+		case "state", "limit", "cursor", "lang":
+		default:
+			return PageRequest{}, "unknown query parameter " + strconv.Quote(name) +
+				"; this endpoint accepts state, limit, cursor and lang", false
+		}
+	}
+	req := PageRequest{
+		State:    values.Get("state"),
+		Language: values.Get("lang"),
+		Cursor:   values.Get("cursor"),
+	}
+	if raw := values.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 {
+			return PageRequest{}, "limit must be a positive whole number", false
+		}
+		req.Limit = limit
+	}
+	return req, "", true
 }

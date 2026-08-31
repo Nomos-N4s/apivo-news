@@ -545,6 +545,98 @@
         }
       }
     },
+    "/api/v1/cashback/wallet/entries": {
+      "get": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "listWalletEntries",
+        "summary": "List the caller's own cashback entries",
+        "description": "The purchases behind the totals: what was bought, what it earned, and what became of it (US3).\n\nReversals are listed as entries of their own alongside the credit they undo, with the reason the money went back. Neither half is hidden: a list showing only the reversal would look like a credit that never happened, and one showing only the original would leave a balance nobody could reconcile against it.\n\nNewest first, paged by an opaque cursor rather than an offset. Entries are written while a member reads - a poll runs, a network confirms - and an offset would show them a row twice or skip one. Send back what next_cursor gave you; a cursor this endpoint did not issue is refused rather than silently answered with the first page.\n\nThe member is the bearer of the token, exactly as for GET /wallet.\n\nThe whole path is unmounted when cashback is off, and then answers 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "description": "List only entries in this state. Omitted lists every state. A state no entry can be in is refused rather than answered with an empty page, because an empty page reads as \"you have earned nothing\".",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "held",
+                "pending",
+                "confirmed",
+                "reserved",
+                "paid",
+                "reversed"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "How many entries to return. Defaults to 20; anything above 100 is capped rather than refused.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Where to continue from: the next_cursor of a previous page, echoed back unchanged. Omit for the first page.",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "description": "BCP-47 primary language subtag to name merchants in, e.g. \"el\". A merchant with no copy in it is named in its own language instead, and the item says so - see merchant_name_is_fallback.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the member's entries, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletEntryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query parameter this endpoint does not serve, a limit that is not a positive whole number, a state no entry can be in, or a cursor this endpoint did not issue.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/editorial/approvals": {
       "post": {
         "tags": [
@@ -3115,6 +3207,136 @@
               }
             ],
             "description": "What confirmed must reach before a withdrawal may be requested (FR-050). Returned rather than left to the client, so a client cannot show one figure while the server enforces another."
+          }
+        }
+      },
+      "WalletEntry": {
+        "type": "object",
+        "description": "One line of a member's history: the purchase, what it earned, and where that stands.",
+        "required": [
+          "entry_id",
+          "merchant_name",
+          "merchant_name_language",
+          "merchant_name_is_fallback",
+          "transacted_at",
+          "sale_amount",
+          "cashback_amount",
+          "state",
+          "expected_confirmation_at",
+          "hold_rule",
+          "reversal_of_id",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "entry_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "merchant_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The retailer, or null for an entry an operator attributed by hand: there was no click, so there is no route to a retailer to follow (FR-034)."
+          },
+          "merchant_name_language": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The BCP-47 primary subtag merchant_name is written in, or null when there is no name."
+          },
+          "merchant_name_is_fallback": {
+            "type": "boolean",
+            "description": "True when merchant_name is in the retailer's own language rather than the one asked for. US5 scenario 2 requires that to be shown as a fallback rather than passed off as the member's language."
+          },
+          "transacted_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the purchase happened, as the network reported it - the instant a member recognises. Not when the entry was written."
+          },
+          "sale_amount": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ],
+            "description": "What the member spent."
+          },
+          "cashback_amount": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ],
+            "description": "What they earned on it."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "held",
+              "pending",
+              "confirmed",
+              "reserved",
+              "paid",
+              "reversed"
+            ],
+            "description": "Where this entry sits now (FR-042)."
+          },
+          "expected_confirmation_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When this entry is expected to confirm. ALWAYS null today: nothing in the schema records a confirmation window, so there is no honest value to compute, and an invented one is a date a member would plan around. It becomes a real answer when a window is recorded per route.",
+            "format": "date-time"
+          },
+          "hold_rule": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The rule holding this entry back, and null unless the state is held (US7). The wallet totals do not show held money at all, so a member looking at an entry they cannot count is owed the reason."
+          },
+          "reversal_of_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The entry this one undoes, and null on an entry that undoes nothing (SC-010).",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why this entry exists, recorded with the transition that opened it. On a reversal, why the money went back."
+          }
+        }
+      },
+      "WalletEntryPage": {
+        "type": "object",
+        "description": "One page of a member's entries, newest first.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WalletEntry"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where to continue from, or null when this page is the last. Null rather than a cursor that would return nothing, so a client stops by reading the answer rather than by making one more request to discover it."
           }
         }
       }

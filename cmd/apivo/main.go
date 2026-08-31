@@ -454,6 +454,11 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, err
 	}
+	history, err := wallet.NewHistory(walletstore.New(pool))
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
 	return append(routes,
 		platformhttp.Route{
 			Pattern: opsPrefix,
@@ -472,11 +477,11 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		},
 		platformhttp.Route{
 			Pattern: walletPrefix,
-			Handler: wallet.NewHandler(log, wallets, walletAuth{ids: ids}),
+			Handler: wallet.NewHandler(log, wallets, history, walletAuth{ids: ids}),
 		},
 		platformhttp.Route{
 			Pattern: walletPrefix + "/",
-			Handler: wallet.NewHandler(log, wallets, walletAuth{ids: ids}),
+			Handler: wallet.NewHandler(log, wallets, history, walletAuth{ids: ids}),
 		},
 	), stop, nil
 }
