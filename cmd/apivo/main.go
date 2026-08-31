@@ -469,7 +469,9 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 // network nothing can build a redirect for - which is the truth, and is
 // findable, where a 404 would say the API is not here at all.
 func newClickOuts(pool *pgxpool.Pool, adapter networks.Network, contextHeader string) (*clickout.ClickOuts, error) {
-	clicks, err := clickout.NewClicks(clickoutstore.New(pool))
+	// The recorder that opens its own transaction, because the click and the
+	// event announcing it commit together or neither does (T076).
+	clicks, err := clickout.NewAnnouncedClicks(pool)
 	if err != nil {
 		return nil, err
 	}
