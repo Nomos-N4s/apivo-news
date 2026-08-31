@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -56,6 +57,10 @@ type Unmatched struct {
 	ID uuid.UUID
 	// ReportID is the evidence row it was recorded about.
 	ReportID uuid.UUID
+	// DetectedAt is when the row says it was noticed. Read back rather than
+	// stamped here, so what is announced about the observation and what an
+	// operator sees in the queue name one moment.
+	DetectedAt time.Time
 }
 
 // queueUnmatched records that this report's reference matched no click,
@@ -85,7 +90,8 @@ func queueUnmatched(ctx context.Context, unmatched UnmatchedStore, reportID uuid
 		return Unmatched{}, false, fmt.Errorf("%w: report %s: %w", ErrNotQueued, reportID, err)
 	}
 	return Unmatched{
-		ID:       uuid.UUID(row.ID.Bytes),
-		ReportID: uuid.UUID(row.NetworkTransactionID.Bytes),
+		ID:         uuid.UUID(row.ID.Bytes),
+		ReportID:   uuid.UUID(row.NetworkTransactionID.Bytes),
+		DetectedAt: row.DetectedAt.Time,
 	}, true, nil
 }

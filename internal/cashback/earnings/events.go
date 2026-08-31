@@ -42,6 +42,18 @@ const (
 	// follow the money without ever reading this module's tables, which is
 	// what consumer rule 2 asks of the payload.
 	TypeEntryStateChanged = EventProducer + ".entry.state_changed"
+	// TypeTransactionUnattributed announces a report nobody can be credited
+	// for (FR-034).
+	//
+	// The SAME type the networks module publishes, and deliberately: FR-034's
+	// queue has two feeders - a report that carried no reference at all, and
+	// one whose reference matched no click - and they are the same fact to
+	// everyone downstream. Two types would make an operator's queue something
+	// a consumer had to assemble from two streams and know to. The
+	// idempotency key is the type and the report, so the two feeders cannot
+	// announce one report twice however they race; they never see the same
+	// report anyway, because a report either named a reference or did not.
+	TypeTransactionUnattributed = EventProducer + ".transaction.unattributed"
 )
 
 // ErrNotAnnounced reports an event that could not be appended beside the
@@ -156,6 +168,38 @@ func (a *Announcer) StateChanged(ctx context.Context, db events.RowQuerier, move
 		TypeEntryStateChanged+":"+string(moved.Transfer), payload)
 }
 
+// Unattributed announces one report whose reference matched no click.
+//
+// It says only which report and when it was noticed, which is the whole of
+// the contract's payload for this type. What an operator needs in order to
+// act - the money, the network's own identifier, whether it may be
+// attributed at all - is read from the queue, not carried here: an event
+// that carried it would be a second copy of facts that can change
+// underneath it.
+//
+// Announced per ROW WRITTEN, never per miss observed. A window re-read after
+// a crash resolves the same references again and writes nothing, and a
+// consumer must not see the same report queued four times a day for it.
+func (a *Announcer) Unattributed(ctx context.Context, db events.RowQuerier, queued Unmatched) error {
+	if queued.ReportID == uuid.Nil {
+		return fmt.Errorf("%w: %s about a report the database did not queue", ErrNotAnnounced, TypeTransactionUnattributed)
+	}
+	payload, err := json.Marshal(struct {
+		NetworkTransactionID uuid.UUID `json:"network_transaction_id"`
+		At                   time.Time `json:"at"`
+	}{
+		NetworkTransactionID: queued.ReportID,
+		// The detection instant the queue ROW carries, for the reason every
+		// other instant here is read back rather than taken from a clock.
+		At: queued.DetectedAt,
+	})
+	if err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrNotAnnounced, TypeTransactionUnattributed, err)
+	}
+	return a.append(ctx, db, TypeTransactionUnattributed, queued.ReportID,
+		TypeTransactionUnattributed+":"+queued.ReportID.String(), payload)
+}
+
 // append writes one event under the given key.
 //
 // An already-appended key is a FAILURE here, not a no-op, and the reason is
@@ -171,7 +215,7 @@ func (a *Announcer) append(ctx context.Context, db events.RowQuerier, eventType 
 		IdempotencyKey: key,
 		Payload:        payload,
 	}); err != nil {
-		return fmt.Errorf("%w: %s about entry %s: %w", ErrNotAnnounced, eventType, subject, err)
+		return fmt.Errorf("%w: %s about %s: %w", ErrNotAnnounced, eventType, subject, err)
 	}
 	return nil
 }
