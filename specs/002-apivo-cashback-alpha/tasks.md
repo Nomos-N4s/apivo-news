@@ -169,7 +169,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T072 [P] [US1] Contract tests for `POST /clickouts` (401 unauthenticated, 409 expired offer, 429 rate limited, no click row after deeplink failure) in `internal/cashback/clickout/handlers_test.go` — all four cases are covered by the handler tests that landed with T064/T065 and T066; what is left is whether they want a file of their own
 - [ ] T073 [P] [US1] Integration test: full earn journey with a mid-run published-rate change proving the click-time rate governs, in `internal/cashback/earnings/journey_integration_test.go`
 - [ ] T074 [P] [US1] Integration test: a transaction with an unknown click reference credits nobody **and lands in the unattributed queue as work an operator may only dismiss**, in `internal/cashback/earnings/unattributed_integration_test.go`
-- [ ] T075 [P] [US1] Test the SC-002 orphan-credit query returns zero rows, in `internal/cashback/earnings/orphan_test.go`
+- [x] T075 [P] [US1] Test the SC-002 orphan-credit query returns zero rows, in `internal/cashback/earnings/orphan_test.go`
 - [ ] T076 [P] [US1] Publish `cashback.click.created`, `cashback.entry.created` and `.state_changed` events in `internal/cashback/earnings/events.go`
 
 **Checkpoint**: 🎯 **MVP.** A member can earn cashback and the money is provably correct. Nothing is visible to them yet.
