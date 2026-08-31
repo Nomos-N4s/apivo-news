@@ -100,7 +100,7 @@ type CursorStore interface {
 //
 // It does not pace its own requests. The port puts that on the adapter -
 // "the adapter holds itself to it, refusing a window wider than MaxWindow
-// and pacing its requests to RequestsPerSecond" - and a poller that paced as
+// and pacing its requests to RequestsPerMinute" - and a poller that paced as
 // well would hold every adapter to a rate its own network never documented.
 type Poller struct {
 	db          Beginner

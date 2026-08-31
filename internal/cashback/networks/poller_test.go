@@ -53,7 +53,7 @@ func pollerTestNetwork(account networks.PublisherAccount, answer func(int, netwo
 	return &pollerTestAdapter{
 		id:      account.Network(),
 		account: account,
-		limits:  networks.Limits{MaxWindow: 31 * 24 * time.Hour, RequestsPerSecond: 6},
+		limits:  networks.Limits{MaxWindow: 31 * 24 * time.Hour, RequestsPerMinute: 360},
 		answer:  answer,
 	}
 }

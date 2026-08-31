@@ -112,10 +112,18 @@ func (w QueryWindow) String() string {
 }
 
 // Limits is what a network documents about how it may be queried: how wide a
-// transaction window it will answer, and how many requests a second it will
-// accept. Awin's numbers - 31 days and 6 requests per second - are the
+// transaction window it will answer, and how many requests a minute it will
+// accept. Awin's numbers - 31 days and 20 requests per minute - are the
 // reference case (ADR-0003), and both are stored per network
 // (max_query_window_days, rate_limit_per_minute) rather than compiled in.
+//
+// The rate is per MINUTE and not per second, in the unit the column carries
+// and the networks themselves publish. A per-second integer cannot express
+// Awin's published limit at all: twenty a minute is a third of a request a
+// second, and the smallest positive integer in that unit is three times too
+// fast. Migration 0026 moved the column for that reason; a declaration in
+// the old unit would have reintroduced the same bug one layer up, where it
+// would look like a correctly-read row.
 //
 // The port declares the limits; it does not enforce the rate. Window width
 // is refused here because it is a property of one call and can be judged
@@ -135,11 +143,11 @@ type Limits struct {
 	// arithmetic can only ever refuse a window the network might have
 	// allowed.
 	MaxWindow time.Duration
-	// RequestsPerSecond is the documented request rate, as the network
-	// states it and the network table stores it. It is what the adapter's
-	// limiter is configured from; nothing in this file consumes it, because
-	// no single call can be judged against a rate.
-	RequestsPerSecond int
+	// RequestsPerMinute is the documented request rate, as the network
+	// states it and the network table stores it (rate_limit_per_minute). It
+	// is what the adapter's limiter is configured from; nothing in this file
+	// consumes it, because no single call can be judged against a rate.
+	RequestsPerMinute int
 }
 
 // Validate reports whether the limits describe a network that can be
@@ -154,8 +162,8 @@ func (l Limits) Validate() error {
 	if l.MaxWindow <= 0 {
 		return fmt.Errorf("%w: maximum query window of %s", ErrInvalidLimits, l.MaxWindow)
 	}
-	if l.RequestsPerSecond <= 0 {
-		return fmt.Errorf("%w: request rate of %d per second", ErrInvalidLimits, l.RequestsPerSecond)
+	if l.RequestsPerMinute <= 0 {
+		return fmt.Errorf("%w: request rate of %d per minute", ErrInvalidLimits, l.RequestsPerMinute)
 	}
 	return nil
 }

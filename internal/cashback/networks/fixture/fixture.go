@@ -208,14 +208,16 @@ func newAdapter(account networks.PublisherAccount, opts ...Option) (*Network, er
 
 // defaultLimits are the reference network's documented numbers (ADR-0003): a
 // 31-day maximum query window, which is why backfill is inherently windowed,
-// and 6 requests a second. They are a function rather than a package
-// variable because a [networks.Limits] handed out from a shared variable is a
-// value one test can edit for every other one.
+// and 360 requests a minute - the same rate this fixture always declared,
+// carried into the unit the column and the port now use. They are a function
+// rather than a package variable because a [networks.Limits] handed out from
+// a shared variable is a value one test can edit for every other one.
 func defaultLimits() networks.Limits {
 	const maxQueryWindowDays = 31
+	const requestsPerMinute = 360
 	return networks.Limits{
 		MaxWindow:         maxQueryWindowDays * 24 * time.Hour,
-		RequestsPerSecond: 6,
+		RequestsPerMinute: requestsPerMinute,
 	}
 }
 

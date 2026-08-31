@@ -343,7 +343,7 @@ type Network interface {
 	// Limits states what the network documents about how it may be queried
 	// (contract rule 3). It is a declaration rather than an enforcement
 	// point: the adapter holds itself to it, refusing a window wider than
-	// MaxWindow and pacing its requests to RequestsPerSecond, and a caller
+	// MaxWindow and pacing its requests to RequestsPerMinute, and a caller
 	// reads it to split a backfill into windows the network will answer.
 	//
 	// The values come from the network's row rather than from literals in

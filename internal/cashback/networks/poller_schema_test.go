@@ -289,7 +289,7 @@ func TestPollForwardAgainstTheRealSchema(t *testing.T) {
 		// wider window itself (contract rule 3), so a poller that split the
 		// backfill wrongly fails here rather than silently reading less
 		// than it thought.
-		adapter.limits = networks.Limits{MaxWindow: 24 * time.Hour, RequestsPerSecond: 6}
+		adapter.limits = networks.Limits{MaxWindow: 24 * time.Hour, RequestsPerMinute: 360}
 
 		poll, err := pollerSchemaPoller(t, tx).PollForward(ctx, adapter)
 		if err != nil {

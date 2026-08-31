@@ -73,15 +73,15 @@ func TestAdapterDefaultsToTheReferenceLimits(t *testing.T) {
 	if want := 31 * 24 * time.Hour; limits.MaxWindow != want {
 		t.Errorf("MaxWindow = %s, want %s", limits.MaxWindow, want)
 	}
-	if limits.RequestsPerSecond != 6 {
-		t.Errorf("RequestsPerSecond = %d, want 6", limits.RequestsPerSecond)
+	if want := 360; limits.RequestsPerMinute != want {
+		t.Errorf("RequestsPerMinute = %d, want %d", limits.RequestsPerMinute, want)
 	}
 }
 
 func TestWithLimitsReplacesTheDeclaration(t *testing.T) {
 	t.Parallel()
 
-	want := networks.Limits{MaxWindow: 2 * time.Hour, RequestsPerSecond: 1}
+	want := networks.Limits{MaxWindow: 2 * time.Hour, RequestsPerMinute: 1}
 	if got := fixtureTestAdapter(t, WithLimits(want)).Limits(); got != want {
 		t.Errorf("Limits() = %+v, want %+v", got, want)
 	}
