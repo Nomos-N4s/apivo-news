@@ -55,7 +55,7 @@ func TestAReversalNeverTouchesTheCreditItUndoes(t *testing.T) {
 	original := creditedEntry(t, earnings.StateConfirmed)
 	entries, ledger := &fakeEntries{row: anEntry(original.Member, earnings.StateReversed)}, &fakeLedger{}
 
-	if _, err := reverser(t, entries, ledger).Reverse(t.Context(), earnings.Reversal{
+	if _, err := reverser(t, entries, ledger).Reverse(t.Context(), &fakeOutbox{}, earnings.Reversal{
 		Original: original,
 		Report:   uuid.New(),
 		Reason:   "the network reversed the sale",
@@ -85,7 +85,7 @@ func TestTheReversalCarriesTheOriginalsFacts(t *testing.T) {
 	reversingReport := uuid.New()
 	entries, ledger := &fakeEntries{row: anEntry(original.Member, earnings.StateReversed)}, &fakeLedger{}
 
-	if _, err := reverser(t, entries, ledger).Reverse(t.Context(), earnings.Reversal{
+	if _, err := reverser(t, entries, ledger).Reverse(t.Context(), &fakeOutbox{}, earnings.Reversal{
 		Original: original, Report: reversingReport,
 	}); err != nil {
 		t.Fatalf("Reverse(): %v", err)
@@ -138,7 +138,7 @@ func TestTheMoneyLeavesTheStageTheCreditReached(t *testing.T) {
 			entries := &fakeEntries{row: anEntry(original.Member, earnings.StateReversed)}
 			ledger := &fakeLedger{}
 
-			if _, err := reverser(t, entries, ledger).Reverse(t.Context(), earnings.Reversal{
+			if _, err := reverser(t, entries, ledger).Reverse(t.Context(), &fakeOutbox{}, earnings.Reversal{
 				Original: original, Report: uuid.New(),
 			}); err != nil {
 				t.Fatalf("Reverse(): %v", err)
@@ -188,7 +188,7 @@ func TestAReversalNeedsEvidenceOfItsOwn(t *testing.T) {
 			t.Parallel()
 			entries, ledger := &fakeEntries{}, &fakeLedger{}
 
-			_, err := reverser(t, entries, ledger).Reverse(t.Context(), earnings.Reversal{
+			_, err := reverser(t, entries, ledger).Reverse(t.Context(), &fakeOutbox{}, earnings.Reversal{
 				Original: original, Report: tc.report,
 			})
 
@@ -213,7 +213,7 @@ func TestAnEntryHoldingNothingCannotBeReversed(t *testing.T) {
 		original := creditedEntry(t, state)
 		entries, ledger := &fakeEntries{}, &fakeLedger{}
 
-		_, err := reverser(t, entries, ledger).Reverse(t.Context(), earnings.Reversal{
+		_, err := reverser(t, entries, ledger).Reverse(t.Context(), &fakeOutbox{}, earnings.Reversal{
 			Original: original, Report: uuid.New(),
 		})
 
@@ -237,7 +237,7 @@ func TestNothingIsWrittenWhenTheReversingTransferIsRefused(t *testing.T) {
 	entries := &fakeEntries{}
 	ledger := &fakeLedger{postErr: errors.New("ledger unreachable")}
 
-	_, err := reverser(t, entries, ledger).Reverse(t.Context(), earnings.Reversal{
+	_, err := reverser(t, entries, ledger).Reverse(t.Context(), &fakeOutbox{}, earnings.Reversal{
 		Original: original, Report: uuid.New(),
 	})
 
@@ -259,5 +259,81 @@ func TestAReverserIsRefusedWithoutAMachine(t *testing.T) {
 
 	if _, err := earnings.NewReversals(nil); !errors.Is(err, earnings.ErrNoEntries) {
 		t.Errorf("NewReversals(nil) error = %v, want %v", err, earnings.ErrNoEntries)
+	}
+}
+
+// TestAReversalAnnouncesBothFacts. Two things happened and two are
+// announced: an entry that did not exist now does, and it moved into the
+// state it was born in. A consumer following creations would otherwise be
+// blind to money owed back, and one following moves would see an entry that
+// appeared already reversed with no transfer to trace it by.
+func TestAReversalAnnouncesBothFacts(t *testing.T) {
+	t.Parallel()
+
+	original := creditedEntry(t, earnings.StateConfirmed)
+	entries := &fakeEntries{row: anEntry(original.Member, earnings.StateReversed)}
+	ledger, out := &fakeLedger{}, &fakeOutbox{}
+
+	reversing, err := reverser(t, entries, ledger).Reverse(t.Context(), out, earnings.Reversal{
+		Original: original,
+		Report:   uuid.New(),
+		Reason:   "the network took it back",
+	})
+	if err != nil {
+		t.Fatalf("Reverse(): %v", err)
+	}
+
+	created := out.only(t, earnings.TypeEntryCreated)
+	if created.Subject != reversing.ID.String() {
+		t.Errorf("the creation is about %q, want the reversing entry %s", created.Subject, reversing.ID)
+	}
+	// Born reversed, and said so: an entry announced as held would have a
+	// consumer counting money toward a balance the schema says is gone.
+	if created.Payload["state"] != string(earnings.StateReversed) {
+		t.Errorf("the creation says the entry is %v, want %s", created.Payload["state"], earnings.StateReversed)
+	}
+	if created.Payload["account_id"] != original.Member.String() {
+		t.Errorf("the creation names member %v, want %s", created.Payload["account_id"], original.Member)
+	}
+
+	moved := out.only(t, earnings.TypeEntryStateChanged)
+	if moved.Subject != reversing.ID.String() {
+		t.Errorf("the move is about %q, want the reversing entry %s", moved.Subject, reversing.ID)
+	}
+	// From nothing: the reversing entry came into being reversed, and the
+	// stream says so rather than inventing a state it was never in.
+	if moved.Payload["from"] != "" {
+		t.Errorf("the move says it came from %v, want nothing", moved.Payload["from"])
+	}
+	if moved.Payload["to"] != string(earnings.StateReversed) {
+		t.Errorf("the move says it went to %v, want %s", moved.Payload["to"], earnings.StateReversed)
+	}
+	// Never the original: the credit being undone is not touched, and it is
+	// not announced as having moved either.
+	for _, e := range out.events {
+		if e.Subject == original.ID.String() {
+			t.Errorf("%s was announced about the original entry, which this reversal must leave alone", e.Type)
+		}
+	}
+}
+
+// TestAReversalThatCannotBeAnnouncedFails, for the reason every other
+// announcement failure is fatal: the append shares the caller's transaction,
+// so carrying on would commit nothing while reporting success.
+func TestAReversalThatCannotBeAnnouncedFails(t *testing.T) {
+	t.Parallel()
+
+	original := creditedEntry(t, earnings.StateConfirmed)
+	entries := &fakeEntries{row: anEntry(original.Member, earnings.StateReversed)}
+	ledger := &fakeLedger{}
+	out := &fakeOutbox{err: errOutboxRefused}
+
+	_, err := reverser(t, entries, ledger).Reverse(t.Context(), out, earnings.Reversal{
+		Original: original,
+		Report:   uuid.New(),
+	})
+
+	if !errors.Is(err, earnings.ErrNotAnnounced) {
+		t.Fatalf("Reverse() error = %v, want one wrapping %v", err, earnings.ErrNotAnnounced)
 	}
 }

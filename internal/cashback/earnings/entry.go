@@ -5,6 +5,7 @@ package earnings
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -40,6 +41,10 @@ type Entry struct {
 	// ReversalOf names the entry this one undoes, and is the zero uuid on an
 	// entry that is not a reversal.
 	ReversalOf uuid.UUID
+	// CreatedAt is the instant the row carries, read back rather than taken
+	// from a clock: what is announced about an entry and what is stored
+	// about it have to name one moment (T076).
+	CreatedAt time.Time
 }
 
 // entryFrom turns one stored row into the value a caller reads.
@@ -62,6 +67,7 @@ func entryFrom(row store.CashbackEntry) (Entry, error) {
 		HoldRule:   row.HoldRule.String,
 		Amount:     amount,
 		ReversalOf: uuid.UUID(row.ReversalOfID.Bytes),
+		CreatedAt:  row.CreatedAt.Time,
 	}, nil
 }
 

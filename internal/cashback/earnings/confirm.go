@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/events"
 )
 
 var (
@@ -86,7 +87,7 @@ func NewConfirmations(entries *Entries, reconciled Reconciliation) (*Confirmatio
 // holding an entry is the caller that just read the report it cites, and a
 // second read would be a second answer - one that could differ from the one
 // the decision was made against.
-func (c *Confirmations) Confirm(ctx context.Context, entry Entry, reported networks.Status, cause uuid.UUID) (Entry, error) {
+func (c *Confirmations) Confirm(ctx context.Context, db events.RowQuerier, entry Entry, reported networks.Status, cause uuid.UUID) (Entry, error) {
 	if reported != networks.StatusConfirmed {
 		return Entry{}, fmt.Errorf("%w: %s reports %s", ErrNotApproved, entry.Report, reported)
 	}
@@ -104,7 +105,7 @@ func (c *Confirmations) Confirm(ctx context.Context, entry Entry, reported netwo
 		return Entry{}, fmt.Errorf("%w: report %s", ErrNotReconciled, entry.Report)
 	}
 
-	return c.entries.Apply(ctx, Move{
+	return c.entries.Apply(ctx, db, Move{
 		Entry:  entry.ID,
 		From:   entry.State,
 		To:     StateConfirmed,
