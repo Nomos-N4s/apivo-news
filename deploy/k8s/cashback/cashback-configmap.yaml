@@ -77,6 +77,12 @@ data:
   # old name.
   HOUSE_ACCOUNT_ROUNDING: "rounding-remainder"
   HOUSE_ACCOUNT_CLAWBACK: "clawback-loss"
+  # And the account an earning is paid out of: the commission a network has
+  # reported (FR-040). The member's share moves out of it and the rounding
+  # to the account above, so what stays is Apivo's own cut - there is no
+  # separate revenue account to reconcile against a balance that already
+  # answers the same question. Required and distinct on the same terms.
+  HOUSE_ACCOUNT_NETWORK_RECEIVABLE: "network-receivable"
   # Which affiliate network adapter the poller uses. EMPTY means `fixture`:
   # a scripted click -> pending -> approved -> reversed lifecycle served from
   # recorded responses, needing no credentials (ADR-0003). That is the safe
