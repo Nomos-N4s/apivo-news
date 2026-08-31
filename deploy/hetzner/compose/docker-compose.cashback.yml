@@ -412,6 +412,20 @@ services:
       # name, because one balance cannot carry two meanings.
       HOUSE_ACCOUNT_ROUNDING: rounding-remainder
       HOUSE_ACCOUNT_CLAWBACK: clawback-loss
+      # And the account an earning is paid OUT of: the commission a network
+      # has reported (FR-040). Required on the same terms as the two above,
+      # and distinct from both.
+      HOUSE_ACCOUNT_NETWORK_RECEIVABLE: network-receivable
+      # The confirmed balance a member must reach before they may ask to be
+      # paid (FR-050). Minor units, so 2000 EUR is twenty euros.
+      #
+      # Two keys and one value: the api refuses to start on one without the
+      # other, because an amount with no currency is a number somebody
+      # compares a balance against and gets right until a second currency is
+      # published (C-6). Required here for the same reason the house accounts
+      # are - APP_ENV=prod puts the production rules in force.
+      PAYOUT_THRESHOLD_MINOR: "2000"
+      PAYOUT_THRESHOLD_CURRENCY: EUR
       BLNK_URL: http://apivo-${APIVO_ENV}-blnk:5001
       REDIS_URL: redis://apivo-${APIVO_ENV}-redis:6379
     # `service_started` and NOT `service_healthy`, even though blnk now has a

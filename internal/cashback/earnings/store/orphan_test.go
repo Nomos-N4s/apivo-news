@@ -120,6 +120,15 @@ func defeatTheSchema(ctx context.Context, t *testing.T, tx pgx.Tx) {
 	}
 }
 
+// evidenceLockTimeout bounds each attempt at the locks below.
+//
+// Five seconds is long enough that a suite merely holding the table for a
+// moment is waited out rather than retried, and short enough that a genuinely
+// stuck run fails instead of hanging. It is a variable rather than a constant
+// so TestTheRetryOutlastsAContendedLock can lower it and drive the retry in a
+// second rather than in half a minute; nothing else assigns it.
+var evidenceLockTimeout = "5s"
+
 // lockEvidenceExclusively takes every lock the DDL below needs, in one
 // statement, bounded and retried.
 //
@@ -140,19 +149,50 @@ func defeatTheSchema(ctx context.Context, t *testing.T, tx pgx.Tx) {
 // verdict on the detector: the case asserts what the query sees, and taking
 // the locks a moment later asserts exactly the same thing.
 //
+// EACH ATTEMPT INSIDE A SAVEPOINT, and without that the retry is a fiction.
+// A statement that fails aborts its transaction, so a lock_timeout or a
+// deadlock leaves every later command answering 25P02 - including the next
+// attempt, which then fails as an unrecognised error rather than retrying.
+// That is not a hypothetical: the first version of this loop shipped without
+// the savepoint and turned a lock timeout into
+// "current transaction is aborted, commands ignored until end of transaction
+// block". Rolling back to the savepoint clears the abort; releasing it on
+// success keeps the locks, because a released savepoint keeps its effects.
+//
+// pgx spells a nested Begin as a savepoint, which is why this reads as a
+// transaction inside a transaction.
+//
 // It must be called before ANY fixture in the case. Holding nothing, this
 // transaction can only wait; holding a row somebody else wants, it can
 // deadlock - which is what happened when one case seeded its report first.
 func lockEvidenceExclusively(ctx context.Context, t *testing.T, tx pgx.Tx) {
 	t.Helper()
-	if _, err := tx.Exec(ctx, `set local lock_timeout = '5s'`); err != nil {
+	// set_config rather than SET LOCAL, because SET LOCAL takes no parameter
+	// and the bound has to be a value the retry case can lower - see
+	// evidenceLockTimeout.
+	if _, err := tx.Exec(ctx, `select set_config('lock_timeout', $1, true)`, evidenceLockTimeout); err != nil {
 		t.Fatalf("bounding the lock wait: %v", err)
 	}
 	var err error
 	for attempt := 1; attempt <= 6; attempt++ {
-		if _, err = tx.Exec(ctx,
-			`lock table cashback.entry, cashback.click in access exclusive mode`); err == nil {
+		var attempted pgx.Tx
+		if attempted, err = tx.Begin(ctx); err != nil {
+			t.Fatalf("opening the savepoint for attempt %d: %v", attempt, err)
+		}
+		_, err = attempted.Exec(ctx,
+			`lock table cashback.entry, cashback.click in access exclusive mode`)
+		if err == nil {
+			// Released, not rolled back: the locks stay with the outer
+			// transaction, which is the whole point of taking them.
+			if err = attempted.Commit(ctx); err != nil {
+				t.Fatalf("releasing the savepoint that took the locks: %v", err)
+			}
 			return
+		}
+		// Back to before the attempt, which is what makes the transaction
+		// usable for the next one.
+		if rollback := attempted.Rollback(ctx); rollback != nil {
+			t.Fatalf("rolling back attempt %d: %v (after %v)", attempt, rollback, err)
 		}
 		var pgErr *pgconn.PgError
 		if !errors.As(err, &pgErr) || (pgErr.Code != pgerrcode.LockNotAvailable && pgErr.Code != pgerrcode.DeadlockDetected) {

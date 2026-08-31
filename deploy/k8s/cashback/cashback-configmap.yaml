@@ -83,17 +83,35 @@ data:
   # separate revenue account to reconcile against a balance that already
   # answers the same question. Required and distinct on the same terms.
   HOUSE_ACCOUNT_NETWORK_RECEIVABLE: "network-receivable"
-  # Which affiliate network adapter the poller uses. EMPTY means `fixture`:
-  # a scripted click -> pending -> approved -> reversed lifecycle served from
-  # recorded responses, needing no credentials (ADR-0003). That is the safe
-  # default while founder question Q1 — which networks to join — is open, and
-  # it is what lets the whole money path run in a cluster before a publisher
+  # The confirmed balance a member must reach before they may ask to be paid
+  # (FR-050). Minor units, so 2000 EUR is twenty euros.
+  #
+  # Two keys and one value: the api refuses to start on one without the other,
+  # because an amount with no currency is a number somebody compares a balance
+  # against and gets right until a second currency is published (C-6). Zero is
+  # a legitimate threshold and means any confirmed balance may be withdrawn,
+  # so it is the PAIR being set that says one was configured - never the
+  # number being non-zero. Required with CASHBACK_ENABLED=true in production,
+  # which every deployed environment is.
+  PAYOUT_THRESHOLD_MINOR: "2000"
+  PAYOUT_THRESHOLD_CURRENCY: "EUR"
+  # Which affiliate network adapter the poller uses. `fixture` is a scripted
+  # click -> pending -> approved -> reversed lifecycle served from recorded
+  # responses, needing no credentials (ADR-0003). That is the safe default
+  # while founder question Q1 — which networks to join — is open, and it is
+  # what lets the whole money path run in a cluster before a publisher
   # account exists.
+  #
+  # NAMED, not left empty. This shipped empty with a comment saying empty
+  # meant fixture, and the api does not agree: CashbackConfig.Missing lists
+  # NETWORK_DRIVER whenever the product is on, so an empty value here refused
+  # to start the cluster. .env.example has always set it explicitly; this now
+  # matches.
   #
   # Naming a live adapter here without its credentials in the Secret is a
   # configuration error the api reports at startup, rather than a poller that
   # silently fetches nothing.
-  NETWORK_DRIVER: ""
+  NETWORK_DRIVER: "fixture"
   # The publisher account the adapter reports for. NOT a credential - the
   # config package logs it in clear, and its two companions
   # (NETWORK_API_KEY, NETWORK_API_SECRET) are Secrets precisely because this
