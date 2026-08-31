@@ -31,15 +31,11 @@ var states = []earnings.State{
 // arrow were added or removed.
 var legal = map[[2]earnings.State]bool{
 	{earnings.StateHeld, earnings.StatePending}:       true,
-	{earnings.StateHeld, earnings.StateReversed}:      true,
 	{earnings.StatePending, earnings.StateHeld}:       true,
 	{earnings.StatePending, earnings.StateConfirmed}:  true,
-	{earnings.StatePending, earnings.StateReversed}:   true,
 	{earnings.StateConfirmed, earnings.StateReserved}: true,
-	{earnings.StateConfirmed, earnings.StateReversed}: true,
 	{earnings.StateReserved, earnings.StateConfirmed}: true,
 	{earnings.StateReserved, earnings.StatePaid}:      true,
-	{earnings.StateReserved, earnings.StateReversed}:  true,
 }
 
 // TestEveryPairOfStatesIsDecidedAsTheDesignSays walks all thirty-six ordered
@@ -55,6 +51,25 @@ func TestEveryPairOfStatesIsDecidedAsTheDesignSays(t *testing.T) {
 				t.Errorf("CanFollow(%s, %s) = %v, want %v", from, to, got, want)
 			}
 		}
+	}
+}
+
+// TestNothingEverBecomesReversed is the arrow whose absence costs the most.
+// A reversal is a new entry citing the superseding report and born reversed;
+// the credit it undoes is left exactly as it was. entry_guard says the same
+// thing in the schema, and the migration's own test refuses a reversal that
+// changed the original's state - so an arrow here would be caught by
+// Postgres at the worst possible moment instead of by this.
+func TestNothingEverBecomesReversed(t *testing.T) {
+	t.Parallel()
+
+	for _, from := range states {
+		if earnings.CanFollow(from, earnings.StateReversed) {
+			t.Errorf("CanFollow(%s, reversed) = true; reversing must create a new entry, not move this one", from)
+		}
+	}
+	if !earnings.CanOpen(earnings.StateReversed) {
+		t.Error("CanOpen(reversed) = false; a reversal is born reversed, so it has to be able to start there")
 	}
 }
 
@@ -90,12 +105,17 @@ func TestAStateNeverFollowsItself(t *testing.T) {
 
 // TestAnEntryOpensOnlyWhereTheNetworkPutIt pins what an entry may be created
 // as. Confirmed would mean Apivo decided a commission was final, which is the
-// network's to say; the other three describe something that has already
-// happened to money the entry has not yet held.
+// network's to say; reserved and paid describe something that has already
+// happened to money the entry has not yet held. Reversed is open because a
+// reversal is born there - see TestNothingEverBecomesReversed.
 func TestAnEntryOpensOnlyWhereTheNetworkPutIt(t *testing.T) {
 	t.Parallel()
 
-	opens := map[earnings.State]bool{earnings.StateHeld: true, earnings.StatePending: true}
+	opens := map[earnings.State]bool{
+		earnings.StateHeld:     true,
+		earnings.StatePending:  true,
+		earnings.StateReversed: true,
+	}
 	for _, s := range states {
 		if got := earnings.CanOpen(s); got != opens[s] {
 			t.Errorf("CanOpen(%s) = %v, want %v", s, got, opens[s])

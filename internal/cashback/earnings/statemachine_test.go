@@ -70,10 +70,16 @@ type fakeEntries struct {
 	transitions []store.RecordTransitionParams
 	links       []store.LinkLedgerTransferParams
 	moves       []store.MoveEntryParams
+	created     store.CreateEntryParams
+	creations   int
 }
 
-func (f *fakeEntries) CreateEntry(context.Context, store.CreateEntryParams) (store.CashbackEntry, error) {
-	return f.row, nil
+func (f *fakeEntries) CreateEntry(_ context.Context, arg store.CreateEntryParams) (store.CashbackEntry, error) {
+	f.created = arg
+	f.creations++
+	row := f.row
+	row.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	return row, nil
 }
 
 func (f *fakeEntries) MoveEntry(_ context.Context, arg store.MoveEntryParams) (store.CashbackEntry, error) {
@@ -178,35 +184,6 @@ func TestAConfirmationMovesTheMembersOwnMoneyBetweenTheirOwnBuckets(t *testing.T
 		if _, _, ok := ref.Member(); !ok {
 			t.Errorf("a confirmation touched %s, which is not the member's own account", ref)
 		}
-	}
-}
-
-// TestAnOpeningCreditComesOutOfTheReceivable pins the other end. The member's
-// share has to come from the commission the network reported; out of anywhere
-// else it would be money the business had not received.
-func TestAnOpeningCreditComesOutOfTheReceivable(t *testing.T) {
-	t.Parallel()
-
-	member := uuid.New()
-	row := anEntry(member, earnings.StatePending)
-	entries, ledger := &fakeEntries{row: row}, &fakeLedger{}
-	move := aMove(t, row)
-	move.From, move.To = earnings.StateConfirmed, earnings.StateReversed
-
-	if _, err := machine(t, entries, ledger).Apply(t.Context(), move); err != nil {
-		t.Fatalf("Apply(): %v", err)
-	}
-	var house int
-	for _, ref := range ledger.ensured {
-		if name, ok := ref.House(); ok {
-			house++
-			if name != receivable {
-				t.Errorf("a reversal touched house account %q, want %q", name, receivable)
-			}
-		}
-	}
-	if house != 1 {
-		t.Errorf("a reversal touched %d house account(s), want exactly one", house)
 	}
 }
 

@@ -60,9 +60,16 @@ func (s State) String() string { return string(s) }
 //
 // THE ARROWS THAT ARE ABSENT ARE THE POINT.
 //
-//   - Nothing leaves reversed or paid. Both are end states, and the money has
-//     already moved; a further transition would be an edit of a settled fact
-//     (C-3), not a correction. A network that reverses after payout is Q3's
+//   - NOTHING EVER BECOMES REVERSED, and this is the arrow whose absence
+//     costs the most to get wrong. A reversal is a NEW ENTRY citing the
+//     superseding report, carrying reversal_of_id, and BORN reversed; the
+//     entry it undoes is left exactly as it was. Moving the original would
+//     be editing a settled fact (C-3, SC-010), and the schema says so twice:
+//     entry_guard makes reversed terminal, and the migration's own test
+//     refuses a reversal that changed the original's state, in those words.
+//     See reversal.go, which is the only thing that opens an entry here.
+//   - Nothing leaves reversed or paid either. Both are end states and the
+//     money has already moved. A network that reverses after payout is Q3's
 //     absorbed loss, recorded against the house, never a state change here.
 //   - Confirmed never returns to pending. The network confirming and then
 //     un-confirming is a reversal, which is what reversed is for; letting
@@ -76,22 +83,28 @@ func (s State) String() string { return string(s) }
 //     the entry is ordinary again, not that the network has confirmed it -
 //     those are two different facts and an operator can only assert the first.
 var transitions = map[State][]State{
-	StateHeld:      {StatePending, StateReversed},
-	StatePending:   {StateHeld, StateConfirmed, StateReversed},
-	StateConfirmed: {StateReserved, StateReversed},
-	StateReserved:  {StateConfirmed, StatePaid, StateReversed},
+	StateHeld:      {StatePending},
+	StatePending:   {StateHeld, StateConfirmed},
+	StateConfirmed: {StateReserved},
+	StateReserved:  {StateConfirmed, StatePaid},
 	StatePaid:      {},
 	StateReversed:  {},
 }
 
 // opening is the set of states an entry may be created in.
 //
-// An entry begins where the network's own report puts it: held when a rule
+// A credit begins where the network's own report puts it: held when a rule
 // caught it, pending otherwise. Never confirmed - that would mean Apivo
 // decided a commission was final, which is the network's to say - and never
-// reserved, paid or reversed, each of which describes something that has
-// already happened to money this entry has not yet held.
-var opening = map[State]bool{StateHeld: true, StatePending: true}
+// reserved or paid, both of which describe something that has already
+// happened to money the entry has not yet held.
+//
+// Reversed is here because a reversal is BORN in it. That is the only way an
+// entry is ever reversed: the credit it undoes is left alone, so nothing
+// transitions into this state and something has to be able to start there.
+// [Reversals.Reverse] is the only caller that opens one, and it is what
+// supplies the reversal_of_id the schema then requires.
+var opening = map[State]bool{StateHeld: true, StatePending: true, StateReversed: true}
 
 // CanOpen reports whether an entry may be created in this state.
 func CanOpen(s State) bool { return opening[s] }
