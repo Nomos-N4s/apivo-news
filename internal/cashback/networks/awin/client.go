@@ -209,6 +209,11 @@ func New(account networks.PublisherAccount, opts ...Option) (*Client, error) {
 	}, nil
 }
 
+// ID names the network this adapter speaks to. It is constant for the life
+// of the client: the id is how a stored row is traced back to the code that
+// wrote it, so an adapter whose answer varied would strand its own evidence.
+func (c *Client) ID() networks.NetworkID { return ID }
+
 // Account is the publisher account this client polls for.
 func (c *Client) Account() networks.PublisherAccount { return c.account }
 
