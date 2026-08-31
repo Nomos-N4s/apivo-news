@@ -102,9 +102,9 @@ func (f *fakeEntries) MoveEntry(_ context.Context, arg store.MoveEntryParams) (s
 }
 
 // The stored row echoed back, because the statement returns the row and what
-// this package reads a transition from is that row. A fake that answered a
-// bare id would let the machine hand on a transition naming no entry and no
-// transfer, and nothing here would notice.
+// is announced is read from it. A fake that returned a bare id would let this
+// package announce a move naming no entry and no transfer, and nothing here
+// would notice.
 func (f *fakeEntries) RecordTransition(_ context.Context, arg store.RecordTransitionParams) (store.CashbackEntryTransition, error) {
 	f.transitions = append(f.transitions, arg)
 	return store.CashbackEntryTransition{
@@ -120,7 +120,7 @@ func (f *fakeEntries) RecordTransition(_ context.Context, arg store.RecordTransi
 }
 
 // recordedAt is the instant the fake's transition rows carry, fixed so a case
-// can assert what was read back from one.
+// can assert what was announced.
 var recordedAt = time.Date(2026, time.March, 1, 9, 30, 0, 0, time.UTC)
 
 func (f *fakeEntries) LinkLedgerTransfer(_ context.Context, arg store.LinkLedgerTransferParams) (store.CashbackLedgerLink, error) {
@@ -179,7 +179,7 @@ func TestAConfirmationMovesTheMembersOwnMoneyBetweenTheirOwnBuckets(t *testing.T
 	row := anEntry(member, earnings.StatePending)
 	entries, ledger := &fakeEntries{row: row}, &fakeLedger{}
 
-	entry, err := machine(t, entries, ledger).Apply(t.Context(), aMove(t, row))
+	entry, err := machine(t, entries, ledger).Apply(t.Context(), &fakeOutbox{}, aMove(t, row))
 	if err != nil {
 		t.Fatalf("Apply(): %v", err)
 	}
@@ -219,7 +219,7 @@ func TestNothingIsRecordedWhenTheTransferIsRefused(t *testing.T) {
 	entries := &fakeEntries{row: row}
 	ledger := &fakeLedger{postErr: errors.New("ledger unreachable")}
 
-	_, err := machine(t, entries, ledger).Apply(t.Context(), aMove(t, row))
+	_, err := machine(t, entries, ledger).Apply(t.Context(), &fakeOutbox{}, aMove(t, row))
 
 	if !errors.Is(err, earnings.ErrNotPosted) {
 		t.Fatalf("Apply() error = %v, want one wrapping %v", err, earnings.ErrNotPosted)
@@ -241,7 +241,7 @@ func TestAnIllegalMoveNeverReachesTheLedger(t *testing.T) {
 	move := aMove(t, row)
 	move.From, move.To = earnings.StateConfirmed, earnings.StatePending
 
-	_, err := machine(t, entries, ledger).Apply(t.Context(), move)
+	_, err := machine(t, entries, ledger).Apply(t.Context(), &fakeOutbox{}, move)
 
 	var illegal earnings.ErrIllegalTransition
 	if !errors.As(err, &illegal) {
@@ -264,7 +264,7 @@ func TestAnEntryThatMovedFirstIsRefusedWithoutRecording(t *testing.T) {
 	entries := &fakeEntries{row: row, moved: true}
 	ledger := &fakeLedger{}
 
-	_, err := machine(t, entries, ledger).Apply(t.Context(), aMove(t, row))
+	_, err := machine(t, entries, ledger).Apply(t.Context(), &fakeOutbox{}, aMove(t, row))
 
 	if !errors.Is(err, earnings.ErrEntryMoved) {
 		t.Fatalf("Apply() error = %v, want one wrapping %v", err, earnings.ErrEntryMoved)
@@ -283,7 +283,7 @@ func TestEveryTransitionIsLinkedToItsPosting(t *testing.T) {
 	row := anEntry(uuid.New(), earnings.StatePending)
 	entries, ledger := &fakeEntries{row: row}, &fakeLedger{}
 
-	if _, err := machine(t, entries, ledger).Apply(t.Context(), aMove(t, row)); err != nil {
+	if _, err := machine(t, entries, ledger).Apply(t.Context(), &fakeOutbox{}, aMove(t, row)); err != nil {
 		t.Fatalf("Apply(): %v", err)
 	}
 	if len(entries.transitions) != 1 || len(entries.links) != 1 {
@@ -311,15 +311,16 @@ func TestTheKeyDistinguishesARepeatedMove(t *testing.T) {
 	entries, ledger := &fakeEntries{row: row}, &fakeLedger{}
 	m := machine(t, entries, ledger)
 
+	out := &fakeOutbox{}
 	release := aMove(t, row)
 	release.From, release.To = earnings.StateHeld, earnings.StatePending
-	if _, err := m.Apply(t.Context(), release); err != nil {
+	if _, err := m.Apply(t.Context(), out, release); err != nil {
 		t.Fatalf("the first release: %v", err)
 	}
 	// The same move again, caused by a different fact - which is what a
 	// second hold and release actually is.
 	release.Cause = uuid.New()
-	if _, err := m.Apply(t.Context(), release); err != nil {
+	if _, err := m.Apply(t.Context(), out, release); err != nil {
 		t.Fatalf("the second release: %v", err)
 	}
 
@@ -344,7 +345,7 @@ func TestPayingOutIsRefusedByName(t *testing.T) {
 	move := aMove(t, row)
 	move.From, move.To = earnings.StateReserved, earnings.StatePaid
 
-	_, err := machine(t, entries, ledger).Apply(t.Context(), move)
+	_, err := machine(t, entries, ledger).Apply(t.Context(), &fakeOutbox{}, move)
 
 	if !errors.Is(err, earnings.ErrNotThisPackagesToPost) {
 		t.Fatalf("Apply() error = %v, want one wrapping %v", err, earnings.ErrNotThisPackagesToPost)
@@ -368,5 +369,58 @@ func TestAMachineIsRefusedWithoutItsParts(t *testing.T) {
 	}
 	if _, err := earnings.NewEntries(&fakeEntries{}, &fakeLedger{}, ""); !errors.Is(err, earnings.ErrNoReceivable) {
 		t.Errorf("NewEntries(_, _, \"\") error = %v, want %v", err, earnings.ErrNoReceivable)
+	}
+}
+
+// TestAMoveIsAnnouncedBesideItself is the atomicity guarantee at this layer:
+// the event is appended through the same handle the move was written with,
+// so there is no code path that commits a state change without its event
+// (contracts/events.md, T076).
+func TestAMoveIsAnnouncedBesideItself(t *testing.T) {
+	t.Parallel()
+
+	row := anEntry(uuid.New(), earnings.StatePending)
+	entries, ledger, out := &fakeEntries{row: row}, &fakeLedger{}, &fakeOutbox{}
+	move := aMove(t, row)
+
+	if _, err := machine(t, entries, ledger).Apply(t.Context(), out, move); err != nil {
+		t.Fatalf("Apply(): %v", err)
+	}
+
+	announced := out.only(t, earnings.TypeEntryStateChanged)
+	if announced.Subject != move.Entry.String() {
+		t.Errorf("the event is about %q, want the entry %s", announced.Subject, move.Entry)
+	}
+	// The transfer the ledger answered, carried through to the stream: the
+	// key and the payload both name it, which is what lets a consumer follow
+	// the money without reading this module's tables.
+	posted := ledger.posted[0].IdempotencyKey
+	if want := "transfer:" + posted; announced.Payload["ledger_transfer_ref"] != want {
+		t.Errorf("the event names transfer %v, want %q", announced.Payload["ledger_transfer_ref"], want)
+	}
+	if announced.Key != earnings.TypeEntryStateChanged+":transfer:"+posted {
+		t.Errorf("the event is keyed %q, want the type and the transfer", announced.Key)
+	}
+	if announced.Payload["from"] != string(earnings.StatePending) || announced.Payload["to"] != string(earnings.StateConfirmed) {
+		t.Errorf("the event says %v to %v, want pending to confirmed",
+			announced.Payload["from"], announced.Payload["to"])
+	}
+}
+
+// TestAMoveThatCannotBeAnnouncedFails. Swallowing the refusal would commit a
+// moved entry with no event - the one thing the contract says no code path
+// may do - and the append shares the caller's transaction, so a caller that
+// carried on would commit nothing while reporting success.
+func TestAMoveThatCannotBeAnnouncedFails(t *testing.T) {
+	t.Parallel()
+
+	row := anEntry(uuid.New(), earnings.StatePending)
+	entries, ledger := &fakeEntries{row: row}, &fakeLedger{}
+	out := &fakeOutbox{err: errOutboxRefused}
+
+	_, err := machine(t, entries, ledger).Apply(t.Context(), out, aMove(t, row))
+
+	if !errors.Is(err, earnings.ErrNotAnnounced) {
+		t.Fatalf("Apply() error = %v, want one wrapping %v", err, earnings.ErrNotAnnounced)
 	}
 }

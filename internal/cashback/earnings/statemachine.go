@@ -18,6 +18,7 @@ import (
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings/store"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/events"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
 
@@ -68,25 +69,15 @@ type Entries struct {
 	store      EntryStore
 	ledger     wallet.Ledger
 	receivable string
-}
-
-// Transition is one recorded state change, read back from the row that
-// records it rather than assembled from what was asked for. From is empty on
-// an opening transition: an entry that came into being did not come from
-// anywhere.
-//
-// It is read back because the row knows things the arguments do not - the
-// instant above all - and because what this package hands on about a move
-// should be what the database holds, not what it hoped to write.
-type Transition struct {
-	Entry    uuid.UUID
-	From     State
-	To       State
-	Transfer wallet.TransferRef
-	At       time.Time
+	announcer  *Announcer
 }
 
 // NewEntries builds the machine, refusing one that is missing a part.
+//
+// The announcer is built here rather than injected, because there is no
+// choice to make: a machine that moved entries without publishing what it
+// moved would be the code path contracts/events.md says may not exist, and
+// leaving it to a caller to pass one is leaving it to a caller to forget.
 func NewEntries(entries EntryStore, ledger wallet.Ledger, receivable string) (*Entries, error) {
 	switch {
 	case entries == nil:
@@ -96,7 +87,23 @@ func NewEntries(entries EntryStore, ledger wallet.Ledger, receivable string) (*E
 	case receivable == "":
 		return nil, ErrNoReceivable
 	}
-	return &Entries{store: entries, ledger: ledger, receivable: receivable}, nil
+	announcer, err := NewAnnouncer()
+	if err != nil {
+		return nil, err
+	}
+	return &Entries{store: entries, ledger: ledger, receivable: receivable, announcer: announcer}, nil
+}
+
+// Transition is one recorded state change, read back from the row that
+// records it rather than assembled from what was asked for. From is empty on
+// an opening transition: an entry that came into being did not come from
+// anywhere.
+type Transition struct {
+	Entry    uuid.UUID
+	From     State
+	To       State
+	Transfer wallet.TransferRef
+	At       time.Time
 }
 
 // Move is one requested transition, and everything the two writes need.
@@ -144,7 +151,13 @@ type Move struct {
 // The legality check runs before either write. It is cheap, it is the one
 // refusal that costs nothing, and a transition the design forbids should
 // never reach the ledger even in a form that would be rolled back.
-func (e *Entries) Apply(ctx context.Context, move Move) (Entry, error) {
+//
+// db is the transaction the store was bound to, taken separately because the
+// outbox is a table this module does not own and sqlc's generated store
+// cannot reach it. Passing a different transaction - or a pool - is what the
+// atomicity guarantee forbids: the event and the move commit together or
+// neither exists.
+func (e *Entries) Apply(ctx context.Context, db events.RowQuerier, move Move) (Entry, error) {
 	if !CanFollow(move.From, move.To) {
 		return Entry{}, ErrIllegalTransition{From: move.From, To: move.To}
 	}
@@ -175,7 +188,11 @@ func (e *Entries) Apply(ctx context.Context, move Move) (Entry, error) {
 		return Entry{}, fmt.Errorf("%w: moving %s: %w", ErrNotRecorded, move.Entry, err)
 	}
 
-	if _, err := e.record(ctx, move.Entry, move.From, move.To, ref, move.Reason, move.Actor); err != nil {
+	recorded, err := e.record(ctx, move.Entry, move.From, move.To, ref, move.Reason, move.Actor)
+	if err != nil {
+		return Entry{}, err
+	}
+	if err := e.announcer.StateChanged(ctx, db, recorded); err != nil {
 		return Entry{}, err
 	}
 	return entryFrom(moved)
@@ -233,6 +250,9 @@ func (e *Entries) record(ctx context.Context, entry uuid.UUID, from, to State, r
 	}); err != nil {
 		return Transition{}, fmt.Errorf("%w: linking %s to transfer %s: %w", ErrNotRecorded, entry, ref, err)
 	}
+	// Read back from the stored row rather than echoed from the arguments,
+	// so what is announced is what the database holds - including the
+	// instant, which only the row knows.
 	return Transition{
 		Entry:    uuid.UUID(transition.EntryID.Bytes),
 		From:     State(transition.FromState.String),

@@ -77,7 +77,7 @@ func TestBothHalvesTogetherConfirm(t *testing.T) {
 	statement := &fakeReconciliation{answer: arrived()}
 
 	confirmed, err := confirmer(t, entries, ledger, statement).
-		Confirm(t.Context(), entry, networks.StatusConfirmed, uuid.New())
+		Confirm(t.Context(), &fakeOutbox{}, entry, networks.StatusConfirmed, uuid.New())
 	if err != nil {
 		t.Fatalf("Confirm(): %v", err)
 	}
@@ -103,7 +103,7 @@ func TestAnUnapprovedCommissionDoesNotConfirm(t *testing.T) {
 	statement := &fakeReconciliation{answer: arrived()}
 
 	_, err := confirmer(t, entries, ledger, statement).
-		Confirm(t.Context(), entry, networks.StatusPending, uuid.New())
+		Confirm(t.Context(), &fakeOutbox{}, entry, networks.StatusPending, uuid.New())
 
 	if !errors.Is(err, earnings.ErrNotApproved) {
 		t.Fatalf("Confirm() error = %v, want one wrapping %v", err, earnings.ErrNotApproved)
@@ -128,7 +128,7 @@ func TestAnApprovedButUnreceivedCommissionDoesNotConfirm(t *testing.T) {
 	statement := &fakeReconciliation{answer: outstanding()}
 
 	_, err := confirmer(t, entries, ledger, statement).
-		Confirm(t.Context(), entry, networks.StatusConfirmed, uuid.New())
+		Confirm(t.Context(), &fakeOutbox{}, entry, networks.StatusConfirmed, uuid.New())
 
 	if !errors.Is(err, earnings.ErrNotReconciled) {
 		t.Fatalf("Confirm() error = %v, want one wrapping %v", err, earnings.ErrNotReconciled)
@@ -158,7 +158,7 @@ func TestAFailedReadIsNotAnUnreceivedCommission(t *testing.T) {
 		{answer: pgtype.Bool{}},
 	} {
 		_, err := confirmer(t, entries, ledger, statement).
-			Confirm(t.Context(), entry, networks.StatusConfirmed, uuid.New())
+			Confirm(t.Context(), &fakeOutbox{}, entry, networks.StatusConfirmed, uuid.New())
 
 		if !errors.Is(err, earnings.ErrReconciliationUnknown) {
 			t.Fatalf("Confirm() error = %v, want one wrapping %v", err, earnings.ErrReconciliationUnknown)
