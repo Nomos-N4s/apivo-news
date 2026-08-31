@@ -35,6 +35,13 @@ const (
 // (ADR-0003).
 const NetworkDriverFixture = "fixture"
 
+// NetworkDriverAwin is the adapter for Awin, the affiliate network this
+// deployment integrates (spec Q1, decided 2026-08-31). It needs
+// NETWORK_ACCOUNT_ID and NETWORK_API_KEY; the credential is read from the
+// environment and never written to the repository or the database
+// (ADR-0003).
+const NetworkDriverAwin = "awin"
+
 // ledgerDrivers is the membership test behind LEDGER_DRIVER's validation.
 var ledgerDrivers = map[string]struct{}{
 	LedgerDriverBlnk:     {},

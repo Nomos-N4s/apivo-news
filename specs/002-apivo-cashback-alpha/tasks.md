@@ -428,4 +428,4 @@ deployment configured for Awin would log "no publisher account is connected"
 and ingest nothing, with hand-written SQL against production as the only
 remedy. T130 is the local `make cashback-seed` and is not this.
 
-- [ ] T145 Provide a supported, idempotent way to connect a network publisher account in a deployed environment — the `cashback.network` row with its documented `max_query_window_days` and `rate_limit_per_minute`, and the `network_account` row the cursors hang off — per plan Phase E and FR-030/FR-031 (missing)
+- [x] T145 Provide a supported, idempotent way to connect a network publisher account in a deployed environment — the `cashback.network` row with its documented `max_query_window_days` and `rate_limit_per_minute`, and the `network_account` row the cursors hang off — per plan Phase E and FR-030/FR-031

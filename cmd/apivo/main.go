@@ -132,6 +132,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	switch {
 	case len(args) == 0:
 		return serve(ctx, getenv, stdout)
+	case args[0] == connectNetworkName:
+		// The one subcommand that takes flags, and the one that writes to
+		// the database. Its own arguments are its own to check.
+		return connectNetworkCommand(ctx, args[1:], getenv, stdout)
 	case args[0] != "healthcheck" && args[0] != "version":
 		return fmt.Errorf("unknown command %q", args[0])
 	case len(args) > 1:

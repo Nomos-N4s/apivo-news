@@ -273,3 +273,59 @@ api is handed resolve to Services that exist in this repository.
 ```sh
 sh deploy/k8s/validate.sh
 ```
+
+## Connecting a publisher account
+
+Applying the cashback set and setting `NETWORK_DRIVER` is not enough to ingest
+anything. The adapter polls **on behalf of a publisher account**, and that
+account is two rows in the database — `cashback.network`, which carries the
+network's documented limits and the query parameter its click references
+travel in, and `cashback.network_account`, which the two durable cursors hang
+off. A deployment configured for a network it has no account row at starts
+perfectly happily and logs, on every boot:
+
+```
+no publisher account "…" is connected at "…"
+```
+
+Ingestion is then off, and nothing else is wrong.
+
+`apivo connect-network` writes both rows. It is a subcommand of the same
+binary, so it runs anywhere the api runs and reads the same configuration the
+api does:
+
+```sh
+kubectl exec deploy/apivo-api -- apivo connect-network -backfill-from 2026-06-01
+```
+
+**The network and the account come from the environment, not from flags.**
+They are `NETWORK_DRIVER` and `NETWORK_ACCOUNT_ID` — the same two values the
+running process resolves its adapter from — so it is not possible to connect
+an account this deployment would not then poll.
+
+**`-backfill-from` is where this account's history starts**, and it is
+required the first time. Nothing in the system can work it out: too recent
+silently skips history nobody notices is missing, too old asks the network for
+years of it. It is **ignored on every later run**, and the command says so
+when you pass one, because the trailing re-read walks from that instant for
+about a hundred days and moving it forward would leave the span between the
+old start and the new one never re-read — where every transaction would sit
+pending forever, with nothing logged.
+
+**`-inactive` connects without turning the network on**, and is also how a
+live network is paused: activation is written on every run, on both rows
+together. `cashback.offer`'s read joins on `network.active`, so an active
+account at an inactive network polls happily while every offer on it is
+unclickable.
+
+Running it again is safe and expected — after a typo, from a fresh container,
+or out of an init job. A re-run does **not** overwrite the network's limits,
+its display name or its click-reference parameter: those are on the row so
+they can be corrected without a release (if a network raises your rate, edit
+the row), and a command that reset them to the documented defaults would put
+the deployment back on numbers you had already found to be wrong. Neither
+cursor is touched at any point.
+
+**No credential is written.** `cashback.network_account.credential_ref`
+records the *name* of the environment key the credential is read from —
+`NETWORK_API_KEY` — and never its value (ADR-0003).
