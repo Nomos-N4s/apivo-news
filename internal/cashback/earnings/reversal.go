@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings/store"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/events"
 )
 
 var (
@@ -81,7 +82,10 @@ type Reversal struct {
 // other move: entry_transition cannot name a transfer that does not exist
 // yet, and the key is derived from the reversing report so a retry re-posts
 // to the same transfer rather than moving the money twice.
-func (r *Reversals) Reverse(ctx context.Context, reversal Reversal) (Entry, error) {
+// db is the transaction the store was bound to, for the reason
+// [Entries.Apply] takes one: the reversing entry and the announcement that
+// it exists commit together or neither does.
+func (r *Reversals) Reverse(ctx context.Context, db events.RowQuerier, reversal Reversal) (Entry, error) {
 	switch reversal.Report {
 	case uuid.Nil:
 		return Entry{}, fmt.Errorf("%w: entry %s", ErrNoReversingReport, reversal.Original.ID)
@@ -126,9 +130,26 @@ func (r *Reversals) Reverse(ctx context.Context, reversal Reversal) (Entry, erro
 	// The opening transition, from nothing. Recorded like any other, because
 	// a reversal that moved money without a transition would be the same
 	// disagreement D7 forbids anywhere else.
-	if err := r.entries.record(ctx, uuid.UUID(created.ID.Bytes), "", StateReversed,
-		ref, reversal.Reason, reversal.Actor); err != nil {
+	recorded, err := r.entries.record(ctx, uuid.UUID(created.ID.Bytes), "", StateReversed,
+		ref, reversal.Reason, reversal.Actor)
+	if err != nil {
 		return Entry{}, err
 	}
-	return entryFrom(created)
+	reversing, err := entryFrom(created)
+	if err != nil {
+		return Entry{}, err
+	}
+	// Two facts, because two things happened: an entry that did not exist
+	// now does, and it moved into the state it was born in. Announcing only
+	// the creation would leave a consumer following state changes with an
+	// entry that appeared already reversed and no transfer to trace it by;
+	// announcing only the move would leave one following creations blind to
+	// an entry that owes a member's money back.
+	if err := r.entries.announcer.Created(ctx, db, reversing); err != nil {
+		return Entry{}, err
+	}
+	if err := r.entries.announcer.StateChanged(ctx, db, recorded); err != nil {
+		return Entry{}, err
+	}
+	return reversing, nil
 }
