@@ -1,0 +1,111 @@
+-- Connecting a publisher account (T145). The two rows a deployment cannot
+-- ingest without, and the one place they are written.
+--
+-- The schema has carried both since 0011 and connectNetwork requires both,
+-- but until this file nothing in the tree wrote either: a deployment
+-- configured for a real network logged "no publisher account is connected"
+-- and ingested nothing, with hand-written SQL against production as the only
+-- remedy.
+--
+-- Both statements are upserts because connecting is an operator action that
+-- has to be safe to repeat - re-run after a typo, run again from a fresh
+-- container, put in a deployment's init job - and an operator who cannot
+-- re-run a command runs a DELETE first.
+--
+-- What they do NOT overwrite is as deliberate as what they do. See each.
+
+-- name: EnsureNetwork :one
+-- Create the network row from what the adapter documents, or leave the
+-- existing one as it is.
+--
+-- Only `active` is written on conflict. Everything else on this row is
+-- operator-editable by design - the limits because a network that raises
+-- them for one account should be a row somebody edits rather than a release,
+-- and click_ref_param because a wrong value silently loses attribution on
+-- every click and has to be correctable without one. A second run of this
+-- command would otherwise quietly undo those edits and put a deployment back
+-- on the documented defaults, which is the failure that looks like nothing
+-- happened.
+--
+-- `active` is written because it is the operator's live intent, expressed by
+-- running the command: with it the same statement both connects a network
+-- and pauses one, and cashback.offer's read joins on n.active, so this is
+-- the switch that decides whether any member can click through at all.
+insert into cashback.network (
+    id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active
+)
+values (
+    sqlc.arg(id),
+    sqlc.arg(display_name),
+    sqlc.arg(click_ref_param),
+    sqlc.arg(max_query_window_days),
+    sqlc.arg(rate_limit_per_minute),
+    sqlc.arg(active)
+)
+on conflict (id) do update
+   set active = excluded.active
+returning
+    id,
+    display_name,
+    click_ref_param,
+    max_query_window_days,
+    rate_limit_per_minute,
+    active;
+
+-- name: ConnectNetworkAccount :one
+-- Create the publisher account row the cursors hang off, or update the two
+-- fields an operator is allowed to change by re-running.
+--
+-- credential_ref and active are written. The first is a KEY INTO
+-- CONFIGURATION and never a credential (ADR-0003), so moving an account to a
+-- different key is an ordinary re-run.
+--
+-- backfill_from is written ONLY on insert, and never on conflict. 0023 is
+-- explicit about why: the trailing re-read walks from that instant until its
+-- own cursor is first written, about a hundred days later, and for that whole
+-- period the value is live state rather than a seed. Moving it forward on a
+-- polling account would leave the span between the old start and the new one
+-- never re-read - and the trailing sweep is the only path from pending to
+-- confirmed, so every transaction in that span would sit pending forever,
+-- with nothing logged and nothing wrong anywhere. A re-run therefore leaves
+-- it alone and the caller reports what it actually is.
+--
+-- Neither cursor is touched at all. They are the poller's, they are advanced
+-- only inside the transaction that persisted a window (FR-031), and a connect
+-- command that reset one would skip every window between.
+insert into cashback.network_account (
+    network_id, external_publisher_id, credential_ref, backfill_from, active
+)
+values (
+    sqlc.arg(network_id),
+    sqlc.arg(external_publisher_id),
+    sqlc.arg(credential_ref),
+    sqlc.narg(backfill_from),
+    sqlc.arg(active)
+)
+on conflict (network_id, external_publisher_id) do update
+   set credential_ref = excluded.credential_ref,
+       active = excluded.active
+returning
+    id,
+    network_id,
+    external_publisher_id,
+    credential_ref,
+    backfill_from,
+    cursor_at,
+    trailing_cursor_at,
+    active;
+
+-- name: GetNetwork :one
+-- The network row as it stands, so a connect can say whether it created one
+-- or found one. Read inside the caller's transaction, which is what makes
+-- the answer the one the upsert immediately after it acts on.
+select
+    id,
+    display_name,
+    click_ref_param,
+    max_query_window_days,
+    rate_limit_per_minute,
+    active
+from cashback.network
+where id = sqlc.arg(id);
