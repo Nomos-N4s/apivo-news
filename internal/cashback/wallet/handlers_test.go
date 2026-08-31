@@ -58,7 +58,7 @@ func serve(t *testing.T, w *wallet.Wallets, auth wallet.MemberAuthenticator, req
 // because something it does not exercise was unavailable.
 func serveWith(t *testing.T, w *wallet.Wallets, h *wallet.History, auth wallet.MemberAuthenticator, req *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
-	return serveHandler(t, wallet.NewHandler(slog.New(slog.DiscardHandler), w, h, nil, auth), req)
+	return serveHandler(t, wallet.NewHandler(slog.New(slog.DiscardHandler), w, h, nil, nil, auth), req)
 }
 
 // serveHandler answers one request against an already-built handler.

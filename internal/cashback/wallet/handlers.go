@@ -60,6 +60,7 @@ type Handler struct {
 	wallets        *Wallets
 	history        *History
 	participations *Participations
+	exports        *Exports
 	auth           MemberAuthenticator
 	// allow is the 405 classifier, derived from routes() in NewHandler so it
 	// cannot drift from what is actually registered.
@@ -68,8 +69,8 @@ type Handler struct {
 
 // NewHandler builds the wallet route table as an http.Handler for the
 // composition root to mount. Every route sits behind the requireMember gate.
-func NewHandler(log *slog.Logger, wallets *Wallets, history *History, participations *Participations, auth MemberAuthenticator) http.Handler {
-	h := &Handler{log: log, wallets: wallets, history: history, participations: participations, auth: auth}
+func NewHandler(log *slog.Logger, wallets *Wallets, history *History, participations *Participations, exports *Exports, auth MemberAuthenticator) http.Handler {
+	h := &Handler{log: log, wallets: wallets, history: history, participations: participations, exports: exports, auth: auth}
 	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
 	for pattern, handler := range h.routes() {
@@ -77,7 +78,7 @@ func NewHandler(log *slog.Logger, wallets *Wallets, history *History, participat
 	}
 	// Both trees get the catch-all, so a stray sub-path under either is
 	// answered here in problem+json rather than handed on.
-	for _, prefix := range []string{Prefix, ParticipationPrefix} {
+	for _, prefix := range []string{Prefix, ParticipationPrefix, ExportPrefix} {
 		mux.HandleFunc(prefix+"/", h.handleUnrouted)
 		mux.HandleFunc(prefix, h.handleUnrouted)
 	}
@@ -95,6 +96,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"GET " + ParticipationPrefix:    h.getParticipation,
 		"POST " + ParticipationPrefix:   h.postParticipation,
 		"DELETE " + ParticipationPrefix: h.deleteParticipation,
+		"GET " + ExportPrefix:           h.getExport,
 	}
 }
 

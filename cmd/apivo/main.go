@@ -95,6 +95,11 @@ const clickoutPrefix = clickout.Prefix
 // serves it for the reason clickoutPrefix is.
 const walletPrefix = wallet.Prefix
 
+// exportPrefix is the member's own history as a document. A sibling of the
+// wallet for the reason participationPrefix is: FR-003 pairs exporting with
+// leaving, and a member who has left still has a record to take.
+const exportPrefix = wallet.ExportPrefix
+
 // participationPrefix is the member's opt-in. A sibling of the wallet
 // rather than a path beneath it (contracts/http-api.md), and served by the
 // same module handler - which is why it is mounted below beside the wallet
@@ -477,7 +482,12 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, err
 	}
-	memberSurface := wallet.NewHandler(log, wallets, history, participations, walletAuth{ids: ids})
+	exports, err := wallet.NewExports(history)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	memberSurface := wallet.NewHandler(log, wallets, history, participations, exports, walletAuth{ids: ids})
 	return append(routes,
 		platformhttp.Route{
 			Pattern: opsPrefix,
@@ -494,14 +504,16 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 			Pattern: clickoutPrefix + "/",
 			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}, clickOutOptions...),
 		},
-		// One handler at four patterns: the wallet and the participation
-		// trees, each at the path AND its subtree. The module's own mux
-		// matches on the full path, so both trees route correctly out of
-		// one route table, one auth gate and one error convention.
+		// One handler at six patterns: the wallet, the participation and
+		// the export trees, each at the path AND its subtree. The module's
+		// own mux matches on the full path, so all three route correctly
+		// out of one route table, one auth gate and one error convention.
 		platformhttp.Route{Pattern: walletPrefix, Handler: memberSurface},
 		platformhttp.Route{Pattern: walletPrefix + "/", Handler: memberSurface},
 		platformhttp.Route{Pattern: participationPrefix, Handler: memberSurface},
 		platformhttp.Route{Pattern: participationPrefix + "/", Handler: memberSurface},
+		platformhttp.Route{Pattern: exportPrefix, Handler: memberSurface},
+		platformhttp.Route{Pattern: exportPrefix + "/", Handler: memberSurface},
 	), stop, nil
 }
 
