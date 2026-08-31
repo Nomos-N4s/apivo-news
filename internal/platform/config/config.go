@@ -74,6 +74,25 @@ type Config struct {
 	// network reports the commission. See CashbackConfig for why its
 	// stance on incompleteness is stricter than Translation's.
 	Cashback CashbackConfig
+	// BrandDir (BRAND_DIR) is the directory holding this deployment's
+	// brand.json: who the product is, which legal entity stands behind it,
+	// and which revision of the terms members are being asked to accept
+	// (ADR-0004).
+	//
+	// Optional, and that is a decision worth stating rather than a gap. A
+	// brand definition names a real company, a real address and real
+	// support mailboxes; there is no value this repository could default it
+	// to that would not be a lie about somebody. So a deployment without
+	// one runs, and the surfaces that need a brand say what is missing -
+	// the participation endpoints answer 503 naming this key, exactly as
+	// the wallet does for the payout threshold - rather than the process
+	// refusing to start or, worse, inventing a brand to start with.
+	//
+	// The path is not validated here. Whether it holds a readable,
+	// complete brand definition is the brand package's question, and the
+	// composition root asks it at start-up: a malformed brand file IS a
+	// startup failure, because a deployment that named one meant it.
+	BrandDir string
 }
 
 // TranslationConfig is the TRANSLATION_* environment, parsed but not
@@ -182,6 +201,7 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		Env:         getenv("APP_ENV"),
 		JWKSURL:     getenv("JWKS_URL"),
 		JWTAudience: getenv("JWT_AUDIENCE"),
+		BrandDir:    strings.TrimSpace(getenv("BRAND_DIR")),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("config: DATABASE_URL is required")
