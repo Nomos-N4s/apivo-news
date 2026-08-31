@@ -393,3 +393,39 @@ Per the repository's working style — worktree-isolated agents, one small PR pe
 - Commit atomically — one logical change per commit, each independently revertable.
 - Any task that touches a legally load-bearing rule lands its database-rejection test in the same PR.
 - Stop at any checkpoint to validate the story independently.
+
+---
+
+## Phase 11: Convergence
+
+Appended 2026-08-31, after founder question **Q1 was answered: Awin**
+(spec.md, Clarifications 2026-08-31). ADR-0003 built the port and deferred
+only the choice, so nothing here changes the architecture — it fills the one
+gap the answer opens, plus one the assessment found beside it.
+
+Existing tasks are untouched and unrenumbered. Phases 6–10 already carry
+tasks for withdrawals, catalogue, reconciliation, abuse and polish; they are
+unbuilt but not un-tasked, so nothing is repeated here. Frontend work is
+excluded by instruction, not because it is done.
+
+**The Awin adapter (Q1, ADR-0003, SC-008).** Nothing outside the adapter
+package may learn Awin's vocabulary — the architecture test is what proves
+SC-008 rather than asserting it.
+
+- [ ] T137 Implement the Awin HTTP transport in `internal/cashback/networks/awin/client.go`: authenticated requests, the per-account rate limit read from `network.rate_limit_per_second`, and retries over the existing backoff helpers. Credentials come from the environment and are never written to the repository or the database (ADR-0003) per spec Q1 (missing)
+- [ ] T138 Implement `BuildDeeplink` in `internal/cashback/networks/awin/deeplink.go`, placing the issued click reference in the parameter the route names rather than a literal, per FR-021 (missing)
+- [ ] T139 Implement `FetchTransactions` in `internal/cashback/networks/awin/transactions.go`: Awin's transaction API mapped to `Reported`, carrying the verbatim raw payload so a wrong normalisation is re-derived from stored evidence and never re-fetched (ADR-0003, C-3), with windows capped at Awin's documented 31 days per FR-031 (missing)
+- [ ] T140 Implement the Awin status mapping in `internal/cashback/networks/awin/status.go` — their vocabulary onto `pending → confirmed | declined` with `reversed` reachable from either — unit-tested against recorded fixtures per ADR-0003 (missing)
+- [ ] T141 Implement `FetchCatalogue` in `internal/cashback/networks/awin/catalogue.go`, mapping Awin's programme feed to `ReportedMerchant` per FR-012 (missing)
+- [ ] T142 Record real Awin responses as redacted fixtures under `internal/cashback/networks/awin/testdata/`, so every test above and all of CI run with no live credentials, per ADR-0003 (missing)
+- [ ] T143 Wire the adapter: add the driver constant to `internal/platform/config/cashback.go`, the case to `networkAdapter()` in `cmd/apivo/networks.go`, and document `NETWORK_DRIVER=awin` with `NETWORK_ACCOUNT_ID` and `NETWORK_API_KEY` in `deploy/k8s/README.md` per spec Q1 (missing)
+- [ ] T144 Run the shared conformance suite in `internal/cashback/networks/conformance_test.go` against the Awin adapter, so the port holds it to the same contract the fixture adapter passes — this is the SC-008 proof (missing)
+
+**Connecting a publisher account.** The schema has carried `network` and
+`network_account` since 0011 and `connectNetwork` requires both, but nothing
+in the tree ever writes them: no endpoint, no admin command, no seed. A
+deployment configured for Awin would log "no publisher account is connected"
+and ingest nothing, with hand-written SQL against production as the only
+remedy. T130 is the local `make cashback-seed` and is not this.
+
+- [ ] T145 Provide a supported, idempotent way to connect a network publisher account in a deployed environment — the `cashback.network` row with its documented `max_query_window_days` and `rate_limit_per_second`, and the `network_account` row the cursors hang off — per plan Phase E and FR-030/FR-031 (missing)

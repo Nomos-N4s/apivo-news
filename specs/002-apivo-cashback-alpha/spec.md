@@ -75,7 +75,19 @@ not stored value — see FR-041 and Open Question Q2.
   "Cashback alpha". Moving to stored value is a new founder decision taken
   with legal advice.
 
-Eight founder-blocked questions remain (Q1, Q3–Q9), recorded below under
+### Session 2026-08-31
+
+- Q: Which affiliate network do we integrate first (Q1)? →
+  A: **Awin.** The publisher account exists and its credentials are in
+  hand, so the alpha integrates Awin and no second network. This resolves
+  the last thing ADR-0003 was written to wait for: that ADR already took
+  Awin as the reference shape and deferred only the choice, so the adapter
+  lands at `internal/cashback/networks/awin/` behind the existing port and
+  is held to the conformance suite the fixture adapter already passes. The
+  fixture adapter stays — it is what CI and the no-Docker loop run on, and
+  a deployment selects between them with `NETWORK_DRIVER`.
+
+Seven founder-blocked questions remain (Q3–Q9), recorded below under
 **Open Questions (founder-only)**. Consistent with Governance, this spec
 records a safe default for each and resolves none of them.
 
@@ -529,10 +541,17 @@ rejects the illegal state, by SQLSTATE, against a real Postgres.
 Per constitution Governance these are decided by the founder alone. Safe
 defaults are recorded; the plan must not silently resolve them.
 
-- **Q1 — Which affiliate networks first?** Publisher accounts require
-  application and approval, and coverage differs sharply between Greece and
-  Germany. *Default until answered*: build against one adapter with recorded
-  fixtures and no live credentials.
+- ~~**Q1 — Which affiliate networks first?**~~
+  **DECIDED 2026-08-31**: **Awin**, and only Awin for the alpha. The
+  publisher account is approved and its API credentials are held by the
+  founder. ADR-0003 already took Awin as its reference network and deferred
+  only the choice, so this confirms that ADR rather than changing it: the
+  adapter implements the existing `networks.Network` port at
+  `internal/cashback/networks/awin/`, passes the shared conformance suite,
+  and carries its credentials in the environment — never in the repository
+  or the database (ADR-0003). Coverage in Greece against Germany is a
+  merchant-programme question to answer per programme, not a second
+  network. A second network is a new founder decision and a new adapter.
 - ~~**Q2 — Regulatory posture on member balances (PSD2 / e-money).**~~
   **DECIDED 2026-08-24**: the rebate-claim posture of FR-041 — no
   member-to-member transfers, no spending inside Apivo, payouts only to the

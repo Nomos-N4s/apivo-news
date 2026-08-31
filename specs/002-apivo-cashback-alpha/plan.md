@@ -239,7 +239,9 @@ The `Network` port, the `fixture` adapter with its full lifecycle, the
 poller with dual cursors and trailing re-reads, evidence persistence, the
 attribution path, and the unattributed queue. The first real adapter lands
 here **if** the founder has answered Q1; if not, the phase completes on
-fixtures and the real adapter is a later, self-contained PR.
+fixtures and the real adapter is a later, self-contained PR. *Resolved
+2026-08-31: the phase completed on fixtures, and Q1 answered Awin — so the
+Awin adapter is that later self-contained PR.*
 
 ### Phase F — Wallet and entry lifecycle (US3, US7)
 
@@ -289,11 +291,13 @@ afterwards.
 1. ~~Ratify the constitution amendment.~~ **Done 2026-08-24 — v1.1.0.**
 2. ~~Decide Q2 (PSD2 / e-money posture).~~ **Done 2026-08-24 —
    rebate-claim.**
-3. **Founder action — apply for an affiliate network publisher account
-   (Q1).** Publisher approval, then per-merchant programme approval, is a
-   business process with a lead time of weeks. It gates go-live and revenue,
-   not engineering: Phase E completes on the `fixture` adapter and the real
-   adapter lands as a later self-contained PR.
+3. ~~**Founder action — apply for an affiliate network publisher account
+   (Q1).**~~ **Done 2026-08-31 — Awin**, publisher account approved and API
+   credentials held. It gated go-live and revenue, not engineering, exactly
+   as planned: Phase E completed on the `fixture` adapter, and the Awin
+   adapter is now the later self-contained PR that was always intended.
+   Per-merchant programme approval remains a per-programme business process
+   and still gates what can actually be earned on.
 4. Remaining founder questions Q3–Q9 all have working defaults and block
    nothing.
 5. Run `/speckit-tasks` to generate `tasks.md` from these artifacts, then
