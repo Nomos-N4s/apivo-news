@@ -165,3 +165,54 @@ func validateDeeplinkTemplate(target DeeplinkTarget) error {
 	}
 	return nil
 }
+
+// AppendClickRef puts ref in the target's click-reference parameter and
+// returns the absolute URL that results: the assembly half of contract rule
+// 5, for every adapter whose network reads its reference from a query
+// parameter on an operator-configured template.
+//
+// It lives here rather than in each adapter because both rules it keeps are
+// rules an adapter gets wrong silently, and the second adapter to be written
+// would have to rediscover them.
+//
+// The first is that the template's own query is carried through byte for
+// byte rather than re-encoded. Re-encoding is what url.Values.Encode does,
+// and it reorders parameters and normalises their escaping - a change to a
+// value an operator was told this system would pass through, made to data
+// some networks are famously fussy about. Appending leaves the template
+// exactly as it was written and adds one pair.
+//
+// The second is that a template already carrying the click-reference
+// parameter is refused rather than given a second one. Which of two
+// same-named parameters a network reads is its own business, so the value
+// that decides whether a member is credited would be chosen by the network's
+// parser rather than by us.
+//
+// It assumes [ValidateDeeplinkInputs] has already run and returns errors
+// wrapping [ErrDeeplinkNotFormed] and [ErrDeeplinkInputsRefused], since
+// everything it can still refuse is deterministic.
+func AppendClickRef(target DeeplinkTarget, ref IssuedClickRef) (string, error) {
+	parsed, err := url.Parse(target.Template)
+	if err != nil {
+		// ValidateDeeplinkInputs parsed this same string successfully a
+		// moment ago, so this branch is unreachable in practice. It is not
+		// unreachable to the compiler, and a deeplink that silently ignored
+		// a parse failure is the exact shape of bug this function exists to
+		// make impossible.
+		return "", fmt.Errorf("%w: %w: offer %s carries a deeplink template that is not a URL: %w",
+			ErrDeeplinkNotFormed, ErrDeeplinkInputsRefused, target.OfferID, err)
+	}
+	if parsed.Query().Has(target.ClickRefParam) {
+		return "", fmt.Errorf("%w: %w: offer %s carries a deeplink template that already sets %s, and a second one would be the value the network ignores",
+			ErrDeeplinkNotFormed, ErrDeeplinkInputsRefused, target.OfferID,
+			strconv.Quote(target.ClickRefParam))
+	}
+
+	pair := url.QueryEscape(target.ClickRefParam) + "=" + url.QueryEscape(ref.Ref())
+	if parsed.RawQuery == "" {
+		parsed.RawQuery = pair
+	} else {
+		parsed.RawQuery = parsed.RawQuery + "&" + pair
+	}
+	return parsed.String(), nil
+}
