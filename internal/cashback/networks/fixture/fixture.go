@@ -278,3 +278,20 @@ func (n *Network) DeeplinkTarget(offerID uuid.UUID) networks.DeeplinkTarget {
 		Template:      deeplinkTemplate,
 	}
 }
+
+// Documented is what this fixture "publishes" about how it may be used: the
+// row a deployment running on the fixture adapter is seeded with.
+//
+// Its numbers are the reference network's, deliberately, because the fixture
+// exists to stand in for one - and a seed whose limits were unlike any real
+// network's would let a poller pass here and fail on the first live account.
+func Documented() networks.Documented {
+	limits := defaultLimits()
+	return networks.Documented{
+		ID:                 ID,
+		DisplayName:        "Fixture network",
+		ClickRefParam:      clickRefParam,
+		MaxQueryWindowDays: int(limits.MaxWindow / (24 * time.Hour)),
+		RateLimitPerMinute: limits.RequestsPerMinute,
+	}
+}

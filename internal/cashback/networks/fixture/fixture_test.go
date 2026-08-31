@@ -184,3 +184,22 @@ func TestRecordedClickRefIsOneARedirectCouldHaveIssued(t *testing.T) {
 		t.Fatalf("NewIssuedClickRef(RecordedClickRef): %v", err)
 	}
 }
+
+// TestTheFixtureDeclarationCouldSeedItsRow holds the fixture to the same
+// rules a real network's declaration is held to, and to the numbers this
+// adapter already declares - a seed unlike the limits the adapter runs on
+// would let a poller pass here and fail on the first live account.
+func TestTheFixtureDeclarationCouldSeedItsRow(t *testing.T) {
+	t.Parallel()
+
+	documented := Documented()
+	if err := documented.Validate(); err != nil {
+		t.Fatalf("the fixture declaration could not seed a network row: %v", err)
+	}
+	if documented.ID != ID {
+		t.Errorf("the declaration names %q, want %q", documented.ID, ID)
+	}
+	if got, want := documented.Limits(), fixtureTestAdapter(t).Limits(); got != want {
+		t.Errorf("the declaration would seed %+v, but the adapter runs on %+v", got, want)
+	}
+}

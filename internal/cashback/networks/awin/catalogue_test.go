@@ -475,3 +475,31 @@ func TestTheRawPayloadIsNotAliasedAcrossRoutes(t *testing.T) {
 		}
 	}
 }
+
+// TestWhatAwinPublishesCouldSeedItsRow keeps the declaration honest against
+// the table it seeds: every rule Validate applies is a check constraint on
+// cashback.network, so a declaration that fails here is a row Postgres would
+// have refused at the moment an operator ran the connect command.
+func TestWhatAwinPublishesCouldSeedItsRow(t *testing.T) {
+	t.Parallel()
+
+	documented := awin.Documented()
+	if err := documented.Validate(); err != nil {
+		t.Fatalf("what Awin publishes could not seed a network row: %v", err)
+	}
+	if documented.ID != awin.ID {
+		t.Errorf("the declaration names %q, want %q", documented.ID, awin.ID)
+	}
+	// The click reference goes in clickref and not one of clickref2-6: Awin
+	// says those cannot reach the advertiser's landing page.
+	if documented.ClickRefParam != "clickref" {
+		t.Errorf("ClickRefParam = %q, want the one parameter that reaches the retailer", documented.ClickRefParam)
+	}
+	if documented.MaxQueryWindowDays != 31 {
+		t.Errorf("MaxQueryWindowDays = %d, want the 31 Awin documents", documented.MaxQueryWindowDays)
+	}
+	if documented.RateLimitPerMinute != awin.DocumentedRateLimitPerMinute {
+		t.Errorf("RateLimitPerMinute = %d, want the %d Awin publishes",
+			documented.RateLimitPerMinute, awin.DocumentedRateLimitPerMinute)
+	}
+}
