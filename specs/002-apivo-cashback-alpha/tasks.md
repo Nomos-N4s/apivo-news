@@ -182,7 +182,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 
 **Independent Test**: Seed entries across every state, load the wallet, assert each displayed total equals an independently computed ledger sum to the minor unit.
 
-- [ ] T077 [US3] Implement wallet balance projection computed from postings, never from a stored balance, in `internal/cashback/wallet/projection.go`
+- [x] T077 [US3] Implement wallet balance projection computed from postings, never from a stored balance, in `internal/cashback/wallet/projection.go` — the four stage balances the ledger can answer. `paid_out`, which `GET /wallet` also returns, is not a balance: no account holds money that has left the business, so it is read from the settled payouts and lands with T078
 - [ ] T078 [US3] Implement `GET /wallet` returning `{minor, currency}` totals plus the payout threshold, in `internal/cashback/wallet/handlers.go`
 - [ ] T079 [US3] Implement `GET /wallet/entries` with state filter and cursor pagination in `internal/cashback/wallet/handlers.go`
 - [ ] T080 [US3] Implement `GET /participation`, `POST /participation`, `DELETE /participation` in `internal/cashback/wallet/participation.go`
