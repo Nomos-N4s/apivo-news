@@ -72,18 +72,29 @@ func NewAnnouncer() (*Announcer, error) {
 
 // Started announces one acceptance the database has just recorded.
 //
-// Keyed on the account AND the instant they accepted, because a member may
-// accept more than once: leaving and coming back is a second acceptance of
-// whatever terms are in force then, and it is a fact in its own right
-// rather than a repeat of the first. Keying on the account alone would
-// silence every re-join after the first; keying on the account and the
-// terms version would silence a re-join under unchanged terms, which is the
-// commonest re-join there is.
+// NO IDEMPOTENCY KEY, and that is the considered choice rather than an
+// omission. A member may accept more than once - leaving and coming back is
+// a second acceptance of whatever terms are in force then, and a fact in
+// its own right - so the key would have to be singular per ACCEPTANCE, and
+// the schema holds no acceptance identity to build one from: participation
+// is keyed on the account, and each re-join overwrites the row. Every
+// candidate is therefore wrong in a way that costs a member something.
+// The account alone silences every re-join after the first. The account and
+// the terms version silences a re-join under unchanged terms, which is the
+// commonest re-join there is. The account and opted_in_at looks right and
+// is the worst of the three: timestamps are microseconds in Postgres, so
+// two acceptances recorded in one microsecond collide - and a collision is
+// a unique violation, which aborts the transaction, so a member's legitimate
+// re-join would fail with a 500 rather than being deduplicated.
 //
-// The instant is the ROW's, read back rather than taken from a clock, so
-// the event and the record name one moment - and so a retry of the same
-// request, which cannot reach here at all because the upsert refuses an
-// active member, could not invent a second key if it did.
+// What the key would have protected is already protected, and better: the
+// upsert refuses an active member outright, so a retried POST never reaches
+// this at all, and a retry after a failed commit re-runs the upsert against
+// a row the rollback restored. The ROW is the uniqueness constraint here;
+// a second one in the outbox could only disagree with it.
+//
+// The instant is the row's, read back rather than taken from a clock, so
+// the event and the record name one moment.
 func (a *Announcer) Started(ctx context.Context, db events.RowQuerier, joined Participation) error {
 	if joined.Member == uuid.Nil {
 		return fmt.Errorf("%w: %s about a member the database did not record", ErrNotAnnounced, TypeParticipationStarted)
@@ -100,17 +111,16 @@ func (a *Announcer) Started(ctx context.Context, db events.RowQuerier, joined Pa
 	if err != nil {
 		return fmt.Errorf("%w: %s: %w", ErrNotAnnounced, TypeParticipationStarted, err)
 	}
-	return a.append(ctx, db, TypeParticipationStarted, joined.Member,
-		TypeParticipationStarted+":"+joined.Member.String()+":"+joined.OptedInAt.UTC().Format(time.RFC3339Nano), payload)
+	return a.append(ctx, db, TypeParticipationStarted, joined.Member, payload)
 }
 
 // Ended announces one member the database has just closed.
 //
-// Keyed on the account and the leaving instant, for the reason Started is:
-// a member who re-joins can leave again, and the second departure is a
-// second fact. The caller only reaches here when its own statement closed
-// the participation, so a repeated DELETE announces nothing rather than
-// colliding.
+// Unkeyed, for the reason [Announcer.Started] is: a member who re-joins can
+// leave again, the second departure is a second fact, and the schema holds
+// no departure identity to make one singular by. The guard is the statement
+// instead - it narrows on status = 'active', so it closes a participation
+// exactly once and a repeated DELETE never reaches here.
 func (a *Announcer) Ended(ctx context.Context, db events.RowQuerier, left Participation) error {
 	switch {
 	case left.Member == uuid.Nil:
@@ -134,18 +144,16 @@ func (a *Announcer) Ended(ctx context.Context, db events.RowQuerier, left Partic
 	if err != nil {
 		return fmt.Errorf("%w: %s: %w", ErrNotAnnounced, TypeParticipationEnded, err)
 	}
-	return a.append(ctx, db, TypeParticipationEnded, left.Member,
-		TypeParticipationEnded+":"+left.Member.String()+":"+left.LeftAt.UTC().Format(time.RFC3339Nano), payload)
+	return a.append(ctx, db, TypeParticipationEnded, left.Member, payload)
 }
 
 // append writes one message and wraps whatever comes back, so every caller
 // reports the same error and names the same subject.
-func (a *Announcer) append(ctx context.Context, db events.RowQuerier, eventType string, subject uuid.UUID, key string, payload json.RawMessage) error {
+func (a *Announcer) append(ctx context.Context, db events.RowQuerier, eventType string, subject uuid.UUID, payload json.RawMessage) error {
 	if _, err := a.writer.Append(ctx, db, events.Message{
-		Type:           eventType,
-		Subject:        subject,
-		IdempotencyKey: key,
-		Payload:        payload,
+		Type:    eventType,
+		Subject: subject,
+		Payload: payload,
 	}); err != nil {
 		return fmt.Errorf("%w: %s about member %s: %w", ErrNotAnnounced, eventType, subject, err)
 	}

@@ -21,7 +21,6 @@ import (
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/db"
-	"github.com/Nomos-N4s/apivo-news/internal/platform/events"
 )
 
 // outboxTx opens the outer transaction every case runs a savepoint inside.
@@ -142,9 +141,12 @@ func TestEndedCarriesTheDeparture(t *testing.T) {
 }
 
 // A member may join, leave and join again, and the second acceptance is a
-// fact in its own right. Keying on the account alone - the obvious key -
-// would silence it, and the member would appear to the stream as somebody
-// who joined once and never came back.
+// fact in its own right. Both cases are announced AT THE SAME INSTANT here,
+// which is the shape every candidate idempotency key got wrong: the account
+// alone silences the re-join, and the account with opted_in_at collides -
+// and a collision is a unique violation, which aborts the transaction, so
+// the member's legitimate re-join would have failed with a 500. Two events
+// at one instant is therefore the property, not an artefact of the test.
 func TestARejoinIsAnnouncedAsWell(t *testing.T) {
 	t.Parallel()
 	ctx, tx := outboxTx(t)
@@ -155,10 +157,10 @@ func TestARejoinIsAnnouncedAsWell(t *testing.T) {
 	if err := made.Started(ctx, tx, joinedAt(member, first)); err != nil {
 		t.Fatalf("the first acceptance: %v", err)
 	}
-	again := joinedAt(member, first.AddDate(0, 4, 0))
+	again := joinedAt(member, first)
 	again.TermsVersion = "4.0.0"
 	if err := made.Started(ctx, tx, again); err != nil {
-		t.Fatalf("the second acceptance: %v", err)
+		t.Fatalf("the second acceptance at the same instant: %v", err)
 	}
 
 	var n int
@@ -172,22 +174,34 @@ func TestARejoinIsAnnouncedAsWell(t *testing.T) {
 	}
 }
 
-// The same acceptance twice is the caller's defect, not a state to recover
-// from - and it arrives as ErrAlreadyAppended, which has aborted the
-// transaction. Asserting it here is what pins the key: an announcement that
-// carried no key at all would duplicate silently.
-func TestTheSameAcceptanceIsRefusedTwice(t *testing.T) {
+// The same departure, twice, at one instant - the case the removed key
+// would have turned into an aborted transaction. Nothing deduplicates here
+// and nothing needs to: the statement that closes a participation narrows
+// on status = 'active', so it closes one exactly once and this is only ever
+// reached by the request that did.
+func TestTwoDeparturesAtOneInstantBothReachTheStream(t *testing.T) {
 	t.Parallel()
 	ctx, tx := outboxTx(t)
 	member := uuid.New()
-	joined := joinedAt(member, time.Date(2026, 3, 4, 9, 30, 0, 0, time.UTC))
+	gone := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+
+	left := joinedAt(member, gone.Add(-time.Hour))
+	left.Status, left.LeftAt = wallet.StatusLeft, gone
 
 	made := announcer(t)
-	if err := made.Started(ctx, tx, joined); err != nil {
-		t.Fatalf("the first append: %v", err)
+	for i := range 2 {
+		if err := made.Ended(ctx, tx, left); err != nil {
+			t.Fatalf("departure %d: %v", i+1, err)
+		}
 	}
-	if err := made.Started(ctx, tx, joined); !errors.Is(err, events.ErrAlreadyAppended) {
-		t.Fatalf("the second append returned %v, want events.ErrAlreadyAppended", err)
+	var n int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from domain_event where type = $1 and subject = $2`,
+		wallet.TypeParticipationEnded, member.String()).Scan(&n); err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("the stream holds %d departures, want 2", n)
 	}
 }
 
