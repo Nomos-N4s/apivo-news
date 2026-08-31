@@ -57,6 +57,14 @@ sql:
         sql_package: "pgx/v5"
   - engine: "postgresql"
     schema: "internal/platform/db/migrations"
+    queries: "internal/cashback/wallet/queries"
+    gen:
+      go:
+        package: "store"
+        out: "internal/cashback/wallet/store"
+        sql_package: "pgx/v5"
+  - engine: "postgresql"
+    schema: "internal/platform/db/migrations"
     queries: "internal/cashback/earnings/queries"
     gen:
       go:
