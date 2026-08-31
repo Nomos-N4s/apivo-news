@@ -126,7 +126,7 @@ func (r *Reversals) Reverse(ctx context.Context, reversal Reversal) (Entry, erro
 	// The opening transition, from nothing. Recorded like any other, because
 	// a reversal that moved money without a transition would be the same
 	// disagreement D7 forbids anywhere else.
-	if err := r.entries.record(ctx, uuid.UUID(created.ID.Bytes), "", StateReversed,
+	if _, err := r.entries.record(ctx, uuid.UUID(created.ID.Bytes), "", StateReversed,
 		ref, reversal.Reason, reversal.Actor); err != nil {
 		return Entry{}, err
 	}

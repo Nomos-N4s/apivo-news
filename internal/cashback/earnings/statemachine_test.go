@@ -12,6 +12,7 @@ import (
 	"errors"
 	"iter"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -42,12 +43,16 @@ func (f *fakeLedger) EnsureAccount(_ context.Context, ref wallet.AccountRef, _ m
 	return wallet.LedgerAccountID("acct:" + ref.String()), nil
 }
 
+// The reference is derived from the key, which is the ledger's own
+// idempotency contract in one line: the same key answers the same transfer,
+// and a different key answers a different one. A constant here would hide
+// exactly the difference D8's key exists to make.
 func (f *fakeLedger) Post(_ context.Context, transfer wallet.Transfer) (wallet.TransferRef, error) {
 	if f.postErr != nil {
 		return "", f.postErr
 	}
 	f.posted = append(f.posted, transfer)
-	return wallet.TransferRef("transfer-1"), nil
+	return wallet.TransferRef("transfer:" + transfer.IdempotencyKey), nil
 }
 
 // The two reads the port declares and this file never makes. They are here
@@ -96,10 +101,27 @@ func (f *fakeEntries) MoveEntry(_ context.Context, arg store.MoveEntryParams) (s
 	return row, nil
 }
 
+// The stored row echoed back, because the statement returns the row and what
+// this package reads a transition from is that row. A fake that answered a
+// bare id would let the machine hand on a transition naming no entry and no
+// transfer, and nothing here would notice.
 func (f *fakeEntries) RecordTransition(_ context.Context, arg store.RecordTransitionParams) (store.CashbackEntryTransition, error) {
 	f.transitions = append(f.transitions, arg)
-	return store.CashbackEntryTransition{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}}, nil
+	return store.CashbackEntryTransition{
+		ID:                pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		EntryID:           arg.EntryID,
+		FromState:         arg.FromState,
+		ToState:           arg.ToState,
+		LedgerTransferRef: arg.LedgerTransferRef,
+		Reason:            arg.Reason,
+		ActorID:           arg.ActorID,
+		OccurredAt:        pgtype.Timestamptz{Time: recordedAt, Valid: true},
+	}, nil
 }
+
+// recordedAt is the instant the fake's transition rows carry, fixed so a case
+// can assert what was read back from one.
+var recordedAt = time.Date(2026, time.March, 1, 9, 30, 0, 0, time.UTC)
 
 func (f *fakeEntries) LinkLedgerTransfer(_ context.Context, arg store.LinkLedgerTransferParams) (store.CashbackLedgerLink, error) {
 	f.links = append(f.links, arg)

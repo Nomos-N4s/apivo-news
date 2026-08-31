@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -67,6 +68,22 @@ type Entries struct {
 	store      EntryStore
 	ledger     wallet.Ledger
 	receivable string
+}
+
+// Transition is one recorded state change, read back from the row that
+// records it rather than assembled from what was asked for. From is empty on
+// an opening transition: an entry that came into being did not come from
+// anywhere.
+//
+// It is read back because the row knows things the arguments do not - the
+// instant above all - and because what this package hands on about a move
+// should be what the database holds, not what it hoped to write.
+type Transition struct {
+	Entry    uuid.UUID
+	From     State
+	To       State
+	Transfer wallet.TransferRef
+	At       time.Time
 }
 
 // NewEntries builds the machine, refusing one that is missing a part.
@@ -158,7 +175,7 @@ func (e *Entries) Apply(ctx context.Context, move Move) (Entry, error) {
 		return Entry{}, fmt.Errorf("%w: moving %s: %w", ErrNotRecorded, move.Entry, err)
 	}
 
-	if err := e.record(ctx, move.Entry, move.From, move.To, ref, move.Reason, move.Actor); err != nil {
+	if _, err := e.record(ctx, move.Entry, move.From, move.To, ref, move.Reason, move.Actor); err != nil {
 		return Entry{}, err
 	}
 	return entryFrom(moved)
@@ -197,7 +214,7 @@ func (e *Entries) post(ctx context.Context, where movement, amount money.Amount,
 //
 // Both, always: the link is what C-7 is answered from, and a transition
 // without one is a posting nobody can find from the domain side.
-func (e *Entries) record(ctx context.Context, entry uuid.UUID, from, to State, ref wallet.TransferRef, reason string, actor uuid.UUID) error {
+func (e *Entries) record(ctx context.Context, entry uuid.UUID, from, to State, ref wallet.TransferRef, reason string, actor uuid.UUID) (Transition, error) {
 	transition, err := e.store.RecordTransition(ctx, store.RecordTransitionParams{
 		EntryID:           pgUUID(entry),
 		FromState:         pgTextOrNull(string(from)),
@@ -207,16 +224,22 @@ func (e *Entries) record(ctx context.Context, entry uuid.UUID, from, to State, r
 		ActorID:           pgUUIDOrNull(actor),
 	})
 	if err != nil {
-		return fmt.Errorf("%w: recording %s becoming %s: %w", ErrNotRecorded, entry, to, err)
+		return Transition{}, fmt.Errorf("%w: recording %s becoming %s: %w", ErrNotRecorded, entry, to, err)
 	}
 	if _, err := e.store.LinkLedgerTransfer(ctx, store.LinkLedgerTransferParams{
 		TransitionID:      transition.ID,
 		EntryID:           pgUUID(entry),
 		LedgerTransferRef: string(ref),
 	}); err != nil {
-		return fmt.Errorf("%w: linking %s to transfer %s: %w", ErrNotRecorded, entry, ref, err)
+		return Transition{}, fmt.Errorf("%w: linking %s to transfer %s: %w", ErrNotRecorded, entry, ref, err)
 	}
-	return nil
+	return Transition{
+		Entry:    uuid.UUID(transition.EntryID.Bytes),
+		From:     State(transition.FromState.String),
+		To:       State(transition.ToState),
+		Transfer: wallet.TransferRef(transition.LedgerTransferRef),
+		At:       transition.OccurredAt.Time,
+	}, nil
 }
 
 // holdRuleFor answers what the moved row's hold_rule must be.
