@@ -136,6 +136,57 @@ type HouseAccountsConfig struct {
 	// loss is recorded against when a transaction reverses after payout:
 	// the loss is absorbed, recorded, and the member is never chased (Q3).
 	Clawback string
+	// NetworkReceivable (HOUSE_ACCOUNT_NETWORK_RECEIVABLE) names the
+	// account holding commission a network has reported. It is the source
+	// side of every earning: the member's share moves out of it, the
+	// sub-minor-unit rounding moves to Rounding, and what stays is Apivo's
+	// own cut (FR-040, D6).
+	//
+	// A configured account rather than a derived one, for the reason the
+	// other two are: this is where members' money meets the business's, and
+	// a name nobody chose is an account nobody meant to open. Apivo's
+	// revenue is the residue rather than a fourth account, because a
+	// separate revenue posting would be a second figure to reconcile
+	// against a balance that already answers the same question.
+	NetworkReceivable string
+}
+
+// purposes pairs every configured house account with what it is for, so a
+// refusal can say which two purposes collided rather than printing a name.
+func (h HouseAccountsConfig) purposes() [][2]string {
+	return [][2]string{
+		{"HOUSE_ACCOUNT_ROUNDING", h.Rounding},
+		{"HOUSE_ACCOUNT_CLAWBACK", h.Clawback},
+		{"HOUSE_ACCOUNT_NETWORK_RECEIVABLE", h.NetworkReceivable},
+	}
+}
+
+// distinct refuses two purposes configured to one account name.
+//
+// One name for two purposes is one balance absorbing two meanings: the
+// rounding remainder D6 keeps visible, the clawback losses Q3 says to record
+// and the commission an earning is paid out of would merge into a single
+// figure none of them can be read back out of. The wallet refuses the same
+// misconfiguration when the accounts are constructed; refusing it here as
+// well - whether or not the product is enabled - is what lets an operator
+// learn on this deploy instead of the one that turns cashback on.
+//
+// A loop over every pair rather than a hand-written comparison, because the
+// comparison is the shape that grows wrong: the two-account version compared
+// the only pair there was, and adding a third purpose would have left two of
+// the three pairs unchecked while still looking complete.
+func (h HouseAccountsConfig) distinct() error {
+	named := h.purposes()
+	for i, a := range named {
+		for _, b := range named[i+1:] {
+			if a[1] != "" && a[1] == b[1] {
+				return fmt.Errorf(
+					"config: %s and %s both name %q; each house purpose is a figure the others cannot be read out of, so a shared account makes all of them unreadable - give every purpose its own account name",
+					a[0], b[0], a[1])
+			}
+		}
+	}
+	return nil
 }
 
 // NetworkConfig is the affiliate network's adapter selection and its
@@ -215,6 +266,7 @@ func (c CashbackConfig) LogValue() slog.Value {
 		slog.String("redis_url", redactedURL(c.RedisURL)),
 		slog.String("house_account_rounding", c.HouseAccounts.Rounding),
 		slog.String("house_account_clawback", c.HouseAccounts.Clawback),
+		slog.String("house_account_network_receivable", c.HouseAccounts.NetworkReceivable),
 		slog.String("network_driver", c.Network.Driver),
 		slog.String("network_account_id", c.Network.AccountID),
 		slog.Bool("network_api_key_set", !c.Network.APIKey.IsZero()),
@@ -259,8 +311,9 @@ func parseCashback(getenv func(string) string) (CashbackConfig, error) {
 			APISecret: NewSecret(getenv("NETWORK_API_SECRET")),
 		},
 		HouseAccounts: HouseAccountsConfig{
-			Rounding: strings.TrimSpace(getenv("HOUSE_ACCOUNT_ROUNDING")),
-			Clawback: strings.TrimSpace(getenv("HOUSE_ACCOUNT_CLAWBACK")),
+			Rounding:          strings.TrimSpace(getenv("HOUSE_ACCOUNT_ROUNDING")),
+			Clawback:          strings.TrimSpace(getenv("HOUSE_ACCOUNT_CLAWBACK")),
+			NetworkReceivable: strings.TrimSpace(getenv("HOUSE_ACCOUNT_NETWORK_RECEIVABLE")),
 		},
 	}
 
@@ -298,10 +351,8 @@ func parseCashback(getenv func(string) string) (CashbackConfig, error) {
 	// here as well - whether or not the product is enabled - is what
 	// lets the operator learn on this deploy instead of the one that
 	// turns cashback on.
-	if c.HouseAccounts.Rounding != "" && c.HouseAccounts.Rounding == c.HouseAccounts.Clawback {
-		return CashbackConfig{}, fmt.Errorf(
-			"config: HOUSE_ACCOUNT_ROUNDING and HOUSE_ACCOUNT_CLAWBACK both name %q; the rounding remainder (D6) and absorbed clawback losses (Q3) are two different figures, and a shared account would make each unreadable - give every purpose its own account name",
-			c.HouseAccounts.Rounding)
+	if err := c.HouseAccounts.distinct(); err != nil {
+		return CashbackConfig{}, err
 	}
 
 	// A BLNK_URL beside a ledger that is not Blnk is an operator who
@@ -354,9 +405,12 @@ func requireCashbackComplete(c CashbackConfig, env string) error {
 		if c.HouseAccounts.Clawback == "" {
 			unset = append(unset, "HOUSE_ACCOUNT_CLAWBACK")
 		}
+		if c.HouseAccounts.NetworkReceivable == "" {
+			unset = append(unset, "HOUSE_ACCOUNT_NETWORK_RECEIVABLE")
+		}
 		if len(unset) > 0 {
 			return fmt.Errorf(
-				"config: %s %s unset and APP_ENV=%s: refusing to start. The house accounts are where the rounding remainder (D6) and absorbed clawback losses (Q3) live, and a production deployment that cannot name them would discover that on its first commission",
+				"config: %s %s unset and APP_ENV=%s: refusing to start. The house accounts are where the rounding remainder (D6) and absorbed clawback losses (Q3) live and where an earning is paid out of (FR-040), and a production deployment that cannot name them would discover that on its first commission",
 				strings.Join(unset, ", "), plural(len(unset), "is", "are"), EnvProd)
 		}
 	}
