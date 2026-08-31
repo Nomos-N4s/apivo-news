@@ -115,7 +115,7 @@ func (w QueryWindow) String() string {
 // transaction window it will answer, and how many requests a second it will
 // accept. Awin's numbers - 31 days and 6 requests per second - are the
 // reference case (ADR-0003), and both are stored per network
-// (max_query_window_days, rate_limit_per_second) rather than compiled in.
+// (max_query_window_days, rate_limit_per_minute) rather than compiled in.
 //
 // The port declares the limits; it does not enforce the rate. Window width
 // is refused here because it is a property of one call and can be judged

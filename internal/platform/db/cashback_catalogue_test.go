@@ -37,8 +37,8 @@ func TestCashbackCatalogueRejectsIllegalWrites(t *testing.T) {
 			rule: "network",
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
 				_, err := tx.Exec(ctx,
-					`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second)
-					 values ($1, '   ', 'clickref', 31, 5)`, "blank_"+f.suffix)
+					`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute)
+					 values ($1, '   ', 'clickref', 31, 300)`, "blank_"+f.suffix)
 				return err
 			},
 			wantCode: codeCheckViolation,
@@ -48,8 +48,8 @@ func TestCashbackCatalogueRejectsIllegalWrites(t *testing.T) {
 			rule: "network",
 			write: func(ctx context.Context, tx pgx.Tx, _ cashbackFixtures) error {
 				_, err := tx.Exec(ctx,
-					`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second)
-					 values ('Not An Id!', 'Unusable', 'clickref', 31, 5)`)
+					`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute)
+					 values ('Not An Id!', 'Unusable', 'clickref', 31, 300)`)
 				return err
 			},
 			wantCode: codeCheckViolation,
@@ -61,8 +61,8 @@ func TestCashbackCatalogueRejectsIllegalWrites(t *testing.T) {
 				// Without it the redirect carries no attribution and every
 				// click through this network is lost (FR-021).
 				_, err := tx.Exec(ctx,
-					`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second)
-					 values ($1, 'Nameless', '  ', 31, 5)`, "noref_"+f.suffix)
+					`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute)
+					 values ($1, 'Nameless', '  ', 31, 300)`, "noref_"+f.suffix)
 				return err
 			},
 			wantCode: codeCheckViolation,
@@ -72,8 +72,8 @@ func TestCashbackCatalogueRejectsIllegalWrites(t *testing.T) {
 			rule: "network",
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
 				_, err := tx.Exec(ctx,
-					`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second)
-					 values ($1, 'Stalled', 'clickref', 0, 5)`, "stalled_"+f.suffix)
+					`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute)
+					 values ($1, 'Stalled', 'clickref', 0, 300)`, "stalled_"+f.suffix)
 				return err
 			},
 			wantCode: codeCheckViolation,
@@ -249,8 +249,8 @@ func TestCashbackCatalogueRejectsIllegalWrites(t *testing.T) {
 				// that answer becoming whichever code path runs first.
 				otherNetwork := "rival_" + f.suffix
 				if _, err := tx.Exec(ctx,
-					`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second)
-					 values ($1, 'Rival Network', 'clickref', 31, 5)`, otherNetwork); err != nil {
+					`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute)
+					 values ($1, 'Rival Network', 'clickref', 31, 300)`, otherNetwork); err != nil {
 					return err
 				}
 				_, err := tx.Exec(ctx,
@@ -459,8 +459,8 @@ func TestCashbackCatalogueAcceptsTheLegalPath(t *testing.T) {
 	// one: it must be representable without a second merchant row.
 	secondNetwork := "second_" + f.suffix
 	if _, err := tx.Exec(ctx,
-		`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second, active)
-		 values ($1, 'Second Network', 'ref', 45, 3, true)`, secondNetwork); err != nil {
+		`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active)
+		 values ($1, 'Second Network', 'ref', 45, 180, true)`, secondNetwork); err != nil {
 		t.Fatalf("a second network was rejected: %v", err)
 	}
 	var secondRoute string

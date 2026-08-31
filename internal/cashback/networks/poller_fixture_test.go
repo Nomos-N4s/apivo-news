@@ -45,8 +45,8 @@ var (
 func fixturePollAccount(ctx context.Context, t *testing.T, tx pgx.Tx) networks.PublisherAccount {
 	t.Helper()
 	if _, err := tx.Exec(ctx, `
-		insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second, active)
-		values ($1, 'Fixture Network', 'clickref', 31, 6, true)`, string(fixture.ID)); err != nil {
+		insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active)
+		values ($1, 'Fixture Network', 'clickref', 31, 360, true)`, string(fixture.ID)); err != nil {
 		t.Fatalf("seeding the network: %v", err)
 	}
 	var accountID pgtype.UUID
