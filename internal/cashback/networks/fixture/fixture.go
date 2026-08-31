@@ -208,14 +208,16 @@ func newAdapter(account networks.PublisherAccount, opts ...Option) (*Network, er
 
 // defaultLimits are the reference network's documented numbers (ADR-0003): a
 // 31-day maximum query window, which is why backfill is inherently windowed,
-// and 6 requests a second. They are a function rather than a package
-// variable because a [networks.Limits] handed out from a shared variable is a
-// value one test can edit for every other one.
+// and 360 requests a minute - the same rate this fixture always declared,
+// carried into the unit the column and the port now use. They are a function
+// rather than a package variable because a [networks.Limits] handed out from
+// a shared variable is a value one test can edit for every other one.
 func defaultLimits() networks.Limits {
 	const maxQueryWindowDays = 31
+	const requestsPerMinute = 360
 	return networks.Limits{
 		MaxWindow:         maxQueryWindowDays * 24 * time.Hour,
-		RequestsPerSecond: 6,
+		RequestsPerMinute: requestsPerMinute,
 	}
 }
 
@@ -274,5 +276,22 @@ func (n *Network) DeeplinkTarget(offerID uuid.UUID) networks.DeeplinkTarget {
 		NetworkID:     ID,
 		ClickRefParam: clickRefParam,
 		Template:      deeplinkTemplate,
+	}
+}
+
+// Documented is what this fixture "publishes" about how it may be used: the
+// row a deployment running on the fixture adapter is seeded with.
+//
+// Its numbers are the reference network's, deliberately, because the fixture
+// exists to stand in for one - and a seed whose limits were unlike any real
+// network's would let a poller pass here and fail on the first live account.
+func Documented() networks.Documented {
+	limits := defaultLimits()
+	return networks.Documented{
+		ID:                 ID,
+		DisplayName:        "Fixture network",
+		ClickRefParam:      clickRefParam,
+		MaxQueryWindowDays: int(limits.MaxWindow / (24 * time.Hour)),
+		RateLimitPerMinute: limits.RequestsPerMinute,
 	}
 }

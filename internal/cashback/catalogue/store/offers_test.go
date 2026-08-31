@@ -216,8 +216,8 @@ func seedOfferChain(t *testing.T, tx pgx.Tx, at time.Time, c offerChain) (pgtype
 	networkID := "livetest_" + suffix
 	if _, err := tx.Exec(ctx,
 		`insert into cashback.network
-		     (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second, active)
-		 values ($1, $2, 'clickref', 31, 5, $3)`,
+		     (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active)
+		 values ($1, $2, 'clickref', 31, 300, $3)`,
 		networkID, "Live Test Network "+suffix, c.networkActive); err != nil {
 		t.Fatalf("seed network: %v", err)
 	}

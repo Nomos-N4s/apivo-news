@@ -22,7 +22,7 @@ var portTestAnchor = time.Date(2026, time.March, 1, 12, 0, 0, 0, time.UTC)
 // contract's window rule is written against.
 var portTestLimits = networks.Limits{
 	MaxWindow:         31 * 24 * time.Hour,
-	RequestsPerSecond: 6,
+	RequestsPerMinute: 360,
 }
 
 // portTestWindow is a window well inside Awin's 31-day maximum.
@@ -147,7 +147,7 @@ func TestLimitsValidateWindow(t *testing.T) {
 		},
 		{
 			name:    "a network declaring no maximum window, which would refuse every window as too wide",
-			limits:  networks.Limits{RequestsPerSecond: 6},
+			limits:  networks.Limits{RequestsPerMinute: 360},
 			window:  portTestWindow(),
 			wantErr: networks.ErrInvalidLimits,
 			wantIn:  []string{"maximum query window"},
@@ -161,13 +161,13 @@ func TestLimitsValidateWindow(t *testing.T) {
 		},
 		{
 			name:    "a negative maximum window",
-			limits:  networks.Limits{MaxWindow: -time.Hour, RequestsPerSecond: 6},
+			limits:  networks.Limits{MaxWindow: -time.Hour, RequestsPerMinute: 360},
 			window:  portTestWindow(),
 			wantErr: networks.ErrInvalidLimits,
 		},
 		{
 			name:    "a negative request rate, which no limiter can be built from",
-			limits:  networks.Limits{MaxWindow: 31 * 24 * time.Hour, RequestsPerSecond: -6},
+			limits:  networks.Limits{MaxWindow: 31 * 24 * time.Hour, RequestsPerMinute: -360},
 			window:  portTestWindow(),
 			wantErr: networks.ErrInvalidLimits,
 			wantIn:  []string{"request rate"},

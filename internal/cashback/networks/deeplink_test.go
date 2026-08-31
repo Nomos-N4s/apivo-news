@@ -224,3 +224,103 @@ func TestDeeplinkRefusalCarriesBothVerdicts(t *testing.T) {
 			err, networks.ErrDeeplinkNotFormed, networks.ErrDeeplinkInputsRefused)
 	}
 }
+
+// TestAppendClickRef covers the assembly half of contract rule 5 directly,
+// rather than only through an adapter. Both rules it keeps are ones a
+// redirect breaks silently - the member is sent to the retailer either way -
+// so they are pinned here, once, for every adapter that calls it.
+func TestAppendClickRef(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		target networks.DeeplinkTarget
+		want   string
+		// wantErr is the sentinel a refusal must carry beneath the umbrella;
+		// nil means a URL is expected instead.
+		wantErr error
+	}{
+		{
+			name:   "a template that already carries a query",
+			target: portTestTarget(),
+			want: "https://www.awin1.com/cread.php?awinmid=4471&ued=https%3A%2F%2Fgartenhaus.example&clickref=" +
+				portTestRefValue,
+		},
+		{
+			name: "a template with no query at all",
+			target: func() networks.DeeplinkTarget {
+				o := portTestTarget()
+				o.Template = "https://www.awin1.com/awclick.php"
+				return o
+			}(),
+			want: "https://www.awin1.com/awclick.php?clickref=" + portTestRefValue,
+		},
+		{
+			name: "a template whose query would not survive re-encoding",
+			target: func() networks.DeeplinkTarget {
+				o := portTestTarget()
+				// Reversed pairs and an unescaped comma: url.Values.Encode
+				// would sort these and escape the comma, which is a change
+				// to a value the operator typed.
+				o.Template = "https://www.awin1.com/cread.php?ued=https%3A%2F%2Fa.example&p=x,y&awinmid=4471"
+				return o
+			}(),
+			want: "https://www.awin1.com/cread.php?ued=https%3A%2F%2Fa.example&p=x,y&awinmid=4471&clickref=" +
+				portTestRefValue,
+		},
+		{
+			name: "a click-reference parameter that has to be escaped",
+			target: func() networks.DeeplinkTarget {
+				o := portTestTarget()
+				o.ClickRefParam = "click ref"
+				return o
+			}(),
+			want: "https://www.awin1.com/cread.php?awinmid=4471&ued=https%3A%2F%2Fgartenhaus.example&click+ref=" +
+				portTestRefValue,
+		},
+		{
+			name: "a template that already sets the click-reference parameter",
+			target: func() networks.DeeplinkTarget {
+				o := portTestTarget()
+				o.Template = "https://www.awin1.com/cread.php?awinmid=4471&clickref=whatever-the-operator-pasted"
+				return o
+			}(),
+			wantErr: networks.ErrDeeplinkInputsRefused,
+		},
+		{
+			name: "a template that already sets it to nothing",
+			target: func() networks.DeeplinkTarget {
+				o := portTestTarget()
+				o.Template = "https://www.awin1.com/cread.php?awinmid=4471&clickref="
+				return o
+			}(),
+			wantErr: networks.ErrDeeplinkInputsRefused,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := networks.AppendClickRef(tt.target, portTestIssuedRef)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("AppendClickRef() error = %v, want one wrapping %v", err, tt.wantErr)
+				}
+				if !errors.Is(err, networks.ErrDeeplinkNotFormed) {
+					t.Errorf("AppendClickRef() error = %v, which does not tell the caller not to redirect", err)
+				}
+				if got != "" {
+					t.Errorf("AppendClickRef() returned %q beside a refusal; a half-built URL still redirects", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("AppendClickRef() unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("AppendClickRef() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

@@ -9,7 +9,7 @@
 //
 // A NOTE ON WHAT THIS DEMONSTRATES RATHER THAN GUARDS. The port puts pacing
 // on the adapter - "the adapter holds itself to it ... pacing its requests
-// to RequestsPerSecond" - and no adapter in this repository paces today,
+// to RequestsPerMinute" - and no adapter in this repository paces today,
 // because the only one serves from testdata and makes no requests at all. So
 // the paced adapter below is built here, in the shape a real one will take:
 // its page read is wrapped in the module's own RetryBackoff. What that

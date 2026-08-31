@@ -181,7 +181,7 @@ func TestNextTrailingWindow(t *testing.T) {
 func TestWindowArithmeticHoldsItsInvariants(t *testing.T) {
 	t.Parallel()
 
-	limits := Limits{MaxWindow: pollTestMax, RequestsPerSecond: 6}
+	limits := Limits{MaxWindow: pollTestMax, RequestsPerMinute: 360}
 	if err := limits.Validate(); err != nil {
 		t.Fatalf("the limits this grid is built on are not usable: %v", err)
 	}

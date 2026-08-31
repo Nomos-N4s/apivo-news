@@ -199,7 +199,8 @@ type CashbackNetwork struct {
 	ClickRefParam string
 	// The network's documented maximum transaction query window. The poller never asks for a wider one (FR-031, ADR-0003).
 	MaxQueryWindowDays int32
-	RateLimitPerSecond int32
+	// The request rate this network documents, in calls per minute - the unit networks publish (Awin: 20 a minute). Per minute rather than per second because a slow network's real limit is a fraction of a request a second, which a positive integer column cannot hold: the adapter divides by sixty to build its limiter.
+	RateLimitPerMinute int32
 	Active             bool
 }
 

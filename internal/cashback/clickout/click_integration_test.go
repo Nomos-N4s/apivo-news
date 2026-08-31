@@ -53,8 +53,8 @@ func clickable(ctx context.Context, t *testing.T, tx pgx.Tx) (account, offer uui
 		t.Fatalf("seeding the member: %v", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second, active)
-		values ($1, 'Click Fixture Network', 'clickref', 31, 5, true)`, networkID); err != nil {
+		insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active)
+		values ($1, 'Click Fixture Network', 'clickref', 31, 300, true)`, networkID); err != nil {
 		t.Fatalf("seeding the network: %v", err)
 	}
 	var merchant, route uuid.UUID

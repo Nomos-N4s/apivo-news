@@ -8,8 +8,6 @@ package fixture
 import (
 	"context"
 	"fmt"
-	"net/url"
-	"strconv"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 )
@@ -47,40 +45,5 @@ func (n *Network) BuildDeeplink(ctx context.Context, target networks.DeeplinkTar
 	if err := n.failures.take(); err != nil {
 		return "", fmt.Errorf("%w: offer %s: %w", networks.ErrDeeplinkNotFormed, target.OfferID, err)
 	}
-	return appendClickRef(target, ref)
-}
-
-// appendClickRef puts the reference in the target's click-reference parameter
-// and returns the absolute URL that results.
-//
-// The template's own query is carried through byte for byte rather than
-// re-encoded. Re-encoding is what url.Values.Encode does, and it reorders
-// parameters and normalises their escaping - which is a change to a value an
-// operator was told this system would pass through, made to data some
-// networks are famously fussy about. Appending leaves the template exactly as
-// it was written and adds one pair.
-func appendClickRef(target networks.DeeplinkTarget, ref networks.IssuedClickRef) (string, error) {
-	parsed, err := url.Parse(target.Template)
-	if err != nil {
-		// ValidateDeeplinkInputs parsed this same string successfully a
-		// moment ago, so this branch is unreachable in practice. It is not
-		// unreachable to the compiler, and a deeplink that silently ignored
-		// a parse failure is the exact shape of bug this method exists to
-		// make impossible.
-		return "", fmt.Errorf("%w: %w: offer %s carries a deeplink template that is not a URL: %w",
-			networks.ErrDeeplinkNotFormed, networks.ErrDeeplinkInputsRefused, target.OfferID, err)
-	}
-	if parsed.Query().Has(target.ClickRefParam) {
-		return "", fmt.Errorf("%w: %w: offer %s carries a deeplink template that already sets %s, and a second one would be the value the network ignores",
-			networks.ErrDeeplinkNotFormed, networks.ErrDeeplinkInputsRefused, target.OfferID,
-			strconv.Quote(target.ClickRefParam))
-	}
-
-	pair := url.QueryEscape(target.ClickRefParam) + "=" + url.QueryEscape(ref.Ref())
-	if parsed.RawQuery == "" {
-		parsed.RawQuery = pair
-	} else {
-		parsed.RawQuery = parsed.RawQuery + "&" + pair
-	}
-	return parsed.String(), nil
+	return networks.AppendClickRef(target, ref)
 }

@@ -73,15 +73,15 @@ func TestAdapterDefaultsToTheReferenceLimits(t *testing.T) {
 	if want := 31 * 24 * time.Hour; limits.MaxWindow != want {
 		t.Errorf("MaxWindow = %s, want %s", limits.MaxWindow, want)
 	}
-	if limits.RequestsPerSecond != 6 {
-		t.Errorf("RequestsPerSecond = %d, want 6", limits.RequestsPerSecond)
+	if want := 360; limits.RequestsPerMinute != want {
+		t.Errorf("RequestsPerMinute = %d, want %d", limits.RequestsPerMinute, want)
 	}
 }
 
 func TestWithLimitsReplacesTheDeclaration(t *testing.T) {
 	t.Parallel()
 
-	want := networks.Limits{MaxWindow: 2 * time.Hour, RequestsPerSecond: 1}
+	want := networks.Limits{MaxWindow: 2 * time.Hour, RequestsPerMinute: 1}
 	if got := fixtureTestAdapter(t, WithLimits(want)).Limits(); got != want {
 		t.Errorf("Limits() = %+v, want %+v", got, want)
 	}
@@ -182,5 +182,24 @@ func TestRecordedClickRefIsOneARedirectCouldHaveIssued(t *testing.T) {
 
 	if _, err := networks.NewIssuedClickRef(RecordedClickRef); err != nil {
 		t.Fatalf("NewIssuedClickRef(RecordedClickRef): %v", err)
+	}
+}
+
+// TestTheFixtureDeclarationCouldSeedItsRow holds the fixture to the same
+// rules a real network's declaration is held to, and to the numbers this
+// adapter already declares - a seed unlike the limits the adapter runs on
+// would let a poller pass here and fail on the first live account.
+func TestTheFixtureDeclarationCouldSeedItsRow(t *testing.T) {
+	t.Parallel()
+
+	documented := Documented()
+	if err := documented.Validate(); err != nil {
+		t.Fatalf("the fixture declaration could not seed a network row: %v", err)
+	}
+	if documented.ID != ID {
+		t.Errorf("the declaration names %q, want %q", documented.ID, ID)
+	}
+	if got, want := documented.Limits(), fixtureTestAdapter(t).Limits(); got != want {
+		t.Errorf("the declaration would seed %+v, but the adapter runs on %+v", got, want)
 	}
 }

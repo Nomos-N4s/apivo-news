@@ -102,8 +102,8 @@ func pollerSchemaAccount(ctx context.Context, t *testing.T, tx pgx.Tx) networks.
 	networkID := "fixture_" + hex.EncodeToString(suffix)
 
 	if _, err := tx.Exec(ctx, `
-		insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second, active)
-		values ($1, 'Poller Network', 'clickref', 31, 6, true)`, networkID); err != nil {
+		insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active)
+		values ($1, 'Poller Network', 'clickref', 31, 360, true)`, networkID); err != nil {
 		t.Fatalf("seeding the network: %v", err)
 	}
 	var accountID pgtype.UUID
@@ -289,7 +289,7 @@ func TestPollForwardAgainstTheRealSchema(t *testing.T) {
 		// wider window itself (contract rule 3), so a poller that split the
 		// backfill wrongly fails here rather than silently reading less
 		// than it thought.
-		adapter.limits = networks.Limits{MaxWindow: 24 * time.Hour, RequestsPerSecond: 6}
+		adapter.limits = networks.Limits{MaxWindow: 24 * time.Hour, RequestsPerMinute: 360}
 
 		poll, err := pollerSchemaPoller(t, tx).PollForward(ctx, adapter)
 		if err != nil {

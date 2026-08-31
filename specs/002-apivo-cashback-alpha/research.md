@@ -246,11 +246,13 @@ Full record: [ADR-0003](../../docs/adr/0003-affiliate-network-integration.md).
   Storing raw payloads means a normalisation bug is fixable without the
   network's cooperation.
 - **Concrete constraints absorbed from the reference network (Awin)**:
-  6 requests/second rate limit; **31-day maximum query window**, so backfill
-  is inherently windowed; `clickref` as the publisher-to-advertiser tracking
-  parameter; `pending → approved | declined` status vocabulary with
-  validation taking **up to 90 days**, which is why the poller re-reads a
-  trailing ~100-day window on a slower schedule.
+  **20 API calls per minute** (see §9 — the figure originally recorded here,
+  6 requests/second, was wrong by a factor of eighteen and is corrected
+  there); **31-day maximum query window**, so backfill is inherently
+  windowed; `clickref` as the publisher-to-advertiser tracking parameter;
+  `pending → approved | declined` status vocabulary with validation taking
+  **up to 90 days**, which is why the poller re-reads a trailing ~100-day
+  window on a slower schedule.
 - **Alternatives considered**: webhook-driven credits (authenticity enters
   the money path), a paid aggregator API (excluded by the free/OSS
   directive), one generic config-driven adapter (networks differ in
@@ -441,7 +443,133 @@ The blocking gate is cleared. ADR-0001 to ADR-0005 move from Proposed to
 
 ---
 
-## 9. Sources
+## 9. Awin — what the network actually documents (recorded 2026-08-31)
+
+Q1 was decided in favour of Awin on 2026-08-31 (spec.md, Clarifications
+Session 2026-08-31), so the "reference network" in §3 is now the network
+this deployment ships against. Everything the adapter is written from is
+recorded here, split by how well it is known, because Phase 11's tasks are
+built on it and the difference between "Awin says so" and "five third-party
+clients agree" decides whether a field may be mapped to money.
+
+### 9.1 Verified from Awin's own documentation
+
+- **Rate limit: 20 API calls per minute, per user.** Awin's API
+  introduction states it in those words. The 6 requests/second recorded in
+  §3 was wrong and is corrected above. The `cashback.network` column that
+  carries it was `rate_limit_per_second integer check (> 0)`, which cannot
+  express Awin's limit at all — 20/minute is 0.33/second and the smallest
+  storable value is 1/second, three times too fast. Migration 0026 renames
+  the column to `rate_limit_per_minute` and multiplies every existing row by
+  sixty; its down-migration is lossy by necessity and rounds **up**, because
+  a rate that rounded to zero would violate the check constraint and strand
+  an operator mid-rollback.
+- **Base URL: `https://api.awin.com`.** Every path is OAuth-gated; an
+  unauthenticated request to any of them, `/` included, answers
+  `401 {"error":"unauthorized"}` with `WWW-Authenticate: Bearer`.
+- **Transactions endpoint: `GET /publishers/{publisherId}/transactions/`**,
+  operation `publisherTransactionsUsingGET`.
+- **Maximum query window: 31 days**, which FR-031 already assumed.
+- **`clickref` is the publisher-to-advertiser click reference**, and
+  `clickref2`–`clickref6` (a.k.a. `pref2`–`pref6`) exist but are explicitly
+  "non-public parameters that cannot be transmitted to the advertiser's
+  landing page". Only `clickref`/`pref1` reaches the retailer. All six come
+  back on a transaction.
+- **Awin's dynamic-parameter syntax is `!!!name!!!`**, and a *general*
+  tracking link built in their Link Builder carries a literal `!!!id!!!`
+  that the publisher is expected to replace by hand with their own publisher
+  id. An operator who pastes such a link into `offer.deeplink_template`
+  ships a redirect that works, sends the member to the retailer, and
+  attributes the click to nobody. T138 refuses it for that reason.
+- **Response field names Awin states anywhere for this endpoint — all
+  eight of them**: `lapseTime` (conversion time in seconds), `type` (Sale,
+  Lead, Bonus, 2nd Tier, Commission group transaction, PPC, TQS, Mobile
+  Sale, Mobile Lead, Mobile App Install, Mobile App Purchase,
+  Compensation), `orderRef`, `clickRef`, `clickRef2 - clickRef6`,
+  `customParameters`, `basketProducts` (only when the request sets
+  `showBasketProducts=true`), and `networkFee` — the last of which the same
+  table marks **not available to publishers**.
+
+### 9.2 The response schema does not exist
+
+Awin publishes no schema for the transactions response. This is a confirmed
+negative rather than a search that came up empty, and it matters enough to
+record how it was established, because the obvious next engineer will
+otherwise go looking for it again.
+
+Awin's API documentation is generated from an OpenAPI definition, and each
+endpoint page embeds its operation object server-side. That object is
+retrievable, and for this endpoint it carries full parameter schemas and a
+`200` response whose body is verbatim `{"properties": [], "examples": []}`.
+Awin uploaded a specification whose success response is untyped. The
+extraction was controlled against sibling endpoints pulled the same way:
+`fetch-list-of-transaction-queries-for-a-given-publisher` returns 23
+populated fields, so an empty result is the document's content and not a
+parsing failure. The same emptiness was confirmed for both publisher and
+advertiser transaction endpoints, both by-ids variants, and both
+validation-batch-job endpoints. No unauthenticated specification is served
+from `help.awin.com` or `api.awin.com` under any conventional path.
+
+**Consequence for T139–T142.** The commonly assumed field names —
+`commissionAmount`, `saleAmount`, `commissionStatus`, `transactionDate`,
+`advertiserId`, `publisherId`, `siteName`, `declineReason` — are **not
+documented for this endpoint**. They are consistent across several
+independent third-party publisher-API clients and are very probably right,
+but "several clients agree" is not the standard ADR-0003 sets for a field
+that decides how much money a member is credited. The mapping in T139 and
+T140 is to be written against a **recorded response from this deployment's
+own publisher account** (T142), not against these names, and the raw
+payload is stored verbatim precisely so that a normalisation written from
+guesswork can be re-derived later without re-fetching (C-3).
+
+Two shapes are worth carrying forward as hypotheses to confirm against that
+recording, because they are the ones a mapping gets silently wrong:
+
+- Money appears in **two different shapes** in the same document.
+  Top-level `commissionAmount` and `saleAmount` are reported as
+  `{"amount": …, "currency": …}` objects, while `amount` and
+  `commissionAmount` **inside `transactionParts[]` are bare numbers with no
+  currency**. A mapper that assumes one shape produces either a parse error
+  or, worse, an amount with the wrong currency attached.
+- The status field is reported as **`commissionStatus`**; `status` is the
+  name of the *query parameter*, not of the response field. Mapping the
+  query parameter's name would read every transaction as having no status.
+
+### 9.3 The unmapped fourth status
+
+Awin's documented vocabulary is `pending → approved | declined`, which is
+what ADR-0003 and the `Reported` status mapping were built against. A
+fourth value, `deleted`, is observable in practice and is covered by
+nothing: it is not in the recorded vocabulary, and Awin does not define it
+where the other three are defined.
+
+It is deliberately left unmapped until T140 rather than guessed at, because
+both guesses are expensive and neither is obviously right. Treating it as
+`declined` reverses a credit that may not have been withdrawn; treating it
+as a no-op ignores what may be a genuine reversal and credits money the
+network has taken back. C-3 is what makes deferring safe — the raw payload
+is stored, so a transaction that arrives as `deleted` before the mapping
+exists can be re-normalised from evidence once it does.
+
+### 9.4 Why the Link Builder API is not in the click-out path
+
+Awin offers `POST /publishers/{publisherId}/linkbuilder/generate`, which
+returns a ready-made tracking URL. The adapter does not use it, and T138
+assembles the redirect locally from the offer's own template instead.
+
+The reason is the rate limit. A publisher account gets 20 API calls per
+minute in total, and it is rationed further — Awin ships a separate
+`Get Link Builder Quota` endpoint, which only exists because the quota can
+run out. Putting that call in the click-out path would cap the product at
+twenty click-outs a minute across all members, spend the same budget the
+transaction poller needs, and make every Awin outage an outage of the one
+action a member takes. Local assembly costs nothing, cannot fail, and is
+what the `offer.deeplink_template` column has been for since migration
+0011.
+
+---
+
+## 10. Sources
 
 - [Open Loyalty — cashback product](https://www.openloyalty.io/product/cashback)
 - [Open Loyalty licence text (community mirror)](https://github.com/kwarambatendai/openloyalty/blob/master/LICENSE)
@@ -453,5 +581,11 @@ The blocking gate is cleared. ADR-0001 to ADR-0005 move from Proposed to
 - [Awin — publisher transactions list endpoint](https://developer.awin.com/apidocs/returns-a-list-of-transactions-for-a-given-publisher)
 - [Awin — automation with APIs](https://www.awin.com/us/how-to-use-awin/automation-with-apis)
 - [Awin — understanding transaction status](https://success.awin.com/s/article/Understanding-Transaction-Status-and-Payment-Process)
+- [Awin — API introduction (base URL, authentication, 20 calls/minute)](https://help.awin.com/apidocs/introduction-1)
+- [Awin — transactions list for a publisher (the eight documented response fields)](https://help.awin.com/apidocs/returns-a-list-of-transactions-for-a-given-publisher)
+- [Awin — click appends and dynamic parameters (`!!!name!!!`, clickref vs clickref2–6)](https://help.awin.com/developers/docs/click-appends-dyn-params)
+- [Awin — create a tracking link for partners (the `!!!id!!!` general link)](https://help.awin.com/docs/create-a-tracking-link-for-partners)
+- [Awin — Link Builder generate endpoint](https://help.awin.com/apidocs/generatelink)
+- [Awin — Link Builder quota endpoint](https://help.awin.com/apidocs/quota)
 - [Best affiliate tracking software 2026 (category survey)](https://remoby.com/blog/best-affiliate-tracking-software-2026/)
 - [EBA guidelines on the limited network exclusion under PSD2](https://www.eba.europa.eu/legacy/regulation-and-policy/regulatory-activities/payment-services-and-electronic-money-1)

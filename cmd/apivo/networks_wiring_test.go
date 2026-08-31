@@ -59,8 +59,8 @@ func networkWiringTx(t *testing.T) (context.Context, pgx.Tx) {
 func networkWiringAccount(ctx context.Context, t *testing.T, tx pgx.Tx, networkID string, active bool, start any) {
 	t.Helper()
 	if _, err := tx.Exec(ctx, `
-		insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second, active)
-		values ($1, 'Wiring Network', 'clickref', 31, 6, true)
+		insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active)
+		values ($1, 'Wiring Network', 'clickref', 31, 360, true)
 		on conflict (id) do nothing`, networkID); err != nil {
 		t.Fatalf("seeding the network: %v", err)
 	}
@@ -281,8 +281,8 @@ func TestRunRegistersTheNetworkSweeps(t *testing.T) {
 	}
 	defer seed.Close()
 	if _, err := seed.Exec(context.Background(), `
-		insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second, active)
-		values ($1, 'Fixture Network', 'clickref', 31, 6, true)`, config.NetworkDriverFixture); err != nil {
+		insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active)
+		values ($1, 'Fixture Network', 'clickref', 31, 360, true)`, config.NetworkDriverFixture); err != nil {
 		t.Fatalf("seeding the network: %v", err)
 	}
 	if _, err := seed.Exec(context.Background(), `

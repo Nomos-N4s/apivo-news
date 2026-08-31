@@ -225,8 +225,8 @@ func TestConformanceAnAdapterIsWhatItSaysItIs(t *testing.T) {
 		if limits.MaxWindow <= 0 {
 			t.Errorf("Limits().MaxWindow is %s; a non-positive maximum makes every window too wide and stops ingestion dead", limits.MaxWindow)
 		}
-		if limits.RequestsPerSecond <= 0 {
-			t.Errorf("Limits().RequestsPerSecond is %d; a non-positive rate makes every request unpermitted", limits.RequestsPerSecond)
+		if limits.RequestsPerMinute <= 0 {
+			t.Errorf("Limits().RequestsPerMinute is %d; a non-positive rate makes every request unpermitted", limits.RequestsPerMinute)
 		}
 	})
 }
@@ -987,7 +987,7 @@ func (c *conformPacingClock) total() time.Duration {
 // TestConformanceTheDeclaredRateCanHoldTheAdapter is the pacing half of
 // contract rule 3.
 //
-// An adapter declares RequestsPerSecond and the poller holds it to that with
+// An adapter declares RequestsPerMinute and the poller holds it to that with
 // a limiter; a rate that could not build one would leave the adapter unpaced,
 // which the network answers with the rate-limited refusals above until
 // somebody notices. So the declaration is checked by using it, and the
@@ -1004,7 +1004,13 @@ func TestConformanceTheDeclaredRateCanHoldTheAdapter(t *testing.T) {
 
 	eachAdapter(t, func(t *testing.T, a conformAdapter) {
 		adapter := a.open(t)
-		rate := float64(adapter.Limits().RequestsPerSecond)
+		// The declaration is per minute, in the unit the network table
+		// carries; the limiter takes a rate a second. The conversion is
+		// written out here rather than folded into the expression below
+		// because getting it backwards is the unit bug migration 0026
+		// existed to fix, and a test that reproduced it would pass.
+		const secondsPerMinute = 60.0
+		rate := float64(adapter.Limits().RequestsPerMinute) / secondsPerMinute
 
 		clock := &conformPacingClock{now: time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)}
 		limiter, err := networks.NewRateLimiter(rate, 1, networks.WithRateLimiterClock(clock))
@@ -1030,7 +1036,14 @@ func TestConformanceTheDeclaredRateCanHoldTheAdapter(t *testing.T) {
 
 		// One token is granted immediately; the rest are paced. Anything less
 		// and the limiter is not holding the adapter to anything.
-		want := time.Duration(float64(reads-1) / rate * float64(time.Second))
+		//
+		// The expectation is computed from the declaration itself, in
+		// minutes, and not from the converted rate above. Deriving both from
+		// one number is what would let the conversion be inverted and the
+		// assertion still hold: a limiter built at sixty times the declared
+		// rate would be compared against an expectation sixty times too
+		// small, and pass while pacing nothing.
+		want := time.Duration(float64(reads-1) * float64(time.Minute) / float64(adapter.Limits().RequestsPerMinute))
 		if got := clock.total(); got < want {
 			t.Errorf("%d reads at %v a second waited %v in total, want at least %v", reads, rate, got, want)
 		}

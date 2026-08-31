@@ -63,8 +63,8 @@ func seedCashback(t *testing.T, tx pgx.Tx) cashbackFixtures {
 	f.networkID = "fixture_" + suffix
 	_, err = tx.Exec(ctx,
 		`insert into cashback.network
-		     (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_second, active)
-		 values ($1, $2, 'clickref', 31, 5, true)`,
+		     (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active)
+		 values ($1, $2, 'clickref', 31, 300, true)`,
 		f.networkID, "Fixture Network "+suffix)
 	if err != nil {
 		t.Fatalf("seed network: %v", err)
