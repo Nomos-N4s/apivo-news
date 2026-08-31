@@ -159,13 +159,17 @@ func TestACursorFromSomewhereElseIsRefused(t *testing.T) {
 }
 
 // TestAnUnknownStateIsRefusedRatherThanAnsweredEmpty. An empty page reads as
-// "you have earned nothing", and a member told that because of a typo would
-// believe it.
+// "you have earned nothing", and a member told that because of a bad filter
+// would believe it.
+//
+// The filter here names a WITHDRAWAL state, which is the mistake a client is
+// actually likely to make: the two machines sit beside each other in the
+// same product and neither's states are the other's.
 func TestAnUnknownStateIsRefusedRatherThanAnsweredEmpty(t *testing.T) {
 	t.Parallel()
 
 	entries := &fakeEntries{}
-	_, err := history(t, entries).Page(t.Context(), wallet.PageRequest{Member: uuid.New(), State: "confirmd"})
+	_, err := history(t, entries).Page(t.Context(), wallet.PageRequest{Member: uuid.New(), State: "awaiting_approval"})
 
 	if !errors.Is(err, wallet.ErrUnknownState) {
 		t.Fatalf("Page() error = %v, want %v", err, wallet.ErrUnknownState)

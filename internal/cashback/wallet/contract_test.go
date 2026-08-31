@@ -140,3 +140,75 @@ func TestGetWalletServesEveryDocumentedStatusAndNoOther(t *testing.T) {
 		}
 	}
 }
+
+// TestListWalletEntriesServesEveryDocumentedStatusAndNoOther, for the same
+// reason and in the same way as the wallet's own.
+func TestListWalletEntriesServesEveryDocumentedStatusAndNoOther(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		status int
+		build  func(t *testing.T) (wallet.EntryReader, wallet.MemberAuthenticator, *http.Request)
+	}{
+		{
+			name:   "a member reads their own history",
+			status: http.StatusOK,
+			build: func(t *testing.T) (wallet.EntryReader, wallet.MemberAuthenticator, *http.Request) {
+				return &fakeEntries{}, fakeAuth{token: "t", member: fakeMember}, entriesRequest(t, "")
+			},
+		},
+		{
+			name:   "a state no entry is ever in",
+			status: http.StatusBadRequest,
+			build: func(t *testing.T) (wallet.EntryReader, wallet.MemberAuthenticator, *http.Request) {
+				return &fakeEntries{}, fakeAuth{token: "t", member: fakeMember}, entriesRequest(t, "state=awaiting_approval")
+			},
+		},
+		{
+			name:   "a token belonging to nobody",
+			status: http.StatusUnauthorized,
+			build: func(t *testing.T) (wallet.EntryReader, wallet.MemberAuthenticator, *http.Request) {
+				req := entriesRequest(t, "")
+				req.Header.Set("Authorization", "Bearer wrong")
+				return &fakeEntries{}, fakeAuth{token: "t", member: fakeMember}, req
+			},
+		},
+		{
+			name:   "the entries could not be read",
+			status: http.StatusInternalServerError,
+			build: func(t *testing.T) (wallet.EntryReader, wallet.MemberAuthenticator, *http.Request) {
+				return &fakeEntries{err: errors.New("connection reset")},
+					fakeAuth{token: "t", member: fakeMember}, entriesRequest(t, "")
+			},
+		},
+	}
+
+	reached := make([]int, 0, len(cases))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, auth, req := tc.build(t)
+			rec := serveWith(t, aWallet(t, money.Amount{Minor: 2000, Currency: "EUR"}),
+				history(t, entries), auth, req)
+			if rec.Code != tc.status {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, tc.status, rec.Body)
+			}
+		})
+		reached = append(reached, tc.status)
+	}
+
+	documented := documentedStatuses(t, "listWalletEntries")
+	sort.Ints(reached)
+	reached = slices.Compact(reached)
+
+	for _, status := range documented {
+		if !slices.Contains(reached, status) {
+			t.Errorf("the contract declares %d for listWalletEntries and no case here produces it: a client is handling an answer that will never arrive", status)
+		}
+	}
+	for _, status := range reached {
+		if !slices.Contains(documented, status) {
+			t.Errorf("the endpoint answers %d and the contract does not declare it: a client cannot handle it", status)
+		}
+	}
+}

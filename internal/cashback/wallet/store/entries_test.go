@@ -18,10 +18,23 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/store"
 )
 
+// shopSourceLanguage is the language every fixture retailer's own copy is
+// written in. One value, because what these cases turn on is whether the
+// language ASKED FOR is present - a second source language would vary the
+// half that is never in question.
+const shopSourceLanguage = "de"
+
+// shopName is what every fixture retailer is called in its own language, for
+// the reason shopSourceLanguage is one value: the cases turn on WHICH name
+// comes back, not on what either says.
+const shopName = "Kaufhaus"
+
 // shop seeds a retailer reachable through a network, with copy in its own
 // language and optionally in another.
-func shop(ctx context.Context, t *testing.T, tx pgx.Tx, sourceLanguage, name string, also map[string]string) (route, merchant pgtype.UUID, networkID string) {
+func shop(ctx context.Context, t *testing.T, tx pgx.Tx, also map[string]string) (route pgtype.UUID, networkID string) {
 	t.Helper()
+	sourceLanguage, name := shopSourceLanguage, shopName
+	var merchant pgtype.UUID
 	id := tag(t)
 	networkID = "walletfix_" + id
 	if _, err := tx.Exec(ctx, `
@@ -53,7 +66,7 @@ func shop(ctx context.Context, t *testing.T, tx pgx.Tx, sourceLanguage, name str
 		merchant, networkID, "ext-"+id).Scan(&route); err != nil {
 		t.Fatalf("seeding the route: %v", err)
 	}
-	return route, merchant, networkID
+	return route, networkID
 }
 
 // earned writes one entry for the member: the report it rests on, the click
@@ -174,7 +187,7 @@ func TestMemberEntriesAgainstSchema(t *testing.T) {
 
 	each("an earning carries the purchase and the shop behind it", func(t *testing.T, tx pgx.Tx) {
 		account, _ := member(ctx, t, tx)
-		route, _, networkID := shop(ctx, t, tx, "de", "Kaufhaus", map[string]string{"el": "Πολυκατάστημα"})
+		route, networkID := shop(ctx, t, tx, map[string]string{"el": "Πολυκατάστημα"})
 		earned(ctx, t, tx, account, route, networkID, "confirmed", "the network confirmed it", false)
 
 		rows := listed(ctx, t, tx, store.MemberEntriesParams{AccountID: account, Language: "el"})
@@ -207,7 +220,7 @@ func TestMemberEntriesAgainstSchema(t *testing.T) {
 	// tell it apart from a real match.
 	each("a shop with no copy in the language asked for falls back", func(t *testing.T, tx pgx.Tx) {
 		account, _ := member(ctx, t, tx)
-		route, _, networkID := shop(ctx, t, tx, "de", "Kaufhaus", nil)
+		route, networkID := shop(ctx, t, tx, nil)
 		earned(ctx, t, tx, account, route, networkID, "pending", "", false)
 
 		rows := listed(ctx, t, tx, store.MemberEntriesParams{AccountID: account, Language: "el"})
@@ -231,7 +244,7 @@ func TestMemberEntriesAgainstSchema(t *testing.T) {
 	// own money out of their own wallet.
 	each("an entry attributed by hand is still the member's", func(t *testing.T, tx pgx.Tx) {
 		account, _ := member(ctx, t, tx)
-		route, _, networkID := shop(ctx, t, tx, "de", "Kaufhaus", nil)
+		route, networkID := shop(ctx, t, tx, nil)
 		earned(ctx, t, tx, account, route, networkID, "pending", "an operator matched it", true)
 
 		rows := listed(ctx, t, tx, store.MemberEntriesParams{AccountID: account, Language: "de"})
@@ -245,7 +258,7 @@ func TestMemberEntriesAgainstSchema(t *testing.T) {
 
 	each("the state filter narrows, and its absence lists everything", func(t *testing.T, tx pgx.Tx) {
 		account, _ := member(ctx, t, tx)
-		route, _, networkID := shop(ctx, t, tx, "de", "Kaufhaus", nil)
+		route, networkID := shop(ctx, t, tx, nil)
 		earned(ctx, t, tx, account, route, networkID, "pending", "", false)
 		earned(ctx, t, tx, account, route, networkID, "confirmed", "", false)
 
@@ -265,7 +278,7 @@ func TestMemberEntriesAgainstSchema(t *testing.T) {
 	each("another member's entries are theirs", func(t *testing.T, tx pgx.Tx) {
 		account, _ := member(ctx, t, tx)
 		other, _ := member(ctx, t, tx)
-		route, _, networkID := shop(ctx, t, tx, "de", "Kaufhaus", nil)
+		route, networkID := shop(ctx, t, tx, nil)
 		earned(ctx, t, tx, account, route, networkID, "confirmed", "", false)
 		earned(ctx, t, tx, other, route, networkID, "confirmed", "", false)
 
@@ -282,7 +295,7 @@ func TestMemberEntriesAgainstSchema(t *testing.T) {
 	// reconcile against it.
 	each("a reversal and the credit it undoes both appear", func(t *testing.T, tx pgx.Tx) {
 		account, _ := member(ctx, t, tx)
-		route, _, networkID := shop(ctx, t, tx, "de", "Kaufhaus", nil)
+		route, networkID := shop(ctx, t, tx, nil)
 		original := earned(ctx, t, tx, account, route, networkID, "confirmed", "the network confirmed it", false)
 		earnedCiting(ctx, t, tx, account, route, networkID, "reversed", "the network took it back", false, original)
 
@@ -310,7 +323,7 @@ func TestMemberEntriesAgainstSchema(t *testing.T) {
 
 	each("newest first, and the cursor resumes after a row", func(t *testing.T, tx pgx.Tx) {
 		account, _ := member(ctx, t, tx)
-		route, _, networkID := shop(ctx, t, tx, "de", "Kaufhaus", nil)
+		route, networkID := shop(ctx, t, tx, nil)
 		for range 3 {
 			earned(ctx, t, tx, account, route, networkID, "confirmed", "", false)
 		}
