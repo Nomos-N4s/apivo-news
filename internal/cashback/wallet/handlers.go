@@ -41,12 +41,26 @@ const timeFormat = time.RFC3339Nano
 // auth gate and one error convention cover both.
 const entriesPath = Prefix + "/entries"
 
+// ParticipationPrefix is the member's opt-in, and it is a SIBLING of the
+// wallet rather than a path beneath it (contracts/http-api.md). That is not
+// an accident of naming: a member who has left cashback still has a wallet
+// full of entries that continue to resolve (FR-003), so participation is
+// not part of the wallet, it is the thing that decides whether new money
+// ever enters one.
+//
+// It is served by this module's handler all the same, which the composition
+// root mounts at both prefixes. One module, one auth gate, one error
+// convention - and this file is where every member-facing cashback route
+// can be read in a single list.
+const ParticipationPrefix = "/api/v1/cashback/participation"
+
 // Handler serves the member wallet endpoints. Build it with NewHandler.
 type Handler struct {
-	log     *slog.Logger
-	wallets *Wallets
-	history *History
-	auth    MemberAuthenticator
+	log            *slog.Logger
+	wallets        *Wallets
+	history        *History
+	participations *Participations
+	auth           MemberAuthenticator
 	// allow is the 405 classifier, derived from routes() in NewHandler so it
 	// cannot drift from what is actually registered.
 	allow platformhttp.AllowTable
@@ -54,15 +68,19 @@ type Handler struct {
 
 // NewHandler builds the wallet route table as an http.Handler for the
 // composition root to mount. Every route sits behind the requireMember gate.
-func NewHandler(log *slog.Logger, wallets *Wallets, history *History, auth MemberAuthenticator) http.Handler {
-	h := &Handler{log: log, wallets: wallets, history: history, auth: auth}
+func NewHandler(log *slog.Logger, wallets *Wallets, history *History, participations *Participations, auth MemberAuthenticator) http.Handler {
+	h := &Handler{log: log, wallets: wallets, history: history, participations: participations, auth: auth}
 	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
 	for pattern, handler := range h.routes() {
 		mux.HandleFunc(pattern, handler)
 	}
-	mux.HandleFunc(Prefix+"/", h.handleUnrouted)
-	mux.HandleFunc(Prefix, h.handleUnrouted)
+	// Both trees get the catch-all, so a stray sub-path under either is
+	// answered here in problem+json rather than handed on.
+	for _, prefix := range []string{Prefix, ParticipationPrefix} {
+		mux.HandleFunc(prefix+"/", h.handleUnrouted)
+		mux.HandleFunc(prefix, h.handleUnrouted)
+	}
 	return h.requireMember(mux)
 }
 
@@ -72,8 +90,11 @@ func NewHandler(log *slog.Logger, wallets *Wallets, history *History, auth Membe
 // checked against the routes rather than against someone's memory of them.
 func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
-		"GET " + Prefix:      h.getWallet,
-		"GET " + entriesPath: h.getEntries,
+		"GET " + Prefix:                 h.getWallet,
+		"GET " + entriesPath:            h.getEntries,
+		"GET " + ParticipationPrefix:    h.getParticipation,
+		"POST " + ParticipationPrefix:   h.postParticipation,
+		"DELETE " + ParticipationPrefix: h.deleteParticipation,
 	}
 }
 
