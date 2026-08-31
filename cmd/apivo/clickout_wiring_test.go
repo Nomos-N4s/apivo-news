@@ -30,7 +30,7 @@ import (
 func clickOutRoutes(ctx context.Context, t *testing.T, pool *pgxpool.Pool, jwksURL string) http.Handler {
 	t.Helper()
 	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
-		config.Config{JWKSURL: jwksURL, Cashback: config.CashbackConfig{Enabled: true}},
+		config.Config{JWKSURL: jwksURL, Cashback: config.CashbackConfig{Enabled: true, LedgerDriver: config.LedgerDriverMemory}},
 		discardLogger(), pool, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
@@ -137,7 +137,7 @@ func TestTheClickOutPathIsMountedWithItsSubtree(t *testing.T) {
 
 	jwks := newJWKSServer(t, newSigningKey(t))
 	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
-		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{Enabled: true}},
+		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{Enabled: true, LedgerDriver: config.LedgerDriverMemory}},
 		discardLogger(), pool, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)

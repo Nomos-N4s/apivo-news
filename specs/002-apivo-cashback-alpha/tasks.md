@@ -183,7 +183,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 **Independent Test**: Seed entries across every state, load the wallet, assert each displayed total equals an independently computed ledger sum to the minor unit.
 
 - [x] T077 [US3] Implement wallet balance projection computed from postings, never from a stored balance, in `internal/cashback/wallet/projection.go` — the four stage balances the ledger can answer. `paid_out`, which `GET /wallet` also returns, is not a balance: no account holds money that has left the business, so it is read from the settled payouts and lands with T078
-- [ ] T078 [US3] Implement `GET /wallet` returning `{minor, currency}` totals plus the payout threshold, in `internal/cashback/wallet/handlers.go`
+- [x] T078 [US3] Implement `GET /wallet` returning `{minor, currency}` totals plus the payout threshold, in `internal/cashback/wallet/handlers.go` — the threshold is configuration (Q5), as `PAYOUT_THRESHOLD_MINOR` and `PAYOUT_THRESHOLD_CURRENCY`; it belongs on the brand once brand loading reaches the API (ADR-0004). The composition root gained the ledger with it: `LEDGER_DRIVER` selected an implementation nothing had constructed
 - [ ] T079 [US3] Implement `GET /wallet/entries` with state filter and cursor pagination in `internal/cashback/wallet/handlers.go`
 - [ ] T080 [US3] Implement `GET /participation`, `POST /participation`, `DELETE /participation` in `internal/cashback/wallet/participation.go`
 - [ ] T081 [US3] Implement `GET /export` for the member's own history as JSON and CSV in `internal/cashback/wallet/export.go`

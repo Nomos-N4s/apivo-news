@@ -70,7 +70,7 @@ func TestOperatorWiringAgainstSchema(t *testing.T) {
 	jwks := newJWKSServer(t, key)
 
 	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
-		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{Enabled: true}},
+		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{Enabled: true, LedgerDriver: config.LedgerDriverMemory}},
 		discardLogger(), pool, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
@@ -203,7 +203,7 @@ func TestTheOperatorSurfaceAnswersProblemJSON(t *testing.T) {
 	key := newSigningKey(t)
 	jwks := newJWKSServer(t, key)
 	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
-		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{Enabled: true}},
+		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{Enabled: true, LedgerDriver: config.LedgerDriverMemory}},
 		discardLogger(), pool, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)

@@ -33,6 +33,10 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/blnk"
+	walletmemory "github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/memory"
+	walletpostgres "github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/postgres"
+	walletstore "github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/store"
 	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
 	"github.com/Nomos-N4s/apivo-news/internal/identity"
@@ -84,6 +88,10 @@ const opsPrefix = ops.Prefix
 // string; naming it here would be a second copy, one deployment away from a
 // path whose catch-all nothing reaches.
 const clickoutPrefix = clickout.Prefix
+
+// walletPrefix is the member wallet surface, taken from the module that
+// serves it for the reason clickoutPrefix is.
+const walletPrefix = wallet.Prefix
 
 // readerPrefix is where the content module's route table is mounted. It
 // covers the whole API namespace because the module also answers what nobody
@@ -441,6 +449,11 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	if cfg.Cashback.ClickContextHeader != "" {
 		clickOutOptions = append(clickOutOptions, clickout.WithContextHeader(cfg.Cashback.ClickContextHeader))
 	}
+	wallets, err := newWallets(cfg, pool)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
 	return append(routes,
 		platformhttp.Route{
 			Pattern: opsPrefix,
@@ -457,7 +470,62 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 			Pattern: clickoutPrefix + "/",
 			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}, clickOutOptions...),
 		},
+		platformhttp.Route{
+			Pattern: walletPrefix,
+			Handler: wallet.NewHandler(log, wallets, walletAuth{ids: ids}),
+		},
+		platformhttp.Route{
+			Pattern: walletPrefix + "/",
+			Handler: wallet.NewHandler(log, wallets, walletAuth{ids: ids}),
+		},
 	), stop, nil
+}
+
+// newWallets assembles the member wallet: the ledger the balances are
+// projected from, the settled payouts that say what has been paid, and the
+// threshold a withdrawal is checked against.
+//
+// The threshold may be the zero Amount here, and is passed through as one.
+// Production cannot start without it; the environments that can are the
+// no-Docker loop and CI, and there the endpoint answers 503 naming the two
+// keys rather than being unmounted - a 404 would say the API is not here.
+func newWallets(cfg config.Config, pool *pgxpool.Pool) (*wallet.Wallets, error) {
+	ledger, err := newLedger(cfg, pool)
+	if err != nil {
+		return nil, err
+	}
+	projector, err := wallet.NewProjector(ledger)
+	if err != nil {
+		return nil, err
+	}
+	return wallet.NewWallets(projector, walletstore.New(pool), cfg.Cashback.PayoutThreshold)
+}
+
+// newLedger builds the Ledger port's implementation this deployment selected
+// (ADR-0002).
+//
+// There is no default and there must not be one: LEDGER_DRIVER is required
+// whenever cashback is on, and a deployment that forgot it would otherwise
+// get the in-process ledger - one that persists nothing, and looks healthy
+// while doing it. config.parseCashback refuses an unknown name, so the last
+// arm here is unreachable and says so rather than choosing.
+func newLedger(cfg config.Config, pool *pgxpool.Pool) (wallet.Ledger, error) {
+	switch cfg.Cashback.LedgerDriver {
+	case config.LedgerDriverBlnk:
+		opts := []blnk.Option{}
+		if key := cfg.Cashback.BlnkSecretKey.Reveal(); key != "" {
+			opts = append(opts, blnk.WithSecretKey(key))
+		}
+		return blnk.New(cfg.Cashback.BlnkURL, opts...)
+	case config.LedgerDriverPostgres:
+		return walletpostgres.New(pool), nil
+	case config.LedgerDriverMemory:
+		// Persists nothing and is scoped to this process. Configuration
+		// refuses it in production; here it is the no-Docker loop's ledger
+		// and nothing more.
+		return walletmemory.New(), nil
+	}
+	return nil, fmt.Errorf("main: LEDGER_DRIVER %q selects no ledger", cfg.Cashback.LedgerDriver)
 }
 
 // newClickOuts assembles the click-out service: the catalogue read that says
@@ -519,6 +587,32 @@ func (a memberAuth) AuthenticateMember(ctx context.Context, token string) (click
 		return clickout.Member{}, err
 	}
 	return clickout.Member{ID: id.Subject}, nil
+}
+
+// walletAuth adapts the identity module to the wallet module's own
+// consumer-defined MemberAuthenticator.
+//
+// A second adapter rather than memberAuth reused, because the two modules
+// declare their own interface and their own Member type - which is the
+// boundary rule working: neither module can be given the other's notion of
+// who is asking, and a change made for the click-out surface cannot reach
+// the wallet by sharing an adapter. The bodies are the same today and that
+// is not a reason to merge them; every route on both surfaces acts on the
+// caller's own money, so the same absence of a role check is the correct
+// answer arrived at twice rather than one answer applied twice.
+type walletAuth struct {
+	ids *identity.Service
+}
+
+func (a walletAuth) AuthenticateMember(ctx context.Context, token string) (wallet.Member, error) {
+	id, err := a.ids.Authenticate(ctx, token)
+	switch {
+	case errors.Is(err, identity.ErrInvalidToken), errors.Is(err, identity.ErrUnknownAccount):
+		return wallet.Member{}, fmt.Errorf("%w: %w", wallet.ErrUnauthenticated, err)
+	case err != nil:
+		return wallet.Member{}, err
+	}
+	return wallet.Member{ID: id.Subject}, nil
 }
 
 // newOperatorAuth builds the identity-to-ops adapter. It is the single

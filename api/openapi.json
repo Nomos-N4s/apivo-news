@@ -502,6 +502,49 @@
         }
       }
     },
+    "/api/v1/cashback/wallet": {
+      "get": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "getWallet",
+        "summary": "Read the caller's own cashback wallet",
+        "description": "Where the member's money is, what they have been paid, and what they must reach before asking to be paid again (FR-041, FR-050).\n\nEvery total is computed from ledger postings on each read, never from a stored balance (D7). paid_out is the exception and is not a balance at all: money that has been paid has left the business, so no account holds it and it is summed from the settled payouts instead.\n\nThe member is the bearer of the token. There is no path segment and no query parameter naming one, so reading another member's wallet is not a request this endpoint can express.\n\nMoney held back by a rule (US7) is deliberately not a total here. A hold is the business deciding not to count money yet, and a fifth figure would invite the member to count it; the entry itself carries the rule that is holding it.\n\nThe whole path is unmounted when cashback is off, and then answers 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The member's wallet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Wallet"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "description": "This deployment has not configured a withdrawal threshold (PAYOUT_THRESHOLD_MINOR, PAYOUT_THRESHOLD_CURRENCY), so there is no currency to answer in and no figure to compare a balance against. Nothing is broken; the deployment is incomplete.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/editorial/approvals": {
       "post": {
         "tags": [
@@ -3018,6 +3061,60 @@
             ],
             "format": "date-time",
             "description": "When the rate band this click was issued against stops being published, or null for a band with no published end.\n\nAbout the OFFER, not the redirect: the credit this click earns is governed by the snapshot taken when it was issued, whatever happens to the band afterwards (FR-013), and no network expires a deeplink. It is the same window whose end makes a later click-out answer 409."
+          }
+        }
+      },
+      "Wallet": {
+        "type": "object",
+        "description": "A member's money, by stage, plus what they have been paid and the threshold a withdrawal is checked against. Every figure names its currency; they are always the same one, because a wallet is answered in the currency the deployment states its threshold in (C-6).",
+        "required": [
+          "pending",
+          "confirmed",
+          "reserved",
+          "paid_out",
+          "payout_threshold"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "pending": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ],
+            "description": "Reported by a network and not yet confirmed. Visible, never spendable."
+          },
+          "confirmed": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ],
+            "description": "Confirmed by the network AND accounted for by an imported statement (FR-043). The only figure the threshold applies to."
+          },
+          "reserved": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ],
+            "description": "Claimed by a withdrawal request and no longer available to a second one (D9). Still the member's."
+          },
+          "paid_out": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ],
+            "description": "The lifetime total of payments that settled. Not a balance: this money has left the business, and this is the record that it went. Payments in flight and payments that failed are not counted."
+          },
+          "payout_threshold": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ],
+            "description": "What confirmed must reach before a withdrawal may be requested (FR-050). Returned rather than left to the client, so a client cannot show one figure while the server enforces another."
           }
         }
       }
