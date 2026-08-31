@@ -41,10 +41,12 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
 	"github.com/Nomos-N4s/apivo-news/internal/identity"
 	"github.com/Nomos-N4s/apivo-news/internal/ingestion"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/brand"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 	platformdb "github.com/Nomos-N4s/apivo-news/internal/platform/db"
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/logging"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/scheduler"
 	"github.com/Nomos-N4s/apivo-news/internal/translation"
 	"github.com/Nomos-N4s/apivo-news/internal/translation/providers/openaicompat"
@@ -92,6 +94,12 @@ const clickoutPrefix = clickout.Prefix
 // walletPrefix is the member wallet surface, taken from the module that
 // serves it for the reason clickoutPrefix is.
 const walletPrefix = wallet.Prefix
+
+// participationPrefix is the member's opt-in. A sibling of the wallet
+// rather than a path beneath it (contracts/http-api.md), and served by the
+// same module handler - which is why it is mounted below beside the wallet
+// rather than assembled from a second one.
+const participationPrefix = wallet.ParticipationPrefix
 
 // readerPrefix is where the content module's route table is mounted. It
 // covers the whole API namespace because the module also answers what nobody
@@ -459,6 +467,17 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, err
 	}
+	terms, err := brandTerms(log, cfg.BrandDir)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	participations, err := wallet.NewParticipations(pool, walletstore.New(pool), terms)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	memberSurface := wallet.NewHandler(log, wallets, history, participations, walletAuth{ids: ids})
 	return append(routes,
 		platformhttp.Route{
 			Pattern: opsPrefix,
@@ -475,15 +494,53 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 			Pattern: clickoutPrefix + "/",
 			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}, clickOutOptions...),
 		},
-		platformhttp.Route{
-			Pattern: walletPrefix,
-			Handler: wallet.NewHandler(log, wallets, history, walletAuth{ids: ids}),
-		},
-		platformhttp.Route{
-			Pattern: walletPrefix + "/",
-			Handler: wallet.NewHandler(log, wallets, history, walletAuth{ids: ids}),
-		},
+		// One handler at four patterns: the wallet and the participation
+		// trees, each at the path AND its subtree. The module's own mux
+		// matches on the full path, so both trees route correctly out of
+		// one route table, one auth gate and one error convention.
+		platformhttp.Route{Pattern: walletPrefix, Handler: memberSurface},
+		platformhttp.Route{Pattern: walletPrefix + "/", Handler: memberSurface},
+		platformhttp.Route{Pattern: participationPrefix, Handler: memberSurface},
+		platformhttp.Route{Pattern: participationPrefix + "/", Handler: memberSurface},
 	), stop, nil
+}
+
+// brandTerms reads the brand definition BRAND_DIR names and reduces it to
+// the three fields the participation record needs (ADR-0004).
+//
+// An unset BRAND_DIR is not an error. There is no brand this repository
+// could ship that would not be a lie about a real company, so a deployment
+// without one starts and the opt-in answers 503 naming the key - the same
+// stance the wallet takes on a missing payout threshold. One ERROR line
+// says so at start-up, because the consequence is a member-facing endpoint
+// that cannot work.
+//
+// A BRAND_DIR that is set and unreadable, or holds a brand file that does
+// not validate, IS a startup failure: a deployment that named a brand meant
+// it, and starting anyway would serve the 503 while an operator believed
+// the brand was configured.
+func brandTerms(log *slog.Logger, dir string) (wallet.Terms, error) {
+	if dir == "" {
+		log.Error("BRAND_DIR is unset, so this deployment has no brand definition: members cannot opt into cashback and POST /api/v1/cashback/participation will answer 503",
+			"key", "BRAND_DIR")
+		return wallet.Terms{}, nil
+	}
+	defined, err := brand.LoadDir(dir)
+	if err != nil {
+		return wallet.Terms{}, fmt.Errorf("BRAND_DIR=%s: %w", dir, err)
+	}
+	// Validate() guarantees both documents are present, so this lookup
+	// cannot miss on a brand that loaded.
+	terms, ok := defined.Document(brand.DocumentTerms)
+	if !ok {
+		return wallet.Terms{}, fmt.Errorf("BRAND_DIR=%s: the brand defines no %q document", dir, brand.DocumentTerms)
+	}
+	currency, err := money.ParseCurrency(defined.Defaults.Currency)
+	if err != nil {
+		return wallet.Terms{}, fmt.Errorf("BRAND_DIR=%s: defaults.currency: %w", dir, err)
+	}
+	log.Info("brand definition loaded", "brand", defined.ID, "terms_version", terms.Version, "currency", currency)
+	return wallet.Terms{Brand: defined.ID, Version: terms.Version, Currency: currency}, nil
 }
 
 // newWallets assembles the member wallet: the ledger the balances are

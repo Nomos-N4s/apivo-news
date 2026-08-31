@@ -502,6 +502,161 @@
         }
       }
     },
+    "/api/v1/cashback/participation": {
+      "get": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "getParticipation",
+        "summary": "Read the caller's own cashback participation",
+        "description": "Whether this member is in cashback, which version of the terms they accepted and when (FR-001, FR-002), and - if they have left - the date they left (FR-003).\n\nWhat the ROW says, never today's configuration: a member who joined under an earlier revision of the terms is shown the revision they actually accepted.\n\nThe member is the bearer of the token. There is no path segment and no query parameter naming an account, so reading somebody else's participation is not a request this endpoint can express.\n\nThe whole path is unmounted when cashback is off, and then answers 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The member's participation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Participation"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "description": "This account has never opted into cashback. Not an error condition: it is how a client knows to render the opt-in.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "optIntoParticipation",
+        "summary": "Opt into cashback",
+        "description": "Accept the terms in force and join cashback (FR-002). A member who left and comes back re-joins through this same endpoint, accepting whatever revision is in force then.\n\nThe version in the body must be the one this deployment is offering. A stale consent is never recorded: a member who agreed to last quarter's terms agreed to something they were not shown, and the 400 names the version that is in force so a client never has to guess.\n\nThe brand a member joins is frozen on the record. A deployment that is later rebranded does not move an existing participation between brands (ADR-0004).",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParticipationOptIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The participation this acceptance created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Participation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not a single JSON document of the expected shape, or terms_version is not the version in force. The detail names the version that is.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "409": {
+            "description": "This account is already in cashback. Their acceptance stands as recorded; a second one would move the date and the version, which are the whole of the record.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "description": "This deployment has not configured a brand definition (BRAND_DIR), so there are no terms to offer and no brand to record an acceptance against. Nothing is broken; the deployment is incomplete.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "leaveParticipation",
+        "summary": "Leave cashback",
+        "description": "Close this member's participation (FR-003).\n\nNothing financial is touched. Entries already earned continue to resolve, payouts already made stand, and the record is closed rather than deleted - the schema refuses the delete outright, because the evidence and the accounting outlive the preference.\n\n200 rather than 204, because leaving has a date and the member is owed it. Idempotent: a second call answers the same participation with the same date.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The closed participation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Participation"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "description": "This account has never opted into cashback, so there is nothing to leave.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/cashback/wallet": {
       "get": {
         "tags": [
@@ -3337,6 +3492,65 @@
               "null"
             ],
             "description": "Where to continue from, or null when this page is the last. Null rather than a cursor that would return nothing, so a client stops by reading the answer rather than by making one more request to discover it."
+          }
+        }
+      },
+      "Participation": {
+        "type": "object",
+        "description": "A member's opt-in to cashback (FR-001). The record of which version of the terms they accepted and when (FR-002), plus - once they have left - the date they left. Leaving closes the record; it never deletes the financial rows built on it (FR-003).",
+        "required": [
+          "status",
+          "opted_in_at",
+          "terms_version",
+          "default_currency",
+          "left_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "left"
+            ],
+            "description": "Whether the member is currently in cashback. There is no third state and no pending: accepting the terms IS the opt-in."
+          },
+          "opted_in_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When they accepted. Re-stated when a member who left comes back, because coming back means accepting the terms in force then."
+          },
+          "terms_version": {
+            "type": "string",
+            "description": "Which revision of the terms this member accepted (FR-002). What the ROW says, which on an older participation may not be the version in force today."
+          },
+          "default_currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$",
+            "description": "The currency this member's wallet is denominated in, as an explicit ISO-4217 code (C-6). Taken from the brand's default at the moment of acceptance (ADR-0004)."
+          },
+          "left_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When they left, or null while they are still in. Leaving is a status and a date, never a deletion."
+          }
+        }
+      },
+      "ParticipationOptIn": {
+        "type": "object",
+        "description": "An acceptance of the terms in force.",
+        "required": [
+          "terms_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "terms_version": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The revision being accepted. It must be the one in force; a stale consent is never recorded, and the 400 names the version that is."
           }
         }
       }

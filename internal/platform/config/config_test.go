@@ -505,3 +505,42 @@ func TestFromEnvDevAcceptsPlaintextDatabase(t *testing.T) {
 		}
 	}
 }
+
+// BRAND_DIR is a path this package carries and deliberately does not judge:
+// whether it holds a readable, complete brand definition is the brand
+// package's question, asked by the composition root at start-up.
+func TestBrandDirIsCarriedAndNotJudged(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]string{
+		"":                    "",
+		"  ":                  "",
+		"/etc/apivo/brand":    "/etc/apivo/brand",
+		"  /etc/apivo/brand ": "/etc/apivo/brand",
+		"/nowhere/at/all":     "/nowhere/at/all",
+	} {
+		cfg, err := config.FromEnv(envFrom(map[string]string{
+			"DATABASE_URL": "postgres://u:p@h/db?sslmode=require",
+			"BRAND_DIR":    name,
+		}))
+		if err != nil {
+			t.Fatalf("BRAND_DIR=%q: %v", name, err)
+		}
+		if cfg.BrandDir != want {
+			t.Errorf("BRAND_DIR=%q gave BrandDir %q, want %q", name, cfg.BrandDir, want)
+		}
+	}
+}
+
+// A deployment without a brand definition still starts, including in
+// production. There is no value this repository could default a brand to
+// that would not be a lie about a real company, so the surfaces that need
+// one say what is missing instead.
+func TestProductionStartsWithoutABrand(t *testing.T) {
+	t.Parallel()
+	if _, err := config.FromEnv(envFrom(map[string]string{
+		"DATABASE_URL": "postgres://u:p@h/db?sslmode=require",
+		"APP_ENV":      "prod",
+	})); err != nil {
+		t.Fatalf("a production deployment with no BRAND_DIR was refused: %v", err)
+	}
+}

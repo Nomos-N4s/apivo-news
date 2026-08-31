@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -197,5 +199,232 @@ func TestTheWiredHistoryAnswersItsOwnMember(t *testing.T) {
 	}
 	if got.NextCursor != nil {
 		t.Errorf("next_cursor = %v on an empty page, want null", *got.NextCursor)
+	}
+}
+
+// TestTheParticipationPathIsMountedWithItsSubtree. The opt-in is a SIBLING
+// of the wallet, served by the same handler, and it needs the same two
+// patterns for the same reason: without the subtree a stray sub-path leaves
+// the module's error convention.
+func TestTheParticipationPathIsMountedWithItsSubtree(t *testing.T) {
+	t.Parallel()
+	ctx, pool := opsWiringPool(t)
+
+	jwks := newJWKSServer(t, newSigningKey(t))
+	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
+			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
+		}},
+		discardLogger(), pool, nil)
+	if err != nil {
+		t.Fatalf("newAuthenticatedRoutes: %v", err)
+	}
+	t.Cleanup(closeVerifier)
+
+	var mounted []string
+	for _, route := range routes {
+		if strings.HasPrefix(route.Pattern, wallet.ParticipationPrefix) {
+			mounted = append(mounted, route.Pattern)
+		}
+	}
+	for _, want := range []string{wallet.ParticipationPrefix, wallet.ParticipationPrefix + "/"} {
+		if !slices.Contains(mounted, want) {
+			t.Errorf("%q is not mounted; mounted: %v", want, mounted)
+		}
+	}
+}
+
+// With cashback off there is nothing to opt into, so the opt-in must not be
+// served either - the flag is one switch over the whole product, not over
+// the wallet alone.
+func TestTheParticipationSurfaceIsUnmountedWithoutTheFlag(t *testing.T) {
+	t.Parallel()
+	ctx, pool := opsWiringPool(t)
+
+	jwks := newJWKSServer(t, newSigningKey(t))
+	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
+	if err != nil {
+		t.Fatalf("newAuthenticatedRoutes: %v", err)
+	}
+	t.Cleanup(closeVerifier)
+
+	for _, route := range routes {
+		if strings.HasPrefix(route.Pattern, wallet.ParticipationPrefix) {
+			t.Fatalf("%s is mounted although cashback is off", route.Pattern)
+		}
+	}
+}
+
+// A deployment with no BRAND_DIR starts and serves the opt-in, which then
+// says what is missing. The alternative - refusing to start, or leaving the
+// route unmounted so it answers 404 - would either take a whole deployment
+// down over a member-facing feature or tell a client the API is not there.
+func TestNoBrandDirStillMountsTheOptIn(t *testing.T) {
+	t.Parallel()
+	ctx, pool := opsWiringPool(t)
+
+	jwks := newJWKSServer(t, newSigningKey(t))
+	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
+			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
+		}},
+		discardLogger(), pool, nil)
+	if err != nil {
+		t.Fatalf("a deployment with no BRAND_DIR was refused: %v", err)
+	}
+	t.Cleanup(closeVerifier)
+
+	for _, route := range routes {
+		if route.Pattern == wallet.ParticipationPrefix {
+			return
+		}
+	}
+	t.Fatalf("no route mounted at %s", wallet.ParticipationPrefix)
+}
+
+// A BRAND_DIR that is set and does not hold a readable, complete brand
+// definition IS a startup failure. Starting anyway would serve the 503
+// while an operator believed the brand was configured.
+func TestABrandDirThatHoldsNoBrandRefusesToStart(t *testing.T) {
+	t.Parallel()
+	ctx, pool := opsWiringPool(t)
+
+	jwks := newJWKSServer(t, newSigningKey(t))
+	_, closeVerifier, err := newAuthenticatedRoutes(ctx,
+		config.Config{JWKSURL: jwks.URL, BrandDir: t.TempDir(), Cashback: config.CashbackConfig{
+			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
+		}},
+		discardLogger(), pool, nil)
+	if closeVerifier != nil {
+		t.Cleanup(closeVerifier)
+	}
+	if err == nil {
+		t.Fatal("an empty BRAND_DIR started; a deployment that named a brand meant it")
+	}
+	if !strings.Contains(err.Error(), "BRAND_DIR") {
+		t.Errorf("the refusal %q does not name the key an operator has to fix", err)
+	}
+}
+
+// brandDir writes a valid brand definition into a directory of its own and
+// answers the path.
+//
+// It COPIES the brand package's own fixture rather than carrying a second
+// definition. A hand-written one here would be a copy of a shape only
+// Validate() knows, and the day the brand gained a required field this test
+// would be the one place still passing with a brand nobody could deploy.
+func brandDir(t *testing.T) string {
+	t.Helper()
+	definition, err := os.ReadFile(filepath.Join("..", "..",
+		"internal", "platform", "brand", "testdata", "fixture", "brand.json"))
+	if err != nil {
+		t.Fatalf("reading the brand fixture: %v", err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "brand.json"), definition, 0o600); err != nil {
+		t.Fatalf("writing the brand definition: %v", err)
+	}
+	return dir
+}
+
+// TestTheWiredOptInRecordsWhatTheBrandSays walks a real token through the
+// real gate to a real database, and opts in.
+//
+// The values the member ends up with come from the brand FILE - the terms
+// version they must send, and the currency their wallet is denominated in -
+// which is the whole of what BRAND_DIR is for, and the thing no test that
+// builds Terms by hand can show.
+func TestTheWiredOptInRecordsWhatTheBrandSays(t *testing.T) {
+	t.Parallel()
+	ctx, pool := opsWiringPool(t)
+
+	key := newSigningKey(t)
+	jwks := newJWKSServer(t, key)
+	member := seedAccount(ctx, t, pool, "reader")
+	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+		config.Config{JWKSURL: jwks.URL, BrandDir: brandDir(t), Cashback: config.CashbackConfig{
+			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
+		}},
+		discardLogger(), pool, nil)
+	if err != nil {
+		t.Fatalf("newAuthenticatedRoutes: %v", err)
+	}
+	t.Cleanup(closeVerifier)
+
+	var handler http.Handler
+	for _, route := range routes {
+		if route.Pattern == wallet.ParticipationPrefix {
+			handler = route.Handler
+		}
+	}
+	if handler == nil {
+		t.Fatalf("no route mounted at %s", wallet.ParticipationPrefix)
+	}
+	token := mintBearer(t, key, member.String())
+
+	// The version in the fixture, sent by a client that read it from the
+	// brand rather than from this test's imagination.
+	req := httptest.NewRequest(http.MethodPost, wallet.ParticipationPrefix,
+		strings.NewReader(`{"terms_version":"3.1.0"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("the body is not a participation: %v (%s)", err, rec.Body)
+	}
+	if got["terms_version"] != "3.1.0" {
+		t.Errorf("terms_version = %v, want the brand's 3.1.0", got["terms_version"])
+	}
+	if got["default_currency"] != "SEK" {
+		t.Errorf("default_currency = %v, want the brand's SEK", got["default_currency"])
+	}
+
+	// And the brand id the row carries is the file's, which is the tenant
+	// boundary ADR-0004 draws and the one field the response does not show.
+	var brandID string
+	if err := pool.QueryRow(ctx,
+		`select brand_id from cashback.participation where account_id = $1`, member).Scan(&brandID); err != nil {
+		t.Fatalf("reading the participation back: %v", err)
+	}
+	if brandID != "zephyra" {
+		t.Errorf("brand_id = %q, want the brand file's own id", brandID)
+	}
+	t.Cleanup(func() {
+		// The guard refuses a delete, so the row is closed rather than
+		// removed: this pool is shared and a later run must find the
+		// account free of an ACTIVE participation.
+		if _, err := pool.Exec(ctx,
+			`update cashback.participation set status = 'left', left_at = now() where account_id = $1`,
+			member); err != nil {
+			t.Errorf("closing the participation: %v", err)
+		}
+	})
+}
+
+// A deployment with no brand serves the opt-in and says what is missing,
+// naming the key rather than answering 404.
+func TestTheWiredOptInSaysWhenThereIsNoBrand(t *testing.T) {
+	t.Parallel()
+	ctx, pool := opsWiringPool(t)
+
+	key := newSigningKey(t)
+	jwks := newJWKSServer(t, key)
+	member := seedAccount(ctx, t, pool, "reader")
+	handler := walletRoutes(ctx, t, pool, jwks.URL, money.Amount{})
+
+	req := httptest.NewRequest(http.MethodPost, wallet.ParticipationPrefix,
+		strings.NewReader(`{"terms_version":"3.1.0"}`))
+	req.Header.Set("Authorization", "Bearer "+mintBearer(t, key, member.String()))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (%s)", rec.Code, rec.Body)
 	}
 }

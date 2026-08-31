@@ -51,10 +51,21 @@ func serve(t *testing.T, w *wallet.Wallets, auth wallet.MemberAuthenticator, req
 }
 
 // serveWith builds the handler over both readers.
+//
+// The participation service is nil, and every case reaching this asks for a
+// wallet route. A service that needed a database to be constructed would
+// make a totals case fail for the reason the history reader is a fake:
+// because something it does not exercise was unavailable.
 func serveWith(t *testing.T, w *wallet.Wallets, h *wallet.History, auth wallet.MemberAuthenticator, req *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
+	return serveHandler(t, wallet.NewHandler(slog.New(slog.DiscardHandler), w, h, nil, auth), req)
+}
+
+// serveHandler answers one request against an already-built handler.
+func serveHandler(t *testing.T, h http.Handler, req *http.Request) *httptest.ResponseRecorder {
+	t.Helper()
 	rec := httptest.NewRecorder()
-	wallet.NewHandler(slog.New(slog.DiscardHandler), w, h, auth).ServeHTTP(rec, req)
+	h.ServeHTTP(rec, req)
 	return rec
 }
 
