@@ -238,3 +238,86 @@ func TestClaimRefusesToMixCurrencies(t *testing.T) {
 		t.Fatalf("Claim() error = %v, want one wrapping %v", err, wallet.ErrNotProjected)
 	}
 }
+
+// TestTheTotalsEqualTheSumOfThePostings is SC-006 itself, against every
+// implementation.
+//
+// The member's money is moved the way the earnings path moves it - out of a
+// house account into held, held to pending, pending to confirmed, confirmed
+// to reserved - and the expected totals are accumulated from those transfers
+// as they are posted. Nothing here asks the projection what it thinks.
+func TestTheTotalsEqualTheSumOfThePostings(t *testing.T) {
+	t.Parallel()
+
+	eachLedger(t, func(t *testing.T, ledger wallet.Ledger) {
+		ctx := context.Background()
+		member := uuid.New()
+		house := wallet.HouseAccount("projection-" + uuid.NewString())
+		const eur = money.Currency("EUR")
+
+		accounts := map[wallet.Stage]wallet.LedgerAccountID{}
+		for _, stage := range []wallet.Stage{wallet.StageHeld, wallet.StagePending, wallet.StageConfirmed, wallet.StageReserved} {
+			accounts[stage] = ensure(t, ledger, wallet.MemberAccount(member, stage), eur)
+		}
+		houseID := ensure(t, ledger, house, eur)
+
+		// The independent tally: every posting this test makes, added up per
+		// stage by hand.
+		want := map[wallet.Stage]int64{}
+		move := func(from, to wallet.LedgerAccountID, fromStage, toStage wallet.Stage, minor int64) {
+			t.Helper()
+			if _, err := ledger.Post(ctx, wallet.Transfer{
+				IdempotencyKey: uuid.NewString(),
+				Postings: []wallet.Posting{
+					{Account: from, Amount: amount(-minor, eur)},
+					{Account: to, Amount: amount(minor, eur)},
+				},
+			}); err != nil {
+				t.Fatalf("posting %d from %s to %s: %v", minor, fromStage, toStage, err)
+			}
+			want[fromStage] -= minor
+			want[toStage] += minor
+		}
+
+		// Credited, released, confirmed, and partly claimed by a withdrawal -
+		// with an extra credit left held, so no two stages end up equal and a
+		// transposition cannot hide.
+		move(houseID, accounts[wallet.StageHeld], 0, wallet.StageHeld, 1000)
+		move(houseID, accounts[wallet.StageHeld], 0, wallet.StageHeld, 250)
+		move(accounts[wallet.StageHeld], accounts[wallet.StagePending], wallet.StageHeld, wallet.StagePending, 1000)
+		move(accounts[wallet.StagePending], accounts[wallet.StageConfirmed], wallet.StagePending, wallet.StageConfirmed, 700)
+		move(accounts[wallet.StageConfirmed], accounts[wallet.StageReserved], wallet.StageConfirmed, wallet.StageReserved, 400)
+
+		totals, err := projector(t, ledger).Of(ctx, member, eur)
+		if err != nil {
+			t.Fatalf("Of(): %v", err)
+		}
+
+		for _, tc := range []struct {
+			stage wallet.Stage
+			got   money.Amount
+		}{
+			{wallet.StageHeld, totals.Held},
+			{wallet.StagePending, totals.Pending},
+			{wallet.StageConfirmed, totals.Confirmed},
+			{wallet.StageReserved, totals.Reserved},
+		} {
+			if tc.got.Minor != want[tc.stage] {
+				t.Errorf("%s = %d, but the postings sum to %d", tc.stage, tc.got.Minor, want[tc.stage])
+			}
+		}
+
+		// And the whole claim is what left the house, to the minor unit: the
+		// member's stages hold everything that was credited and nothing else.
+		claim, err := totals.Claim()
+		if err != nil {
+			t.Fatalf("Claim(): %v", err)
+		}
+		if claim.Minor != 1250 {
+			t.Errorf("the member claims %d, but %d was credited to them", claim.Minor, 1250)
+		}
+		if held := balance(t, ledger, houseID, eur); held.Minor != -1250 {
+			t.Errorf("the house is out by %d, but %d was credited away from it", held.Minor, 1250)
+		}
+	})
+}
