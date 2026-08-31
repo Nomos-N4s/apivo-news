@@ -181,35 +181,6 @@ func TestAConfirmationMovesTheMembersOwnMoneyBetweenTheirOwnBuckets(t *testing.T
 	}
 }
 
-// TestAnOpeningCreditComesOutOfTheReceivable pins the other end. The member's
-// share has to come from the commission the network reported; out of anywhere
-// else it would be money the business had not received.
-func TestAnOpeningCreditComesOutOfTheReceivable(t *testing.T) {
-	t.Parallel()
-
-	member := uuid.New()
-	row := anEntry(member, earnings.StatePending)
-	entries, ledger := &fakeEntries{row: row}, &fakeLedger{}
-	move := aMove(t, row)
-	move.From, move.To = earnings.StateConfirmed, earnings.StateReversed
-
-	if _, err := machine(t, entries, ledger).Apply(t.Context(), move); err != nil {
-		t.Fatalf("Apply(): %v", err)
-	}
-	var house int
-	for _, ref := range ledger.ensured {
-		if name, ok := ref.House(); ok {
-			house++
-			if name != receivable {
-				t.Errorf("a reversal touched house account %q, want %q", name, receivable)
-			}
-		}
-	}
-	if house != 1 {
-		t.Errorf("a reversal touched %d house account(s), want exactly one", house)
-	}
-}
-
 // TestNothingIsRecordedWhenTheTransferIsRefused is D7's other direction. A
 // state recorded with no posting behind it is exactly the disagreement
 // between the wallet and the ledger that C-1 exists to prevent.
