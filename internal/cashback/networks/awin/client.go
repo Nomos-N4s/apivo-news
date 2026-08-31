@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -155,6 +156,9 @@ func New(account networks.PublisherAccount, opts ...Option) (*Client, error) {
 	if err := account.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrNoPublisherAccount, err)
 	}
+	if err := refuseUnusablePublisherID(account.ExternalID()); err != nil {
+		return nil, err
+	}
 	s := settings{
 		baseURL:       DefaultBaseURL,
 		ratePerMinute: DocumentedRateLimitPerMinute,
@@ -213,6 +217,37 @@ func New(account networks.PublisherAccount, opts ...Option) (*Client, error) {
 // of the client: the id is how a stored row is traced back to the code that
 // wrote it, so an adapter whose answer varied would strand its own evidence.
 func (c *Client) ID() networks.NetworkID { return ID }
+
+// refuseUnusablePublisherID refuses an Awin publisher id that is not a run of
+// digits.
+//
+// Awin's own specification types publisherId as integer (int64), so this
+// refuses nothing a real account carries. What it prevents is a path
+// injection from our own configuration: the id is interpolated into
+// "publishers/{id}/programmes", the port checks only that it is not blank
+// (see [networks.PublisherAccount.Validate], which is deliberately
+// network-agnostic), and url.URL.JoinPath escapes a space but not a slash.
+// An operator who typed "123/456" would therefore reach a different endpoint
+// than the one this adapter meant to call, with a valid token attached, and
+// read whatever came back as their catalogue.
+//
+// Refused at construction, beside the base URL and the token, because those
+// are the three pieces of configuration that end up in a URL and this is the
+// only one the port could not check.
+func refuseUnusablePublisherID(id string) error {
+	if id == "" {
+		// Unreachable: PublisherAccount.Validate has already refused a blank
+		// id, and it says so better than this would.
+		return fmt.Errorf("%w: the publisher account carries no id", ErrNoPublisherAccount)
+	}
+	for i := range len(id) {
+		if id[i] < '0' || id[i] > '9' {
+			return fmt.Errorf("%w: the Awin publisher id must be digits only, and %s is not: a value carrying a slash would send an authenticated request to a path this adapter never meant to call",
+				ErrNotConfigured, strconv.Quote(id))
+		}
+	}
+	return nil
+}
 
 // Account is the publisher account this client polls for.
 func (c *Client) Account() networks.PublisherAccount { return c.account }

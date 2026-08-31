@@ -550,3 +550,51 @@ func TestAReadableRetryAfterIsCarriedIntoTheRefusal(t *testing.T) {
 		t.Errorf("the refusal does not carry the ask: %v", err)
 	}
 }
+
+// TestAPublisherIDThatCouldReshapeAPathIsRefused covers the third piece of
+// configuration that ends up in a URL. The port checks only that the id is
+// not blank, because it is network-agnostic and cannot know Awin types this
+// as an integer; url.URL.JoinPath escapes a space but not a slash, so an id
+// carrying one would send an authenticated request to a path this adapter
+// never meant to call and the answer would be read as a catalogue.
+func TestAPublisherIDThatCouldReshapeAPathIsRefused(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		externalID string
+		wantErr    error
+	}{
+		{name: "the digits a real account carries", externalID: "123456"},
+		{name: "a slash that would add path segments", externalID: "123/456", wantErr: awin.ErrNotConfigured},
+		{name: "a traversal", externalID: "..", wantErr: awin.ErrNotConfigured},
+		{name: "a query that would append parameters", externalID: "123?accessToken=x", wantErr: awin.ErrNotConfigured},
+		{name: "space around an otherwise good id", externalID: " 123 ", wantErr: awin.ErrNotConfigured},
+		{name: "an id that is not a number at all", externalID: "acme-publisher", wantErr: awin.ErrNotConfigured},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			account, err := networks.NewPublisherAccount(uuid.New(), awin.ID, tt.externalID)
+			if err != nil {
+				t.Fatalf("NewPublisherAccount(%q): %v", tt.externalID, err)
+			}
+
+			client, err := awin.New(account, awin.WithToken(theToken))
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Fatalf("New(): %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("New() error = %v, want one wrapping %v", err, tt.wantErr)
+			}
+			if client != nil {
+				t.Errorf("New() returned a client beside a refusal")
+			}
+		})
+	}
+}
