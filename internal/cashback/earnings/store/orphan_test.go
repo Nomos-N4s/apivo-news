@@ -15,10 +15,13 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings/store"
@@ -93,8 +96,19 @@ func orphans(ctx context.Context, t *testing.T, q *store.Queries) []store.Orphan
 // stops an orphan being written. It is the only way to prove the detector can
 // see one: the guards are doing their job, so the shapes it looks for cannot
 // otherwise exist to be looked for.
+//
+// CALL IT FIRST, before the case's fixtures. Disabling a trigger and dropping
+// a constraint take an ACCESS EXCLUSIVE lock on cashback.entry, which
+// conflicts with every other transaction touching that table - and `go test`
+// runs packages in parallel against ONE database, so the integration suites
+// in the parent package are doing exactly that. Asked for while this
+// savepoint already holds rows another transaction wants, the request
+// completes a cycle and Postgres aborts one of the two. Asked for while this
+// savepoint holds nothing, it can only wait - and waiting is what the timeout
+// and the retry below are for.
 func defeatTheSchema(ctx context.Context, t *testing.T, tx pgx.Tx) {
 	t.Helper()
+	lockEntriesExclusively(ctx, t, tx)
 	if _, err := tx.Exec(ctx, `alter table cashback.entry disable trigger entry_evidence_guard`); err != nil {
 		t.Fatalf("disabling the evidence guard: %v", err)
 	}
@@ -104,6 +118,31 @@ func defeatTheSchema(ctx context.Context, t *testing.T, tx pgx.Tx) {
 			t.Fatalf("dropping %s: %v", constraint, err)
 		}
 	}
+}
+
+// lockEntriesExclusively takes the lock the DDL below needs, bounded and
+// retried.
+//
+// Bounded, because an unbounded wait for a lock a parallel suite holds is a
+// hung test rather than a failing one. Retried, because contention is not a
+// verdict on the detector: the case asserts what the query sees, and taking
+// the lock a moment later asserts exactly the same thing.
+func lockEntriesExclusively(ctx context.Context, t *testing.T, tx pgx.Tx) {
+	t.Helper()
+	if _, err := tx.Exec(ctx, `set local lock_timeout = '5s'`); err != nil {
+		t.Fatalf("bounding the lock wait: %v", err)
+	}
+	var err error
+	for attempt := 1; attempt <= 6; attempt++ {
+		if _, err = tx.Exec(ctx, `lock table cashback.entry in access exclusive mode`); err == nil {
+			return
+		}
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || (pgErr.Code != pgerrcode.LockNotAvailable && pgErr.Code != pgerrcode.DeadlockDetected) {
+			t.Fatalf("locking the entries: %v", err)
+		}
+	}
+	t.Fatalf("the entry table stayed locked by another suite for half a minute: %v", err)
 }
 
 // onlyOrphan requires exactly one orphan and returns its reason.
@@ -150,8 +189,8 @@ func TestTheOrphanCreditQueryAgainstSchema(t *testing.T) {
 	// wrong column would return zero in these cases exactly as it does in the
 	// two above, and nothing else could tell the two apart.
 	each(ctx, t, tx, "a credit dropping the click the network named is found", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
-		member, _, report := creditable(ctx, t, tx)
 		defeatTheSchema(ctx, t, tx)
+		member, _, report := creditable(ctx, t, tx)
 
 		if err := credit(ctx, tx, member, report, pgtype.UUID{}); err != nil {
 			t.Fatalf("planting the orphan: %v", err)
@@ -162,9 +201,9 @@ func TestTheOrphanCreditQueryAgainstSchema(t *testing.T) {
 	})
 
 	each(ctx, t, tx, "a credit citing another member's click is found", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		defeatTheSchema(ctx, t, tx)
 		_, click, _ := creditable(ctx, t, tx)
 		other, _, othersReport := creditable(ctx, t, tx)
-		defeatTheSchema(ctx, t, tx)
 
 		// The other member's own report and credit, resting on the FIRST
 		// member's click: real evidence, belonging to somebody else.
