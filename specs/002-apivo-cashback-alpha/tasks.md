@@ -412,8 +412,8 @@ excluded by instruction, not because it is done.
 package may learn Awin's vocabulary — the architecture test is what proves
 SC-008 rather than asserting it.
 
-- [ ] T137 Implement the Awin HTTP transport in `internal/cashback/networks/awin/client.go`: authenticated requests, the per-account rate limit read from `network.rate_limit_per_second`, and retries over the existing backoff helpers. Credentials come from the environment and are never written to the repository or the database (ADR-0003) per spec Q1 (missing)
-- [ ] T138 Implement `BuildDeeplink` in `internal/cashback/networks/awin/deeplink.go`, placing the issued click reference in the parameter the route names rather than a literal, per FR-021 (missing)
+- [x] T137 Implement the Awin HTTP transport in `internal/cashback/networks/awin/client.go`: authenticated requests, the per-account rate limit read from `network.rate_limit_per_minute`, and retries over the existing backoff helpers. Credentials come from the environment and are never written to the repository or the database (ADR-0003) per spec Q1
+- [x] T138 Implement `BuildDeeplink` in `internal/cashback/networks/awin/deeplink.go`, placing the issued click reference in the parameter the route names rather than a literal, per FR-021
 - [ ] T139 Implement `FetchTransactions` in `internal/cashback/networks/awin/transactions.go`: Awin's transaction API mapped to `Reported`, carrying the verbatim raw payload so a wrong normalisation is re-derived from stored evidence and never re-fetched (ADR-0003, C-3), with windows capped at Awin's documented 31 days per FR-031 (missing)
 - [ ] T140 Implement the Awin status mapping in `internal/cashback/networks/awin/status.go` — their vocabulary onto `pending → confirmed | declined` with `reversed` reachable from either — unit-tested against recorded fixtures per ADR-0003 (missing)
 - [ ] T141 Implement `FetchCatalogue` in `internal/cashback/networks/awin/catalogue.go`, mapping Awin's programme feed to `ReportedMerchant` per FR-012 (missing)
@@ -428,4 +428,4 @@ deployment configured for Awin would log "no publisher account is connected"
 and ingest nothing, with hand-written SQL against production as the only
 remedy. T130 is the local `make cashback-seed` and is not this.
 
-- [ ] T145 Provide a supported, idempotent way to connect a network publisher account in a deployed environment — the `cashback.network` row with its documented `max_query_window_days` and `rate_limit_per_second`, and the `network_account` row the cursors hang off — per plan Phase E and FR-030/FR-031 (missing)
+- [ ] T145 Provide a supported, idempotent way to connect a network publisher account in a deployed environment — the `cashback.network` row with its documented `max_query_window_days` and `rate_limit_per_minute`, and the `network_account` row the cursors hang off — per plan Phase E and FR-030/FR-031 (missing)
