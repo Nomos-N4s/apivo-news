@@ -71,3 +71,11 @@ sql:
         package: "store"
         out: "internal/cashback/earnings/store"
         sql_package: "pgx/v5"
+  - engine: "postgresql"
+    schema: "internal/platform/db/migrations"
+    queries: "internal/cashback/payout/queries"
+    gen:
+      go:
+        package: "store"
+        out: "internal/cashback/payout/store"
+        sql_package: "pgx/v5"
