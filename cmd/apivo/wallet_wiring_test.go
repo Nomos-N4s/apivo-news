@@ -428,3 +428,83 @@ func TestTheWiredOptInSaysWhenThereIsNoBrand(t *testing.T) {
 		t.Fatalf("status = %d, want 503 (%s)", rec.Code, rec.Body)
 	}
 }
+
+// TestTheExportPathIsMountedWithItsSubtree. The third tree the member
+// surface serves, and it needs the same two patterns for the same reason.
+func TestTheExportPathIsMountedWithItsSubtree(t *testing.T) {
+	t.Parallel()
+	ctx, pool := opsWiringPool(t)
+
+	jwks := newJWKSServer(t, newSigningKey(t))
+	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
+			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
+		}},
+		discardLogger(), pool, nil)
+	if err != nil {
+		t.Fatalf("newAuthenticatedRoutes: %v", err)
+	}
+	t.Cleanup(closeVerifier)
+
+	var mounted []string
+	for _, route := range routes {
+		if strings.HasPrefix(route.Pattern, wallet.ExportPrefix) {
+			mounted = append(mounted, route.Pattern)
+		}
+	}
+	for _, want := range []string{wallet.ExportPrefix, wallet.ExportPrefix + "/"} {
+		if !slices.Contains(mounted, want) {
+			t.Errorf("%q is not mounted; mounted: %v", want, mounted)
+		}
+	}
+}
+
+// TestTheWiredExportAnswersItsOwnMember walks a real token through the real
+// gate to a real query. The document is empty because nothing has been
+// earned - which is the answer a new member gets, and the one an export
+// whose joins could not resolve would fail to give at all.
+func TestTheWiredExportAnswersItsOwnMember(t *testing.T) {
+	t.Parallel()
+	ctx, pool := opsWiringPool(t)
+
+	key := newSigningKey(t)
+	jwks := newJWKSServer(t, key)
+	member := seedAccount(ctx, t, pool, "reader")
+	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
+			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
+		}},
+		discardLogger(), pool, nil)
+	if err != nil {
+		t.Fatalf("newAuthenticatedRoutes: %v", err)
+	}
+	t.Cleanup(closeVerifier)
+
+	var handler http.Handler
+	for _, route := range routes {
+		if route.Pattern == wallet.ExportPrefix {
+			handler = route.Handler
+		}
+	}
+	if handler == nil {
+		t.Fatalf("no route mounted at %s", wallet.ExportPrefix)
+	}
+
+	for _, tc := range []struct{ query, wantType string }{
+		{"", "application/json"},
+		{"?format=csv&lang=de", "text/csv"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, wallet.ExportPrefix+tc.query, nil)
+		req.Header.Set("Authorization", "Bearer "+mintBearer(t, key, member.String()))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("%q answered %d, want 200 (%s)", tc.query, rec.Code, rec.Body)
+			continue
+		}
+		if kind := rec.Header().Get("Content-Type"); !strings.HasPrefix(kind, tc.wantType) {
+			t.Errorf("%q sent Content-Type %q, want %s", tc.query, kind, tc.wantType)
+		}
+	}
+}

@@ -502,6 +502,90 @@
         }
       }
     },
+    "/api/v1/cashback/export": {
+      "get": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "exportCashbackHistory",
+        "summary": "Export the caller's own cashback history",
+        "description": "The member's complete cashback history as one document, in JSON or CSV (FR-003).\n\nFR-003 pairs leaving with taking your record, and for a reason: a member deciding whether to go should not have to choose between the two.\n\nThis is NOT a page. GET /wallet/entries pages because a member reads their history a screen at a time; an export is read by a spreadsheet, an accountant or a subject-access request, and a partial one is worse than none - a document that looks complete and is not. So there is no state, limit or cursor, and sending one is a 400 rather than a narrower file.\n\nThe CSV carries each money figure as TWO columns, minor units and currency, because C-6 holds in a spreadsheet exactly as on the wire: one column of bare integers is a column somebody sums across currencies. Text a spreadsheet would read as a formula is prefixed with an apostrophe - merchant names come from an affiliate network's catalogue and reasons are typed by operators, and neither is text this service wrote.\n\nBoth renderings are sent as an attachment, newest entry first.\n\nThe member is the bearer of the token. There is no path segment and no query parameter naming an account, so exporting somebody else's history is not a request this endpoint can express.\n\nThe whole path is unmounted when cashback is off, and then answers 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (the default) or csv.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "csv"
+              ],
+              "default": "json"
+            }
+          },
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "description": "BCP-47 primary language subtag to name merchants in. A name shown in another language is labelled as a fallback rather than passed off (US5 scenario 2). Omitted, every name comes back labelled.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The member's complete history.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashbackExport"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string",
+                  "description": "A header row followed by one row per entry, newest first: entry_id, transacted_at, merchant_name, merchant_name_language, merchant_name_is_fallback, sale_amount_minor, sale_currency, cashback_amount_minor, cashback_currency, state, hold_rule, reversal_of_id, reason. An absent value is an empty cell."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown query parameter, a format that is not json or csv, or a state, limit or cursor - which this endpoint refuses by name, because an export is always the complete history.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "413": {
+            "description": "This history holds more entries than one document can carry. Refused rather than shortened: a CSV cut short is indistinguishable from a complete shorter one, so a member handed one would have a file they believe is their record and is not.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/cashback/participation": {
       "get": {
         "tags": [
@@ -3551,6 +3635,35 @@
             "type": "string",
             "minLength": 1,
             "description": "The revision being accepted. It must be the one in force; a stale consent is never recorded, and the 400 names the version that is."
+          }
+        }
+      },
+      "CashbackExport": {
+        "type": "object",
+        "description": "A member's complete cashback history as one document (FR-003). Not a page: an export is the whole record or it is not an export, so this endpoint takes no state, limit or cursor.",
+        "required": [
+          "exported_at",
+          "entry_count",
+          "entries"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "exported_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this document was taken. The export walks the history backwards, so an entry written while it was being assembled is newer than the pages already read and is not in the file; this is what lets a reader tell what the document covers."
+          },
+          "entry_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many entries follow. Written out rather than left to be counted, so a truncated file can be DETECTED: the count and the array would disagree."
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WalletEntry"
+            },
+            "description": "The whole history, newest first - the same order and the same item shape as GET /wallet/entries, so a client parses one thing for both."
           }
         }
       }

@@ -30,7 +30,7 @@ func participationHandler(t *testing.T, tx pgx.Tx, terms wallet.Terms, member uu
 	if err != nil {
 		t.Fatalf("NewParticipations(): %v", err)
 	}
-	return wallet.NewHandler(slog.New(slog.DiscardHandler), nil, nil, service,
+	return wallet.NewHandler(slog.New(slog.DiscardHandler), nil, nil, service, nil,
 		fakeAuth{token: "a-token", member: member})
 }
 
