@@ -237,6 +237,16 @@ func (d *Destinations) Get(ctx context.Context, accountID, id uuid.UUID) (Destin
 	return destinationFrom(row), nil
 }
 
+// id and accountID render the value's identifiers back in the shape the
+// generated store takes, so a caller inside this package never rebuilds a
+// pgtype by hand and never passes the two in the wrong order.
+func (d Destination) id() pgtype.UUID { return pgtype.UUID{Bytes: d.ID, Valid: true} }
+
+func (d Destination) accountID() pgtype.UUID { return pgtype.UUID{Bytes: d.AccountID, Valid: true} }
+
+// pgtypeText spells a present string the way the generated store takes one.
+func pgtypeText(s string) pgtype.Text { return pgtype.Text{String: s, Valid: true} }
+
 // destinationFrom turns a row into the value, spelling an unverified
 // destination as the zero time rather than as a null the caller has to
 // remember to check.

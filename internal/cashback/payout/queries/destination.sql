@@ -65,3 +65,27 @@ select
 from cashback.payout_destination
 where id = sqlc.arg(id)
   and account_id = sqlc.arg(account_id);
+
+-- name: VerifyPayoutDestination :one
+-- Record that a member proved this destination is theirs (FR-051).
+--
+-- Narrowed on verified_at being null as well as on the account, and both
+-- narrowings do a job. The account is the ownership rule every statement in
+-- this file is shaped by. The null is what makes the write one-way in the
+-- same breath as performing it: the table's guard raises on any attempt to
+-- change a verification that already exists, so a statement that did not
+-- exclude verified rows would turn "already verified" - an ordinary,
+-- harmless repeat - into a database error in the middle of a member's
+-- request.
+--
+-- Answering no rows is therefore three things at once: not theirs, no such
+-- destination, or already verified. The caller reads the destination first
+-- and so knows which, and it must: two of those are a refusal and one is a
+-- success that happened earlier.
+update cashback.payout_destination
+   set verified_at = now(),
+       verified_method = sqlc.arg(verified_method)
+ where id = sqlc.arg(id)
+   and account_id = sqlc.arg(account_id)
+   and verified_at is null
+returning id, account_id, kind, details_ref, verified_at, verified_method, created_at;

@@ -150,3 +150,49 @@ func (q *Queries) ListPayoutDestinationsForAccount(ctx context.Context, accountI
 	}
 	return items, nil
 }
+
+const verifyPayoutDestination = `-- name: VerifyPayoutDestination :one
+update cashback.payout_destination
+   set verified_at = now(),
+       verified_method = $1
+ where id = $2
+   and account_id = $3
+   and verified_at is null
+returning id, account_id, kind, details_ref, verified_at, verified_method, created_at
+`
+
+type VerifyPayoutDestinationParams struct {
+	VerifiedMethod pgtype.Text
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+}
+
+// Record that a member proved this destination is theirs (FR-051).
+//
+// Narrowed on verified_at being null as well as on the account, and both
+// narrowings do a job. The account is the ownership rule every statement in
+// this file is shaped by. The null is what makes the write one-way in the
+// same breath as performing it: the table's guard raises on any attempt to
+// change a verification that already exists, so a statement that did not
+// exclude verified rows would turn "already verified" - an ordinary,
+// harmless repeat - into a database error in the middle of a member's
+// request.
+//
+// Answering no rows is therefore three things at once: not theirs, no such
+// destination, or already verified. The caller reads the destination first
+// and so knows which, and it must: two of those are a refusal and one is a
+// success that happened earlier.
+func (q *Queries) VerifyPayoutDestination(ctx context.Context, arg VerifyPayoutDestinationParams) (CashbackPayoutDestination, error) {
+	row := q.db.QueryRow(ctx, verifyPayoutDestination, arg.VerifiedMethod, arg.ID, arg.AccountID)
+	var i CashbackPayoutDestination
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Kind,
+		&i.DetailsRef,
+		&i.VerifiedAt,
+		&i.VerifiedMethod,
+		&i.CreatedAt,
+	)
+	return i, err
+}
