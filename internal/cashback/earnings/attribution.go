@@ -14,6 +14,7 @@ import (
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/clickout"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/events"
 )
 
 var (
@@ -76,6 +77,7 @@ type Clicks interface {
 type Matcher struct {
 	clicks    Clicks
 	unmatched UnmatchedStore
+	announcer *Announcer
 }
 
 // NewMatcher builds the matcher, refusing one that is missing a part.
@@ -86,7 +88,15 @@ func NewMatcher(clicks Clicks, unmatched UnmatchedStore) (*Matcher, error) {
 	if unmatched == nil {
 		return nil, ErrNoUnmatchedStore
 	}
-	return &Matcher{clicks: clicks, unmatched: unmatched}, nil
+	// Built here rather than injected, for the reason [NewEntries] builds
+	// one: a matcher that queued money nobody can be credited for without
+	// publishing that it had would leave the fact visible only to whoever
+	// thought to query the table.
+	announcer, err := NewAnnouncer()
+	if err != nil {
+		return nil, err
+	}
+	return &Matcher{clicks: clicks, unmatched: unmatched, announcer: announcer}, nil
 }
 
 // Match answers the click a report's reference names, queueing the report as
@@ -103,7 +113,11 @@ func NewMatcher(clicks Clicks, unmatched UnmatchedStore) (*Matcher, error) {
 // nothing, and forgot the second call would leave money in no queue at all,
 // and nothing downstream would ever notice - the report simply would not be
 // credited and nobody would be looking for it.
-func (m *Matcher) Match(ctx context.Context, report Report) (Attribution, error) {
+// db is the transaction the unmatched store was bound to, taken separately
+// because the outbox is a table this module does not own and sqlc's
+// generated store cannot reach it. The observation and the announcement of
+// it are one commit or neither.
+func (m *Matcher) Match(ctx context.Context, db events.RowQuerier, report Report) (Attribution, error) {
 	if _, present := report.Ref.Ref(); !present {
 		return Attribution{}, fmt.Errorf("%w: %s", ErrNoReference, report.ID)
 	}
@@ -111,9 +125,17 @@ func (m *Matcher) Match(ctx context.Context, report Report) (Attribution, error)
 	click, err := m.clicks.ByRef(ctx, report.Ref)
 	switch {
 	case errors.Is(err, clickout.ErrNoSuchClick):
-		queued, _, err := queueUnmatched(ctx, m.unmatched, report.ID)
+		queued, wrote, err := queueUnmatched(ctx, m.unmatched, report.ID)
 		if err != nil {
 			return Attribution{}, err
+		}
+		// Announced per ROW WRITTEN. A window re-read after a crash resolves
+		// the same references again and writes nothing; announcing anyway
+		// would republish one report's misfortune on every sweep forever.
+		if wrote {
+			if err := m.announcer.Unattributed(ctx, db, queued); err != nil {
+				return Attribution{}, err
+			}
 		}
 		return Attribution{Report: report.ID, Queued: queued.ID}, nil
 	case err != nil:

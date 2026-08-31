@@ -374,7 +374,7 @@ func TestTheClickTimeRateGovernsTheCredit(t *testing.T) {
 	// reference rather than a string, so "no reference" stays a branch a
 	// caller has to handle.
 	reported := networks.NewClickRef(click.Ref.Ref())
-	attributed, err := matcher.Match(j.ctx, earnings.Report{ID: report, Ref: reported})
+	attributed, err := matcher.Match(j.ctx, j.tx, earnings.Report{ID: report, Ref: reported})
 	if err != nil {
 		t.Fatalf("Match(): %v", err)
 	}

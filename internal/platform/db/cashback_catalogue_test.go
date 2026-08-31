@@ -537,6 +537,31 @@ func TestCurrentOfferQueryUsesTheValidityIndex(t *testing.T) {
 		t.Fatalf("a closing rate band was rejected: %v", err)
 	}
 
+	// A route's history, because on three rows every index costs the same
+	// and the planner's choice between them is a coin toss - it would name
+	// offer_merchant_network_idx, whose leading column is the same, and this
+	// test would be asserting which side the coin landed on. With a history
+	// the two stop tying: the equality-only index returns the whole route
+	// and filters, and the validity index answers the window from the index
+	// itself. That difference IS the thing being tested.
+	if _, err := tx.Exec(ctx, `
+		insert into cashback.offer
+		    (merchant_network_id, rate_kind, rate_bps, member_share_bps, valid_from, valid_to, deeplink_template)
+		select $1, 'percent', 100, 5000,
+		       now() - interval '400 days' + (g || ' days')::interval,
+		       now() - interval '399 days' + (g || ' days')::interval,
+		       'https://example.test/expired'
+		  from generate_series(1, 300) g`, f.merchantNetworkID); err != nil {
+		t.Fatalf("seeding the route's history: %v", err)
+	}
+	// Analysed here so the plan below is decided against statistics this
+	// test wrote, rather than against whatever a shared database happens to
+	// have been analysed to. ANALYZE sees this transaction's own rows and is
+	// rolled back with them.
+	if _, err := tx.Exec(ctx, `analyze cashback.offer`); err != nil {
+		t.Fatalf("analysing the offers: %v", err)
+	}
+
 	const currentBands = `select id from cashback.offer
 	                       where merchant_network_id = $1
 	                         and valid_from <= now()
@@ -575,6 +600,13 @@ func TestCurrentOfferQueryUsesTheValidityIndex(t *testing.T) {
 	}
 	if !strings.Contains(plan, "offer_validity_window_idx") {
 		t.Fatalf("the bands-in-force query does not use offer_validity_window_idx; plan was:\n%s", plan)
+	}
+	// And answers the window FROM THE INDEX. An index that were only used
+	// for the equality, with valid_from and valid_to left to a Filter, would
+	// satisfy the check above while reading the route's whole history - which
+	// is exactly what the index exists to avoid.
+	if strings.Contains(plan, "Filter:") {
+		t.Errorf("the bands-in-force query filters rows the index should have excluded; plan was:\n%s", plan)
 	}
 }
 

@@ -41,6 +41,10 @@ func (f *fakeClicks) ByRef(_ context.Context, reported networks.ClickRef) (click
 
 // fakeUnmatched stands in for the one statement this package writes,
 // recording what it was asked about so a case can assert the report named.
+// detectedAt is the instant the fake's queue rows carry, fixed so a case can
+// assert what was announced.
+var detectedAt = time.Date(2026, time.March, 1, 7, 15, 0, 0, time.UTC)
+
 type fakeUnmatched struct {
 	err    error
 	noRows bool
@@ -62,6 +66,12 @@ func (f *fakeUnmatched) RecordUnmatchedReference(_ context.Context, id pgtype.UU
 	row.NetworkTransactionID = id
 	if !row.ID.Valid {
 		row.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	}
+	if !row.DetectedAt.Valid {
+		// The statement returns detected_at, and what is announced about the
+		// observation is read from it. A fake that left it unset would let
+		// this package announce a detection at the zero time.
+		row.DetectedAt = pgtype.Timestamptz{Time: detectedAt, Valid: true}
 	}
 	return row, nil
 }
@@ -99,7 +109,7 @@ func TestAReferenceNamingAClickIsAttributedToIt(t *testing.T) {
 	unmatched := &fakeUnmatched{}
 
 	attributed, err := matcherOver(t, clicks, unmatched).
-		Match(t.Context(), earnings.Report{ID: reportID, Ref: ref})
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: ref})
 	if err != nil {
 		t.Fatalf("Match(): %v", err)
 	}
@@ -134,7 +144,7 @@ func TestAReferenceNamingNothingIsQueuedRatherThanRefused(t *testing.T) {
 	unmatched := &fakeUnmatched{row: store.RecordUnmatchedReferenceRow{ID: pgtype.UUID{Bytes: rowID, Valid: true}}}
 
 	attributed, err := matcherOver(t, &fakeClicks{err: clickoutMiss()}, unmatched).
-		Match(t.Context(), earnings.Report{ID: reportID, Ref: reported("a-reference-nothing-answers-to")})
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: reported("a-reference-nothing-answers-to")})
 	if err != nil {
 		t.Fatalf("Match() refused a miss: %v", err)
 	}
@@ -164,7 +174,7 @@ func TestAReportCarryingNoReferenceIsRefused(t *testing.T) {
 	clicks := &fakeClicks{}
 
 	_, err := matcherOver(t, clicks, unmatched).
-		Match(t.Context(), earnings.Report{ID: uuid.New()})
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: uuid.New()})
 
 	if !errors.Is(err, earnings.ErrNoReference) {
 		t.Fatalf("Match() error = %v, want one wrapping %v", err, earnings.ErrNoReference)
@@ -185,7 +195,7 @@ func TestAFailedReadIsNotAMiss(t *testing.T) {
 	clicks := &fakeClicks{err: errors.New("connection reset")}
 
 	_, err := matcherOver(t, clicks, unmatched).
-		Match(t.Context(), earnings.Report{ID: uuid.New(), Ref: reported("a-reference-that-names-a-click")})
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-that-names-a-click")})
 
 	if err == nil {
 		t.Fatal("Match() reported success although the click could not be read")

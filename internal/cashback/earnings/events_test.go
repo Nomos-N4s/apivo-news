@@ -307,3 +307,59 @@ func TestNothingIsAnnouncedAboutNothing(t *testing.T) {
 		t.Errorf("appended %d event(s) about a move naming no transfer, want none", len(stored))
 	}
 }
+
+// TestAQueuedReportLandsInTheStreamAsTheContractDescribesIt. The type is the
+// one the networks module publishes for the other half of FR-034's queue,
+// and it lands here identically - which is the point: an operator's queue is
+// one queue to everybody downstream.
+func TestAQueuedReportLandsInTheStreamAsTheContractDescribesIt(t *testing.T) {
+	ctx, tx := outboxTx(t)
+	queued := earnings.Unmatched{
+		ID:         uuid.New(),
+		ReportID:   uuid.New(),
+		DetectedAt: time.Date(2026, time.March, 3, 6, 0, 0, 0, time.UTC),
+	}
+
+	if err := announcer(t).Unattributed(ctx, tx, queued); err != nil {
+		t.Fatalf("Unattributed(): %v", err)
+	}
+
+	// The subject is the REPORT, not the queue row: what a consumer follows
+	// is the money, and the row is this module's bookkeeping about it.
+	stored := outboxAbout(ctx, t, tx, queued.ReportID)
+	if len(stored) != 1 {
+		t.Fatalf("appended %d event(s), want one", len(stored))
+	}
+	got := stored[0]
+	if got.Type != earnings.TypeTransactionUnattributed {
+		t.Errorf("type = %q, want %q", got.Type, earnings.TypeTransactionUnattributed)
+	}
+	if got.IdempotencyKey == nil || *got.IdempotencyKey != earnings.TypeTransactionUnattributed+":"+queued.ReportID.String() {
+		t.Errorf("idempotency key = %v, want the type and the report", got.IdempotencyKey)
+	}
+	wantNoEnvelopeFields(t, got)
+	if got.Payload["network_transaction_id"] != queued.ReportID.String() {
+		t.Errorf("network_transaction_id = %v, want %s", got.Payload["network_transaction_id"], queued.ReportID)
+	}
+	if got.Payload["at"] != "2026-03-03T06:00:00Z" {
+		t.Errorf("at = %v, want the instant the queue row carries", got.Payload["at"])
+	}
+	// Identifiers travel, data stays in its owning schema (consumer rule 5).
+	for _, leaked := range []string{"unattributed_id", "click_ref", "commission_minor", "amount"} {
+		if _, defect := got.Payload[leaked]; defect {
+			t.Errorf("the payload carries %q, which is read from the queue rather than the stream", leaked)
+		}
+	}
+}
+
+// TestNothingIsAnnouncedAboutAReportTheDatabaseDidNotQueue, for the reason
+// the entry cases refuse a fact about nothing.
+func TestNothingIsAnnouncedAboutAReportTheDatabaseDidNotQueue(t *testing.T) {
+	ctx, tx := outboxTx(t)
+
+	err := announcer(t).Unattributed(ctx, tx, earnings.Unmatched{})
+
+	if !errors.Is(err, earnings.ErrNotAnnounced) {
+		t.Errorf("Unattributed(zero) = %v, want one wrapping %v", err, earnings.ErrNotAnnounced)
+	}
+}
