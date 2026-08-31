@@ -250,11 +250,14 @@ func TestNothingIsWrittenWhenTheReversingTransferIsRefused(t *testing.T) {
 	}
 }
 
-// TestAReverserIsRefusedWithoutAMachine covers the construction refusal.
+// TestAReverserIsRefusedWithoutAMachine covers the construction refusal. It
+// shares ErrNoEntries with the confirmer rather than declaring a second name
+// for the same fact: both are "there is no machine to move entries with", and
+// two errors saying that would be two things a caller has to match on.
 func TestAReverserIsRefusedWithoutAMachine(t *testing.T) {
 	t.Parallel()
 
-	if _, err := earnings.NewReversals(nil); !errors.Is(err, earnings.ErrNoEntryMachine) {
-		t.Errorf("NewReversals(nil) error = %v, want %v", err, earnings.ErrNoEntryMachine)
+	if _, err := earnings.NewReversals(nil); !errors.Is(err, earnings.ErrNoEntries) {
+		t.Errorf("NewReversals(nil) error = %v, want %v", err, earnings.ErrNoEntries)
 	}
 }

@@ -26,10 +26,6 @@ import (
 )
 
 var (
-	// ErrNoEntryMachine reports a reverser built with no machine to post and
-	// record through. Refused at construction, because one that discovered it
-	// later would already have read a credit it cannot undo.
-	ErrNoEntryMachine = errors.New("earnings: reversing needs the entry machine to post and record through")
 	// ErrNoReversingReport reports a reversal with no evidence of its own.
 	// A status change is a new superseding row (C-3), never an edit, so the
 	// reversing report always exists by the time this is called - and citing
@@ -53,7 +49,7 @@ type Reversals struct {
 // NewReversals builds it over the entry machine, refusing a nil one.
 func NewReversals(entries *Entries) (*Reversals, error) {
 	if entries == nil {
-		return nil, ErrNoEntryMachine
+		return nil, ErrNoEntries
 	}
 	return &Reversals{entries: entries}, nil
 }
