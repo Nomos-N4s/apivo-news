@@ -41,6 +41,16 @@ type Offers interface {
 	LiveOffer(ctx context.Context, id uuid.UUID, at time.Time) (catalogue.Offer, error)
 }
 
+// Recorder is the write this service needs: one click, recorded and read
+// back. Named here per the boundary rules - the consumer names its
+// dependency - and named as an interface rather than taken as *Clicks so the
+// service can be given a recorder that opens its own transaction and one
+// that writes through the caller's, and cannot tell them apart. That is what
+// keeps [ClickOuts.Issue] about ordering rather than about transactions.
+type Recorder interface {
+	Record(ctx context.Context, click NewClick) (Click, error)
+}
+
 // Deeplinks builds the redirect for a target, using the adapter for the
 // network that target names.
 //
@@ -87,7 +97,7 @@ type Issued struct {
 // ClickOuts issues tracked redirects. Build it with [NewClickOuts].
 type ClickOuts struct {
 	offers    Offers
-	clicks    *Clicks
+	clicks    Recorder
 	minter    *Minter
 	deeplinks Deeplinks
 	limiter   *Limiter
@@ -112,7 +122,7 @@ func WithLimiter(l *Limiter) Option {
 }
 
 // NewClickOuts builds the service, refusing one that is missing a part.
-func NewClickOuts(offers Offers, clicks *Clicks, deeplinks Deeplinks, opts ...Option) (*ClickOuts, error) {
+func NewClickOuts(offers Offers, clicks Recorder, deeplinks Deeplinks, opts ...Option) (*ClickOuts, error) {
 	if offers == nil || clicks == nil || deeplinks == nil {
 		return nil, ErrNoClickOuts
 	}

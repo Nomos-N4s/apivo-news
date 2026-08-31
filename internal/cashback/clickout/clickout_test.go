@@ -285,10 +285,15 @@ func TestAServiceMissingAPartIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClicks(): %v", err)
 	}
+	// Every part as its interface, including the recorder: the absent case
+	// is a nil INTERFACE, which is what a composition root that skipped a
+	// part would pass. A nil *Clicks boxed into one is a non-nil interface
+	// holding a nil pointer, and would say this test passes while the
+	// service panicked on its first click.
 	cases := []struct {
 		name      string
 		offers    clickout.Offers
-		clicks    *clickout.Clicks
+		clicks    clickout.Recorder
 		deeplinks clickout.Deeplinks
 	}{
 		{name: "no offer reader", clicks: clicks, deeplinks: &fakeDeeplinks{}},
