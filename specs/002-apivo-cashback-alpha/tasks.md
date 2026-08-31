@@ -170,7 +170,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T073 [P] [US1] Integration test: full earn journey with a mid-run published-rate change proving the click-time rate governs, in `internal/cashback/earnings/journey_integration_test.go`
 - [ ] T074 [P] [US1] Integration test: a transaction with an unknown click reference credits nobody **and lands in the unattributed queue as work an operator may only dismiss**, in `internal/cashback/earnings/unattributed_integration_test.go`
 - [x] T075 [P] [US1] Test the SC-002 orphan-credit query returns zero rows, in `internal/cashback/earnings/orphan_test.go`
-- [ ] T076 [P] [US1] Publish `cashback.click.created`, `cashback.entry.created` and `.state_changed` events in `internal/cashback/earnings/events.go`
+- [x] T076 [P] [US1] Publish `cashback.click.created`, `cashback.entry.created` and `.state_changed` events in `internal/cashback/earnings/events.go` — the two entry events are there; `cashback.click.created` is in `internal/cashback/clickout/events.go` instead, because an event must be appended in the transaction that made its fact true and the click's insert is in clickout, which earnings cannot reach without an import cycle
 
 **Checkpoint**: 🎯 **MVP.** A member can earn cashback and the money is provably correct. Nothing is visible to them yet.
 
