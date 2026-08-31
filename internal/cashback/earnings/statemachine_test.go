@@ -70,10 +70,16 @@ type fakeEntries struct {
 	transitions []store.RecordTransitionParams
 	links       []store.LinkLedgerTransferParams
 	moves       []store.MoveEntryParams
+	created     store.CreateEntryParams
+	creations   int
 }
 
-func (f *fakeEntries) CreateEntry(context.Context, store.CreateEntryParams) (store.CashbackEntry, error) {
-	return f.row, nil
+func (f *fakeEntries) CreateEntry(_ context.Context, arg store.CreateEntryParams) (store.CashbackEntry, error) {
+	f.created = arg
+	f.creations++
+	row := f.row
+	row.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	return row, nil
 }
 
 func (f *fakeEntries) MoveEntry(_ context.Context, arg store.MoveEntryParams) (store.CashbackEntry, error) {
