@@ -77,14 +77,32 @@ type fakeEntries struct {
 	moves       []store.MoveEntryParams
 	created     store.CreateEntryParams
 	creations   int
+	createErr   error
 }
 
+// The stored row echoed back, because the statement returns the row and what
+// the caller reads its entry from is that row. A fake that answered a row it
+// was built with would let a credit be inserted as one thing and read back
+// as another, and nothing here would notice.
 func (f *fakeEntries) CreateEntry(_ context.Context, arg store.CreateEntryParams) (store.CashbackEntry, error) {
 	f.created = arg
 	f.creations++
-	row := f.row
-	row.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
-	return row, nil
+	if f.createErr != nil {
+		return store.CashbackEntry{}, f.createErr
+	}
+	return store.CashbackEntry{
+		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		AccountID:            arg.AccountID,
+		BrandID:              arg.BrandID,
+		NetworkTransactionID: arg.NetworkTransactionID,
+		ClickID:              arg.ClickID,
+		State:                arg.State,
+		AmountMinor:          arg.AmountMinor,
+		Currency:             arg.Currency,
+		HoldRule:             arg.HoldRule,
+		ReversalOfID:         arg.ReversalOfID,
+		CreatedAt:            pgtype.Timestamptz{Time: recordedAt, Valid: true},
+	}, nil
 }
 
 func (f *fakeEntries) MoveEntry(_ context.Context, arg store.MoveEntryParams) (store.CashbackEntry, error) {
