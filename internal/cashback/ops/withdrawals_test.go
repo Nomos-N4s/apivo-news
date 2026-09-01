@@ -407,7 +407,12 @@ func TestEachRefusalFailureGetsTheStatusItMeans(t *testing.T) {
 		"already decided":   {payout.ErrNotAwaitingApproval, http.StatusConflict},
 		"nothing reserved":  {payout.ErrNothingReserved, http.StatusConflict},
 		"refused elsewhere": {payout.ErrNotRejected, http.StatusConflict},
-		"something else":    {errors.New("the pool is gone"), http.StatusInternalServerError},
+		// 503: nothing is broken, the deployment cannot release a
+		// reservation yet, and those are different things to whoever is
+		// paged.
+		"no receivable":  {payout.ErrNoReceivable, http.StatusServiceUnavailable},
+		"no reason":      {payout.ErrNoDecisionReason, http.StatusBadRequest},
+		"something else": {errors.New("the pool is gone"), http.StatusInternalServerError},
 	} {
 		rec := reject(t, &stubRefuser{err: c.err}, uuid.NewString(), `{"reason":"a reason"}`)
 		if rec.Code != c.want {

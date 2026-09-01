@@ -116,3 +116,44 @@ select id, brand_id, request_id, approved_by, idempotency_key,
        submitted_at, settled_at
   from cashback.payout
  where request_id = sqlc.arg(request_id);
+
+-- name: RecordPayoutOutcome :one
+-- Move a payout to where the rail says it ended up.
+--
+-- Narrowed on the state the caller read, so two retries racing one payout
+-- leave one recorded outcome rather than the second overwriting the first -
+-- the same conditional-write shape every decision in this schema uses.
+--
+-- settled_at is now() for a settlement and null otherwise, computed here
+-- rather than passed in because payout_settled_iff_settlement_time ties the
+-- two together: a settled payout without an instant, or an unsettled one
+-- with, is a row the database refuses. One statement decides both, so they
+-- cannot disagree.
+--
+-- payout_guard permits exactly this and nothing else: the state, the
+-- settlement instant and the rail's reference may move; who approved it,
+-- what it pays and on which rail may not, and a settled payout is terminal.
+update cashback.payout
+   set state = sqlc.arg(to_state),
+       settled_at = case when sqlc.arg(to_state)::text = 'settled' then now() else null end,
+       rail_reference = coalesce(sqlc.narg(rail_reference), rail_reference)
+ where id = sqlc.arg(id)
+   and state = sqlc.arg(from_state)
+returning id, brand_id, request_id, approved_by, idempotency_key,
+          amount_minor, currency, rail, rail_reference, state,
+          submitted_at, settled_at;
+
+-- name: LockPayoutForRequest :one
+-- The payout a request has, held against a second retry of the same one.
+--
+-- FOR UPDATE because a retry both reads the payout's state and decides what
+-- to do about it, and two retries arriving together must not both conclude
+-- that the rail was never asked. The withdrawal request is locked by the
+-- caller first, so the order is always request then payout and there is no
+-- pair of locks to take the wrong way round.
+select id, brand_id, request_id, approved_by, idempotency_key,
+       amount_minor, currency, rail, rail_reference, state,
+       submitted_at, settled_at
+  from cashback.payout
+ where request_id = sqlc.arg(request_id)
+   for update;

@@ -2,6 +2,7 @@ package earnings_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -148,5 +149,23 @@ func TestReservingNothingIsRefused(t *testing.T) {
 	}
 	if _, _, err := earnings.Covering(entries, money.Amount{}); !errors.Is(err, earnings.ErrNothingToReserve) {
 		t.Errorf("Covering(zero value) = %v, want one wrapping %v", err, earnings.ErrNothingToReserve)
+	}
+}
+
+// TestShortConfirmedBalanceSaysAllThreeFigures. "Insufficient" without them
+// is a message somebody has to reproduce to act on, and the shortfall is
+// what reaches the member (US4 scenario 1).
+func TestShortConfirmedBalanceSaysAllThreeFigures(t *testing.T) {
+	err := earnings.ShortConfirmedBalance{
+		Want:  eur(t, 5000),
+		Have:  eur(t, 3000),
+		Short: eur(t, 2000),
+	}
+	// Minor units, as money.Amount.String renders them: this string is for a
+	// log, and the member-facing figures travel as {minor, currency}.
+	for _, want := range []string{"5000 EUR", "3000 EUR", "2000 EUR"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Error() = %q, want it to name %s", err.Error(), want)
+		}
 	}
 }
