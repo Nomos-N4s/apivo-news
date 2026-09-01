@@ -560,10 +560,12 @@ func (a Amount) Split(rate BasisPoints, mode Rounding) (share, remainder Amount,
 // here beside the amount split it mirrors, with the same exact arithmetic
 // and the same insistence that the caller name a rounding mode.
 //
-// Nothing overflows: both rates are at most [BasisPointsScale], so their
-// product is at most a hundred million and every intermediate value stays
-// well inside int64. Rates are never negative, so the away-from-zero
-// question is asked on the positive side.
+// Nothing overflows and nothing is narrowed. Both rates are checked to be
+// at most [BasisPointsScale] before they are multiplied, so their product is
+// at most a hundred million - two hundred times smaller than the largest
+// int32 - and the whole computation stays in the width the result is
+// returned in. Rates are never negative, so the away-from-zero question is
+// asked on the positive side.
 func (b BasisPoints) Split(rate BasisPoints, mode Rounding) (share, remainder BasisPoints, err error) {
 	if !b.Valid() {
 		return 0, 0, fmt.Errorf("%w: %d", ErrRateOutOfRange, int32(b))
@@ -575,9 +577,13 @@ func (b BasisPoints) Split(rate BasisPoints, mode Rounding) (share, remainder Ba
 		return 0, 0, fmt.Errorf("%w: %s", ErrInvalidRounding, mode)
 	}
 
-	product := int64(b) * int64(rate)
-	units := product / basisPointsScaleMinor
-	if roundsAway(units, product%basisPointsScaleMinor, false, mode) {
+	const scale = int32(BasisPointsScale)
+	product := int32(b) * int32(rate)
+	units := product / scale
+	// roundsAway is written for minor units and reads the two quantities as
+	// magnitudes, which is what they are here; widening to int64 for the
+	// call is exact.
+	if roundsAway(int64(units), int64(product%scale), false, mode) {
 		// A fraction was dropped, so the units are strictly short of the
 		// exact quotient and this step cannot pass it - which keeps the
 		// share within b and the remainder at or above zero.
