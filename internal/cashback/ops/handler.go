@@ -24,7 +24,12 @@ const Prefix = "/api/v1/cashback/ops/"
 type Handler struct {
 	log   *slog.Logger
 	store UnattributedStore
-	auth  OperatorAuthenticator
+	// approvals releases withdrawals. A second dependency rather than a
+	// method on store, because the two answer to different modules: the
+	// queue is the networks module's evidence and an approval is the payout
+	// module's money.
+	approvals WithdrawalApprover
+	auth      OperatorAuthenticator
 	// allow is the 405 classifier, derived from routes() in NewHandler so
 	// it cannot drift from what is actually registered.
 	allow platformhttp.AllowTable
@@ -34,8 +39,8 @@ type Handler struct {
 // composition root to mount. Every route sits behind the requireOperator
 // gate - authentication wraps the whole table, so a future route cannot be
 // added unauthenticated by omission.
-func NewHandler(log *slog.Logger, store UnattributedStore, auth OperatorAuthenticator) http.Handler {
-	h := &Handler{log: log, store: store, auth: auth}
+func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, auth OperatorAuthenticator) http.Handler {
+	h := &Handler{log: log, store: store, approvals: approvals, auth: auth}
 	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
 	for pattern, handler := range h.routes() {
@@ -57,6 +62,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		"GET " + Prefix + "unattributed":               h.listUnattributed,
 		"POST " + Prefix + "unattributed/{id}/dismiss": h.dismissUnattributed,
+		"POST " + Prefix + "withdrawals/{id}/approve":  h.approveWithdrawal,
 	}
 }
 

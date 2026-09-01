@@ -361,7 +361,7 @@ func (unreachableStore) Provenance(context.Context, uuid.UUID) (editorial.Proven
 // a status code alone would dress the loss up as an ordinary 404.
 func TestOperatorPatternsAreReachable(t *testing.T) {
 	t.Parallel()
-	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, alwaysOperator{})
+	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, alwaysOperator{})
 
 	for _, pattern := range ops.Patterns() {
 		t.Run(pattern, func(t *testing.T) {
@@ -410,4 +410,13 @@ func (unreachableOpsStore) Open(context.Context, networks.After, int) ([]network
 
 func (unreachableOpsStore) Dismiss(context.Context, ops.Dismissal) (ops.Dismissed, error) {
 	return ops.Dismissed{}, errors.New("the route probe must not reach the store")
+}
+
+// unreachableOpsApprover stands in for the withdrawal approver in the route
+// probes. Every probe here is refused before the handler reaches it, which is
+// what makes an approver that cannot work safe.
+type unreachableOpsApprover struct{}
+
+func (unreachableOpsApprover) Approve(context.Context, payout.Approval) (payout.Payout, error) {
+	return payout.Payout{}, errors.New("the route probes must not approve anything")
 }

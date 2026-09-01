@@ -502,6 +502,94 @@
         }
       }
     },
+    "/api/v1/cashback/ops/withdrawals/{id}/approve": {
+      "post": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "approveWithdrawal",
+        "summary": "Approve a withdrawal and submit the payout",
+        "description": "Release one withdrawal to the payout rail (US4 scenario 3, C-4, C-5).\n\nThere is no request body, and that is the contract rather than an omission: who approves is the token subject and when is the clock, so a body could only be naming an approver - which is exactly what C-4 forbids. One that arrives is refused with 400.\n\nThe approval is written and COMMITTED before the rail is contacted, because the payout's idempotency key is generated from the request and committing the row is what claims it. A second approval then loses on a unique violation rather than making a second payment.\n\nSo a rail failure answers 502 and the approval STANDS: the payout exists, its key is fixed, and a retry re-submits under it (FR-053). An operator told the approval had failed would approve it again.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The withdrawal request being approved."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The payout this approval created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovedPayout"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The id in the path is not a UUID, or a request body was sent.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "404": {
+            "description": "No withdrawal request has that id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request is no longer awaiting approval, has already been paid, cannot be paid as one payout because its reserved entries span two brands (ADR-0004), or was refused by the schema - which includes an approver who does not hold the operator role (C-4).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "The approval is recorded and the payout exists, but the rail did not accept it. It will be retried under the same key; do not approve again.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/cashback/export": {
       "get": {
         "tags": [
@@ -3812,6 +3900,71 @@
           }
         ],
         "description": "A problem document carrying the arithmetic as RFC 9457 extension members - `code`, `shortfall`, and the two figures it was derived from - so a client shows the member what would work instead of parsing prose. No figure appears in `detail`: amounts travel as {minor, currency} and the client formats them for the member's locale."
+      },
+      "ApprovedPayout": {
+        "type": "object",
+        "description": "One outbound money movement, as it stands the moment it was approved. The row IS the approval (C-4): it cannot exist without a named operator behind it.",
+        "required": [
+          "payout_id",
+          "request_id",
+          "approved_by",
+          "idempotency_key",
+          "amount",
+          "rail",
+          "rail_reference",
+          "state",
+          "submitted_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "payout_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "approved_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The operator this payment rests on, taken from the token subject and never from the request (C-4). Echoed so an operator sees which account the server recorded rather than which one they believe they are."
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "The database's own derivation from the request (C-5, D8), never a value a caller supplied. It is what a retry must reuse and what an operator searches by on the rail's side."
+          },
+          "amount": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "rail": {
+            "type": "string",
+            "description": "Which rail carried the money. Frozen once the row exists (payout_guard)."
+          },
+          "rail_reference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the rail called this payment, and null until the rail has answered. A submitted payout without one is not broken: it is the state a retry picks up (FR-053)."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "submitted",
+              "settled",
+              "failed"
+            ]
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       }
     }
   }
