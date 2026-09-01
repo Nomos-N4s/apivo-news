@@ -82,10 +82,8 @@ func withdrawalPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 	return ctx, pool
 }
 
-// ensureWithdrawalDatabase creates the scratch database beside the one
-// DATABASE_URL names and migrates it. It is left behind rather than dropped:
-// a named database makes a second run cheap, and dropping it from a cleanup
-// would race whatever is still using it.
+// ensureWithdrawalDatabase remakes the scratch database beside the one
+// DATABASE_URL names and migrates it, once per test process.
 func ensureWithdrawalDatabase(base string) (string, error) {
 	parsed, err := url.Parse(base)
 	if err != nil {
@@ -97,8 +95,25 @@ func ensureWithdrawalDatabase(base string) (string, error) {
 		return "", err
 	}
 	defer admin.Close()
+
+	// DROPPED AND REMADE EACH RUN, not reused. These cases commit withdrawal
+	// requests, and a payout will reference one as soon as approving exists -
+	// cashback.payout is append-only (payout_no_delete and payout_no_truncate
+	// are triggers), so nothing can tidy one away, which is correct: money
+	// that has left is not a fixture. That leaves the whole database as the
+	// only unit that can be reset, and it is ours alone to reset. WITH
+	// (FORCE) closes connections a previous run left behind rather than
+	// failing on them.
+	//
+	// What has to be reset at all is the ledger's transfer references. The
+	// memory adapter numbers them from 1 in every process, while
+	// withdrawal_request_reserved_transfer_ref_unique is global - so a
+	// second run would collide with the first on "transfer-1". The
+	// constraint is right; the fixture is what is pretending to be several
+	// ledgers, and it starts from nothing instead.
+	_, _ = admin.Exec(ctx, `drop database if exists "`+withdrawalDatabase+`" with (force)`)
 	// create database cannot run in a transaction and has no IF NOT EXISTS,
-	// so an already-created one reports an error. The migrate below is what
+	// so a racing creation reports an error. The migrate below is what
 	// proves the database is usable; this is carried into its failure only,
 	// because "does not exist" and "may not create one" are fixed
 	// differently.
@@ -113,33 +128,7 @@ func ensureWithdrawalDatabase(base string) (string, error) {
 		}
 		return "", err
 	}
-	return scratchURL, clearRequests(ctx, scratchURL)
-}
-
-// clearRequests empties cashback.withdrawal_request before a run.
-//
-// The memory ledger's transfer references are a counter that restarts at 1 in
-// every process, and withdrawal_request_reserved_transfer_ref_unique is
-// global - so without this, the second RUN of this file collides with the
-// first on "transfer-1". The constraint is right (a transfer reference is the
-// ledger's identity for one movement of money) and the fixture is what is
-// pretending, so the fixture is what gives way.
-//
-// Only this table, and only in this database. Entries, transitions and ledger
-// links are append-only evidence and are left where they are; they do not
-// collide, because every case seeds a member of its own. A payout row
-// referencing a request would make this delete fail, which is the right
-// outcome: money that has left is not a fixture to be tidied away.
-func clearRequests(ctx context.Context, scratchURL string) error {
-	pool, err := pgxpool.New(ctx, scratchURL)
-	if err != nil {
-		return err
-	}
-	defer pool.Close()
-	if _, err := pool.Exec(ctx, `delete from cashback.withdrawal_request`); err != nil {
-		return fmt.Errorf("clearing %s.cashback.withdrawal_request: %w", withdrawalDatabase, err)
-	}
-	return nil
+	return scratchURL, nil
 }
 
 func euro(t *testing.T, minor int64) money.Amount {
