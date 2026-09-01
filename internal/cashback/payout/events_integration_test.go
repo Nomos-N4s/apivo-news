@@ -10,6 +10,7 @@ package payout_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout/stub"
 )
 
 // announced is one outbox row as this suite reads it.
@@ -151,5 +153,95 @@ func TestARefusedRequestIsAnnouncedToNobody(t *testing.T) {
 	}
 	if announcements != 0 {
 		t.Errorf("a refused request left %d events in the stream, want none", announcements)
+	}
+}
+
+// TestAnApprovalIsAnnouncedWithTheHumanWhoMadeIt. FR-061 wants a named human
+// on every operator action, and C-4 puts one in the column. The event
+// carries it rather than an id to come back and ask about: a consumer that
+// had to resolve the approver through this schema would be making exactly
+// the synchronous call-back consumer rule 2 forbids.
+func TestAnApprovalIsAnnouncedWithTheHumanWhoMadeIt(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f, request := approvable(ctx, t)
+	operator := seedOperator(ctx, t, pool)
+
+	if _, err := approvals(t, f, stub.New()).Approve(ctx, payout.Approval{
+		Request: request.ID, Operator: operator,
+	}); err != nil {
+		t.Fatalf("Approve(): %v", err)
+	}
+
+	events := announcementsOf(ctx, t, pool, "cashback.withdrawal.approved", request.ID)
+	if len(events) != 1 {
+		t.Fatalf("got %d cashback.withdrawal.approved events, want exactly 1", len(events))
+	}
+	one := events[0]
+	if one.Payload["actor"] != operator.String() {
+		t.Errorf("actor = %v, want the operator %s", one.Payload["actor"], operator)
+	}
+	if one.Payload["account_id"] != f.member.String() {
+		t.Errorf("account_id = %v, want the member %s", one.Payload["account_id"], f.member)
+	}
+	if minor, currency := amountIn(t, one.Payload); minor != request.Amount.Minor || currency != string(request.Amount.Currency) {
+		t.Errorf("amount = %d %s, want %s", minor, currency, request.Amount)
+	}
+	// An approval has no reason: the reason field belongs to a refusal, and
+	// a consumer branching on its presence must be able to.
+	if _, present := one.Payload["reason"]; present {
+		t.Errorf("an approval carries a reason: %v", one.Payload["reason"])
+	}
+}
+
+// TestAnApprovalTheRailRefusedIsStillAnnounced. The decision and the payout
+// are committed before the rail is asked (FR-052), so the announcement is
+// too. Waiting for the rail would drop the event on exactly the submissions
+// that go wrong - which is when somebody most wants to know a decision was
+// made.
+func TestAnApprovalTheRailRefusedIsStillAnnounced(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f, request := approvable(ctx, t)
+	operator := seedOperator(ctx, t, pool)
+
+	if _, err := approvals(t, f, stub.New(stub.WithTimeout())).Approve(ctx, payout.Approval{
+		Request: request.ID, Operator: operator,
+	}); !errors.Is(err, payout.ErrRailRetryable) {
+		t.Fatalf("Approve() = %v, want a retryable rail failure", err)
+	}
+
+	if events := announcementsOf(ctx, t, pool, "cashback.withdrawal.approved", request.ID); len(events) != 1 {
+		t.Errorf("a timed-out submission left %d approval events, want the 1 the decision made", len(events))
+	}
+}
+
+// TestARefusalIsAnnouncedWithItsReason. The reason is what a member is owed
+// (FR-061) and what withdrawal_request_rejection_has_reason makes mandatory,
+// so it travels with the fact rather than being left in a column.
+func TestARefusalIsAnnouncedWithItsReason(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f, request := approvable(ctx, t)
+	operator := seedOperator(ctx, t, pool)
+	const reason = "the destination could not be verified"
+
+	if _, err := rejections(t, f).Reject(ctx, payout.Rejection{
+		Request: request.ID, Operator: operator, Reason: reason,
+	}); err != nil {
+		t.Fatalf("Reject(): %v", err)
+	}
+
+	events := announcementsOf(ctx, t, pool, "cashback.withdrawal.rejected", request.ID)
+	if len(events) != 1 {
+		t.Fatalf("got %d cashback.withdrawal.rejected events, want exactly 1", len(events))
+	}
+	one := events[0]
+	if one.Payload["reason"] != reason {
+		t.Errorf("reason = %v, want %q", one.Payload["reason"], reason)
+	}
+	if one.Payload["actor"] != operator.String() {
+		t.Errorf("actor = %v, want the operator %s", one.Payload["actor"], operator)
+	}
+	// And nothing claims it was approved.
+	if events := announcementsOf(ctx, t, pool, "cashback.withdrawal.approved", request.ID); len(events) != 0 {
+		t.Errorf("a refused request left %d approval events, want none", len(events))
 	}
 }

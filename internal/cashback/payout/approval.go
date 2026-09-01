@@ -116,6 +116,7 @@ type Approvals struct {
 	db         Beginner
 	rail       Rail
 	descriptor string
+	announcer  *Announcer
 }
 
 // NewApprovals builds the approver, refusing one that is missing a part.
@@ -128,7 +129,11 @@ func NewApprovals(db Beginner, rail Rail, descriptor string) (*Approvals, error)
 	case descriptor == "":
 		return nil, ErrNoDescriptor
 	}
-	return &Approvals{db: db, rail: rail, descriptor: descriptor}, nil
+	announcer, err := NewAnnouncer()
+	if err != nil {
+		return nil, err
+	}
+	return &Approvals{db: db, rail: rail, descriptor: descriptor, announcer: announcer}, nil
 }
 
 // Approve records the decision, claims the idempotency key, and submits.
@@ -189,12 +194,13 @@ func (a *Approvals) claim(ctx context.Context, approval Approval) (Payout, Instr
 		return Payout{}, Instruction{}, err
 	}
 
-	if _, err := queries.RecordWithdrawalDecision(ctx, store.RecordWithdrawalDecisionParams{
+	decided, err := queries.RecordWithdrawalDecision(ctx, store.RecordWithdrawalDecisionParams{
 		ID:        pgtype.UUID{Bytes: request.ID, Valid: true},
 		FromState: string(StateAwaitingApproval),
 		ToState:   string(StateApproved),
 		DecidedBy: pgtype.UUID{Bytes: approval.Operator, Valid: true},
-	}); err != nil {
+	})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// The row moved between the locking read and here, which the
 			// lock should have made impossible. Reported rather than
@@ -217,6 +223,17 @@ func (a *Approvals) claim(ctx context.Context, approval Approval) (Payout, Instr
 	}
 	written, err := payoutFrom(row)
 	if err != nil {
+		return Payout{}, Instruction{}, err
+	}
+	released, err := withdrawalFrom(decided)
+	if err != nil {
+		return Payout{}, Instruction{}, err
+	}
+	// Announced from the transaction that DECIDES, before the rail is
+	// asked. Waiting for the rail would mean an approval that never
+	// reached the stream whenever a submission timed out, which is
+	// precisely when somebody wants to know a decision was made.
+	if err := a.announcer.Approved(ctx, tx, released); err != nil {
 		return Payout{}, Instruction{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
