@@ -442,4 +442,4 @@ reports zero for every member forever, and `cashback.withdrawal`'s `paid`
 state is unreachable. That is a wrong number on a member-facing screen rather
 than a missing feature.
 
-- [ ] T146 Implement the settlement sweep: for each payout in `submitted`, ask its rail `Status` and record the answer — `settled` moves the payout and its request to `paid` and announces `cashback.payout.settled`; `failed` takes the release path `Retries.giveUp` already implements; anything else leaves it. In `internal/cashback/payout/settle.go`, scheduled from `cmd/apivo`, per FR-053 and contracts/events.md
+- [x] T146 Implement the settlement sweep: for each payout in `submitted`, ask its rail `Status` and record the answer — `settled` moves the payout and its request to `paid` and announces `cashback.payout.settled`; `failed` takes the release path `Retries.giveUp` already implements; anything else leaves it. In `internal/cashback/payout/settle.go`, scheduled from `cmd/apivo`, per FR-053 and contracts/events.md
