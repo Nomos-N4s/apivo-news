@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"slices"
 	"testing"
@@ -52,6 +53,34 @@ func readCycle(t *testing.T, h http.Handler) cycleBody {
 		t.Fatalf("unmarshalling sources body: %v", err)
 	}
 	return body
+}
+
+// fixtureFeedURL makes one test server's address unique to this seeding.
+//
+// The seeded rows below are rolled back, so they leak nothing - but
+// source_url_key is unique across the whole table, and other suites seed
+// live server addresses that COMMIT. httptest.NewServer takes an ephemeral
+// port and the kernel reuses ports, so a database used over many runs
+// accumulates loopback addresses until this test draws one already on
+// record and the seeding fails on a unique violation with nothing wrong in
+// the code under test. Rolling back protects the other suites from this
+// one; it does not protect this one from them. In CI, where the database is
+// new every time, it never happens.
+//
+// A query parameter rather than a path segment: this test fetches the
+// server's own URL directly and never reads the seeded one back, so the
+// suffix has to travel nowhere - but a query keeps the path the feed's own,
+// which is what a reader comparing the two would expect.
+func fixtureFeedURL(t *testing.T, feedURL, suffix string) string {
+	t.Helper()
+	parsed, err := url.Parse(feedURL)
+	if err != nil {
+		t.Fatalf("parsing the feed URL %q: %v", feedURL, err)
+	}
+	query := parsed.Query()
+	query.Set("fixture", suffix)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 // seedCycleSource inserts one source inside the transaction.
@@ -127,9 +156,9 @@ func TestTheCycleCountsComeFromThePollState(t *testing.T) {
 	healthyName := "Cycle Healthy " + suffix
 	failingName := "Cycle Failing " + suffix
 	pausedName := "Cycle Paused " + suffix
-	healthyID := seedCycleSource(ctx, t, tx, healthyName, healthy.URL)
-	failingID := seedCycleSource(ctx, t, tx, failingName, failing.URL)
-	pausedID := seedCycleSource(ctx, t, tx, pausedName, failing.URL+"/paused")
+	healthyID := seedCycleSource(ctx, t, tx, healthyName, fixtureFeedURL(t, healthy.URL, suffix))
+	failingID := seedCycleSource(ctx, t, tx, failingName, fixtureFeedURL(t, failing.URL, suffix))
+	pausedID := seedCycleSource(ctx, t, tx, pausedName, fixtureFeedURL(t, failing.URL+"/paused", suffix))
 
 	// One poll of the healthy feed: fetch, store every item, record the
 	// outcome - the same three steps the poll loop performs, over the same
@@ -199,4 +228,48 @@ func TestTheCycleCountsComeFromThePollState(t *testing.T) {
 	if got := len(cycle.Cycle.Failures) - len(baseline.Cycle.Failures); got != 1 {
 		t.Errorf("failures grew by %d, want exactly the one failing feed", got)
 	}
+}
+
+// TestTheCycleSeedSurvivesAnAddressAlreadyOnRecord is the reproduction of
+// the failure fixtureFeedURL exists to stop: another suite has committed a
+// source at a loopback address, this run's httptest server draws that same
+// port back, and the seeding dies on source_url_key with nothing wrong in
+// the code under test.
+//
+// Both rows go in one transaction that is rolled back, so the occupied
+// address is real to the unique index and to nothing else - the test cannot
+// itself become the litter it is about.
+func TestTheCycleSeedSurvivesAnAddressAlreadyOnRecord(t *testing.T) {
+	t.Parallel()
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise the seeding")
+	}
+	if err := db.Migrate(dsn); err != nil {
+		t.Fatalf("migrating: %v", err)
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connecting: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	t.Cleanup(server.Close)
+
+	suffix := randomHex(t)
+	// Whoever got here first: the bare address, exactly as the pre-fix
+	// seeders wrote it.
+	seedCycleSource(ctx, t, tx, "Occupier "+suffix, server.URL)
+
+	// The same address, drawn again by this run. Before fixtureFeedURL this
+	// second seeding failed on source_url_key.
+	seedCycleSource(ctx, t, tx, "Cycle Occupied "+suffix, fixtureFeedURL(t, server.URL, suffix))
 }
