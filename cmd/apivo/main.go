@@ -388,6 +388,31 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 				"trailing_lag", networks.DefaultTrailingLag)
 		}
 
+		// The catalogue import, opt-in in the same way and for the same
+		// reason: it needs a brand and a stated source language, and a
+		// deployment configured ahead of either should serve its existing
+		// catalogue rather than refuse to start. It says so at ERROR,
+		// because a catalogue nothing refreshes looks exactly like a
+		// catalogue right up to the day a member clicks a retailer who left.
+		switch imports, missing, err := newCatalogueImport(log, cfg, adapter, pool); {
+		// Already reported where the network was resolved.
+		case networkOff != nil:
+		case err != nil:
+			return err
+		case len(missing) > 0:
+			log.ErrorContext(ctx, "NO CATALOGUE IMPORT IS SCHEDULED, so the retailers members can click will never be refreshed",
+				"missing", strings.Join(missing, ", "))
+		default:
+			if err := imports.Register(jobs); err != nil {
+				return err
+			}
+			registered++
+			log.InfoContext(ctx, "catalogue import registered",
+				"job", catalogue.ImportJobName,
+				"interval", catalogue.ImportInterval,
+				"network", adapter.ID().String())
+		}
+
 		// The same refusal Run makes first, made here where it can still
 		// fail the deployment: from inside the goroutine below, a pool too
 		// small for its jobs would be one ERROR line under an already
@@ -399,10 +424,11 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		//
 		// Two connections per job plus two reserved is the locker's
 		// arithmetic. The zero-sum check alone needs 4; the settlement
-		// sweep takes that to 6, and the two network sweeps to 10. pgx
-		// defaults MaxConns to max(4, NumCPU), which is why a deployment
-		// with cashback on may have to raise pool_max_conns in
-		// DATABASE_URL - the error below says so with the numbers in it.
+		// sweep takes that to 6, the two network sweeps to 10, and the
+		// catalogue import to 12. pgx defaults MaxConns to max(4, NumCPU),
+		// which is why a deployment with cashback on may have to raise
+		// pool_max_conns in DATABASE_URL - the error below says so with the
+		// numbers in it.
 		if err := locker.CheckCapacity(registered); err != nil {
 			return err
 		}
