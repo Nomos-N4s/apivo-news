@@ -347,6 +347,9 @@ func TestAHandlerMissingAPartIsRefusedAtConstruction(t *testing.T) {
 	if _, err := payout.NewHandler(discardLogger(), nil, f.destinations, &stubVault{}, auth); !errors.Is(err, payout.ErrNoWithdrawalStore) {
 		t.Errorf("with no service = %v, want one wrapping %v", err, payout.ErrNoWithdrawalStore)
 	}
+	if _, err := payout.NewHandler(discardLogger(), f.withdrawals, nil, &stubVault{}, auth); !errors.Is(err, payout.ErrNoDestinationStore) {
+		t.Errorf("with no destination store = %v, want one wrapping %v", err, payout.ErrNoDestinationStore)
+	}
 	if _, err := payout.NewHandler(discardLogger(), f.withdrawals, f.destinations, &stubVault{}, nil); err == nil {
 		t.Error("a handler with nowhere to authenticate was built, want a refusal")
 	}

@@ -30,10 +30,13 @@ func get(t *testing.T, h http.Handler, token, path string) *httptest.ResponseRec
 	return rec
 }
 
-// postTo sends an authenticated POST to an arbitrary path.
-func postTo(t *testing.T, h http.Handler, token, path, body string) *httptest.ResponseRecorder {
+// postDestinationTo sends an authenticated POST to the destinations
+// endpoint. The withdrawals one has post() in handlers_test.go; the two
+// differ only in where they aim, and neither takes a path, so no case can
+// aim one somewhere the endpoint under test is not.
+func postDestinationTo(t *testing.T, h http.Handler, token, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, payout.DestinationsPrefix, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -235,7 +238,7 @@ func TestARecordedDestinationArrivesUnverifiedAndItsDetailsGoToTheVault(t *testi
 		t.Fatalf("NewHandler(): %v", err)
 	}
 
-	rec := postTo(t, h, "good-token", payout.DestinationsPrefix,
+	rec := postDestinationTo(t, h, "good-token",
 		`{"kind":"sepa","details":{"iban":"DE00 0000 0000 0000 0000 00","holder":"A Member"}}`)
 
 	if rec.Code != http.StatusCreated {
@@ -279,7 +282,7 @@ func TestADeploymentWithNoVaultCannotRecordADestination(t *testing.T) {
 		t.Fatalf("NewHandler() with no vault = %v, want it built", err)
 	}
 
-	rec := postTo(t, h, "good-token", payout.DestinationsPrefix, `{"kind":"sepa","details":{"iban":"x"}}`)
+	rec := postDestinationTo(t, h, "good-token", `{"kind":"sepa","details":{"iban":"x"}}`)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
 	}
@@ -316,7 +319,7 @@ func TestABadDestinationRequestIsRefusedWithoutQuotingIt(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: NewHandler(): %v", name, err)
 		}
-		rec := postTo(t, h, "good-token", payout.DestinationsPrefix, c.body)
+		rec := postDestinationTo(t, h, "good-token", c.body)
 		if rec.Code != c.want {
 			t.Errorf("%s: status = %d, want %d; body: %s", name, rec.Code, c.want, rec.Body.String())
 		}
@@ -342,7 +345,113 @@ func TestEveryReadRouteNeedsAToken(t *testing.T) {
 			t.Errorf("GET %s without a token: status = %d, want 401", path, rec.Code)
 		}
 	}
-	if rec := postTo(t, h, "", payout.DestinationsPrefix, `{"kind":"sepa","details":{}}`); rec.Code != http.StatusUnauthorized {
+	if rec := postDestinationTo(t, h, "", `{"kind":"sepa","details":{}}`); rec.Code != http.StatusUnauthorized {
 		t.Errorf("POST without a token: status = %d, want 401", rec.Code)
+	}
+}
+
+// TestAWithdrawalIdThatIsNotAUUIDIs400. Not 404: a 404 would say the id was
+// looked for, and this one was never a shape the column could hold. The
+// distinction is what tells a client whether to fix their request or their
+// expectations.
+func TestAWithdrawalIdThatIsNotAUUIDIs400(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	h := handlerFor(t, aFixture(ctx, t, 1000, 5000))
+
+	rec := get(t, h, "good-token", payout.Prefix+"/not-a-uuid")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/problem+json") {
+		t.Errorf("Content-Type = %q, want problem+json", ct)
+	}
+}
+
+// TestAMemberWithNothingGetsAnEmptyListRatherThanNull. The document says
+// these are arrays, and a nil slice marshals to null - which a client
+// iterating the field would trip over on exactly the accounts least able to
+// afford a broken screen: the new ones.
+func TestAMemberWithNothingGetsAnEmptyListRatherThanNull(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f := aFixture(ctx, t, 1000, 5000)
+	newcomer := seedMember(ctx, t, pool)
+	h, err := payout.NewHandler(discardLogger(), f.withdrawals, f.destinations, &stubVault{},
+		stubAuth{token: "good-token", member: newcomer})
+	if err != nil {
+		t.Fatalf("NewHandler(): %v", err)
+	}
+
+	for _, path := range []string{payout.Prefix, payout.DestinationsPrefix} {
+		rec := get(t, h, "good-token", path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: status = %d, want 200; body: %s", path, rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Items *[]json.RawMessage `json:"items"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("GET %s: the body is not JSON: %v (%s)", path, err, rec.Body.String())
+		}
+		if body.Items == nil {
+			t.Errorf("GET %s: items = null, want []; body: %s", path, rec.Body.String())
+		} else if len(*body.Items) != 0 {
+			t.Errorf("GET %s: items = %v, want empty for a member with nothing", path, *body.Items)
+		}
+	}
+}
+
+// TestAMethodTheDestinationsTreeDoesNotServeSaysWhatItDoes. 405 naming both
+// verbs rather than 404, so a client learns the endpoint exists and it is
+// the method that is wrong - asserted on the destinations tree as well as
+// the withdrawals one, because this module now serves two and a convention
+// held on one of them is not a convention.
+func TestAMethodTheDestinationsTreeDoesNotServeSaysWhatItDoes(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	h := handlerFor(t, aFixture(ctx, t, 1000, 5000))
+
+	req := httptest.NewRequest(http.MethodDelete, payout.DestinationsPrefix, nil)
+	req.Header.Set("Authorization", "Bearer good-token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405; body: %s", rec.Code, rec.Body.String())
+	}
+	allow := rec.Header().Get("Allow")
+	if !strings.Contains(allow, http.MethodGet) || !strings.Contains(allow, http.MethodPost) {
+		t.Errorf("Allow = %q, want it to name both GET and POST", allow)
+	}
+}
+
+// TestADatabaseThatHasGoneAwayIsA500. A read that cannot reach the database
+// answers a problem document rather than a panic or a half-written body, and
+// says nothing about why - a member cannot act on it and an attacker should
+// not learn from it. The reason goes to the log instead.
+func TestADatabaseThatHasGoneAwayIsA500(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	f := aFixture(ctx, t, 1000, 5000)
+	h := handlerFor(t, f)
+	// Verified working first, so a 500 below is the closed pool rather than
+	// a fixture that never served anything.
+	if rec := get(t, h, "good-token", payout.Prefix); rec.Code != http.StatusOK {
+		t.Fatalf("before closing the pool: status = %d, want 200", rec.Code)
+	}
+	f.pool.Close()
+
+	for _, path := range []string{
+		payout.Prefix,
+		payout.Prefix + "/" + uuid.NewString(),
+		payout.DestinationsPrefix,
+	} {
+		rec := get(t, h, "good-token", path)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("GET %s over a closed pool: status = %d, want 500; body: %s", path, rec.Code, rec.Body.String())
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/problem+json") {
+			t.Errorf("GET %s: Content-Type = %q, want problem+json", path, ct)
+		}
+		if strings.Contains(rec.Body.String(), "closed pool") || strings.Contains(rec.Body.String(), "conn") {
+			t.Errorf("GET %s: the answer quotes the database failure: %s", path, rec.Body.String())
+		}
 	}
 }
