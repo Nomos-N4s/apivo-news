@@ -136,6 +136,65 @@ type ReservationStore interface {
 	ConfirmedEntriesFor(ctx context.Context, arg store.ConfirmedEntriesForParams) ([]store.CashbackEntry, error)
 }
 
+// Total sums a set of entries in one currency.
+//
+// Exported because the caller deciding whether a withdrawal is allowed needs
+// the member's WHOLE confirmed balance to compare against the threshold
+// (FR-050), which is a different figure from the part [Covering] takes.
+// Summing it here rather than there keeps one piece of arithmetic over
+// money.Amount instead of two.
+func Total(entries []Entry, currency money.Currency) (money.Amount, error) {
+	total, err := money.New(0, currency)
+	if err != nil {
+		return money.Amount{}, err
+	}
+	for _, entry := range entries {
+		if entry.Amount.Currency != currency {
+			return money.Amount{}, fmt.Errorf(
+				"earnings: entry %s holds %s and %s was asked about: balances do not span currencies (C-6)",
+				entry.ID, entry.Amount.Currency, currency)
+		}
+		if total, err = total.Add(entry.Amount); err != nil {
+			return money.Amount{}, err
+		}
+	}
+	return total, nil
+}
+
+// Confirmed reads and LOCKS every confirmed entry a member holds in one
+// currency, oldest first.
+//
+// The lock is the point, and it is why this is a separate call rather than
+// something [Entries.Reserve] does for itself: the caller checks the
+// threshold, decides which entries to take and reserves them, and all three
+// have to see one set of rows. Two withdrawal requests for one member are
+// made sequential here - the second waits, and reads what the first left.
+//
+// So the caller must hold the transaction open from this call to the
+// reservation. One that read here, released, and reserved later would have
+// reserved against a balance that no longer exists.
+func (e *Entries) Confirmed(ctx context.Context, entries ReservationStore, member uuid.UUID, currency money.Currency) ([]Entry, error) {
+	if entries == nil {
+		return nil, ErrNoEntryStore
+	}
+	rows, err := entries.ConfirmedEntriesFor(ctx, store.ConfirmedEntriesForParams{
+		AccountID: pgUUID(member),
+		Currency:  string(currency),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("earnings: reading what %s has confirmed in %s: %w", member, currency, err)
+	}
+	held := make([]Entry, 0, len(rows))
+	for _, row := range rows {
+		entry, err := entryFrom(row)
+		if err != nil {
+			return nil, err
+		}
+		held = append(held, entry)
+	}
+	return held, nil
+}
+
 // Reservation is what one withdrawal claimed.
 type Reservation struct {
 	// Transfer is the single ledger reference every reserved entry's
@@ -152,8 +211,13 @@ type Reservation struct {
 	Amount money.Amount
 }
 
-// Reserve moves a member's oldest confirmed entries into reserved under one
-// ledger transfer (D9).
+// Reserve moves the given entries into reserved under ONE ledger transfer
+// (D9).
+//
+// The entries are the caller's to choose - [Covering] is the rule, and the
+// caller applies it to what [Entries.Confirmed] locked - because the
+// threshold that decides whether a withdrawal is allowed at all is the payout
+// path's policy, not this package's.
 //
 // The order of the writes is [Entries.Apply]'s order and for its reason: the
 // transfer is posted first because entry_transition.ledger_transfer_ref is not
@@ -166,28 +230,40 @@ type Reservation struct {
 // makes the C-7 join in 0016 return the whole payment rather than a fifth of
 // it.
 //
-// db is the transaction the store was bound to. Every entry moved, every
-// transition recorded and every event appended commit together or none of
-// them do; a caller that passed a pool instead would be able to commit a
-// reservation half-recorded.
-func (e *Entries) Reserve(ctx context.Context, db events.RowQuerier, entries ReservationStore, member uuid.UUID, want money.Amount, cause uuid.UUID) (Reservation, error) {
+// db is the transaction the store was bound to, and it must be the one
+// [Entries.Confirmed] read under: the lock it took is what makes this set
+// still the member's to reserve. Every entry moved, every transition recorded
+// and every event appended commit together or none of them do.
+func (e *Entries) Reserve(ctx context.Context, db events.RowQuerier, entries ReservationStore, taking []Entry, cause uuid.UUID) (Reservation, error) {
 	switch {
 	case entries == nil:
 		return Reservation{}, ErrNoEntryStore
 	case cause == uuid.Nil:
 		return Reservation{}, ErrNoReservationCause
-	}
-	if err := want.Validate(); err != nil {
-		return Reservation{}, fmt.Errorf("%w: %w", ErrNothingToReserve, err)
+	case len(taking) == 0:
+		return Reservation{}, fmt.Errorf("%w: no entries to reserve", ErrNothingToReserve)
 	}
 
-	confirmed, err := e.confirmed(ctx, entries, member, want.Currency)
+	member := taking[0].Member
+	for _, entry := range taking {
+		switch {
+		case entry.Member != member:
+			// One transfer moves one member's money between one pair of
+			// stage accounts. A set spanning two members would post half of
+			// somebody else's balance into this member's reserved account.
+			return Reservation{}, fmt.Errorf(
+				"earnings: entry %s belongs to %s and %s belongs to %s: a reservation is one member's",
+				taking[0].ID, member, entry.ID, entry.Member)
+		case entry.State != StateConfirmed:
+			return Reservation{}, ErrIllegalTransition{From: entry.State, To: StateReserved}
+		}
+	}
+	total, err := Total(taking, taking[0].Amount.Currency)
 	if err != nil {
 		return Reservation{}, err
 	}
-	taking, total, err := Covering(confirmed, want)
-	if err != nil {
-		return Reservation{}, err
+	if !total.IsPositive() {
+		return Reservation{}, fmt.Errorf("%w: %s", ErrNothingToReserve, total)
 	}
 
 	where, err := postingsFor(member, StateConfirmed, StateReserved, e.receivable)
@@ -208,26 +284,6 @@ func (e *Entries) Reserve(ctx context.Context, db events.RowQuerier, entries Res
 		reserved = append(reserved, moved)
 	}
 	return Reservation{Transfer: ref, Entries: reserved, Amount: total}, nil
-}
-
-// confirmed reads and locks the member's confirmed entries in one currency.
-func (e *Entries) confirmed(ctx context.Context, entries ReservationStore, member uuid.UUID, currency money.Currency) ([]Entry, error) {
-	rows, err := entries.ConfirmedEntriesFor(ctx, store.ConfirmedEntriesForParams{
-		AccountID: pgUUID(member),
-		Currency:  string(currency),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("earnings: reading what %s has confirmed in %s: %w", member, currency, err)
-	}
-	held := make([]Entry, 0, len(rows))
-	for _, row := range rows {
-		entry, err := entryFrom(row)
-		if err != nil {
-			return nil, err
-		}
-		held = append(held, entry)
-	}
-	return held, nil
 }
 
 // reserveOne moves one entry into reserved against the transfer already
