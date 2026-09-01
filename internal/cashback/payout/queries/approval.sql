@@ -157,3 +157,41 @@ select id, brand_id, request_id, approved_by, idempotency_key,
   from cashback.payout
  where request_id = sqlc.arg(request_id)
    for update;
+
+-- name: MarkWithdrawalPaid :one
+-- Move a request to paid, and touch NOTHING else.
+--
+-- Deliberately not RecordWithdrawalDecision, which sets decided_at to now().
+-- A settlement is an OBSERVATION, not a decision: the human decided when
+-- they approved, and overwriting their instant with a sweep's clock would
+-- lose the one fact C-4 exists to keep. The approval already set decided_by
+-- and decided_at, so withdrawal_request_decided_before_leaving_the_queue and
+-- withdrawal_request_decision_all_or_none stay satisfied without writing
+-- either again.
+--
+-- Narrowed on approved for the reason every other decision here is: a
+-- request already paid, refused or failed matches nothing and its caller is
+-- told, rather than two writes both succeeding and one being lost.
+update cashback.withdrawal_request
+   set state = 'paid'
+ where id = sqlc.arg(id)
+   and state = 'approved'
+returning id, account_id, destination_id, amount_minor, currency, state,
+          requested_at, reserved_transfer_ref, decided_by, decided_at,
+          decision_reason;
+
+-- name: SubmittedPayouts :many
+-- Every payment the rail has taken and not finished, oldest first.
+--
+-- The sweep's work list. It returns the REQUEST ids rather than the payout
+-- rows, because settling one re-reads and locks it anyway (a row read here
+-- and acted on later is a row that may have moved in between), and because
+-- the request is what the rest of the settlement path is keyed on.
+--
+-- Oldest first so a backlog drains in the order members have been waiting,
+-- and a payment that is stuck stays at the front where it is noticed rather
+-- than being lapped by newer ones.
+select request_id
+  from cashback.payout
+ where state = 'submitted'
+ order by submitted_at;
