@@ -25,12 +25,15 @@ import (
 
 // fakeReservationStore holds a member's confirmed rows and moves them.
 type fakeReservationStore struct {
-	rows        []store.CashbackEntry
-	readErr     error
-	reads       []store.ConfirmedEntriesForParams
-	moves       []store.MoveEntryParams
-	transitions []store.RecordTransitionParams
-	links       []store.LinkLedgerTransferParams
+	rows    []store.CashbackEntry
+	readErr error
+	reads   []store.ConfirmedEntriesForParams
+	// reservedReads is every transfer a release was asked about, so a case
+	// can assert it read back through the reservation's own reference.
+	reservedReads []string
+	moves         []store.MoveEntryParams
+	transitions   []store.RecordTransitionParams
+	links         []store.LinkLedgerTransferParams
 	// gone are entries the store reports as having left the state the caller
 	// read them in, standing in for a row that moved between the read and
 	// the write.
@@ -45,21 +48,46 @@ func (f *fakeReservationStore) ConfirmedEntriesFor(_ context.Context, arg store.
 	return f.rows, nil
 }
 
+// EntriesReservedUnder answers the rows a release would move back, keyed on
+// the transfer the fake recorded them against.
+func (f *fakeReservationStore) EntriesReservedUnder(_ context.Context, ref string) ([]store.CashbackEntry, error) {
+	f.reservedReads = append(f.reservedReads, ref)
+	if f.readErr != nil {
+		return nil, f.readErr
+	}
+	var out []store.CashbackEntry
+	for _, transition := range f.transitions {
+		if transition.LedgerTransferRef != ref || transition.ToState != string(earnings.StateReserved) {
+			continue
+		}
+		for _, row := range f.rows {
+			if row.ID == transition.EntryID && row.State == string(earnings.StateReserved) {
+				out = append(out, row)
+			}
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeReservationStore) MoveEntry(_ context.Context, arg store.MoveEntryParams) (store.CashbackEntry, error) {
 	f.moves = append(f.moves, arg)
 	if f.gone[uuid.UUID(arg.ID.Bytes)] {
 		return store.CashbackEntry{}, pgx.ErrNoRows
 	}
-	for _, row := range f.rows {
-		if row.ID != arg.ID {
+	// The move is APPLIED to the stored row, not just echoed. A fake that
+	// answered the new state while remembering the old one would let a case
+	// reserve and then release the same entries and see both succeed, which
+	// is exactly the sequence these cases exist to check.
+	for i := range f.rows {
+		if f.rows[i].ID != arg.ID {
 			continue
 		}
-		if row.State != arg.FromState {
+		if f.rows[i].State != arg.FromState {
 			return store.CashbackEntry{}, pgx.ErrNoRows
 		}
-		row.State = arg.ToState
-		row.HoldRule = arg.HoldRule
-		return row, nil
+		f.rows[i].State = arg.ToState
+		f.rows[i].HoldRule = arg.HoldRule
+		return f.rows[i], nil
 	}
 	return store.CashbackEntry{}, pgx.ErrNoRows
 }
@@ -317,5 +345,125 @@ func TestConfirmedReadsTheMembersOwnMoney(t *testing.T) {
 	}
 	if total.Minor != 3000 {
 		t.Errorf("confirmed total = %s, want 30.00", total)
+	}
+}
+
+// TestAReleaseIsTheReservationsExactInverse. Both accounts are the member's,
+// so what moves is which bucket counts toward the threshold, not how much
+// they have.
+func TestAReleaseIsTheReservationsExactInverse(t *testing.T) {
+	member := uuid.New()
+	rows := confirmedRows(member, 1000, 2000)
+	entries := &fakeReservationStore{rows: rows}
+	ledger := &fakeLedger{}
+	machine := machine(t, entries, ledger)
+	request := uuid.New()
+
+	reserved, err := machine.Reserve(t.Context(), &fakeOutbox{}, entries, asEntries(t, rows), request)
+	if err != nil {
+		t.Fatalf("Reserve(): %v", err)
+	}
+
+	held, err := machine.Reserved(t.Context(), entries, reserved.Transfer)
+	if err != nil {
+		t.Fatalf("Reserved(): %v", err)
+	}
+	if len(held) != 2 {
+		t.Fatalf("read back %d entries, want the two reserved", len(held))
+	}
+	released, err := machine.Release(t.Context(), &fakeOutbox{}, entries, held, request)
+	if err != nil {
+		t.Fatalf("Release(): %v", err)
+	}
+
+	if released.Amount != reserved.Amount {
+		t.Errorf("released %s, want the %s reserved", released.Amount, reserved.Amount)
+	}
+	if released.Transfer == reserved.Transfer {
+		t.Fatal("the release reused the reservation's transfer; the ledger would have recorded nothing and the money would stay reserved")
+	}
+	// The accounts of the last posted transfer, which is the release's.
+	from, to := ledger.ensured[len(ledger.ensured)-2], ledger.ensured[len(ledger.ensured)-1]
+	if got, stage, ok := from.Member(); !ok || got != member || stage != wallet.StageReserved {
+		t.Errorf("released from %s, want %s's reserved", from, member)
+	}
+	if got, stage, ok := to.Member(); !ok || got != member || stage != wallet.StageConfirmed {
+		t.Errorf("released to %s, want %s's confirmed", to, member)
+	}
+}
+
+// TestAReleaseIsKeyedApartFromItsReservation is the mistake that would be
+// invisible: one key for both would make the release a REPLAY, the ledger
+// would return the reservation's own reference and record nothing, and every
+// table would say the money had come back while it sat reserved.
+func TestAReleaseIsKeyedApartFromItsReservation(t *testing.T) {
+	member := uuid.New()
+	rows := confirmedRows(member, 1000)
+	entries := &fakeReservationStore{rows: rows}
+	ledger := &fakeLedger{}
+	machine := machine(t, entries, ledger)
+	request := uuid.New()
+
+	if _, err := machine.Reserve(t.Context(), &fakeOutbox{}, entries, asEntries(t, rows), request); err != nil {
+		t.Fatalf("Reserve(): %v", err)
+	}
+	held, err := machine.Reserved(t.Context(), entries, wallet.TransferRef("transfer:"+ledger.posted[0].IdempotencyKey))
+	if err != nil {
+		t.Fatalf("Reserved(): %v", err)
+	}
+	if _, err := machine.Release(t.Context(), &fakeOutbox{}, entries, held, request); err != nil {
+		t.Fatalf("Release(): %v", err)
+	}
+
+	if len(ledger.posted) != 2 {
+		t.Fatalf("posted %d transfer(s), want the reservation and its release", len(ledger.posted))
+	}
+	reserve, release := ledger.posted[0].IdempotencyKey, ledger.posted[1].IdempotencyKey
+	if reserve == release {
+		t.Fatalf("both posted under %q; a release under the reservation's key records nothing", reserve)
+	}
+	if want := "withdrawal:" + request.String() + ":release"; release != want {
+		t.Errorf("released under %q, want %q derived from the request", release, want)
+	}
+}
+
+// TestReleasingAnEntryThatIsNotReservedIsRefused, before the ledger is asked
+// for anything.
+func TestReleasingAnEntryThatIsNotReservedIsRefused(t *testing.T) {
+	member := uuid.New()
+	rows := confirmedRows(member, 1000)
+	entries := &fakeReservationStore{rows: rows}
+	ledger := &fakeLedger{}
+
+	// Still confirmed: never reserved, so there is nothing to release.
+	_, err := machine(t, entries, ledger).Release(t.Context(), &fakeOutbox{}, entries, asEntries(t, rows), uuid.New())
+	var illegal earnings.ErrIllegalTransition
+	if !errors.As(err, &illegal) {
+		t.Fatalf("Release() = %v, want a %T", err, illegal)
+	}
+	if len(ledger.posted) != 0 {
+		t.Errorf("posted %d transfer(s) for a refused release, want none", len(ledger.posted))
+	}
+}
+
+// TestAReleaseReadsBackThroughTheReservationsOwnTransfer. One statement of
+// which entries a payment covers, and this is it - the same seam the
+// provenance view uses.
+func TestAReleaseReadsBackThroughTheReservationsOwnTransfer(t *testing.T) {
+	member := uuid.New()
+	rows := confirmedRows(member, 1000)
+	entries := &fakeReservationStore{rows: rows}
+
+	machine := machine(t, entries, &fakeLedger{})
+	reserved, err := machine.Reserve(t.Context(), &fakeOutbox{}, entries, asEntries(t, rows), uuid.New())
+	if err != nil {
+		t.Fatalf("Reserve(): %v", err)
+	}
+	if _, err := machine.Reserved(t.Context(), entries, reserved.Transfer); err != nil {
+		t.Fatalf("Reserved(): %v", err)
+	}
+
+	if len(entries.reservedReads) != 1 || entries.reservedReads[0] != string(reserved.Transfer) {
+		t.Errorf("read back through %v, want the reservation's own %s", entries.reservedReads, reserved.Transfer)
 	}
 }

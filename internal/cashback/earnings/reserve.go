@@ -134,6 +134,7 @@ func Covering(entries []Entry, want money.Amount) ([]Entry, money.Amount, error)
 type ReservationStore interface {
 	EntryStore
 	ConfirmedEntriesFor(ctx context.Context, arg store.ConfirmedEntriesForParams) ([]store.CashbackEntry, error)
+	EntriesReservedUnder(ctx context.Context, ledgerTransferRef string) ([]store.CashbackEntry, error)
 }
 
 // Total sums a set of entries in one currency.
@@ -235,30 +236,91 @@ type Reservation struct {
 // still the member's to reserve. Every entry moved, every transition recorded
 // and every event appended commit together or none of them do.
 func (e *Entries) Reserve(ctx context.Context, db events.RowQuerier, entries ReservationStore, taking []Entry, cause uuid.UUID) (Reservation, error) {
+	return e.moveTogether(ctx, db, entries, taking, StateConfirmed, StateReserved, reservationKey(cause), cause)
+}
+
+// Reserved reads and LOCKS every entry one reservation claimed, oldest first.
+//
+// The reservation is named by its transfer reference rather than by the
+// request, because the transfer is the seam C-7 already uses (migration
+// 0016): there is one statement of which entries a payment covers, and this
+// reads that one rather than adding a second.
+//
+// The lock is why this is separate from [Entries.Release], for the reason
+// [Entries.Confirmed] is separate from [Entries.Reserve]: the caller decides
+// between the two calls, and both have to see one set of rows. The
+// transaction must stay open across them.
+func (e *Entries) Reserved(ctx context.Context, entries ReservationStore, transfer wallet.TransferRef) ([]Entry, error) {
+	if entries == nil {
+		return nil, ErrNoEntryStore
+	}
+	rows, err := entries.EntriesReservedUnder(ctx, string(transfer))
+	if err != nil {
+		return nil, fmt.Errorf("earnings: reading what %s reserved: %w", transfer, err)
+	}
+	held := make([]Entry, 0, len(rows))
+	for _, row := range rows {
+		entry, err := entryFrom(row)
+		if err != nil {
+			return nil, err
+		}
+		held = append(held, entry)
+	}
+	return held, nil
+}
+
+// Release moves a reservation's entries back to confirmed under ONE ledger
+// transfer, undoing [Entries.Reserve].
+//
+// The member's total does not change: both accounts are theirs, and what
+// moves is which bucket counts toward the threshold. That is what makes a
+// release the exact inverse of a reservation rather than a refund.
+//
+// One transfer for the whole set, for [Entries.Reserve]'s reason and one
+// more: a release recorded as several transfers would leave the entries of
+// one withdrawal findable only in pieces, and an auditor reading the
+// provenance of a rejected request would see a partial answer.
+//
+// Called by a rejection (T093) and by a terminal rail failure (FR-053, US4
+// scenario 5). Both release the same reservation and both derive the key from
+// the request, so whichever happens cannot be followed by the other posting a
+// second time - and only one of them can happen at all, because a rejection
+// is a decision before approval and a rail failure is one after it.
+func (e *Entries) Release(ctx context.Context, db events.RowQuerier, entries ReservationStore, releasing []Entry, cause uuid.UUID) (Reservation, error) {
+	return e.moveTogether(ctx, db, entries, releasing, StateReserved, StateConfirmed, releaseKey(cause), cause)
+}
+
+// moveTogether moves a whole set between two stages under ONE transfer.
+//
+// The shared body of [Entries.Reserve] and [Entries.Release], because the two
+// differ only in direction and key. Written once rather than twice: a
+// reservation and its release that drifted apart would be money moved out of
+// a member's balance by one rule and back by another.
+func (e *Entries) moveTogether(ctx context.Context, db events.RowQuerier, entries ReservationStore, set []Entry, from, to State, key string, cause uuid.UUID) (Reservation, error) {
 	switch {
 	case entries == nil:
 		return Reservation{}, ErrNoEntryStore
 	case cause == uuid.Nil:
 		return Reservation{}, ErrNoReservationCause
-	case len(taking) == 0:
-		return Reservation{}, fmt.Errorf("%w: no entries to reserve", ErrNothingToReserve)
+	case len(set) == 0:
+		return Reservation{}, fmt.Errorf("%w: no entries to move to %s", ErrNothingToReserve, to)
 	}
 
-	member := taking[0].Member
-	for _, entry := range taking {
+	member := set[0].Member
+	for _, entry := range set {
 		switch {
 		case entry.Member != member:
 			// One transfer moves one member's money between one pair of
 			// stage accounts. A set spanning two members would post half of
-			// somebody else's balance into this member's reserved account.
+			// somebody else's balance into this member's account.
 			return Reservation{}, fmt.Errorf(
-				"earnings: entry %s belongs to %s and %s belongs to %s: a reservation is one member's",
-				taking[0].ID, member, entry.ID, entry.Member)
-		case entry.State != StateConfirmed:
-			return Reservation{}, ErrIllegalTransition{From: entry.State, To: StateReserved}
+				"earnings: entry %s belongs to %s and %s belongs to %s: one transfer is one member's",
+				set[0].ID, member, entry.ID, entry.Member)
+		case entry.State != from:
+			return Reservation{}, ErrIllegalTransition{From: entry.State, To: to}
 		}
 	}
-	total, err := Total(taking, taking[0].Amount.Currency)
+	total, err := Total(set, set[0].Amount.Currency)
 	if err != nil {
 		return Reservation{}, err
 	}
@@ -266,46 +328,46 @@ func (e *Entries) Reserve(ctx context.Context, db events.RowQuerier, entries Res
 		return Reservation{}, fmt.Errorf("%w: %s", ErrNothingToReserve, total)
 	}
 
-	where, err := postingsFor(member, StateConfirmed, StateReserved, e.receivable)
+	where, err := postingsFor(member, from, to, e.receivable)
 	if err != nil {
 		return Reservation{}, err
 	}
-	ref, err := e.post(ctx, where, total, reservationKey(cause))
+	ref, err := e.post(ctx, where, total, key)
 	if err != nil {
 		return Reservation{}, err
 	}
 
-	reserved := make([]Entry, 0, len(taking))
-	for _, entry := range taking {
-		moved, err := e.reserveOne(ctx, db, entries, entry, ref)
+	moved := make([]Entry, 0, len(set))
+	for _, entry := range set {
+		one, err := e.moveOne(ctx, db, entries, entry, from, to, ref)
 		if err != nil {
 			return Reservation{}, err
 		}
-		reserved = append(reserved, moved)
+		moved = append(moved, one)
 	}
-	return Reservation{Transfer: ref, Entries: reserved, Amount: total}, nil
+	return Reservation{Transfer: ref, Entries: moved, Amount: total}, nil
 }
 
-// reserveOne moves one entry into reserved against the transfer already
-// posted for the whole set.
+// moveOne moves one entry against the transfer already posted for the whole
+// set.
 //
-// The conditional move is kept even though ConfirmedEntriesFor locked the row:
-// the lock makes a concurrent withdrawal wait, and this makes a row that
-// somehow left confirmed anyway say so rather than be recorded as having
-// moved from a state it was not in.
-func (e *Entries) reserveOne(ctx context.Context, db events.RowQuerier, entries ReservationStore, entry Entry, ref wallet.TransferRef) (Entry, error) {
+// The conditional move is kept even though the caller's read locked the row:
+// the lock makes a concurrent decision wait, and this makes a row that
+// somehow left the state anyway say so rather than be recorded as having
+// moved from one it was not in.
+func (e *Entries) moveOne(ctx context.Context, db events.RowQuerier, entries ReservationStore, entry Entry, from, to State, ref wallet.TransferRef) (Entry, error) {
 	moved, err := entries.MoveEntry(ctx, store.MoveEntryParams{
 		ID:        pgUUID(entry.ID),
-		FromState: string(StateConfirmed),
-		ToState:   string(StateReserved),
+		FromState: string(from),
+		ToState:   string(to),
 	})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		return Entry{}, fmt.Errorf("%w: %s was not %s", ErrEntryMoved, entry.ID, StateConfirmed)
+		return Entry{}, fmt.Errorf("%w: %s was not %s", ErrEntryMoved, entry.ID, from)
 	case err != nil:
-		return Entry{}, fmt.Errorf("%w: reserving %s: %w", ErrNotRecorded, entry.ID, err)
+		return Entry{}, fmt.Errorf("%w: moving %s to %s: %w", ErrNotRecorded, entry.ID, to, err)
 	}
-	recorded, err := e.record(ctx, entry.ID, StateConfirmed, StateReserved, ref, "", uuid.Nil)
+	recorded, err := e.record(ctx, entry.ID, from, to, ref, "", uuid.Nil)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -325,4 +387,14 @@ func (e *Entries) reserveOne(ctx context.Context, db events.RowQuerier, entries 
 // request id is the one fact that cannot move under a retry.
 func reservationKey(cause uuid.UUID) string {
 	return fmt.Sprintf("withdrawal:%s:reserve", cause)
+}
+
+// releaseKey derives the key for putting a reservation back (D8).
+//
+// The request again, and distinct from [reservationKey] by one word. Sharing
+// the reservation's key would make the release a REPLAY of it - the ledger
+// would return the original reference and record nothing - and the money
+// would stay reserved while every table said it had come back.
+func releaseKey(cause uuid.UUID) string {
+	return fmt.Sprintf("withdrawal:%s:release", cause)
 }
