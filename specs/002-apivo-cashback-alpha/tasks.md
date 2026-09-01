@@ -202,11 +202,11 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 
 **Independent Test**: Drive a withdrawal end to end against the stub rail including duplicate submission, rail timeout and terminal failure; assert exactly-once semantics and balance integrity in every path.
 
-- [ ] T086 [US4] Implement the payout destination store with the ownership check in `internal/cashback/payout/destination.go` + `store/`
-- [ ] T087 [US4] Implement destination verification and the rule that an unverified destination cannot receive money, in `internal/cashback/payout/verification.go`
-- [ ] T088 [US4] Define the `PayoutRail` port with terminal/retryable failure classification in `internal/cashback/payout/rail.go` per [contracts/ports.md](contracts/ports.md) §3
-- [ ] T089 [P] [US4] Implement the `manual` rail (operator executes, records the reference, still enforces C-4 and C-5) in `internal/cashback/payout/manual/manual.go`
-- [ ] T090 [P] [US4] Implement the `stub` rail with timeout, duplicate-submission and permanent-failure modes in `internal/cashback/payout/stub/stub.go`
+- [x] T086 [US4] Implement the payout destination store with the ownership check in `internal/cashback/payout/destination.go` + `store/`
+- [x] T087 [US4] Implement destination verification and the rule that an unverified destination cannot receive money, in `internal/cashback/payout/verification.go`
+- [x] T088 [US4] Define the `PayoutRail` port with terminal/retryable failure classification in `internal/cashback/payout/rail.go` per [contracts/ports.md](contracts/ports.md) §3
+- [x] T089 [P] [US4] Implement the `manual` rail (operator executes, records the reference, still enforces C-4 and C-5) in `internal/cashback/payout/manual/manual.go`
+- [x] T090 [P] [US4] Implement the `stub` rail with timeout, duplicate-submission and permanent-failure modes in `internal/cashback/payout/stub/stub.go`
 - [ ] T091 [US4] Implement `POST /withdrawals` reserving the amount in the same transaction as the request, in `internal/cashback/payout/handlers.go`
 - [ ] T092 [US4] Implement `POST /ops/withdrawals/{id}/approve` recording `approved_by` and submitting with the request-derived idempotency key, in `internal/cashback/ops/withdrawals.go`
 - [ ] T093 [US4] Implement rejection releasing the reservation back to confirmed balance, in `internal/cashback/payout/reject.go`
