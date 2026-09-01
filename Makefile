@@ -17,7 +17,7 @@ DATABASE_URL_TEST ?= postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
 # `make test RACE=` and let CI cover the race detection.
 RACE ?= -race
 
-.PHONY: setup db-up db-down test test-unit cover vet lint openapi-lint sqlc ts-types web-install web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status cashback-up cashback-seed cashback-scenario cashback-verify-ledger cashback-brand-check migration-lint ref-lint
+.PHONY: setup db-up db-down test test-unit cover arch-test vet lint openapi-lint sqlc ts-types web-install web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status cashback-up cashback-seed cashback-scenario cashback-verify-ledger cashback-brand-check migration-lint ref-lint
 
 # ---------------------------------------------------------------------------
 # `missing` — how a cashback target behaves before its dependency has landed.
@@ -86,6 +86,14 @@ test: db-up
 cover: db-up
 	DATABASE_URL="$(DATABASE_URL_TEST)" $(GO) test $(RACE) -shuffle=on -covermode=atomic -coverprofile=coverage.out -coverpkg=./... ./...
 	sh scripts/coverage_gate.sh 90 coverage.out
+
+## arch-test: run the architecture conformance tests (module boundaries, SC-008)
+##
+## Named separately from `test` because quickstart V9 runs it on its own:
+## boundaries are the check somebody reaches for after moving code, and it
+## needs no database and no compose stack to answer.
+arch-test:
+	$(GO) test ./internal/arch/...
 
 ## vet: run go vet
 vet:
