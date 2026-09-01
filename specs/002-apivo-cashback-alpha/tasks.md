@@ -232,7 +232,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [x] T102 [US5] Implement place-scoped merchant queries over `merchant_place` in `internal/cashback/catalogue/store/queries/`
 - [ ] T103 [US5] Implement `GET /catalogue` with separate `lang` and `place` parameters in `internal/cashback/catalogue/handlers.go`
 - [x] T104 [US5] Implement `GET /merchants/{slug}` returning every published rate band with conditions and exclusions, in `internal/cashback/catalogue/handlers.go`
-- [ ] T105 [US5] Implement catalogue import from `Network.FetchCatalogue` recording source and retrieval time, in `internal/cashback/catalogue/import.go`
+- [x] T105 [US5] Implement catalogue import from `Network.FetchCatalogue` recording source and retrieval time, in `internal/cashback/catalogue/import.go` — the importer landed earlier and nothing was calling it, which is why this stayed open: a deployment kept whatever retailers were in the database when it was last seeded and never learned about a new one, a departed one or a renamed one. It now runs every six hours in one transaction, gated on `NETWORK_SOURCE_LANGUAGE` and `BRAND_DIR`; with either unset the api serves normally and says at ERROR that no import is scheduled
 - [ ] T106 [P] [US5] Build the catalogue listing page in `web/src/pages/[lang]/[place]/cashback/index.astro`
 - [ ] T107 [P] [US5] Build the merchant detail page in `web/src/pages/[lang]/[place]/cashback/[slug].astro`
 - [x] T108 [P] [US5] Test language fallback is labelled and never blank or invented, in `internal/cashback/catalogue/copy_test.go`
