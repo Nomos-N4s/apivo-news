@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -244,4 +245,97 @@ func TestARefusalIsAnnouncedWithItsReason(t *testing.T) {
 	if events := announcementsOf(ctx, t, pool, "cashback.withdrawal.approved", request.ID); len(events) != 0 {
 		t.Errorf("a refused request left %d approval events, want none", len(events))
 	}
+}
+
+// TestAPaymentThatWillNeverHappenIsAnnounced. The classification is what
+// tells a consumer this from a payment still being retried - the only thing
+// this event exists to say - and the subject is the PAYOUT rather than the
+// request, because it is a fact about the payment and per-subject ordering
+// is the only ordering the stream guarantees.
+func TestAPaymentThatWillNeverHappenIsAnnounced(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f, request := approvable(ctx, t)
+	operator := seedOperator(ctx, t, pool)
+	rail := stub.New(stub.WithTimeout())
+
+	if _, err := approvals(t, f, rail).Approve(ctx, payout.Approval{
+		Request: request.ID, Operator: operator,
+	}); !errors.Is(err, payout.ErrRailRetryable) {
+		t.Fatalf("the approval = %v, want a retryable rail failure", err)
+	}
+	// A retryable failure announces nothing: the payment may still happen,
+	// and a consumer told otherwise would write the member off.
+	if announced := failuresFor(ctx, t, pool, request.ID); announced != 0 {
+		t.Errorf("a timed-out submission announced %d failures, want none", announced)
+	}
+
+	rail.FailNext(payout.Terminal(errors.New("the destination account is closed")))
+	outcome, err := retries(t, f, rail).Retry(ctx, request.ID)
+	if err != nil {
+		t.Fatalf("Retry(): %v", err)
+	}
+
+	events := announcementsOf(ctx, t, pool, "cashback.payout.failed", outcome.Payout.ID)
+	if len(events) != 1 {
+		t.Fatalf("got %d cashback.payout.failed events, want exactly 1", len(events))
+	}
+	one := events[0]
+	if one.Payload["classification"] != "terminal" {
+		t.Errorf("classification = %v, want terminal", one.Payload["classification"])
+	}
+	if one.Payload["request_id"] != request.ID.String() {
+		t.Errorf("request_id = %v, want %s", one.Payload["request_id"], request.ID)
+	}
+	if one.Payload["payout_id"] != outcome.Payout.ID.String() {
+		t.Errorf("payout_id = %v, want %s", one.Payload["payout_id"], outcome.Payout.ID)
+	}
+	// The instant is the DECISION's, not the submission's. The payout row
+	// carries only when the money was first sent, and an event that used it
+	// would date the failure to whenever the payment was attempted - which
+	// on a payment retried for days is a lie a consumer cannot detect.
+	var decidedAt, submittedAt time.Time
+	if err := pool.QueryRow(ctx,
+		`select r.decided_at, p.submitted_at
+		   from cashback.withdrawal_request r
+		   join cashback.payout p on p.request_id = r.id
+		  where r.id = $1`,
+		pgtype.UUID{Bytes: request.ID, Valid: true}).Scan(&decidedAt, &submittedAt); err != nil {
+		t.Fatalf("reading the two instants: %v", err)
+	}
+	if decidedAt.Equal(submittedAt) {
+		t.Fatal("the decision and the submission share an instant; this case cannot tell them apart")
+	}
+	announcedAt, err := time.Parse(time.RFC3339Nano, one.Payload["at"].(string))
+	if err != nil {
+		t.Fatalf("the payload's at is not a timestamp: %v (%v)", err, one.Payload["at"])
+	}
+	if !announcedAt.Equal(decidedAt) {
+		t.Errorf("at = %s, want the decision's %s (the submission's is %s)",
+			announcedAt, decidedAt, submittedAt)
+	}
+
+	// The rail never answered, so there is no reference to carry - and an
+	// empty string would say the rail named this payment "".
+	if ref, present := one.Payload["rail_reference"]; present {
+		t.Errorf("rail_reference = %v on a payment the rail never named, want it absent", ref)
+	}
+	// The refusal is also the request's decision, and both are announced.
+	if refusals := announcementsOf(ctx, t, pool, "cashback.withdrawal.rejected", request.ID); len(refusals) != 0 {
+		t.Errorf("a failed payment announced %d rejections; a rejection is a decision BEFORE approval", len(refusals))
+	}
+}
+
+// failuresFor counts the payout failures announced about one request. Keyed
+// on the request rather than the payout because the interesting moment is
+// before the failure exists, when there is no payout id to ask about.
+func failuresFor(ctx context.Context, t *testing.T, pool *pgxpool.Pool, request uuid.UUID) int {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from domain_event
+		  where type = 'cashback.payout.failed' and payload->>'request_id' = $1`,
+		request.String()).Scan(&count); err != nil {
+		t.Fatalf("counting payout failures for %s: %v", request, err)
+	}
+	return count
 }

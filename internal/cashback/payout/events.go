@@ -187,7 +187,7 @@ func (a *Announcer) Rejected(ctx context.Context, db events.RowQuerier, refused 
 // about the payment, and per-subject ordering is the only ordering the
 // stream guarantees. Keyed on the payout, which fails once - payout_guard
 // makes failed terminal.
-func (a *Announcer) Failed(ctx context.Context, db events.RowQuerier, failed Payout, classification string) error {
+func (a *Announcer) Failed(ctx context.Context, db events.RowQuerier, failed Payout, classification string, at time.Time) error {
 	switch {
 	case failed.ID == uuid.Nil:
 		return fmt.Errorf("%w: %s about a payout the database did not record", ErrNotAnnounced, TypePayoutFailed)
@@ -208,7 +208,11 @@ func (a *Announcer) Failed(ctx context.Context, db events.RowQuerier, failed Pay
 		RequestID:      failed.Request,
 		RailReference:  failed.RailReference,
 		Classification: classification,
-		At:             failed.SubmittedAt,
+		// The DECISION's instant, passed in by the caller that holds it.
+		// The payout row carries only when it was submitted, which is not
+		// when it failed - and an event that used it would date the failure
+		// to whenever the money was first sent.
+		At: at,
 	})
 	if err != nil {
 		return fmt.Errorf("%w: %s: %w", ErrNotAnnounced, TypePayoutFailed, err)

@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -62,13 +63,13 @@ func TestWhatTheAnnouncerRefusesToSay(t *testing.T) {
 			})
 		},
 		"a failure with no payout": func() error {
-			return announcer.Failed(ctx, nil, payout.Payout{Request: uuid.New()}, "terminal")
+			return announcer.Failed(ctx, nil, payout.Payout{Request: uuid.New()}, "terminal", time.Now())
 		},
 		// Without it a consumer cannot tell a payment that will never happen
 		// from one still being retried, which is the only thing this event
 		// exists to say.
 		"a failure with no classification": func() error {
-			return announcer.Failed(ctx, nil, payout.Payout{ID: uuid.New(), Request: uuid.New()}, "")
+			return announcer.Failed(ctx, nil, payout.Payout{ID: uuid.New(), Request: uuid.New()}, "", time.Now())
 		},
 	} {
 		if err := announce(); !errors.Is(err, payout.ErrNotAnnounced) {

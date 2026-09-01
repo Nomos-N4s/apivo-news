@@ -76,6 +76,7 @@ type Retries struct {
 	ledger     wallet.Ledger
 	receivable string
 	descriptor string
+	announcer  *Announcer
 }
 
 // NewRetries builds the service. The receivable may be blank and the
@@ -93,7 +94,14 @@ func NewRetries(db Beginner, rail Rail, ledger wallet.Ledger, receivable, descri
 	case descriptor == "":
 		return nil, ErrNoDescriptor
 	}
-	return &Retries{db: db, rail: rail, ledger: ledger, receivable: receivable, descriptor: descriptor}, nil
+	announcer, err := NewAnnouncer()
+	if err != nil {
+		return nil, err
+	}
+	return &Retries{
+		db: db, rail: rail, ledger: ledger, receivable: receivable,
+		descriptor: descriptor, announcer: announcer,
+	}, nil
 }
 
 // Retry re-sends the payment for one request, or gives up on it.
@@ -315,18 +323,30 @@ func (r *Retries) giveUp(ctx context.Context, request uuid.UUID, cause error) (O
 	// this request, and the rail is what decided the payment. Recording
 	// somebody else - or nobody - would lose the one name C-4 exists to
 	// keep.
-	if _, err := queries.RecordWithdrawalDecision(ctx, store.RecordWithdrawalDecisionParams{
+	decidedRow, err := queries.RecordWithdrawalDecision(ctx, store.RecordWithdrawalDecisionParams{
 		ID:             pgtype.UUID{Bytes: request, Valid: true},
 		FromState:      string(StateApproved),
 		ToState:        string(StateFailed),
 		DecidedBy:      pgtype.UUID{Bytes: failing.ApprovedBy, Valid: true},
 		DecisionReason: pgtype.Text{String: railRefusal(cause), Valid: true},
-	}); err != nil {
+	})
+	if err != nil {
 		return Outcome{}, fmt.Errorf("%w: failing %s: %w", ErrNotRetried, request, err)
 	}
 
 	failed, err := payoutFrom(failedRow)
 	if err != nil {
+		return Outcome{}, err
+	}
+	decided, err := withdrawalFrom(decidedRow)
+	if err != nil {
+		return Outcome{}, err
+	}
+	// Beside the release and both state changes, so the money going back
+	// and the stream saying why are one commit. The instant is the
+	// decision's, read off the request row: the payout row carries only
+	// when it was SUBMITTED, which is not when it failed.
+	if err := r.announcer.Failed(ctx, tx, failed, classificationOf(cause), decided.DecidedAt); err != nil {
 		return Outcome{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -356,4 +376,22 @@ func railRefusal(cause error) string {
 		said = string(runes[:most]) + "..."
 	}
 	return said
+}
+
+// classificationOf names the rail's verdict for the event payload.
+//
+// Only a terminal failure reaches [Retries.giveUp], so this answers
+// "terminal" in practice - and it is derived rather than written out, because
+// a field that says what the caller assumed rather than what the error
+// carries is a field that goes on saying it after the assumption stops
+// holding.
+func classificationOf(cause error) string {
+	switch {
+	case errors.Is(cause, ErrRailTerminal):
+		return "terminal"
+	case errors.Is(cause, ErrRailRetryable):
+		return "retryable"
+	default:
+		return "unclassified"
+	}
 }
