@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -50,7 +51,7 @@ func discardLogger() *slog.Logger {
 // fixture's member as "good-token".
 func handlerFor(t *testing.T, f fixture) http.Handler {
 	t.Helper()
-	h, err := payout.NewHandler(discardLogger(), f.withdrawals, stubAuth{token: "good-token", member: f.member})
+	h, err := payout.NewHandler(discardLogger(), f.withdrawals, f.destinations, &stubVault{}, stubAuth{token: "good-token", member: f.member})
 	if err != nil {
 		t.Fatalf("NewHandler(): %v", err)
 	}
@@ -298,7 +299,7 @@ func TestAPathNobodyServesIsANotFound(t *testing.T) {
 	ctx, _ := withdrawalPool(t)
 	h := handlerFor(t, aFixture(ctx, t, 1000, 5000))
 
-	req := httptest.NewRequest(http.MethodGet, payout.Prefix+"/nothing-here", nil)
+	req := httptest.NewRequest(http.MethodGet, payout.Prefix+"/"+uuid.NewString()+"/nothing-here", nil)
 	req.Header.Set("Authorization", "Bearer good-token")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -309,7 +310,7 @@ func TestAPathNobodyServesIsANotFound(t *testing.T) {
 
 	// And without a token it is a 401: the gate wraps the whole mux, so a
 	// path nobody serves cannot be probed unauthenticated either.
-	unauthenticated := httptest.NewRequest(http.MethodGet, payout.Prefix+"/nothing-here", nil)
+	unauthenticated := httptest.NewRequest(http.MethodGet, payout.Prefix+"/"+uuid.NewString()+"/nothing-here", nil)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, unauthenticated)
 	if rec.Code != http.StatusUnauthorized {
@@ -321,9 +322,15 @@ func TestAPathNobodyServesIsANotFound(t *testing.T) {
 // step, so the OpenAPI check reads what is registered rather than what
 // somebody remembered.
 func TestEveryRouteIsListed(t *testing.T) {
-	patterns := payout.Patterns()
-	if len(patterns) != 1 || patterns[0] != "POST "+payout.Prefix {
-		t.Errorf("Patterns() = %v, want the one POST route", patterns)
+	want := []string{
+		"GET " + payout.DestinationsPrefix,
+		"GET " + payout.Prefix,
+		"GET " + payout.Prefix + "/{id}",
+		"POST " + payout.DestinationsPrefix,
+		"POST " + payout.Prefix,
+	}
+	if got := payout.Patterns(); !slices.Equal(got, want) {
+		t.Errorf("Patterns() = %v, want %v", got, want)
 	}
 }
 
@@ -334,13 +341,16 @@ func TestAHandlerMissingAPartIsRefusedAtConstruction(t *testing.T) {
 	f := aFixture(ctx, t, 1000, 5000)
 	auth := stubAuth{token: "good-token", member: f.member}
 
-	if _, err := payout.NewHandler(nil, f.withdrawals, auth); err == nil {
+	if _, err := payout.NewHandler(nil, f.withdrawals, f.destinations, &stubVault{}, auth); err == nil {
 		t.Error("a handler with no logger was built, want a refusal")
 	}
-	if _, err := payout.NewHandler(discardLogger(), nil, auth); !errors.Is(err, payout.ErrNoWithdrawalStore) {
+	if _, err := payout.NewHandler(discardLogger(), nil, f.destinations, &stubVault{}, auth); !errors.Is(err, payout.ErrNoWithdrawalStore) {
 		t.Errorf("with no service = %v, want one wrapping %v", err, payout.ErrNoWithdrawalStore)
 	}
-	if _, err := payout.NewHandler(discardLogger(), f.withdrawals, nil); err == nil {
+	if _, err := payout.NewHandler(discardLogger(), f.withdrawals, nil, &stubVault{}, auth); !errors.Is(err, payout.ErrNoDestinationStore) {
+		t.Errorf("with no destination store = %v, want one wrapping %v", err, payout.ErrNoDestinationStore)
+	}
+	if _, err := payout.NewHandler(discardLogger(), f.withdrawals, f.destinations, &stubVault{}, nil); err == nil {
 		t.Error("a handler with nowhere to authenticate was built, want a refusal")
 	}
 }
@@ -356,7 +366,7 @@ func TestADeploymentThatCannotPayOutAnswers503(t *testing.T) {
 		"no receivable": mustWithdrawals(t, f, "", euro(t, 1000)),
 		"no threshold":  mustWithdrawals(t, f, receivable, money.Amount{}),
 	} {
-		h, err := payout.NewHandler(discardLogger(), withdrawals,
+		h, err := payout.NewHandler(discardLogger(), withdrawals, f.destinations, &stubVault{},
 			stubAuth{token: "good-token", member: f.member})
 		if err != nil {
 			t.Fatalf("%s: NewHandler(): %v", name, err)

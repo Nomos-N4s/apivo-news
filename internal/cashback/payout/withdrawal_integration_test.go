@@ -143,11 +143,12 @@ func euro(t *testing.T, minor int64) money.Amount {
 // verified destination, and the service over a ledger that agrees with the
 // entries.
 type fixture struct {
-	pool        *pgxpool.Pool
-	member      uuid.UUID
-	destination uuid.UUID
-	ledger      *memory.Ledger
-	withdrawals *payout.Withdrawals
+	pool         *pgxpool.Pool
+	member       uuid.UUID
+	destination  uuid.UUID
+	ledger       *memory.Ledger
+	withdrawals  *payout.Withdrawals
+	destinations *payout.Destinations
 }
 
 // aFixture seeds a member with the given confirmed entries, a verified
@@ -175,7 +176,14 @@ func aFixture(ctx context.Context, t *testing.T, threshold int64, confirmed ...i
 	if err != nil {
 		t.Fatalf("NewWithdrawals(): %v", err)
 	}
-	return fixture{pool: pool, member: member, destination: destination, ledger: ledger, withdrawals: withdrawals}
+	destinations, err := payout.NewDestinations(pool)
+	if err != nil {
+		t.Fatalf("NewDestinations(): %v", err)
+	}
+	return fixture{
+		pool: pool, member: member, destination: destination, ledger: ledger,
+		withdrawals: withdrawals, destinations: destinations,
+	}
 }
 
 // seedMember writes an account for one case to own.
@@ -267,25 +275,23 @@ const fixtureBrand = "fixture-de"
 
 // seedConfirmedEntry writes one confirmed entry with the evidence C-2 makes
 // mandatory behind it.
-func seedConfirmedEntry(ctx context.Context, t *testing.T, pool *pgxpool.Pool, member uuid.UUID, minor int64) uuid.UUID {
+func seedConfirmedEntry(ctx context.Context, t *testing.T, pool *pgxpool.Pool, member uuid.UUID, minor int64) {
 	t.Helper()
-	return seedConfirmedEntryForBrand(ctx, t, pool, member, minor, fixtureBrand)
+	seedConfirmedEntryForBrand(ctx, t, pool, member, minor, fixtureBrand)
 }
 
 // seedConfirmedEntryForBrand writes one confirmed entry under a named brand,
 // so a case can build the balance spanning two that no single payout can pay.
-func seedConfirmedEntryForBrand(ctx context.Context, t *testing.T, pool *pgxpool.Pool, member uuid.UUID, minor int64, brand string) uuid.UUID {
+func seedConfirmedEntryForBrand(ctx context.Context, t *testing.T, pool *pgxpool.Pool, member uuid.UUID, minor int64, brand string) {
 	t.Helper()
 	report := seedReport(ctx, t, pool, minor)
-	var id pgtype.UUID
-	if err := pool.QueryRow(ctx, `
+	if _, err := pool.Exec(ctx, `
 		insert into cashback.entry (account_id, brand_id, network_transaction_id, state, amount_minor, currency)
-		values ($1, $2, $3, 'confirmed', $4, 'EUR') returning id`,
+		values ($1, $2, $3, 'confirmed', $4, 'EUR')`,
 		pgtype.UUID{Bytes: member, Valid: true}, brand,
-		pgtype.UUID{Bytes: report, Valid: true}, minor).Scan(&id); err != nil {
+		pgtype.UUID{Bytes: report, Valid: true}, minor); err != nil {
 		t.Fatalf("seeding a confirmed entry: %v", err)
 	}
-	return uuid.UUID(id.Bytes)
 }
 
 // credit posts the money into the member's confirmed stage account, so the

@@ -167,7 +167,8 @@ func TestOpenAPISecurityMatchesTheAuthGate(t *testing.T) {
 			strings.HasPrefix(path, walletPrefix) ||
 			strings.HasPrefix(path, participationPrefix) ||
 			strings.HasPrefix(path, exportPrefix) ||
-			strings.HasPrefix(path, withdrawalPrefix)
+			strings.HasPrefix(path, withdrawalPrefix) ||
+			strings.HasPrefix(path, destinationsPrefix)
 		switch {
 		case gated && !requiresBearer(op):
 			t.Errorf("%s is behind an auth gate but the document does not require bearerAuth on it", pattern)

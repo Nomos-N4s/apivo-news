@@ -103,6 +103,12 @@ const walletPrefix = wallet.Prefix
 // owns the string for the reason clickoutPrefix does.
 const withdrawalPrefix = payout.Prefix
 
+// destinationsPrefix is where a member records and reads the places they may
+// be paid. A sibling of the withdrawals tree rather than a path beneath it: a
+// destination outlives the withdrawals that name it, and proving one is yours
+// is a separate act from asking to be paid at it (FR-051).
+const destinationsPrefix = payout.DestinationsPrefix
+
 // exportPrefix is the member's own history as a document. A sibling of the
 // wallet for the reason participationPrefix is: FR-003 pairs exporting with
 // leaving, and a member who has left still has a record to take.
@@ -526,7 +532,18 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		return nil, nil, err
 	}
 	memberSurface := wallet.NewHandler(log, wallets, history, participations, exports, walletAuth{ids: ids})
-	withdrawalSurface, err := payout.NewHandler(log, withdrawals, payoutAuth{ids: ids})
+	destinations, err := payout.NewDestinations(pool)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	// No details vault is wired, and that is the honest state of the alpha:
+	// a vault is somebody's KMS or a processor's tokenisation endpoint, and
+	// picking one here would pick it for every deployment. Passing nil
+	// means POST /payout-destinations answers 503 naming nothing else -
+	// every other route on the surface, including withdrawing to a
+	// destination that already exists, works (payout.ErrNoVault).
+	withdrawalSurface, err := payout.NewHandler(log, withdrawals, destinations, nil, payoutAuth{ids: ids})
 	if err != nil {
 		stop()
 		return nil, nil, err
@@ -563,6 +580,8 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		// C-4 and C-5 exist for.
 		platformhttp.Route{Pattern: withdrawalPrefix, Handler: withdrawalSurface},
 		platformhttp.Route{Pattern: withdrawalPrefix + "/", Handler: withdrawalSurface},
+		platformhttp.Route{Pattern: destinationsPrefix, Handler: withdrawalSurface},
+		platformhttp.Route{Pattern: destinationsPrefix + "/", Handler: withdrawalSurface},
 	), stop, nil
 }
 

@@ -20,6 +20,8 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -28,15 +30,30 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
 
-// Prefix is the path this module serves. The composition root mounts the
-// handler at it AND at it plus a trailing slash, so a stray sub-path is
-// answered here in problem+json rather than handed to whatever else claims
-// the namespace.
+// Prefix is the withdrawals path this module serves. The composition root
+// mounts the handler at it AND at it plus a trailing slash, so a stray
+// sub-path is answered here in problem+json rather than handed to whatever
+// else claims the namespace.
 const Prefix = "/api/v1/cashback/withdrawals"
 
-// maxBodyBytes caps a withdrawal request body. It carries an id and an
-// amount; anything larger is not a request this endpoint has a reading of.
-const maxBodyBytes = 4 << 10
+// DestinationsPrefix is where a member records and reads the places they may
+// be paid. A SIBLING of the withdrawals tree rather than a path beneath it:
+// a destination outlives the withdrawals that name it, and FR-051 makes
+// proving one is yours a separate act from asking to be paid at it.
+//
+// Served by this module's handler all the same, which the composition root
+// mounts at both prefixes - one module, one auth gate, one error convention.
+const DestinationsPrefix = destinationsPath
+
+// maxBodyBytes caps a request body on this surface. The largest legal one is
+// a destination's details, which is a handful of fields; anything larger is
+// not a request these endpoints have a reading of.
+const maxBodyBytes = 16 << 10
+
+// destinationsPath is where a member's payout destinations live, and
+// withdrawalsPath is [Prefix] itself - a member asks to be paid at the same
+// address they read their requests from.
+const destinationsPath = "/api/v1/cashback/payout-destinations"
 
 // The codes a client branches on, carried as the problem document's "code"
 // extension member. They are the contract's own spellings
@@ -56,9 +73,14 @@ const (
 
 // Handler serves the member withdrawal endpoints. Build it with NewHandler.
 type Handler struct {
-	log         *slog.Logger
-	withdrawals *Withdrawals
-	auth        MemberAuthenticator
+	log          *slog.Logger
+	withdrawals  *Withdrawals
+	destinations *Destinations
+	// vault is where bank details go instead of into this database
+	// (ADR-0003). May be nil: a deployment that has not chosen one answers
+	// 503 on the one endpoint that needs it and serves the rest.
+	vault DetailsVault
+	auth  MemberAuthenticator
 	// allow is the 405 classifier, derived from routes() in NewHandler so it
 	// cannot drift from what is actually registered.
 	allow platformhttp.AllowTable
@@ -66,23 +88,30 @@ type Handler struct {
 
 // NewHandler builds the withdrawal route table as an http.Handler for the
 // composition root to mount. Every route sits behind the requireMember gate.
-func NewHandler(log *slog.Logger, withdrawals *Withdrawals, auth MemberAuthenticator) (http.Handler, error) {
+func NewHandler(log *slog.Logger, withdrawals *Withdrawals, destinations *Destinations, vault DetailsVault, auth MemberAuthenticator) (http.Handler, error) {
 	switch {
 	case log == nil:
 		return nil, errors.New("payout: the withdrawal handler needs a logger")
 	case withdrawals == nil:
 		return nil, ErrNoWithdrawalStore
+	case destinations == nil:
+		return nil, ErrNoDestinationStore
 	case auth == nil:
 		return nil, errors.New("payout: the withdrawal handler needs somewhere to authenticate members")
 	}
-	h := &Handler{log: log, withdrawals: withdrawals, auth: auth}
+	// vault is deliberately absent from that list: see [ErrNoVault].
+	h := &Handler{log: log, withdrawals: withdrawals, destinations: destinations, vault: vault, auth: auth}
 	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
 	for pattern, handler := range h.routes() {
 		mux.HandleFunc(pattern, handler)
 	}
-	mux.HandleFunc(Prefix+"/", h.handleUnrouted)
-	mux.HandleFunc(Prefix, h.handleUnrouted)
+	// Both trees get the catch-all, so a stray sub-path under either is
+	// answered here in problem+json rather than handed on.
+	for _, prefix := range []string{Prefix, DestinationsPrefix} {
+		mux.HandleFunc(prefix+"/", h.handleUnrouted)
+		mux.HandleFunc(prefix, h.handleUnrouted)
+	}
 	return h.requireMember(mux), nil
 }
 
@@ -92,7 +121,11 @@ func NewHandler(log *slog.Logger, withdrawals *Withdrawals, auth MemberAuthentic
 // checked against the routes rather than against somebody's memory of them.
 func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
-		"POST " + Prefix: h.postWithdrawal,
+		"POST " + Prefix:             h.postWithdrawal,
+		"GET " + Prefix:              h.listWithdrawals,
+		"GET " + Prefix + "/{id}":    h.getWithdrawal,
+		"GET " + DestinationsPrefix:  h.listDestinations,
+		"POST " + DestinationsPrefix: h.postDestination,
 	}
 }
 
@@ -299,4 +332,228 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 		return false
 	}
 	return true
+}
+
+// timeFormat renders every timestamp on this surface: RFC 3339 with
+// sub-second precision, in UTC, so payloads are stable across the server's
+// local zone.
+const timeFormat = time.RFC3339Nano
+
+// stamp renders one instant, and the empty string for the zero value - a
+// decision nobody has made yet has no date, and "0001-01-01" is a date a
+// client would render.
+func stamp(at time.Time) *string {
+	if at.IsZero() {
+		return nil
+	}
+	rendered := at.UTC().Format(timeFormat)
+	return &rendered
+}
+
+// withdrawalItem is one request as a member reads it back.
+type withdrawalItem struct {
+	RequestID     string     `json:"request_id"`
+	DestinationID string     `json:"destination_id"`
+	Amount        amountJSON `json:"amount"`
+	State         string     `json:"state"`
+	RequestedAt   string     `json:"requested_at"`
+	// DecidedAt and DecisionReason are the operator's decision, null until
+	// one is made. The reason is what a refused member is owed (FR-061), so
+	// it is on the member's own view of their request rather than only on
+	// the operator's.
+	DecidedAt      *string `json:"decided_at"`
+	DecisionReason *string `json:"decision_reason"`
+	// PayoutReference is what the rail called the payment, null until a
+	// payout exists and the rail has answered. It is the string a member
+	// quotes to their bank, which is why it reaches them at all.
+	PayoutReference *string `json:"payout_reference"`
+}
+
+// listWithdrawals implements GET /api/v1/cashback/withdrawals.
+func (h *Handler) listWithdrawals(w http.ResponseWriter, r *http.Request) {
+	member := memberFrom(r.Context())
+	made, err := h.withdrawals.List(r.Context(), member.ID)
+	if err != nil {
+		h.log.ErrorContext(r.Context(), "listing a member's withdrawals", "error", err)
+		platformhttp.Problem(w, http.StatusInternalServerError, "")
+		return
+	}
+	items := make([]withdrawalItem, 0, len(made))
+	for _, one := range made {
+		items = append(items, withdrawalItemOf(one))
+	}
+	h.writeJSON(w, r, http.StatusOK, struct {
+		Items []withdrawalItem `json:"items"`
+	}{Items: items})
+}
+
+// getWithdrawal implements GET /api/v1/cashback/withdrawals/{id}.
+func (h *Handler) getWithdrawal(w http.ResponseWriter, r *http.Request) {
+	member := memberFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		platformhttp.Problem(w, http.StatusBadRequest, "the withdrawal id is not a UUID")
+		return
+	}
+	one, err := h.withdrawals.Get(r.Context(), member.ID, id)
+	switch {
+	case errors.Is(err, ErrWithdrawalNotFound):
+		// The same 404 for another member's request and for one that does
+		// not exist, so an id cannot be probed for existence.
+		platformhttp.Problem(w, http.StatusNotFound, "no such withdrawal request")
+		return
+	case err != nil:
+		h.log.ErrorContext(r.Context(), "reading a withdrawal", "error", err)
+		platformhttp.Problem(w, http.StatusInternalServerError, "")
+		return
+	}
+	h.writeJSON(w, r, http.StatusOK, withdrawalItemOf(one))
+}
+
+// withdrawalItemOf renders one request.
+func withdrawalItemOf(one Withdrawal) withdrawalItem {
+	item := withdrawalItem{
+		RequestID:     one.ID.String(),
+		DestinationID: one.Destination.String(),
+		Amount:        figure(one.Amount),
+		State:         one.State.String(),
+		RequestedAt:   one.RequestedAt.UTC().Format(timeFormat),
+		DecidedAt:     stamp(one.DecidedAt),
+	}
+	if one.DecisionReason != "" {
+		reason := one.DecisionReason
+		item.DecisionReason = &reason
+	}
+	return item
+}
+
+// destinationItem is one destination as a member reads it back.
+//
+// There is no details field and there never will be. What a member sees is
+// which rail it is for and whether it has been proved theirs; the details
+// are somewhere this service cannot read them from (ADR-0003), and an
+// endpoint that echoed them would be the leak the whole arrangement exists
+// to prevent.
+type destinationItem struct {
+	DestinationID string `json:"destination_id"`
+	Kind          string `json:"kind"`
+	// VerifiedAt is null until the member has proved this destination is
+	// theirs (FR-051), and VerifiedMethod says how. A withdrawal to one
+	// that is null is refused, so a client can tell before asking.
+	VerifiedAt     *string `json:"verified_at"`
+	VerifiedMethod *string `json:"verified_method"`
+	CreatedAt      string  `json:"created_at"`
+}
+
+func destinationItemOf(d Destination) destinationItem {
+	item := destinationItem{
+		DestinationID: d.ID.String(),
+		Kind:          d.Kind.String(),
+		VerifiedAt:    stamp(d.VerifiedAt),
+		CreatedAt:     d.CreatedAt.UTC().Format(timeFormat),
+	}
+	if d.VerifiedMethod != "" {
+		method := d.VerifiedMethod
+		item.VerifiedMethod = &method
+	}
+	return item
+}
+
+// listDestinations implements GET /api/v1/cashback/payout-destinations.
+func (h *Handler) listDestinations(w http.ResponseWriter, r *http.Request) {
+	member := memberFrom(r.Context())
+	held, err := h.destinations.List(r.Context(), member.ID)
+	if err != nil {
+		h.log.ErrorContext(r.Context(), "listing a member's payout destinations", "error", err)
+		platformhttp.Problem(w, http.StatusInternalServerError, "")
+		return
+	}
+	items := make([]destinationItem, 0, len(held))
+	for _, one := range held {
+		items = append(items, destinationItemOf(one))
+	}
+	h.writeJSON(w, r, http.StatusOK, struct {
+		Items []destinationItem `json:"items"`
+	}{Items: items})
+}
+
+// destinationRequestBody is what a member sends.
+//
+// Details arrive as a raw JSON document rather than a typed shape, because
+// what they contain differs by rail and the vault is the only thing
+// positioned to judge. This package does not look inside, does not store the
+// value, and does not put it in an error - it passes straight through to
+// [DetailsVault.Store] and what comes back is a reference.
+type destinationRequestBody struct {
+	Kind    string          `json:"kind"`
+	Details json.RawMessage `json:"details"`
+}
+
+// postDestination implements POST /api/v1/cashback/payout-destinations.
+//
+// It answers 201 with verified_at null, always. Verification is a separate
+// flow (FR-051) and a destination that arrived verified would be one nobody
+// proved belongs to the member, which is the whole thing the check exists to
+// stop.
+func (h *Handler) postDestination(w http.ResponseWriter, r *http.Request) {
+	member := memberFrom(r.Context())
+
+	var body destinationRequestBody
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	kind, err := ParseKind(body.Kind)
+	if err != nil {
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"kind must be one of "+strings.Join(Kinds(), ", "))
+		return
+	}
+	if len(body.Details) == 0 {
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"details are required: a destination that says nowhere is one no rail could pay")
+		return
+	}
+	if h.vault == nil {
+		// 503, not 500: nothing is broken, the deployment has nowhere to
+		// put bank details, and only this one endpoint needs one. Reading
+		// destinations and withdrawing to them keep working.
+		h.log.ErrorContext(r.Context(), "a payout destination was offered and this deployment has no details vault")
+		platformhttp.Problem(w, http.StatusServiceUnavailable,
+			"this deployment cannot record payout details yet")
+		return
+	}
+
+	reference, err := h.vault.Store(r.Context(), kind, body.Details)
+	switch {
+	case errors.Is(err, ErrDetailsRefused):
+		// The member's to act on, and answered WITHOUT quoting what they
+		// sent: an error is the least controlled string in a system, and
+		// this one would otherwise carry an IBAN into a log.
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"those details were refused for a "+kind.String()+" destination")
+		return
+	case err != nil:
+		h.log.ErrorContext(r.Context(), "storing payout details", "kind", kind, "error", err)
+		platformhttp.Problem(w, http.StatusBadGateway,
+			"the details could not be stored; nothing was recorded")
+		return
+	}
+
+	recorded, err := h.destinations.Record(r.Context(), NewDestination{
+		AccountID: member.ID, Kind: kind, DetailsRef: reference,
+	})
+	if err != nil {
+		if errors.Is(err, ErrInvalidDestination) {
+			platformhttp.Problem(w, http.StatusBadRequest, "that does not describe a payout destination")
+			return
+		}
+		// The details are in the vault and no row names them. Worth seeing:
+		// it is an orphan somebody has to clear, not something a member can
+		// do anything about.
+		h.log.ErrorContext(r.Context(), "recording a payout destination after storing its details",
+			"kind", kind, "error", err)
+		platformhttp.Problem(w, http.StatusInternalServerError, "")
+		return
+	}
+	h.writeJSON(w, r, http.StatusCreated, destinationItemOf(recorded))
 }
