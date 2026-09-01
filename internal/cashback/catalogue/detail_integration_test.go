@@ -50,31 +50,32 @@ func aRoute(ctx context.Context, t *testing.T, tx pgx.Tx, merchant uuid.UUID, ne
 // and every case below would pass whichever one the page published.
 const memberShare = 5000
 
-// aBand seeds one percent rate band at the standard share and returns its
-// id. A nil closes means an open-ended band.
+// aBand seeds one percent rate band at the standard share. A nil closes
+// means an open-ended band.
 func aBand(ctx context.Context, t *testing.T, tx pgx.Tx, route uuid.UUID,
 	bps int32, conditions, exclusions string, opens time.Time, closes any,
-) uuid.UUID {
+) {
 	t.Helper()
-	return aSharedBand(ctx, t, tx, route, bps, memberShare, conditions, exclusions, opens, closes)
+	aSharedBand(ctx, t, tx, route, bps, memberShare, conditions, exclusions, opens, closes)
 }
 
-// aSharedBand seeds one percent rate band on a route and returns its id.
+// aSharedBand seeds one percent rate band on a route.
+//
+// Neither helper hands back the band's id: a page is read by SLUG and every
+// case here asserts on what it published, so an id to thread through would
+// be an invitation to assert on the seed instead of on the answer.
 func aSharedBand(ctx context.Context, t *testing.T, tx pgx.Tx, route uuid.UUID,
 	bps, share int32, conditions, exclusions string, opens time.Time, closes any,
-) uuid.UUID {
+) {
 	t.Helper()
-	var id uuid.UUID
-	if err := tx.QueryRow(ctx, `
+	if _, err := tx.Exec(ctx, `
 		insert into cashback.offer (
 			merchant_network_id, rate_kind, rate_bps, member_share_bps,
 			conditions, exclusions, valid_from, valid_to, deeplink_template)
-		values ($1, 'percent', $2, $3, $4, $5, $6, $7, 'https://example.test/go')
-		returning id`,
-		route, bps, share, textOrNull(conditions), textOrNull(exclusions), opens, closes).Scan(&id); err != nil {
+		values ($1, 'percent', $2, $3, $4, $5, $6, $7, 'https://example.test/go')`,
+		route, bps, share, textOrNull(conditions), textOrNull(exclusions), opens, closes); err != nil {
 		t.Fatalf("seeding a band: %v", err)
 	}
-	return id
 }
 
 // textOrNull keeps the schema's not-blank checks happy: the columns are
