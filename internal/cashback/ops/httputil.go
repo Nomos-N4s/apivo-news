@@ -21,10 +21,16 @@ const timeFormat = time.RFC3339Nano
 // stamp renders one timestamp for the wire.
 func stamp(at time.Time) string { return at.UTC().Format(timeFormat) }
 
-// writeJSON writes a JSON response body with the given status.
-func (h *Handler) writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {
+// writeJSON writes a JSON response body.
+//
+// Always 200, and the status is not a parameter because there is no second
+// answer for this surface to give. Every operator endpoint decides an
+// existing row - dismissing, approving, refusing - so none of them creates a
+// resource and none of them answers 201. A parameter that only ever took one
+// value would be an invitation to pass another without meaning to.
+func (h *Handler) writeJSON(w http.ResponseWriter, r *http.Request, body any) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
+	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		h.log.WarnContext(r.Context(), "writing operator response", "error", err)
 	}

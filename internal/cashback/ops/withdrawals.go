@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -28,6 +30,18 @@ import (
 // module, named here per the boundary rules. *payout.Approvals satisfies it.
 type WithdrawalApprover interface {
 	Approve(ctx context.Context, approval payout.Approval) (payout.Payout, error)
+}
+
+// WithdrawalRefuser is the other answer to the same question.
+// *payout.Rejections satisfies it.
+//
+// A second interface rather than a second method on the first, because the
+// two are implemented by different types for a reason: approving reaches a
+// payout rail and refusing does not, so one commits before it submits and
+// the other is a single transaction. Folding them together would put a rail
+// in the type that has no use for one.
+type WithdrawalRefuser interface {
+	Reject(ctx context.Context, rejection payout.Rejection) (payout.Rejected, error)
 }
 
 // approveResponse is what an operator reads back: the payment that now
@@ -133,5 +147,109 @@ func (h *Handler) approveWithdrawal(w http.ResponseWriter, r *http.Request) {
 		reference := paid.RailReference
 		body.RailReference = &reference
 	}
-	h.writeJSON(w, r, http.StatusOK, body)
+	h.writeJSON(w, r, body)
+}
+
+// rejectRequest is what an operator sends: the reason, and nothing else. Who
+// refuses comes from the token, for the reason approving takes no body at
+// all (C-4) - the difference is that a refusal genuinely has something for a
+// client to say.
+type rejectRequest struct {
+	Reason string `json:"reason"`
+}
+
+// rejectResponse is what a refusal answers.
+type rejectResponse struct {
+	RequestID string `json:"request_id"`
+	State     string `json:"state"`
+	// DecidedBy is the operator this refusal rests on, echoed so they see
+	// which account the server recorded.
+	DecidedBy      string     `json:"decided_by"`
+	DecidedAt      string     `json:"decided_at"`
+	DecisionReason string     `json:"decision_reason"`
+	ReleasedAmount amountJSON `json:"released_amount"`
+	// ReleaseTransfer is the ledger movement that carried the money back,
+	// distinct from the reservation that carried it out. Both are in the
+	// response because a refusal is two facts - a decision and a movement -
+	// and an operator checking one against the ledger needs the reference.
+	ReleaseTransfer string `json:"release_transfer"`
+}
+
+// rejectWithdrawal implements POST /ops/withdrawals/{id}/reject.
+func (h *Handler) rejectWithdrawal(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		platformhttp.Problem(w, http.StatusBadRequest, "the withdrawal id is not a UUID")
+		return
+	}
+	var req rejectRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	switch {
+	case reason == "":
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"a refusal records why (FR-061): supply a non-blank reason")
+		return
+	case len([]rune(reason)) > maxReasonRunes:
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"the reason is longer than "+strconv.Itoa(maxReasonRunes)+" characters")
+		return
+	}
+
+	refused, err := h.refusals.Reject(r.Context(), payout.Rejection{
+		Request:  id,
+		Operator: operatorFrom(r.Context()).ID,
+		Reason:   reason,
+	})
+	switch {
+	case errors.Is(err, payout.ErrNoSuchWithdrawal):
+		platformhttp.Problem(w, http.StatusNotFound, "no such withdrawal request")
+		return
+	case errors.Is(err, payout.ErrNotAwaitingApproval):
+		platformhttp.Problem(w, http.StatusConflict,
+			"this withdrawal is no longer awaiting approval; reload the queue before deciding it")
+		return
+	case errors.Is(err, payout.ErrNothingReserved):
+		// 409, and it deserves a look: reserved_transfer_ref is NOT NULL so
+		// that every request has entries behind it, and one with none has a
+		// balance nobody can put back.
+		h.log.ErrorContext(r.Context(), "a withdrawal was refused and its reservation moved no entries",
+			"withdrawal", id, "error", err)
+		platformhttp.Problem(w, http.StatusConflict,
+			"this withdrawal's reservation moved no entries, so there is nothing to release; it needs looking at rather than deciding")
+		return
+	case errors.Is(err, payout.ErrNoDecisionReason):
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"a refusal records why (FR-061): supply a non-blank reason")
+		return
+	case errors.Is(err, payout.ErrNoReceivable):
+		h.log.ErrorContext(r.Context(), "a withdrawal was refused and this deployment has not named the receivable",
+			"withdrawal", id, "keys", "HOUSE_ACCOUNT_NETWORK_RECEIVABLE")
+		platformhttp.Problem(w, http.StatusServiceUnavailable,
+			"this deployment cannot release a reservation yet")
+		return
+	case errors.Is(err, payout.ErrNotRejected):
+		h.log.WarnContext(r.Context(), "a withdrawal refusal was refused", "withdrawal", id, "error", err)
+		platformhttp.Problem(w, http.StatusConflict,
+			"this withdrawal cannot be refused as it stands")
+		return
+	case err != nil:
+		h.internalError(w, r, "refusing a withdrawal", err)
+		return
+	}
+
+	h.writeJSON(w, r, rejectResponse{
+		RequestID:      refused.Request.ID.String(),
+		State:          refused.Request.State.String(),
+		DecidedBy:      refused.Request.DecidedBy.String(),
+		DecidedAt:      stamp(refused.Request.DecidedAt),
+		DecisionReason: refused.Request.DecisionReason,
+		ReleasedAmount: amountJSON{
+			Minor:    refused.Released.Minor,
+			Currency: string(refused.Released.Currency),
+		},
+		ReleaseTransfer: refused.ReleaseTransfer,
+	})
 }

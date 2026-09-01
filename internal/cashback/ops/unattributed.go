@@ -125,7 +125,7 @@ func (h *Handler) listUnattributed(w http.ResponseWriter, r *http.Request) {
 		next := encodeCursor(unattributedCursors, last.DetectedAt, last.ID)
 		page.NextCursor = &next
 	}
-	h.writeJSON(w, r, http.StatusOK, page)
+	h.writeJSON(w, r, page)
 }
 
 // unattributedItemOf renders one open report for the wire.

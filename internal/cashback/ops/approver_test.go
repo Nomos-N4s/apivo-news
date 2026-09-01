@@ -36,3 +36,11 @@ type unreachableApprover struct{}
 func (unreachableApprover) Approve(context.Context, payout.Approval) (payout.Payout, error) {
 	return payout.Payout{}, errors.New("ops: this case must not reach the approver")
 }
+
+// unreachableRefuser fails any case that reaches it, for the reason
+// unreachableApprover does.
+type unreachableRefuser struct{}
+
+func (unreachableRefuser) Reject(context.Context, payout.Rejection) (payout.Rejected, error) {
+	return payout.Rejected{}, errors.New("ops: this case must not reach the refuser")
+}

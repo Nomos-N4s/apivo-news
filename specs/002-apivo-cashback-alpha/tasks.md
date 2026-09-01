@@ -209,7 +209,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [x] T090 [P] [US4] Implement the `stub` rail with timeout, duplicate-submission and permanent-failure modes in `internal/cashback/payout/stub/stub.go`
 - [x] T091 [US4] Implement `POST /withdrawals` reserving the amount in the same transaction as the request, in `internal/cashback/payout/handlers.go`
 - [x] T092 [US4] Implement `POST /ops/withdrawals/{id}/approve` recording `approved_by` and submitting with the request-derived idempotency key, in `internal/cashback/ops/withdrawals.go`
-- [ ] T093 [US4] Implement rejection releasing the reservation back to confirmed balance, in `internal/cashback/payout/reject.go`
+- [x] T093 [US4] Implement rejection releasing the reservation back to confirmed balance, in `internal/cashback/payout/reject.go`
 - [ ] T094 [US4] Implement failure classification and same-key retry in `internal/cashback/payout/retry.go`
 - [ ] T095 [US4] Implement `GET /payout-destinations`, `POST /payout-destinations`, `GET /withdrawals`, `GET /withdrawals/{id}` in `internal/cashback/payout/handlers.go`
 - [ ] T096 [P] [US4] Build the withdrawal request and status pages in `web/src/pages/[lang]/[place]/cashback/withdraw.astro`

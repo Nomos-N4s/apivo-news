@@ -180,7 +180,7 @@ func (h *Handler) dismissUnattributed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeJSON(w, r, http.StatusOK, dismissResponse{
+	h.writeJSON(w, r, dismissResponse{
 		ID:                   dismissed.ID.String(),
 		NetworkTransactionID: dismissed.ReportID.String(),
 		DetectedAt:           stamp(dismissed.DetectedAt),
