@@ -148,7 +148,7 @@ func TestEditorialWiringAgainstSchema(t *testing.T) {
 	key := newSigningKey(t)
 	jwks := newJWKSServer(t, key)
 
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx, config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx, config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}

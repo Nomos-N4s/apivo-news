@@ -29,7 +29,7 @@ import (
 // and picks out the click-out handler.
 func clickOutRoutes(ctx context.Context, t *testing.T, pool *pgxpool.Pool, jwksURL string) http.Handler {
 	t.Helper()
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwksURL, Cashback: config.CashbackConfig{Enabled: true, LedgerDriver: config.LedgerDriverMemory}},
 		discardLogger(), pool, nil)
 	if err != nil {
@@ -113,7 +113,7 @@ func TestTheClickOutSurfaceIsUnmountedWithoutTheFlag(t *testing.T) {
 	ctx, pool := opsWiringPool(t)
 
 	jwks := newJWKSServer(t, newSigningKey(t))
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
@@ -136,7 +136,7 @@ func TestTheClickOutPathIsMountedWithItsSubtree(t *testing.T) {
 	ctx, pool := opsWiringPool(t)
 
 	jwks := newJWKSServer(t, newSigningKey(t))
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{Enabled: true, LedgerDriver: config.LedgerDriverMemory}},
 		discardLogger(), pool, nil)
 	if err != nil {

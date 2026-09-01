@@ -429,3 +429,17 @@ and ingest nothing, with hand-written SQL against production as the only
 remedy. T130 is the local `make cashback-seed` and is not this.
 
 - [x] T145 Provide a supported, idempotent way to connect a network publisher account in a deployed environment — the `cashback.network` row with its documented `max_query_window_days` and `rate_limit_per_minute`, and the `network_account` row the cursors hang off — per plan Phase E and FR-030/FR-031
+
+**Nothing settles a payout.** Found while building T100. `cashback.payout`
+has a `settled` state, a `settled_at` column and
+`payout_settled_iff_settlement_time` tying them together;
+`RecordPayoutOutcome` can write it; `Rail.Status` exists to be asked. Nothing
+calls any of it, so no payout ever leaves `submitted` and the only outcome
+reachable is `failed`. Phase 6's checkpoint says the money loop closes — it
+does not: money leaves and nothing observes it arriving. `paid_out` on
+`GET /wallet` is read from settled payouts (T077, landed with T078), so it
+reports zero for every member forever, and `cashback.withdrawal`'s `paid`
+state is unreachable. That is a wrong number on a member-facing screen rather
+than a missing feature.
+
+- [ ] T146 Implement the settlement sweep: for each payout in `submitted`, ask its rail `Status` and record the answer — `settled` moves the payout and its request to `paid` and announces `cashback.payout.settled`; `failed` takes the release path `Retries.giveUp` already implements; anything else leaves it. In `internal/cashback/payout/settle.go`, scheduled from `cmd/apivo`, per FR-053 and contracts/events.md

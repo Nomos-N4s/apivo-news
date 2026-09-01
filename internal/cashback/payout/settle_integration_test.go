@@ -9,6 +9,8 @@ package payout_test
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout/manual"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout/stub"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 )
@@ -306,5 +309,259 @@ func TestASweepMissingAPartIsRefusedAtConstruction(t *testing.T) {
 	}
 	if _, err := payout.NewSettlements(discardLogger(), f.pool, rail, nil); err == nil {
 		t.Error("a sweep with nowhere to put the money back was built, want a refusal")
+	}
+}
+
+// TestARequestWithNoPayoutIsNotAskedAbout. A request nobody approved has no
+// payment for a rail to know about, and asking would be asking about
+// something that does not exist.
+func TestARequestWithNoPayoutIsNotAskedAbout(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	f, request := approvable(ctx, t)
+
+	if _, err := settlements(t, f, stub.New()).Settle(ctx, request.ID); !errors.Is(err, payout.ErrNoPayout) {
+		t.Errorf("Settle() on an unapproved request = %v, want %v", err, payout.ErrNoPayout)
+	}
+	if _, err := settlements(t, f, stub.New()).Settle(ctx, uuid.Nil); !errors.Is(err, payout.ErrNotSettled) {
+		t.Errorf("Settle() with no request = %v, want %v", err, payout.ErrNotSettled)
+	}
+}
+
+// closingRail answers about a payment and takes the database down on the way,
+// which is the ordering that matters: the rail is asked OUTSIDE the
+// transaction, so everything between its answer and the commit can fail with
+// a member's money already moved.
+type closingRail struct {
+	payout.Rail
+	pool *pgxpool.Pool
+}
+
+func (c closingRail) Status(ctx context.Context, reference payout.RailReference) (payout.RailStatus, error) {
+	status, err := c.Rail.Status(ctx, reference)
+	c.pool.Close()
+	return status, err
+}
+
+// TestADatabaseThatGoesAwayWhileTheRailIsThinkingRecordsNothing. The payment
+// arrived and this service could not write it down. Nothing may be half
+// recorded - a payout marked settled whose request still reads approved is a
+// member being told two different things by two screens - so the whole
+// transaction is lost and the payout stays submitted for the next sweep.
+func TestADatabaseThatGoesAwayWhileTheRailIsThinkingRecordsNothing(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	rail := stub.New()
+	f, request, sent := submittedThrough(ctx, t, rail)
+	if err := rail.Settle(mustReference(t, sent.RailReference)); err != nil {
+		t.Fatalf("settling at the rail: %v", err)
+	}
+
+	sweep, err := payout.NewSettlements(discardLogger(), f.pool,
+		closingRail{Rail: rail, pool: f.pool}, retries(t, f, rail))
+	if err != nil {
+		t.Fatalf("NewSettlements(): %v", err)
+	}
+	if _, err := sweep.Settle(ctx, request.ID); !errors.Is(err, payout.ErrNotSettled) {
+		t.Errorf("Settle() over a closed pool = %v, want %v", err, payout.ErrNotSettled)
+	}
+
+	// Read on a live connection: nothing was written and nothing announced.
+	var state string
+	if err := pool.QueryRow(ctx,
+		`select state from cashback.payout where request_id = $1`,
+		pgtype.UUID{Bytes: request.ID, Valid: true}).Scan(&state); err != nil {
+		t.Fatalf("re-reading the payout: %v", err)
+	}
+	if state != string(payout.StatusSubmitted) {
+		t.Errorf("the payout is %s, want it still %s for the next sweep", state, payout.StatusSubmitted)
+	}
+	if events := announcementsOf(ctx, t, pool, "cashback.payout.settled", sent.ID); len(events) != 0 {
+		t.Errorf("a settlement that could not be recorded announced %d events, want none", len(events))
+	}
+}
+
+// TestASweepThatCannotReadItsWorkListSaysSo. A sweep that answered "nothing to
+// settle" when it could not read the table would look identical to a healthy
+// one with an empty queue, every five minutes, forever.
+func TestASweepThatCannotReadItsWorkListSaysSo(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	f := aFixture(ctx, t, 1000, 5000)
+	rail := stub.New()
+	sweep := settlements(t, f, rail)
+
+	f.pool.Close()
+
+	if err := sweep.Sweep(ctx); !errors.Is(err, payout.ErrNotSettled) {
+		t.Errorf("Sweep() over a closed pool = %v, want %v", err, payout.ErrNotSettled)
+	}
+}
+
+// TestASweepCutShortLeavesTheRestForNextTime. The scheduler bounds a run, and
+// a sweep that ignored that would hold its lock past the timeout. What it may
+// NOT do is lose the payments it did not reach: they are still submitted, so
+// the next tick starts where this one stopped.
+func TestASweepCutShortLeavesTheRestForNextTime(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	rail := stub.New()
+	f, request, _ := submittedThrough(ctx, t, rail)
+
+	stopped, cancel := context.WithCancel(ctx)
+	cancel()
+
+	if err := settlements(t, f, rail).Sweep(stopped); !errors.Is(err, payout.ErrNotSettled) {
+		t.Errorf("Sweep() on a cancelled context = %v, want %v", err, payout.ErrNotSettled)
+	}
+	waiting, err := f.withdrawals.Get(ctx, f.member, request.ID)
+	if err != nil {
+		t.Fatalf("re-reading the request: %v", err)
+	}
+	if waiting.State != payout.StateApproved {
+		t.Errorf("the request is %s, want it left at %s for the next sweep", waiting.State, payout.StateApproved)
+	}
+}
+
+// TestASettledPaymentWhoseRequestIsNotApprovedIsRefused. The payout and the
+// request are written together, so through this API they cannot disagree.
+// They can disagree in a database somebody has been in by hand, and then the
+// question is what a sweep does about it: nothing, loudly. Guessing would
+// move money's paper trail on a hunch.
+func TestASettledPaymentWhoseRequestIsNotApprovedIsRefused(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	rail := stub.New()
+	f, request, sent := submittedThrough(ctx, t, rail)
+	if err := rail.Settle(mustReference(t, sent.RailReference)); err != nil {
+		t.Fatalf("settling at the rail: %v", err)
+	}
+
+	// Staged by hand, because no code path produces it: the payout is still
+	// submitted and the request has moved on without it.
+	if _, err := f.pool.Exec(ctx,
+		`update cashback.withdrawal_request set state = 'failed' where id = $1`,
+		pgtype.UUID{Bytes: request.ID, Valid: true}); err != nil {
+		t.Fatalf("staging the inconsistency: %v", err)
+	}
+
+	if _, err := settlements(t, f, rail).Settle(ctx, request.ID); !errors.Is(err, payout.ErrNotSettled) {
+		t.Errorf("Settle() on an inconsistent pair = %v, want %v", err, payout.ErrNotSettled)
+	}
+	// And nothing was written: the payout is where it was, and no arrival
+	// was announced for a member whose request says it failed.
+	var state string
+	if err := pool.QueryRow(ctx,
+		`select state from cashback.payout where request_id = $1`,
+		pgtype.UUID{Bytes: request.ID, Valid: true}).Scan(&state); err != nil {
+		t.Fatalf("re-reading the payout: %v", err)
+	}
+	if state != string(payout.StatusSubmitted) {
+		t.Errorf("the payout is %s, want it untouched at %s", state, payout.StatusSubmitted)
+	}
+	if events := announcementsOf(ctx, t, pool, "cashback.payout.settled", sent.ID); len(events) != 0 {
+		t.Errorf("an inconsistent pair announced %d settlements, want none", len(events))
+	}
+}
+
+// TestTheSweepLearnsNothingFromTheManualRail, and that is the manual rail
+// being honest rather than the sweep being broken.
+//
+// A manual payout moves when a person goes to a bank. The rail has no way to
+// learn what they did, and one that guessed "settled" because time had passed
+// would report money as delivered on the strength of a clock. So it answers
+// submitted, always.
+//
+// The consequence is worth stating where somebody will find it: on the
+// alpha's default rail this sweep runs and settles nothing. What closes the
+// loop there is an operator recording the settlement against the payout row -
+// the schema leaves state, settled_at and rail_reference movable for exactly
+// that - and no endpoint does it yet. The sweep is the half that works the
+// moment a rail which can answer is configured.
+func TestTheSweepLearnsNothingFromTheManualRail(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f := aFixture(ctx, t, 1000, approvableAmount*2)
+	operator := seedOperator(ctx, t, pool)
+	// A manual destination: a rail refuses one it cannot carry, and the
+	// fixture's default is the stub's.
+	toABank := seedDestinationOfKind(ctx, t, f.pool, f.member, true, "manual")
+	request, err := f.withdrawals.Request(ctx, payout.Request{
+		Member: f.member, Destination: toABank, Amount: euro(t, approvableAmount),
+	})
+	if err != nil {
+		t.Fatalf("Request(): %v", err)
+	}
+
+	rail := manual.New()
+	sent, err := approvals(t, f, rail).Approve(ctx, payout.Approval{
+		Request: request.ID, Operator: operator,
+	})
+	if err != nil {
+		t.Fatalf("Approve(): %v", err)
+	}
+
+	settled, err := settlements(t, f, rail).Settle(ctx, request.ID)
+	if err != nil {
+		t.Fatalf("Settle(): %v", err)
+	}
+	if settled.Status != payout.StatusSubmitted {
+		t.Errorf("the manual rail said %s, want %s - it cannot know", settled.Status, payout.StatusSubmitted)
+	}
+	if settled.Payout.State != payout.StatusSubmitted {
+		t.Errorf("the payout is %s, want it untouched", settled.Payout.State)
+	}
+	if events := announcementsOf(ctx, t, pool, "cashback.payout.settled", sent.ID); len(events) != 0 {
+		t.Errorf("the manual rail produced %d settlements, want none", len(events))
+	}
+}
+
+// TestAPaymentTheRailNeverAcknowledgedIsTheRetryPathsWork. A submission that
+// timed out leaves a real payout with no rail reference, in state submitted -
+// so this sweep picks it up, and there is nothing it can do: a rail cannot
+// answer about a payment it did not confirm taking.
+//
+// Without this the sweep would fail on every such payout, every five minutes,
+// for as long as one sat there - a page of identical errors describing a
+// state only a retry can move.
+func TestAPaymentTheRailNeverAcknowledgedIsTheRetryPathsWork(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	// A submission that timed out: the payout is committed before the rail
+	// is asked (FR-052), so it exists with no reference.
+	rail := stub.New(stub.WithTimeout())
+	f, request := approvable(ctx, t)
+	operator := seedOperator(ctx, t, pool)
+	if _, err := approvals(t, f, rail).Approve(ctx, payout.Approval{
+		Request: request.ID, Operator: operator,
+	}); !errors.Is(err, payout.ErrRailRetryable) {
+		t.Fatalf("the approval = %v, want a retryable rail failure", err)
+	}
+	if row := payoutOf(ctx, t, f, request.ID); row.RailReference.Valid {
+		t.Fatalf("the payout carries %q, want nothing recorded", row.RailReference.String)
+	}
+
+	sweep := settlements(t, f, rail)
+	if _, err := sweep.Settle(ctx, request.ID); !errors.Is(err, payout.ErrNotAcknowledged) {
+		t.Errorf("Settle() = %v, want %v", err, payout.ErrNotAcknowledged)
+	}
+	// And the sweep counts it apart from a failure. The error a sweep
+	// returns is one line for the whole run, so what distinguishes the two
+	// is what it SAYS: a WARN naming a queue for the retry path, not an
+	// ERROR about a payment it could not resolve.
+	var said strings.Builder
+	loud, err := payout.NewSettlements(
+		slog.New(slog.NewTextHandler(&said, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		f.pool, rail, retries(t, f, rail))
+	if err != nil {
+		t.Fatalf("NewSettlements(): %v", err)
+	}
+	_ = loud.Sweep(ctx)
+	if !strings.Contains(said.String(), "never acknowledged") {
+		t.Errorf("the sweep said nothing about payments waiting on a retry: %s", said.String())
+	}
+	if strings.Contains(said.String(), "level=ERROR") && strings.Contains(said.String(), request.ID.String()) {
+		t.Errorf("the unacknowledged payment was reported as a failure: %s", said.String())
+	}
+	// It is still there for the retry, untouched.
+	waiting, err := f.withdrawals.Get(ctx, f.member, request.ID)
+	if err != nil {
+		t.Fatalf("re-reading the request: %v", err)
+	}
+	if waiting.State != payout.StateApproved {
+		t.Errorf("the request is %s, want it left at %s for a retry", waiting.State, payout.StateApproved)
 	}
 }

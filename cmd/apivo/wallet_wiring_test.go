@@ -30,7 +30,7 @@ import (
 // picks out the wallet handler.
 func walletRoutes(ctx context.Context, t *testing.T, pool *pgxpool.Pool, jwksURL string, threshold money.Amount) http.Handler {
 	t.Helper()
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwksURL, Cashback: config.CashbackConfig{
 			Enabled:         true,
 			LedgerDriver:    config.LedgerDriverMemory,
@@ -59,7 +59,7 @@ func TestTheWalletSurfaceIsUnmountedWithoutTheFlag(t *testing.T) {
 	ctx, pool := opsWiringPool(t)
 
 	jwks := newJWKSServer(t, newSigningKey(t))
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
@@ -80,7 +80,7 @@ func TestTheWalletPathIsMountedWithItsSubtree(t *testing.T) {
 	ctx, pool := opsWiringPool(t)
 
 	jwks := newJWKSServer(t, newSigningKey(t))
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
@@ -211,7 +211,7 @@ func TestTheParticipationPathIsMountedWithItsSubtree(t *testing.T) {
 	ctx, pool := opsWiringPool(t)
 
 	jwks := newJWKSServer(t, newSigningKey(t))
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
@@ -242,7 +242,7 @@ func TestTheParticipationSurfaceIsUnmountedWithoutTheFlag(t *testing.T) {
 	ctx, pool := opsWiringPool(t)
 
 	jwks := newJWKSServer(t, newSigningKey(t))
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
@@ -265,7 +265,7 @@ func TestNoBrandDirStillMountsTheOptIn(t *testing.T) {
 	ctx, pool := opsWiringPool(t)
 
 	jwks := newJWKSServer(t, newSigningKey(t))
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
@@ -291,7 +291,7 @@ func TestABrandDirThatHoldsNoBrandRefusesToStart(t *testing.T) {
 	ctx, pool := opsWiringPool(t)
 
 	jwks := newJWKSServer(t, newSigningKey(t))
-	_, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	_, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, BrandDir: t.TempDir(), Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
@@ -342,7 +342,7 @@ func TestTheWiredOptInRecordsWhatTheBrandSays(t *testing.T) {
 	key := newSigningKey(t)
 	jwks := newJWKSServer(t, key)
 	member := seedAccount(ctx, t, pool, "reader")
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, BrandDir: brandDir(t), Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
@@ -436,7 +436,7 @@ func TestTheExportPathIsMountedWithItsSubtree(t *testing.T) {
 	ctx, pool := opsWiringPool(t)
 
 	jwks := newJWKSServer(t, newSigningKey(t))
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
@@ -470,7 +470,7 @@ func TestTheWiredExportAnswersItsOwnMember(t *testing.T) {
 	key := newSigningKey(t)
 	jwks := newJWKSServer(t, key)
 	member := seedAccount(ctx, t, pool, "reader")
-	routes, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},

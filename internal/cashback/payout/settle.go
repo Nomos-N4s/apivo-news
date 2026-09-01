@@ -60,6 +60,12 @@ var (
 	// or never sent. Ordinary in a sweep that raced another, and never a
 	// defect.
 	ErrNotSubmitted = errors.New("payout: this payout is not waiting on a rail")
+	// ErrNotAcknowledged reports a payout the rail never named: the state
+	// a submission that timed out leaves behind. There is nothing to ask
+	// about - a rail cannot answer about a payment it did not confirm
+	// taking - so it belongs to the retry path (FR-053), which re-sends
+	// under the same key, and not to this sweep.
+	ErrNotAcknowledged = errors.New("payout: the rail never acknowledged this payment")
 )
 
 // Settlement is what one asking produced.
@@ -136,7 +142,7 @@ func (s *Settlements) Sweep(ctx context.Context) error {
 		return fmt.Errorf("%w: reading the payments still in flight: %w", ErrNotSettled, err)
 	}
 
-	var failures int
+	var failures, unacknowledged int
 	for _, id := range waiting {
 		if err := ctx.Err(); err != nil {
 			// The sweep was cut short. What is left is still submitted, so
@@ -148,6 +154,12 @@ func (s *Settlements) Sweep(ctx context.Context) error {
 		case errors.Is(err, ErrNotSubmitted):
 			// Another sweep, a retry or an operator got there first.
 			// Nothing to report.
+		case errors.Is(err, ErrNotAcknowledged):
+			// The retry path's work, not this sweep's. Counted rather than
+			// logged one by one: a deployment with a backlog of timed-out
+			// submissions wants one line saying how many, not a page of
+			// identical errors every five minutes.
+			unacknowledged++
 		case err != nil:
 			failures++
 			s.log.ErrorContext(ctx, "asking the rail about a payment", "request", request, "error", err)
@@ -155,6 +167,13 @@ func (s *Settlements) Sweep(ctx context.Context) error {
 			s.log.InfoContext(ctx, "a payment reached the member",
 				"request", request, "payout", settled.Payout.ID)
 		}
+	}
+	if unacknowledged > 0 {
+		// WARN rather than ERROR: nothing is broken here, and nothing this
+		// sweep does will fix it. It is a queue for the retry path, and an
+		// operator seeing it grow knows what to look at.
+		s.log.WarnContext(ctx, "payments the rail never acknowledged, waiting on a retry",
+			"count", unacknowledged, "of", len(waiting))
 	}
 	if failures > 0 {
 		return fmt.Errorf("%w: %d of %d payments could not be resolved", ErrNotSettled, failures, len(waiting))
@@ -178,12 +197,19 @@ func (s *Settlements) Settle(ctx context.Context, request uuid.UUID) (Settlement
 	if err != nil {
 		return Settlement{}, err
 	}
+	if waiting.RailReference == "" {
+		// A submission that timed out. The payout is real and the money
+		// may be in flight, but the rail never said what it called the
+		// payment, so there is nothing to ask it about. A retry re-sends
+		// under the same key and gets the reference; only then can this
+		// sweep do anything.
+		return Settlement{}, fmt.Errorf("%w: %s", ErrNotAcknowledged, waiting.ID)
+	}
 	reference, err := NewRailReference(waiting.RailReference)
 	if err != nil {
-		// A submitted payout with no usable reference cannot be asked
-		// about. Loud, because it is a row that should not exist: a
-		// submission records what the rail called it.
-		return Settlement{}, fmt.Errorf("%w: %s carries no rail reference: %w", ErrNotSettled, waiting.ID, err)
+		// Not blank - the column refuses that - so this is a stored value
+		// the port will not accept, which is a row that should not exist.
+		return Settlement{}, fmt.Errorf("%w: %s carries an unusable rail reference: %w", ErrNotSettled, waiting.ID, err)
 	}
 
 	status, err := s.rail.Status(ctx, reference)
