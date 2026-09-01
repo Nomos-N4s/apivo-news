@@ -360,6 +360,70 @@
         }
       }
     },
+    "/api/v1/cashback/merchants/{slug}": {
+      "get": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "getMerchant",
+        "summary": "One retailer's page, with every rate band published for them",
+        "description": "The retailer at this address, described in the reader's language, with EVERY rate band in force right now - each carrying its own conditions and its own exclusions (US5 scenario 3, FR-011).\n\n**Every rate here is what the MEMBER earns**, never the network's commission. A published band records the commission and, separately, the share of it the member receives; this endpoint composes the two before answering, rounding the way the credit itself will round, so the figure shown and the figure later paid can only differ over the commission the network actually reported.\n\n**Bands are the published route's.** A retailer live on several networks has a band per network; the catalogue publishes one route, which is the route a click is issued through. Quoting the others would quote a rate no click can earn.\n\n**An empty `rates` list is an ordinary answer.** A retailer whose bands have lapsed pays nothing today and is still a shop that exists, so it is 200 with no rates - never a 404.\n\n**Language and place are independent axes** (constitution VII). `lang` names the language only. A merchant with no copy in it falls back to the retailer's source language and says so in `name_is_fallback` - an unrecognised or absent `lang` does the same rather than failing, because a page a member has navigated to should render.\n\nThe whole path is unmounted when cashback is off, and then answers 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "description": "The retailer's stable, human-readable address.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+            }
+          },
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "description": "BCP-47 primary language subtag the reader wants the copy in. Absent or unavailable falls back to the retailer's source language, labelled.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The retailer's page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Merchant"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No retailer is published at this address: never imported, or imported and since paused. The two are one answer deliberately - which retailers we have stopped publishing is not a page request's business."
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/cashback/ops/unattributed": {
       "get": {
         "tags": [
@@ -3948,6 +4012,135 @@
             ],
             "format": "date-time",
             "description": "When the rate band this click was issued against stops being published, or null for a band with no published end.\n\nAbout the OFFER, not the redirect: the credit this click earns is governed by the snapshot taken when it was issued, whatever happens to the band afterwards (FR-013), and no network expires a deeplink. It is the same window whose end makes a later click-out answer 409."
+          }
+        }
+      },
+      "Merchant": {
+        "type": "object",
+        "description": "A retailer's page: who they are, how they are described in the reader's language, and every rate band published for them at the moment the page was read.",
+        "required": [
+          "merchant_id",
+          "slug",
+          "country",
+          "name",
+          "name_language",
+          "name_is_fallback",
+          "summary",
+          "terms",
+          "typical_confirmation_days",
+          "rates"
+        ],
+        "properties": {
+          "merchant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": "string",
+            "description": "The address this page was reached at."
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[A-Z]{2}$",
+            "description": "Where the retailer trades, or null when they are bound to no one country. Not where the reader is: language and place are independent axes (constitution VII)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_language": {
+            "type": "string",
+            "description": "The language the copy on this page is actually in, which is not necessarily the one that was asked for."
+          },
+          "name_is_fallback": {
+            "type": "boolean",
+            "description": "Whether the copy came from the retailer's source language because none exists in the reader's. This is how US5 scenario 2 renders \"shown in German\" rather than silently pretending."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "terms": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "typical_confirmation_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "How long a purchase here usually takes to confirm. ALWAYS null today: nothing in the schema records it - not on the retailer, not on the route, not on the network - and a member reads this number as \"you will be paid in about six weeks\", so it is left absent rather than filled in with a plausible constant."
+          },
+          "rates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MerchantRate"
+            },
+            "description": "Every band in force right now, newest first. Empty when the retailer's rates have lapsed, which is an ordinary answer rather than a 404."
+          }
+        }
+      },
+      "MerchantRate": {
+        "type": "object",
+        "description": "One published rate band, as the member earns it. Exactly one of `bps` and `amount` is present, chosen by `kind`; both are integers, because no rate or money value on this API is ever a decimal string or a float (C-6). The frontend formats for display from these fields.",
+        "required": [
+          "offer_id",
+          "kind",
+          "conditions",
+          "exclusions",
+          "valid_to"
+        ],
+        "properties": {
+          "offer_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The band a click on this rate would be issued against - the value POST /clickouts takes, so a page and the click it leads to name the same rate."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "percent",
+              "fixed"
+            ],
+            "description": "Which of `bps` and `amount` carries this rate."
+          },
+          "bps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "description": "The member's rate in basis points on a percent band (4% = 400). Absent on a fixed band."
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money",
+            "description": "What the member earns per transaction on a fixed band. Absent on a percent band."
+          },
+          "conditions": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What this band requires, verbatim as published (FR-011), or null when it records none. Null rather than an empty string, so \"no conditions\" and \"conditions that failed to load\" do not render the same."
+          },
+          "exclusions": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What this band does not pay on (FR-011), or null when it records none."
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When this band stops being published, or null for one with no published end."
           }
         }
       },

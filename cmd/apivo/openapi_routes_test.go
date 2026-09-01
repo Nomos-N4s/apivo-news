@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Nomos-N4s/apivo-news/internal/account"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/catalogue"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/clickout"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
@@ -104,7 +105,7 @@ func documentedOperations(t *testing.T, doc openAPIDocument) map[string]operatio
 // registeredPatterns is every route this binary mounts: the platform's own
 // plus each module's, reported by the same maps the routers are built from.
 func registeredPatterns() []string {
-	return slices.Concat(platformhttp.Patterns(), content.Patterns(), editorial.Patterns(), account.Patterns(), ops.Patterns(), clickout.Patterns(), wallet.Patterns(), payout.Patterns())
+	return slices.Concat(platformhttp.Patterns(), content.Patterns(), editorial.Patterns(), account.Patterns(), ops.Patterns(), clickout.Patterns(), catalogue.Patterns(), wallet.Patterns(), payout.Patterns())
 }
 
 func TestOpenAPIDocumentDescribesEveryRegisteredRoute(t *testing.T) {
@@ -164,6 +165,7 @@ func TestOpenAPISecurityMatchesTheAuthGate(t *testing.T) {
 			strings.HasPrefix(path, accountPrefix) ||
 			strings.HasPrefix(path, opsPrefix) ||
 			strings.HasPrefix(path, clickoutPrefix) ||
+			strings.HasPrefix(path, merchantPrefix) ||
 			strings.HasPrefix(path, walletPrefix) ||
 			strings.HasPrefix(path, participationPrefix) ||
 			strings.HasPrefix(path, exportPrefix) ||

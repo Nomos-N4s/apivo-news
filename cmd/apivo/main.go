@@ -93,6 +93,13 @@ const opsPrefix = ops.Prefix
 // path whose catch-all nothing reaches.
 const clickoutPrefix = clickout.Prefix
 
+// merchantPrefix is the member-facing catalogue: one retailer's page and
+// every rate published for them. A subtree of the cashback base path rather
+// than the whole of it, for the reason opsPrefix is - a catch-all on the
+// bare prefix would swallow every other module's 404s - and the module owns
+// the string for the reason clickoutPrefix does.
+const merchantPrefix = catalogue.MerchantPrefix
+
 // walletPrefix is the member wallet surface, taken from the module that
 // serves it for the reason clickoutPrefix is.
 const walletPrefix = wallet.Prefix
@@ -575,6 +582,12 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		return nil, nil, nil, err
 	}
 	memberSurface := wallet.NewHandler(log, wallets, history, participations, exports, walletAuth{ids: ids})
+	merchants, err := catalogue.NewMerchantReader(cataloguestore.New(pool))
+	if err != nil {
+		stop()
+		return nil, nil, nil, err
+	}
+	catalogueSurface := catalogue.NewHandler(log, merchants, catalogueAuth{ids: ids})
 	destinations, err := payout.NewDestinations(pool)
 	if err != nil {
 		stop()
@@ -625,6 +638,10 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 			Pattern: clickoutPrefix + "/",
 			Handler: clickout.NewHandler(log, clickouts, memberAuth{ids: ids}, clickOutOptions...),
 		},
+		// The member-facing catalogue, at the path AND its subtree for the
+		// reason the click-out is.
+		platformhttp.Route{Pattern: merchantPrefix, Handler: catalogueSurface},
+		platformhttp.Route{Pattern: merchantPrefix + "/", Handler: catalogueSurface},
 		// One handler at six patterns: the wallet, the participation and
 		// the export trees, each at the path AND its subtree. The module's
 		// own mux matches on the full path, so all three route correctly
@@ -832,6 +849,29 @@ func (a memberAuth) AuthenticateMember(ctx context.Context, token string) (click
 		return clickout.Member{}, err
 	}
 	return clickout.Member{ID: id.Subject}, nil
+}
+
+// catalogueAuth adapts the identity module to the catalogue module's own
+// consumer-defined MemberAuthenticator.
+//
+// It resolves a token and returns no account, which is the whole of that
+// interface: browsing is gated because there is no anonymous cashback
+// surface (FR-023), not because a catalogue answer depends on who is asking.
+// An adapter that handed the account over would be the first step towards a
+// read that quietly scoped by it.
+type catalogueAuth struct {
+	ids *identity.Service
+}
+
+func (a catalogueAuth) AuthenticateReader(ctx context.Context, token string) error {
+	_, err := a.ids.Authenticate(ctx, token)
+	switch {
+	case errors.Is(err, identity.ErrInvalidToken), errors.Is(err, identity.ErrUnknownAccount):
+		return fmt.Errorf("%w: %w", catalogue.ErrUnauthenticated, err)
+	case err != nil:
+		return err
+	}
+	return nil
 }
 
 // walletAuth adapts the identity module to the wallet module's own
