@@ -443,3 +443,5 @@ state is unreachable. That is a wrong number on a member-facing screen rather
 than a missing feature.
 
 - [x] T146 Implement the settlement sweep: for each payout in `submitted`, ask its rail `Status` and record the answer — `settled` moves the payout and its request to `paid` and announces `cashback.payout.settled`; `failed` takes the release path `Retries.giveUp` already implements; anything else leaves it. In `internal/cashback/payout/settle.go`, scheduled from `cmd/apivo`, per FR-053 and contracts/events.md
+
+- [x] T147 Implement `POST /ops/withdrawals/{id}/settle`, the operator recording that a payout they carried out by hand has landed — the manual rail's only settlement path, since its `Status` always answers `submitted` by design — in `internal/cashback/ops/withdrawals.go` and `internal/cashback/payout/settle.go`, per FR-053 and FR-061

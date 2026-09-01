@@ -28,7 +28,7 @@ func approve(t *testing.T, approver ops.WithdrawalApprover, id, body string) *ht
 		ops.Prefix+"withdrawals/"+id+"/approve", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer t")
 	rec := httptest.NewRecorder()
-	ops.NewHandler(discardLogger(), unreachableStore{}, approver, unreachableRefuser{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
+	ops.NewHandler(discardLogger(), unreachableStore{}, approver, unreachableRefuser{}, unreachableSettler{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
 	return rec
 }
 
@@ -233,7 +233,7 @@ func TestApprovingNeedsTheOperatorRole(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost,
 		ops.Prefix+"withdrawals/"+uuid.NewString()+"/approve", nil)
 	rec := httptest.NewRecorder()
-	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{},
+	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{},
 		stubAuth{err: fmt.Errorf("%w: a reader", ops.ErrNotOperator)}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden && rec.Code != http.StatusUnauthorized {
@@ -276,7 +276,7 @@ func reject(t *testing.T, refuser ops.WithdrawalRefuser, id, body string) *httpt
 		ops.Prefix+"withdrawals/"+id+"/reject", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer t")
 	rec := httptest.NewRecorder()
-	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, refuser,
+	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, refuser, unreachableSettler{},
 		stubAuth{op: anOperator}).ServeHTTP(rec, req)
 	return rec
 }
@@ -431,4 +431,137 @@ func TestTheRefusalRouteIsListed(t *testing.T) {
 		}
 	}
 	t.Errorf("Patterns() = %v, want it to name %q", ops.Patterns(), want)
+}
+
+// settle sends an authenticated POST to the settlement endpoint. A nil
+// settler is the deployment that has nowhere to record one.
+func settle(t *testing.T, settler ops.WithdrawalSettler, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost,
+		ops.Prefix+"withdrawals/"+id+"/settle", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer t")
+	rec := httptest.NewRecorder()
+	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{},
+		settler, stubAuth{op: anOperator}).ServeHTTP(rec, req)
+	return rec
+}
+
+// recordingSettler remembers what it was asked to record, so a case can
+// assert on what reached the service rather than on what the body said.
+type recordingSettler struct {
+	saw    payout.Recording
+	answer payout.Settlement
+	err    error
+}
+
+func (s *recordingSettler) Record(_ context.Context, recording payout.Recording) (payout.Settlement, error) {
+	s.saw = recording
+	return s.answer, s.err
+}
+
+// aSettlement is what the settler answers when a case is not about failure.
+func aSettlement(t *testing.T, request uuid.UUID, reference string) payout.Settlement {
+	t.Helper()
+	amount, err := money.New(3000, money.Currency("EUR"))
+	if err != nil {
+		t.Fatalf("money.New(): %v", err)
+	}
+	return payout.Settlement{
+		Payout: payout.Payout{
+			ID: uuid.New(), Request: request, Amount: amount,
+			RailReference: reference, State: payout.StatusSettled,
+			SettledAt: time.Date(2026, time.September, 1, 11, 0, 0, 0, time.UTC),
+		},
+		Status: payout.StatusSettled,
+	}
+}
+
+// TestSettlingRecordsTheOperatorAndWhatTheBankCalledIt. C-4 and FR-061: the
+// acting human is the token subject, never the body, so "settle as somebody
+// else" is not a request this endpoint can express.
+func TestSettlingRecordsTheOperatorAndWhatTheBankCalledIt(t *testing.T) {
+	request := uuid.New()
+	const fromTheBank = "DE-SEPA-2026-09-01-000417"
+	settler := &recordingSettler{answer: aSettlement(t, request, fromTheBank)}
+
+	rec := settle(t, settler, request.String(), `{"rail_reference":"  `+fromTheBank+`  "}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if settler.saw.Operator != anOperator.ID {
+		t.Errorf("the service saw operator %s, want the token subject %s", settler.saw.Operator, anOperator.ID)
+	}
+	if settler.saw.Request != request {
+		t.Errorf("the service saw request %s, want %s", settler.saw.Request, request)
+	}
+	// Trimmed before it travels: a reference with edges is one a member
+	// quotes wrong.
+	if settler.saw.Reference != fromTheBank {
+		t.Errorf("the service saw reference %q, want the trimmed %q", settler.saw.Reference, fromTheBank)
+	}
+
+	var body struct {
+		RailReference string `json:"rail_reference"`
+		State         string `json:"state"`
+		RequestState  string `json:"request_state"`
+		SettledAt     string `json:"settled_at"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the body is not JSON: %v (%s)", err, rec.Body.String())
+	}
+	if body.RailReference != fromTheBank {
+		t.Errorf("rail_reference = %q, want %q", body.RailReference, fromTheBank)
+	}
+	if body.State != "settled" || body.RequestState != "paid" {
+		t.Errorf("state/request_state = %q/%q, want settled/paid", body.State, body.RequestState)
+	}
+	if body.SettledAt == "" {
+		t.Error("settled_at is empty; a settled payout has an instant")
+	}
+}
+
+// TestWhatTheSettlementEndpointRefuses. Everything here would settle a
+// payment on less than a settlement needs, or on evidence the caller has no
+// standing to supply.
+func TestWhatTheSettlementEndpointRefuses(t *testing.T) {
+	request := uuid.New()
+	good := func() *recordingSettler {
+		return &recordingSettler{answer: aSettlement(t, request, "ref")}
+	}
+
+	for name, c := range map[string]struct {
+		settler ops.WithdrawalSettler
+		id      string
+		body    string
+		want    int
+	}{
+		"a bad id":          {good(), "not-a-uuid", `{"rail_reference":"ref"}`, http.StatusBadRequest},
+		"no reference":      {good(), request.String(), `{}`, http.StatusBadRequest},
+		"a blank reference": {good(), request.String(), `{"rail_reference":"   "}`, http.StatusBadRequest},
+		"a long reference": {good(), request.String(),
+			`{"rail_reference":"` + strings.Repeat("x", 201) + `"}`, http.StatusBadRequest},
+		// C-4: the operator is the token subject, so a body naming one is
+		// refused rather than quietly ignored.
+		"an operator in the body": {good(), request.String(),
+			`{"rail_reference":"ref","operator":"` + uuid.NewString() + `"}`, http.StatusBadRequest},
+		"no payout": {&recordingSettler{err: payout.ErrNoPayout},
+			request.String(), `{"rail_reference":"ref"}`, http.StatusNotFound},
+		"no such withdrawal": {&recordingSettler{err: payout.ErrNoSuchWithdrawal},
+			request.String(), `{"rail_reference":"ref"}`, http.StatusNotFound},
+		// Anything the service did not classify is this API's problem, not
+		// the caller's, and says nothing about why.
+		"an unclassified failure": {&recordingSettler{err: errors.New("the ledger fell over")},
+			request.String(), `{"rail_reference":"ref"}`, http.StatusInternalServerError},
+		"not waiting on a rail": {&recordingSettler{err: payout.ErrNotSubmitted},
+			request.String(), `{"rail_reference":"ref"}`, http.StatusConflict},
+		"refused by the service": {&recordingSettler{err: payout.ErrNotSettled},
+			request.String(), `{"rail_reference":"ref"}`, http.StatusConflict},
+		// A deployment with nowhere to record one still runs its queue.
+		"no settler at all": {nil, request.String(), `{"rail_reference":"ref"}`, http.StatusServiceUnavailable},
+	} {
+		if rec := settle(t, c.settler, c.id, c.body); rec.Code != c.want {
+			t.Errorf("%s: status = %d, want %d; body: %s", name, rec.Code, c.want, rec.Body.String())
+		}
+	}
 }

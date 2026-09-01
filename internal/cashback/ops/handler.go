@@ -32,7 +32,11 @@ type Handler struct {
 	// refusals is the other answer to the same question; see
 	// [WithdrawalRefuser] for why it is a separate dependency.
 	refusals WithdrawalRefuser
-	auth     OperatorAuthenticator
+	// settlements records a payment an operator made by hand. May be nil:
+	// see [Handler.settleWithdrawal] for why a deployment without one
+	// answers 503 on that route alone rather than not serving the queue.
+	settlements WithdrawalSettler
+	auth        OperatorAuthenticator
 	// allow is the 405 classifier, derived from routes() in NewHandler so
 	// it cannot drift from what is actually registered.
 	allow platformhttp.AllowTable
@@ -42,8 +46,11 @@ type Handler struct {
 // composition root to mount. Every route sits behind the requireOperator
 // gate - authentication wraps the whole table, so a future route cannot be
 // added unauthenticated by omission.
-func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, refusals WithdrawalRefuser, auth OperatorAuthenticator) http.Handler {
-	h := &Handler{log: log, store: store, approvals: approvals, refusals: refusals, auth: auth}
+func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, refusals WithdrawalRefuser, settlements WithdrawalSettler, auth OperatorAuthenticator) http.Handler {
+	h := &Handler{
+		log: log, store: store, approvals: approvals, refusals: refusals,
+		settlements: settlements, auth: auth,
+	}
 	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
 	for pattern, handler := range h.routes() {
@@ -67,6 +74,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"POST " + Prefix + "unattributed/{id}/dismiss": h.dismissUnattributed,
 		"POST " + Prefix + "withdrawals/{id}/approve":  h.approveWithdrawal,
 		"POST " + Prefix + "withdrawals/{id}/reject":   h.rejectWithdrawal,
+		"POST " + Prefix + "withdrawals/{id}/settle":   h.settleWithdrawal,
 	}
 }
 

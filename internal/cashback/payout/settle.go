@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -219,7 +220,8 @@ func (s *Settlements) Settle(ctx context.Context, request uuid.UUID) (Settlement
 
 	switch status {
 	case StatusSettled:
-		return s.recordArrival(ctx, request)
+		// Nobody told this service: the rail did, and it has no name.
+		return s.recordArrival(ctx, request, recorded{})
 	case StatusFailed:
 		// The rail took the payment and could not complete it. Same end as
 		// a refused submission, so the same code puts the money back.
@@ -234,6 +236,64 @@ func (s *Settlements) Settle(ctx context.Context, request uuid.UUID) (Settlement
 		// waiting is not news.
 		return Settlement{Payout: waiting, Status: status}, nil
 	}
+}
+
+// recorded is what an operator supplied when they told this service a manual
+// payment had landed. Zero when a rail reported it instead: a rail has no
+// name, and it already said what it called the payment.
+type recorded struct {
+	Operator  uuid.UUID
+	Reference string
+}
+
+// Recording is an operator saying a payment they made by hand has landed.
+type Recording struct {
+	// Request is the withdrawal whose payment settled.
+	Request uuid.UUID
+	// Operator is the human saying so (FR-061). Never taken from a body -
+	// the endpoint takes it from the token, as every operator action does.
+	Operator uuid.UUID
+	// Reference is what the BANK called the transfer, replacing the
+	// manual: placeholder the submission recorded. It is what a member
+	// quotes and what an auditor follows, so the placeholder standing in
+	// for it is a payment nobody can trace.
+	Reference string
+}
+
+// Record settles a payment an operator made by hand.
+//
+// This is the other half of closing the money loop, and on the manual rail
+// it is the ONLY half that works: manual.Status always answers submitted,
+// deliberately, because a rail that guessed "settled" because time had
+// passed would report money as delivered on the strength of a clock. A
+// person went to a bank, so a person says so.
+//
+// The rail is not asked, because there is nothing to ask. Everything else -
+// the lock, the two writes, the event - is the sweep's path exactly, so a
+// settlement recorded by hand and one reported by a rail leave the same rows
+// behind.
+func (s *Settlements) Record(ctx context.Context, recording Recording) (Settlement, error) {
+	reference := strings.TrimSpace(recording.Reference)
+	switch {
+	case recording.Request == uuid.Nil:
+		return Settlement{}, fmt.Errorf("%w: no payment to record", ErrNotSettled)
+	case recording.Operator == uuid.Nil:
+		// FR-061 in the one place a caller could get it wrong. Recording
+		// money as delivered is an operator action and an anonymous one is
+		// a bug in the gate above.
+		return Settlement{}, fmt.Errorf("%w: no operator is recording it", ErrNotSettled)
+	case reference == "":
+		// The placeholder means "nobody has done this yet". Settling
+		// without replacing it would say a payment landed and leave
+		// nothing to trace it by.
+		return Settlement{}, fmt.Errorf("%w: no reference: what did the bank call the transfer?", ErrNotSettled)
+	}
+	// No NewRailReference check here, deliberately: it refuses exactly the
+	// blank string, which the trim above has already refused. A second
+	// guard for the same thing would be a branch nothing could reach.
+	return s.recordArrival(ctx, recording.Request, recorded{
+		Operator: recording.Operator, Reference: reference,
+	})
 }
 
 // submitted reads the payout this sweep may ask about, refusing one that is
@@ -262,7 +322,7 @@ func (s *Settlements) submitted(ctx context.Context, request uuid.UUID) (Payout,
 // the rail has already answered. The three writes are one commit because a
 // payout marked settled whose request still reads approved is a member being
 // told two different things by two screens.
-func (s *Settlements) recordArrival(ctx context.Context, request uuid.UUID) (Settlement, error) {
+func (s *Settlements) recordArrival(ctx context.Context, request uuid.UUID, told recorded) (Settlement, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return Settlement{}, fmt.Errorf("%w: %w", ErrNotSettled, err)
@@ -291,6 +351,12 @@ func (s *Settlements) recordArrival(ctx context.Context, request uuid.UUID) (Set
 		ID:        pgtype.UUID{Bytes: waiting.ID, Valid: true},
 		FromState: string(StatusSubmitted),
 		ToState:   string(StatusSettled),
+		// Null leaves the reference the submission recorded, which is what
+		// a rail-reported settlement wants: the rail already named it. An
+		// operator recording a manual payment supplies what their BANK
+		// called it, replacing the manual: placeholder that says "nobody
+		// has done this yet".
+		RailReference: pgtype.Text{String: told.Reference, Valid: told.Reference != ""},
 	})
 	if err != nil {
 		return Settlement{}, fmt.Errorf("%w: settling %s: %w", ErrNotSettled, waiting.ID, err)
@@ -312,7 +378,7 @@ func (s *Settlements) recordArrival(ctx context.Context, request uuid.UUID) (Set
 		return Settlement{}, fmt.Errorf("%w: marking %s paid: %w", ErrNotSettled, request, err)
 	}
 
-	if err := s.announcer.Settled(ctx, tx, arrived); err != nil {
+	if err := s.announcer.Settled(ctx, tx, arrived, told.Operator); err != nil {
 		return Settlement{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

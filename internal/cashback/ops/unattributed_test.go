@@ -140,7 +140,7 @@ func list(t *testing.T, store ops.UnattributedStore, query string) *httptest.Res
 	req := httptest.NewRequest(http.MethodGet, path, strings.NewReader(""))
 	req.Header.Set("Authorization", "Bearer t")
 	rec := httptest.NewRecorder()
-	ops.NewHandler(discardLogger(), store, unreachableApprover{}, unreachableRefuser{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
+	ops.NewHandler(discardLogger(), store, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
 	return rec
 }
 
@@ -414,7 +414,7 @@ func TestTheWrongMethodIsA405WithAnAllowHeader(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, ops.Prefix+"unattributed", strings.NewReader(""))
 	req.Header.Set("Authorization", "Bearer t")
 	rec := httptest.NewRecorder()
-	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
+	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusMethodNotAllowed, rec.Body.String())
@@ -431,7 +431,7 @@ func TestTheWrongMethodIsA405WithAnAllowHeader(t *testing.T) {
 func TestEveryRegisteredRouteIsReachable(t *testing.T) {
 	t.Parallel()
 
-	h := ops.NewHandler(discardLogger(), &pageStore{}, unreachableApprover{}, unreachableRefuser{}, stubAuth{op: anOperator})
+	h := ops.NewHandler(discardLogger(), &pageStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, stubAuth{op: anOperator})
 
 	for _, pattern := range ops.Patterns() {
 		t.Run(pattern, func(t *testing.T) {

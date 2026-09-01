@@ -2394,6 +2394,104 @@
           }
         }
       }
+    },
+    "/api/v1/cashback/ops/withdrawals/{id}/settle": {
+      "post": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "settleWithdrawal",
+        "summary": "Record that a payment made by hand has landed",
+        "description": "Record that a payout an operator carried out themselves reached the member (FR-053, FR-061).\n\nThis is the manual rail's whole settlement path and there is no automatic alternative to it. The scheduled sweep asks each rail what became of the payments it took; the manual rail always answers \"submitted\", because a rail that guessed otherwise would report money as delivered on the strength of a clock. A person went to a bank, so a person says so.\n\nThe rail reference is what the BANK called the transfer. It replaces the `manual:` placeholder the submission recorded - the one that means nobody has made the payment yet - and it is what a member quotes and an auditor follows, so a settlement without it would say money landed and leave nothing to trace it by.\n\nWho records it is the token subject and is not in the body, as with every operator action here. The amount is not in the body either: the payout froze it at approval, and a settlement that could restate it would be one that could pay a different sum.\n\nThe payout becomes `settled` and the request becomes `paid`, in one transaction. The approval is not touched - `decided_by` and `decided_at` stay as the approving operator left them, because a settlement is an observation and not a second decision.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The withdrawal request whose payment landed."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawalSettlement"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The payment as it now stands.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettledPayout"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The id in the path is not a UUID, the body is not a single JSON document of the expected shape, or the rail reference is blank or longer than 200 characters.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "404": {
+            "description": "No withdrawal request has that id, or it has no payout because nobody approved it.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The payment is not waiting on a rail - already settled, already failed, or never sent - or it cannot be settled as it stands. Reload before recording it.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "description": "This deployment has nowhere to record a settlement. Nothing is broken and the approval queue keeps working; only this route is affected.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4316,6 +4414,71 @@
           "release_transfer": {
             "type": "string",
             "description": "The ledger transfer that carried the money back. Distinct from the reservation that carried it out: one movement each way, each with its own reference. Sharing one would make the release a replay that recorded nothing."
+          }
+        }
+      },
+      "WithdrawalSettlement": {
+        "type": "object",
+        "description": "An operator saying a payment they made by hand has landed.",
+        "required": [
+          "rail_reference"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "rail_reference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "What the bank called the transfer, replacing the `manual:` placeholder recorded at submission."
+          }
+        }
+      },
+      "SettledPayout": {
+        "type": "object",
+        "description": "One payout that reached the member.",
+        "required": [
+          "payout_id",
+          "request_id",
+          "rail_reference",
+          "amount",
+          "state",
+          "settled_at",
+          "request_state"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "payout_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "rail_reference": {
+            "type": "string",
+            "description": "What the operator recorded, which is what a member quotes to their bank."
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "settled"
+            ]
+          },
+          "settled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Never null: payout_settled_iff_settlement_time ties the instant to the state."
+          },
+          "request_state": {
+            "type": "string",
+            "enum": [
+              "paid"
+            ],
+            "description": "Echoed so an operator reading one screen need not reload another to learn the member's request is paid."
           }
         }
       },

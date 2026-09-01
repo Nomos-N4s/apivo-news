@@ -51,7 +51,7 @@ func dismiss(t *testing.T, store ops.UnattributedStore, id, body string) *httpte
 	req := httptest.NewRequest(http.MethodPost, ops.Prefix+"unattributed/"+id+"/dismiss", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer t")
 	rec := httptest.NewRecorder()
-	ops.NewHandler(discardLogger(), store, unreachableApprover{}, unreachableRefuser{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
+	ops.NewHandler(discardLogger(), store, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
 	return rec
 }
 

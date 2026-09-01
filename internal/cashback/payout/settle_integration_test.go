@@ -565,3 +565,126 @@ func TestAPaymentTheRailNeverAcknowledgedIsTheRetryPathsWork(t *testing.T) {
 		t.Errorf("the request is %s, want it left at %s for a retry", waiting.State, payout.StateApproved)
 	}
 }
+
+// TestAnOperatorRecordsAPaymentTheyMadeByHand is the manual rail's whole
+// settlement path, and the only one it has: a person went to a bank, so a
+// person says so.
+//
+// What must be true afterwards is what a rail-reported settlement leaves
+// behind, plus one thing more - the reference is the BANK's, not the
+// manual: placeholder that meant nobody had made the transfer yet.
+func TestAnOperatorRecordsAPaymentTheyMadeByHand(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f := aFixture(ctx, t, 1000, approvableAmount*2)
+	operator := seedOperator(ctx, t, pool)
+	toABank := seedDestinationOfKind(ctx, t, f.pool, f.member, true, "manual")
+	request, err := f.withdrawals.Request(ctx, payout.Request{
+		Member: f.member, Destination: toABank, Amount: euro(t, approvableAmount),
+	})
+	if err != nil {
+		t.Fatalf("Request(): %v", err)
+	}
+	rail := manual.New()
+	sent, err := approvals(t, f, rail).Approve(ctx, payout.Approval{
+		Request: request.ID, Operator: operator,
+	})
+	if err != nil {
+		t.Fatalf("Approve(): %v", err)
+	}
+	if !strings.HasPrefix(sent.RailReference, "manual:") {
+		t.Fatalf("the submission recorded %q, want the manual: placeholder", sent.RailReference)
+	}
+	approved := decisionOf(ctx, t, f.pool, request.ID)
+
+	const fromTheBank = "DE-SEPA-2026-09-01-000417"
+	settled, err := settlements(t, f, rail).Record(ctx, payout.Recording{
+		Request: request.ID, Operator: operator, Reference: fromTheBank,
+	})
+	if err != nil {
+		t.Fatalf("Record(): %v", err)
+	}
+
+	if settled.Payout.State != payout.StatusSettled {
+		t.Errorf("the payout is %s, want %s", settled.Payout.State, payout.StatusSettled)
+	}
+	if settled.Payout.RailReference != fromTheBank {
+		t.Errorf("the reference is %q, want the bank's %q", settled.Payout.RailReference, fromTheBank)
+	}
+	if settled.Payout.SettledAt.IsZero() {
+		t.Error("the payout carries no settlement instant")
+	}
+	paid, err := f.withdrawals.Get(ctx, f.member, request.ID)
+	if err != nil {
+		t.Fatalf("re-reading the request: %v", err)
+	}
+	if paid.State != payout.StatePaid {
+		t.Errorf("the request is %s, want %s", paid.State, payout.StatePaid)
+	}
+	// The approval is untouched, as it is when a rail reports the arrival.
+	switch after := decisionOf(ctx, t, f.pool, request.ID); {
+	case after.By != approved.By:
+		t.Errorf("the decision is now %s's, want the approver's %s", after.By, approved.By)
+	case !after.At.Equal(approved.At):
+		t.Errorf("decided_at moved to %s, want the approval's %s", after.At, approved.At)
+	}
+
+	// Announced with the human who said so, which a rail-reported
+	// settlement has no way to carry.
+	events := announcementsOf(ctx, t, pool, "cashback.payout.settled", settled.Payout.ID)
+	if len(events) != 1 {
+		t.Fatalf("got %d settlement events, want exactly 1", len(events))
+	}
+	if events[0].Payload["actor"] != operator.String() {
+		t.Errorf("actor = %v, want the operator %s (FR-061)", events[0].Payload["actor"], operator)
+	}
+	if events[0].Payload["rail_reference"] != fromTheBank {
+		t.Errorf("rail_reference = %v, want the bank's %q", events[0].Payload["rail_reference"], fromTheBank)
+	}
+}
+
+// TestARailReportedSettlementNamesNobody. Both are real settlements and
+// neither is more true, but only one has a human to ask about it - and a
+// consumer cannot tell them apart from the payload otherwise.
+func TestARailReportedSettlementNamesNobody(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	rail := stub.New()
+	f, request, sent := submittedThrough(ctx, t, rail)
+	if err := rail.Settle(mustReference(t, sent.RailReference)); err != nil {
+		t.Fatalf("settling at the rail: %v", err)
+	}
+	if _, err := settlements(t, f, rail).Settle(ctx, request.ID); err != nil {
+		t.Fatalf("Settle(): %v", err)
+	}
+
+	events := announcementsOf(ctx, t, pool, "cashback.payout.settled", sent.ID)
+	if len(events) != 1 {
+		t.Fatalf("got %d settlement events, want exactly 1", len(events))
+	}
+	if actor, present := events[0].Payload["actor"]; present {
+		t.Errorf("actor = %v on a rail-reported settlement, want it absent", actor)
+	}
+}
+
+// TestWhatRecordingRefuses. Each of these would settle a payment on less
+// evidence than a settlement needs.
+func TestWhatRecordingRefuses(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	rail := stub.New()
+	f, request, _ := submittedThrough(ctx, t, rail)
+	sweep := settlements(t, f, rail)
+	operator := seedOperator(ctx, t, f.pool)
+
+	for name, recording := range map[string]payout.Recording{
+		"no request":  {Operator: operator, Reference: "ref"},
+		"no operator": {Request: request.ID, Reference: "ref"},
+		// The placeholder means nobody has made the transfer. Settling
+		// without replacing it would say money landed and leave nothing to
+		// trace it by.
+		"no reference":    {Request: request.ID, Operator: operator},
+		"blank reference": {Request: request.ID, Operator: operator, Reference: "   "},
+	} {
+		if _, err := sweep.Record(ctx, recording); !errors.Is(err, payout.ErrNotSettled) {
+			t.Errorf("%s = %v, want %v", name, err, payout.ErrNotSettled)
+		}
+	}
+}
