@@ -378,6 +378,32 @@ func TestSourcesListsRegisteredFeedsNewestFirst(t *testing.T) {
 	}
 }
 
+// sourceWalkPages is how many pages a full walk of the sources list may take
+// before it has genuinely failed to terminate.
+//
+// It is derived from the rows the snapshot holds rather than being a round
+// number, and that is the whole point. These tests walk the WHOLE table, and
+// the table is not theirs: every suite that registers a source leaves one
+// behind, and source rows are kept on purpose - the items hanging off them
+// are retrieved content, which I-3 makes immutable because it is legal
+// evidence, so nothing can delete them and a long-lived database only grows.
+//
+// A fixed cap is therefore a table-size limit wearing the costume of a
+// termination check. It passes in CI, where the database is new every run,
+// and fails on a developer's database that has merely been used - naming a
+// pagination bug that is not there. Counting first makes the failure mean
+// what it says.
+func sourceWalkPages(ctx context.Context, t *testing.T, tx pgx.Tx, pageSize int) int {
+	t.Helper()
+	var rows int
+	if err := tx.QueryRow(ctx, `select count(*) from source`).Scan(&rows); err != nil {
+		t.Fatalf("counting the sources a walk has to cross: %v", err)
+	}
+	// A page for every full page, one for the remainder, and a margin so a
+	// real failure reads as "never terminated" rather than "off by one".
+	return rows/pageSize + 8
+}
+
 // TestSourcesKeysetPageBoundary walks the whole list two rows at a time:
 // next_cursor is null exactly when the list is exhausted, no row repeats,
 // and no seeded row is skipped.
@@ -389,9 +415,10 @@ func TestSourcesKeysetPageBoundary(t *testing.T) {
 
 	seen := make(map[string]int)
 	cursor := ""
+	maxPages := sourceWalkPages(ctx, t, tx, 2)
 	for page := 0; ; page++ {
-		if page > 500 {
-			t.Fatal("the walk did not terminate; next_cursor never went null")
+		if page > maxPages {
+			t.Fatalf("the walk did not terminate after %d pages; next_cursor never went null", page)
 		}
 		query := "?limit=2"
 		if cursor != "" {
@@ -458,9 +485,10 @@ func TestSourcesKeysetTieBreakOnIdenticalCreatedAt(t *testing.T) {
 	seen := make(map[string]int)
 	var order []string
 	cursor := ""
+	maxPages := sourceWalkPages(ctx, t, tx, 1)
 	for page := 0; ; page++ {
-		if page > 500 {
-			t.Fatal("the walk did not terminate; next_cursor never went null")
+		if page > maxPages {
+			t.Fatalf("the walk did not terminate after %d pages; next_cursor never went null", page)
 		}
 		query := "?limit=1"
 		if cursor != "" {
