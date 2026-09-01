@@ -279,11 +279,13 @@ Three things turn it on, and only the first is configuration.
 
 3. **A bigger connection pool.** The scheduler holds one connection per
    running job and one for its work, plus two reserved for the rest of the
-   application, so the three jobs a polling deployment registers need eight —
-   and pgx defaults `MaxConns` to `max(4, NumCPU)`. Add `pool_max_conns=8` to
-   `DATABASE_URL`. Without it the api refuses to start, with the numbers in
-   the error, rather than deadlocking its request handlers against its jobs
-   under load.
+   application, so the four jobs a polling deployment registers — the
+   zero-sum check, the payout settlement sweep, and the forward and trailing
+   network sweeps — need ten, and pgx defaults `MaxConns` to
+   `max(4, NumCPU)`. Add `pool_max_conns=10` to `DATABASE_URL`. A cashback
+   deployment that is not polling registers two jobs and needs six. Without
+   it the api refuses to start, with the numbers in the error, rather than
+   deadlocking its request handlers against its jobs under load.
 
 Once polling, each account runs two jobs: a forward sweep every 15 minutes
 that reads the next period nobody has read, and a trailing sweep every 6

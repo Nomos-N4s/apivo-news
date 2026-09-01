@@ -404,3 +404,34 @@ func TestASettledPayoutIsNotRetried(t *testing.T) {
 		t.Fatalf("Retry() on a settled payout = %v, want one wrapping %v", err, payout.ErrNothingToRetry)
 	}
 }
+
+// TestARetryOverADatabaseThatHasGoneAwayDoesNotTouchTheRail. The order is the
+// whole point: a retry reads what to send BEFORE it sends it, so a database
+// it cannot reach means no submission at all. A service that asked the rail
+// first and discovered the failure afterwards would have moved a member's
+// money with nothing to prove it - and the reservation still sitting where a
+// second retry would find it and send again.
+func TestARetryOverADatabaseThatHasGoneAwayDoesNotTouchTheRail(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	rail := stub.New(stub.WithTimeout())
+	f, request := approvedThrough(ctx, t, rail)
+	before := payoutOf(ctx, t, f, request.ID)
+
+	retrier := retries(t, f, rail)
+	abandoner := retries(t, f, rail)
+	f.pool.Close()
+
+	if _, err := retrier.Retry(ctx, request.ID); err == nil {
+		t.Error("a retry over a closed pool succeeded, want a refusal")
+	}
+	// Abandon is the other entry point, and it releases money - so it must
+	// refuse for the same reason and just as loudly.
+	if _, err := abandoner.Abandon(ctx, request.ID, payout.Terminal(errors.New("gone"))); !errors.Is(err, payout.ErrNotRetried) {
+		t.Errorf("Abandon() over a closed pool = %v, want %v", err, payout.ErrNotRetried)
+	}
+	// The rail was never asked: the key it would have been asked under is
+	// the one the payout still carries, unsubmitted.
+	if before.RailReference.Valid {
+		t.Fatalf("the fixture's payout already carries %q; this case needs one the rail never named", before.RailReference.String)
+	}
+}

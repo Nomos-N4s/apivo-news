@@ -204,6 +204,11 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 	}
 
 	var routes []platformhttp.Route
+	// The settlement sweep is built with the cashback surface, because it
+	// needs the one ledger that surface shares, and registered with the
+	// scheduler further down. Nil until then, and nil for good in a
+	// deployment with no authenticated routes or no cashback.
+	var settlements *payout.Settlements
 	if cfg.JWKSURL == "" {
 		// Without a verification endpoint no bearer token can be checked, so
 		// the authenticated routes are not mounted at all: a misconfigured
@@ -217,12 +222,15 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// rather than something to deduce from a 404 later.
 		log.ErrorContext(ctx, "JWKS_URL is not set: every /api/v1/editorial/ and /api/v1/account/ route is UNMOUNTED and will answer 404; reader endpoints are unaffected. Set JWKS_URL to the auth provider JWKS endpoint to enable them")
 	} else {
-		authenticated, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, log, pool, adapter)
+		authenticated, sweep, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, log, pool, adapter)
 		if err != nil {
 			return err
 		}
 		defer closeVerifier()
 		routes = append(routes, authenticated...)
+		// Held for the scheduler below, which is built after the routes.
+		// Nil when cashback is off, and the registration there skips it.
+		settlements = sweep
 	}
 
 	// The feed poll loop runs beside the HTTP server, on the same pool and
@@ -341,6 +349,12 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		}
 		registered := 1
 
+		settling, err := registerSettlement(ctx, log, jobs, settlements)
+		if err != nil {
+			return err
+		}
+		registered += settling
+
 		// The affiliate-network sweeps, which are opt-in in a way the
 		// zero-sum check is not: polling needs a publisher account row that
 		// only an operator can create, so a deployment configured ahead of
@@ -377,9 +391,10 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// a job registered above cannot be forgotten here.
 		//
 		// Two connections per job plus two reserved is the locker's
-		// arithmetic, so registering the sweeps takes the requirement from
-		// 4 to 8. pgx defaults MaxConns to max(4, NumCPU), which is why
-		// turning ingestion on may mean raising pool_max_conns in
+		// arithmetic. The zero-sum check alone needs 4; the settlement
+		// sweep takes that to 6, and the two network sweeps to 10. pgx
+		// defaults MaxConns to max(4, NumCPU), which is why a deployment
+		// with cashback on may have to raise pool_max_conns in
 		// DATABASE_URL - the error below says so with the numbers in it.
 		if err := locker.CheckCapacity(registered); err != nil {
 			return err
@@ -438,13 +453,38 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 // refusal that names the network nothing can build a redirect for. Not
 // mounting it instead would answer 404, which tells a frontend the API does
 // not exist here when it does and is merely unable to send anybody anywhere.
-func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool, adapter networks.Network) ([]platformhttp.Route, func(), error) {
+// registerSettlement puts the payout settlement sweep on the scheduler and
+// answers how many jobs that added, for the capacity check.
+//
+// Extracted so the registration itself is testable. It is the only thing in
+// this tree that observes a payment ARRIVING (T146), and a sweep that were
+// built and never registered would leave every payout stuck at submitted and
+// paid_out reporting zero - with nothing failing, because every service it
+// calls still works. The count is returned rather than assumed for the same
+// reason the caller computes the rest: a job registered and not counted is a
+// pool sized for fewer jobs than are running.
+//
+// A nil sweep is not an error. It means the authenticated surface was not
+// built, or cashback is off, and then there are no payouts to settle.
+func registerSettlement(ctx context.Context, log *slog.Logger, jobs *scheduler.Scheduler, sweep *payout.Settlements) (int, error) {
+	if sweep == nil {
+		return 0, nil
+	}
+	if err := sweep.Register(jobs); err != nil {
+		return 0, err
+	}
+	log.InfoContext(ctx, "payout settlement sweep registered",
+		"job", payout.SettlementJobName, "interval", payout.SettlementInterval)
+	return 1, nil
+}
+
+func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool, adapter networks.Network) ([]platformhttp.Route, *payout.Settlements, func(), error) {
 	verifier, err := identity.NewVerifier(ctx, identity.VerifierConfig{
 		JWKSURL:  cfg.JWKSURL,
 		Audience: cfg.JWTAudience,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	ids := identity.New(verifier, pool)
 	roles := identity.NewAccountRoles(pool)
@@ -464,17 +504,20 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		// Named, not silent. An operator who cannot find the queue should
 		// read why in the first log line rather than deduce it from a 404.
 		log.InfoContext(ctx, "CASHBACK_ENABLED is off: every "+opsPrefix+" route is UNMOUNTED and will answer 404")
-		return routes, stop, nil
+		// No sweep either: with no payouts there is nothing in flight to
+		// ask a rail about, and a job that woke every five minutes to read
+		// an empty table would be one more thing to explain.
+		return routes, nil, stop, nil
 	}
 	opsStore, err := ops.NewPGStore(pool)
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	clickouts, err := newClickOuts(pool, adapter, cfg.Cashback.ClickContextHeader)
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	clickOutOptions := []clickout.HandlerOption{}
 	if cfg.Cashback.ClickContextHeader != "" {
@@ -488,54 +531,54 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	ledger, err := newLedger(cfg, pool)
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	wallets, err := newWallets(ledger, pool, cfg.Cashback.PayoutThreshold)
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	withdrawals, err := payout.NewWithdrawals(pool, ledger,
 		cfg.Cashback.HouseAccounts.NetworkReceivable, cfg.Cashback.PayoutThreshold)
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	history, err := wallet.NewHistory(walletstore.New(pool))
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	terms, err := brandTerms(log, cfg.BrandDir)
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	approvals, err := newApprovals(pool, terms)
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	refusals, err := payout.NewRejections(pool, ledger, cfg.Cashback.HouseAccounts.NetworkReceivable)
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	participations, err := wallet.NewParticipations(pool, walletstore.New(pool), terms)
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	exports, err := wallet.NewExports(history)
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	memberSurface := wallet.NewHandler(log, wallets, history, participations, exports, walletAuth{ids: ids})
 	destinations, err := payout.NewDestinations(pool)
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// No details vault is wired, and that is the honest state of the alpha:
 	// a vault is somebody's KMS or a processor's tokenisation endpoint, and
@@ -546,8 +589,26 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	withdrawalSurface, err := payout.NewHandler(log, withdrawals, destinations, nil, payoutAuth{ids: ids})
 	if err != nil {
 		stop()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	// The settlement sweep, over the SAME rail the approver submits
+	// through: asking a different one about a payment is asking about a
+	// payment it never made. It reaches Retries only for Abandon - a
+	// payment the rail took and could not complete puts the money back the
+	// way a refused submission does - and the Abandoner port is what stops
+	// it re-sending anything.
+	retries, err := payout.NewRetries(pool, newPayoutRail(), ledger,
+		cfg.Cashback.HouseAccounts.NetworkReceivable, payoutDescriptor(terms))
+	if err != nil {
+		stop()
+		return nil, nil, nil, err
+	}
+	settlements, err := payout.NewSettlements(log, pool, newPayoutRail(), retries)
+	if err != nil {
+		stop()
+		return nil, nil, nil, err
+	}
+
 	return append(routes,
 		platformhttp.Route{
 			Pattern: opsPrefix,
@@ -582,7 +643,7 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		platformhttp.Route{Pattern: withdrawalPrefix + "/", Handler: withdrawalSurface},
 		platformhttp.Route{Pattern: destinationsPrefix, Handler: withdrawalSurface},
 		platformhttp.Route{Pattern: destinationsPrefix + "/", Handler: withdrawalSurface},
-	), stop, nil
+	), settlements, stop, nil
 }
 
 // brandTerms reads the brand definition BRAND_DIR names and reduces it to
@@ -658,16 +719,31 @@ func newWallets(ledger wallet.Ledger, pool *pgxpool.Pool, threshold money.Amount
 // rather than making the operator queue disappear, the same stance the
 // wallet takes on a missing threshold.
 func newApprovals(pool *pgxpool.Pool, terms wallet.Terms) (*payout.Approvals, error) {
-	descriptor := terms.Brand
-	if descriptor == "" {
+	return payout.NewApprovals(pool, newPayoutRail(), payoutDescriptor(terms))
+}
+
+// newPayoutRail is the one rail this deployment pays through.
+//
+// A function rather than a value because every caller wants its own - the
+// approver, the retrier and the settlement sweep - and because it is the
+// single place a deployment with a real rail changes. What must NOT vary is
+// which rail: asking one rail about a payment another made is asking about a
+// payment that does not exist.
+func newPayoutRail() payout.Rail { return manual.New() }
+
+// payoutDescriptor is what a member reads on their statement (FR-070,
+// FR-073). It comes from the brand, because no rail may contain a product
+// name.
+func payoutDescriptor(terms wallet.Terms) string {
+	if terms.Brand == "" {
 		// payout.NewApprovals refuses a blank one, and the alternative to a
 		// placeholder here is an unmounted operator queue. The name is not
 		// a product name: it is the absence of one, and it reaches a
 		// member's statement only in a deployment that has already been
 		// told at start-up that it has no brand.
-		descriptor = "CASHBACK"
+		return "CASHBACK"
 	}
-	return payout.NewApprovals(pool, manual.New(), descriptor)
+	return terms.Brand
 }
 
 // newLedger builds the Ledger port's implementation this deployment selected

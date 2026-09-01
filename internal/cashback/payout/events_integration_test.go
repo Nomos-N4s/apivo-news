@@ -339,3 +339,34 @@ func failuresFor(ctx context.Context, t *testing.T, pool *pgxpool.Pool, request 
 	}
 	return count
 }
+
+// TestAnAlreadyAppendedKeyIsAFailureNotANoOp. The outbox reports a collision
+// as a unique violation, and a failed statement aborts the whole transaction
+// - so a caller that shrugged it off would carry on through a transaction
+// whose every later statement raises "current transaction is aborted", and
+// would commit nothing while reporting success. This is the case that
+// documents why the announcer returns the error rather than swallowing it.
+func TestAnAlreadyAppendedKeyIsAFailureNotANoOp(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f := aFixture(ctx, t, 1000, 5000)
+	announcer, err := payout.NewAnnouncer()
+	if err != nil {
+		t.Fatalf("NewAnnouncer(): %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	made := payout.Withdrawal{
+		ID: uuid.New(), Member: f.member, Amount: euro(t, 2500), RequestedAt: time.Now(),
+	}
+	if err := announcer.Requested(ctx, tx, made); err != nil {
+		t.Fatalf("the first announcement: %v", err)
+	}
+	if err := announcer.Requested(ctx, tx, made); !errors.Is(err, payout.ErrNotAnnounced) {
+		t.Errorf("the second announcement under the same key = %v, want %v", err, payout.ErrNotAnnounced)
+	}
+}

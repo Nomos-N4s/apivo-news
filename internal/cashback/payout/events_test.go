@@ -77,3 +77,34 @@ func TestWhatTheAnnouncerRefusesToSay(t *testing.T) {
 		}
 	}
 }
+
+// TestWhatTheAnnouncerRefusesToSayAboutASettlement. A settled payout is the
+// one fact that says a member was actually paid, so the three things that
+// would make it a lie each refuse it.
+func TestWhatTheAnnouncerRefusesToSayAboutASettlement(t *testing.T) {
+	t.Parallel()
+	announcer, err := payout.NewAnnouncer()
+	if err != nil {
+		t.Fatalf("NewAnnouncer(): %v", err)
+	}
+	ctx := context.Background()
+	settled := payout.Payout{
+		ID: uuid.New(), Request: uuid.New(),
+		RailReference: "stub:payout:whatever", SettledAt: time.Now(),
+	}
+
+	for name, spoil := range map[string]func(*payout.Payout){
+		"a settlement with no payout": func(p *payout.Payout) { p.ID = uuid.Nil },
+		// It settled, so it was submitted, so the rail named it. A
+		// settlement with no reference is a row the schema would not hold.
+		"a settlement the rail never named": func(p *payout.Payout) { p.RailReference = "" },
+		// payout_settled_iff_settlement_time refuses the row outright.
+		"a settlement with no instant": func(p *payout.Payout) { p.SettledAt = time.Time{} },
+	} {
+		spoiled := settled
+		spoil(&spoiled)
+		if err := announcer.Settled(ctx, nil, spoiled); !errors.Is(err, payout.ErrNotAnnounced) {
+			t.Errorf("%s = %v, want one wrapping %v", name, err, payout.ErrNotAnnounced)
+		}
+	}
+}
