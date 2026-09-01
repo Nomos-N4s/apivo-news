@@ -136,7 +136,7 @@ type CashbackEntryTransition struct {
 type CashbackLedgerLink struct {
 	TransitionID pgtype.UUID
 	EntryID      pgtype.UUID
-	// The ledger's own transfer reference, unique here so one transfer can never be claimed by two transitions.
+	// The ledger's own transfer reference. Unique per ENTRY rather than outright: a withdrawal reserves several entries under one transfer (D9), and C-7 finds them by matching it (0016). One entry still cannot claim one transfer twice.
 	LedgerTransferRef string
 	PostedAt          pgtype.Timestamptz
 }

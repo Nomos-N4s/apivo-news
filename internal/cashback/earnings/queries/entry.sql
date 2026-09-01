@@ -80,3 +80,38 @@ select id, account_id, brand_id, network_transaction_id, click_id,
        state, amount_minor, currency, hold_rule, reversal_of_id, created_at
   from cashback.entry
  where id = sqlc.arg(id);
+
+-- name: ConfirmedEntriesFor :many
+-- Every confirmed entry a member holds in one currency, oldest first, locked.
+--
+-- This is what a withdrawal reserves FROM. It returns the whole set rather
+-- than the few rows a particular amount needs, and it takes a row lock on all
+-- of them, and both of those are the point:
+--
+--   * FOR UPDATE is what makes two withdrawal requests for one member
+--     sequential. The second blocks here, and by the time it reads, the first
+--     has moved its entries out of confirmed - so the second sees what is
+--     actually left rather than what was there when it started. Without it
+--     both could select the same entries and both would post a reservation
+--     for money that only exists once.
+--   * The whole set, because which rows a given amount needs is a decision
+--     about running totals, and a decision about money is one this repository
+--     makes in Go where it can be read and tested, not in a window function
+--     that cannot be locked in the same statement anyway (Postgres refuses
+--     FOR UPDATE beside one).
+--
+-- Oldest first is not arbitrary either: cashback is paid out in the order it
+-- was earned, so a member's oldest confirmed money leaves first and nothing
+-- can sit at the back of the queue indefinitely.
+--
+-- One currency, because an account holds one currency (C-6) and a withdrawal
+-- is denominated in one. Confirmed money in another currency is a different
+-- balance and a different withdrawal.
+select id, account_id, brand_id, network_transaction_id, click_id,
+       state, amount_minor, currency, hold_rule, reversal_of_id, created_at
+  from cashback.entry
+ where account_id = sqlc.arg(account_id)
+   and currency = sqlc.arg(currency)
+   and state = 'confirmed'
+ order by created_at, id
+   for update;

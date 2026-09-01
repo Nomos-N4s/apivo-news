@@ -32,6 +32,7 @@ import (
 	clickoutstore "github.com/Nomos-N4s/apivo-news/internal/cashback/clickout/store"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/blnk"
 	walletmemory "github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/memory"
@@ -94,6 +95,12 @@ const clickoutPrefix = clickout.Prefix
 // walletPrefix is the member wallet surface, taken from the module that
 // serves it for the reason clickoutPrefix is.
 const walletPrefix = wallet.Prefix
+
+// withdrawalPrefix is where a member asks to be paid. A sibling of the
+// wallet rather than a path beneath it: reading a balance and asking for
+// money to leave are different acts behind different rules, and the module
+// owns the string for the reason clickoutPrefix does.
+const withdrawalPrefix = payout.Prefix
 
 // exportPrefix is the member's own history as a document. A sibling of the
 // wallet for the reason participationPrefix is: FR-003 pairs exporting with
@@ -466,7 +473,23 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	if cfg.Cashback.ClickContextHeader != "" {
 		clickOutOptions = append(clickOutOptions, clickout.WithContextHeader(cfg.Cashback.ClickContextHeader))
 	}
-	wallets, err := newWallets(cfg, pool)
+	// One ledger for the whole cashback surface. Two would be two ledgers
+	// under the memory driver - a wallet showing balances the withdrawal
+	// path cannot see - and two clients of the same substrate under the
+	// others, which is waste rather than a bug. Built here so both callers
+	// take the same one.
+	ledger, err := newLedger(cfg, pool)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	wallets, err := newWallets(ledger, pool, cfg.Cashback.PayoutThreshold)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	withdrawals, err := payout.NewWithdrawals(pool, ledger,
+		cfg.Cashback.HouseAccounts.NetworkReceivable, cfg.Cashback.PayoutThreshold)
 	if err != nil {
 		stop()
 		return nil, nil, err
@@ -492,6 +515,11 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		return nil, nil, err
 	}
 	memberSurface := wallet.NewHandler(log, wallets, history, participations, exports, walletAuth{ids: ids})
+	withdrawalSurface, err := payout.NewHandler(log, withdrawals, payoutAuth{ids: ids})
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
 	return append(routes,
 		platformhttp.Route{
 			Pattern: opsPrefix,
@@ -518,6 +546,12 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		platformhttp.Route{Pattern: participationPrefix + "/", Handler: memberSurface},
 		platformhttp.Route{Pattern: exportPrefix, Handler: memberSurface},
 		platformhttp.Route{Pattern: exportPrefix + "/", Handler: memberSurface},
+		// Withdrawals are a sibling of the wallet rather than a path beneath
+		// it, and a module of their own: reading a balance and asking for
+		// money to leave are different acts, and the second one is the one
+		// C-4 and C-5 exist for.
+		platformhttp.Route{Pattern: withdrawalPrefix, Handler: withdrawalSurface},
+		platformhttp.Route{Pattern: withdrawalPrefix + "/", Handler: withdrawalSurface},
 	), stop, nil
 }
 
@@ -563,20 +597,19 @@ func brandTerms(log *slog.Logger, dir string) (wallet.Terms, error) {
 // projected from, the settled payouts that say what has been paid, and the
 // threshold a withdrawal is checked against.
 //
+// The ledger is passed in rather than built here, because the withdrawal
+// path needs THE SAME ONE - see the call site.
+//
 // The threshold may be the zero Amount here, and is passed through as one.
 // Production cannot start without it; the environments that can are the
 // no-Docker loop and CI, and there the endpoint answers 503 naming the two
 // keys rather than being unmounted - a 404 would say the API is not here.
-func newWallets(cfg config.Config, pool *pgxpool.Pool) (*wallet.Wallets, error) {
-	ledger, err := newLedger(cfg, pool)
-	if err != nil {
-		return nil, err
-	}
+func newWallets(ledger wallet.Ledger, pool *pgxpool.Pool, threshold money.Amount) (*wallet.Wallets, error) {
 	projector, err := wallet.NewProjector(ledger)
 	if err != nil {
 		return nil, err
 	}
-	return wallet.NewWallets(projector, walletstore.New(pool), cfg.Cashback.PayoutThreshold)
+	return wallet.NewWallets(projector, walletstore.New(pool), threshold)
 }
 
 // newLedger builds the Ledger port's implementation this deployment selected
@@ -691,6 +724,27 @@ func (a walletAuth) AuthenticateMember(ctx context.Context, token string) (walle
 		return wallet.Member{}, err
 	}
 	return wallet.Member{ID: id.Subject}, nil
+}
+
+// payoutAuth adapts the identity module to the payout module's own
+// consumer-defined MemberAuthenticator, for the reason walletAuth is a
+// second adapter rather than memberAuth reused: each module declares its own
+// interface and its own Member type, so a change made for one surface cannot
+// reach another by sharing an adapter. This surface is where money LEAVES,
+// which is the surface it would matter most on.
+type payoutAuth struct {
+	ids *identity.Service
+}
+
+func (a payoutAuth) AuthenticateMember(ctx context.Context, token string) (payout.Member, error) {
+	id, err := a.ids.Authenticate(ctx, token)
+	switch {
+	case errors.Is(err, identity.ErrInvalidToken), errors.Is(err, identity.ErrUnknownAccount):
+		return payout.Member{}, fmt.Errorf("%w: %w", payout.ErrUnauthenticated, err)
+	case err != nil:
+		return payout.Member{}, err
+	}
+	return payout.Member{ID: id.Subject}, nil
 }
 
 // newOperatorAuth builds the identity-to-ops adapter. It is the single

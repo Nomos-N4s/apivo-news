@@ -207,7 +207,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [x] T088 [US4] Define the `PayoutRail` port with terminal/retryable failure classification in `internal/cashback/payout/rail.go` per [contracts/ports.md](contracts/ports.md) §3
 - [x] T089 [P] [US4] Implement the `manual` rail (operator executes, records the reference, still enforces C-4 and C-5) in `internal/cashback/payout/manual/manual.go`
 - [x] T090 [P] [US4] Implement the `stub` rail with timeout, duplicate-submission and permanent-failure modes in `internal/cashback/payout/stub/stub.go`
-- [ ] T091 [US4] Implement `POST /withdrawals` reserving the amount in the same transaction as the request, in `internal/cashback/payout/handlers.go`
+- [x] T091 [US4] Implement `POST /withdrawals` reserving the amount in the same transaction as the request, in `internal/cashback/payout/handlers.go`
 - [ ] T092 [US4] Implement `POST /ops/withdrawals/{id}/approve` recording `approved_by` and submitting with the request-derived idempotency key, in `internal/cashback/ops/withdrawals.go`
 - [ ] T093 [US4] Implement rejection releasing the reservation back to confirmed balance, in `internal/cashback/payout/reject.go`
 - [ ] T094 [US4] Implement failure classification and same-key retry in `internal/cashback/payout/retry.go`

@@ -416,8 +416,8 @@ func TestAMoveIsAnnouncedBesideItself(t *testing.T) {
 	if want := "transfer:" + posted; announced.Payload["ledger_transfer_ref"] != want {
 		t.Errorf("the event names transfer %v, want %q", announced.Payload["ledger_transfer_ref"], want)
 	}
-	if announced.Key != earnings.TypeEntryStateChanged+":transfer:"+posted {
-		t.Errorf("the event is keyed %q, want the type and the transfer", announced.Key)
+	if announced.Key != earnings.TypeEntryStateChanged+":transfer:"+posted+":"+move.Entry.String() {
+		t.Errorf("the event is keyed %q, want the type, the transfer and the entry", announced.Key)
 	}
 	if announced.Payload["from"] != string(earnings.StatePending) || announced.Payload["to"] != string(earnings.StateConfirmed) {
 		t.Errorf("the event says %v to %v, want pending to confirmed",

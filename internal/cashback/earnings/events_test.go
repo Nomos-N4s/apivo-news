@@ -225,10 +225,11 @@ func TestAMoveLandsInTheStreamNamingItsTransfer(t *testing.T) {
 	if got.Subject == nil || *got.Subject != moved.Entry.String() {
 		t.Errorf("subject = %v, want the entry %s", got.Subject, moved.Entry)
 	}
-	// Keyed on the transfer, not the entry: an entry moves many times and
-	// keying on it would refuse every move after the first.
-	if got.IdempotencyKey == nil || *got.IdempotencyKey != earnings.TypeEntryStateChanged+":"+string(moved.Transfer) {
-		t.Errorf("idempotency key = %v, want the type and the transfer", got.IdempotencyKey)
+	// Keyed on the transfer AND the entry. The transfer is what makes a
+	// retry a replay; the entry is what keeps a reservation - one transfer
+	// over many entries - from colliding with itself.
+	if got.IdempotencyKey == nil || *got.IdempotencyKey != earnings.TypeEntryStateChanged+":"+string(moved.Transfer)+":"+moved.Entry.String() {
+		t.Errorf("idempotency key = %v, want the type, the transfer and the entry", got.IdempotencyKey)
 	}
 	wantNoEnvelopeFields(t, got)
 
@@ -261,6 +262,37 @@ func TestAnEntryMovesMoreThanOnce(t *testing.T) {
 
 	if stored := outboxAbout(ctx, t, tx, entry); len(stored) != 2 {
 		t.Fatalf("appended %d event(s) about one entry, want two", len(stored))
+	}
+}
+
+// TestOneTransferCarriesManyEntries is the reservation case, and it is the
+// one that fails when the key is the transfer alone. A withdrawal reserves
+// several entries under ONE transfer (D9), because C-7 finds them by matching
+// that single reference - so every one of those moves has to be announced
+// even though they all name the same transfer.
+func TestOneTransferCarriesManyEntries(t *testing.T) {
+	ctx, tx := outboxTx(t)
+	a := announcer(t)
+	const reservation = wallet.TransferRef("transfer:withdrawal:reserve")
+
+	first := uuid.New()
+	second := uuid.New()
+	for _, entry := range []uuid.UUID{first, second} {
+		moved := earnings.Transition{
+			Entry:    entry,
+			From:     earnings.StateConfirmed,
+			To:       earnings.StateReserved,
+			Transfer: reservation,
+		}
+		if err := a.StateChanged(ctx, tx, moved); err != nil {
+			t.Fatalf("announcing %s reserved under %s: %v", entry, reservation, err)
+		}
+	}
+
+	for _, entry := range []uuid.UUID{first, second} {
+		if stored := outboxAbout(ctx, t, tx, entry); len(stored) != 1 {
+			t.Errorf("appended %d event(s) about %s, want one", len(stored), entry)
+		}
 	}
 }
 

@@ -123,12 +123,22 @@ func (a *Announcer) Created(ctx context.Context, db events.RowQuerier, entry Ent
 
 // StateChanged announces one move the database has just recorded.
 //
-// Keyed on the ledger transfer rather than on the entry, because an entry
-// moves many times and the transfer is what makes each move singular: the
-// posting key is derived from the entry, the cause and the destination state
-// (D8), so a retry of the same move re-posts to the SAME transfer. Keying on
-// the transfer therefore refuses exactly the announcement a retry would
-// duplicate, and refuses nothing else.
+// Keyed on the ledger transfer AND the entry, because a transfer does not
+// always carry one entry. A transition posted by [Entries.Apply] has a
+// transfer to itself - the key is derived from the entry, the cause and the
+// destination state (D8), so a retry of the same move re-posts to the SAME
+// transfer - and for those two the transfer alone would be enough. A
+// reservation is the exception that decides this: [Entries.Reserve] posts ONE
+// transfer for every entry a withdrawal claims, because C-7 finds them by
+// matching that single reference (migration 0016). Keyed on the transfer
+// alone, the first entry of a five-entry reservation would be announced and
+// the other four would collide on an already-appended key - which the outbox
+// reports as a unique violation that aborts the whole transaction, so the
+// reservation would not be half-announced, it would not commit at all.
+//
+// Adding the entry refuses exactly the announcement a retry would duplicate
+// and refuses nothing else: a retry re-posts to the same transfer and moves
+// the same entries, so it re-derives the same keys.
 //
 // The subject is the entry, not the transfer, because per-subject ordering
 // is the only ordering the stream guarantees and the order that matters here
@@ -165,7 +175,7 @@ func (a *Announcer) StateChanged(ctx context.Context, db events.RowQuerier, move
 		return fmt.Errorf("%w: %s: %w", ErrNotAnnounced, TypeEntryStateChanged, err)
 	}
 	return a.append(ctx, db, TypeEntryStateChanged, moved.Entry,
-		TypeEntryStateChanged+":"+string(moved.Transfer), payload)
+		TypeEntryStateChanged+":"+string(moved.Transfer)+":"+moved.Entry.String(), payload)
 }
 
 // Unattributed announces one report whose reference matched no click.
