@@ -61,7 +61,8 @@ func aStagedMerchant() *stubDetailStore {
 	}
 }
 
-// aStagedBand is a well-formed 4% band, for a case to break one field of.
+// aStagedBand is a well-formed 4% commission at half share - so the page
+// quotes 2% - for a case to break one field of.
 func aStagedBand() store.PublishedBandsRow {
 	return store.PublishedBandsRow{
 		ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
@@ -101,8 +102,8 @@ func TestTheStagedPageIsWellFormed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Detail(): %v", err)
 	}
-	if page.Copy.Name != "Bühne" || len(page.Bands) != 1 || page.Bands[0].Rate.Percent != 400 {
-		t.Errorf("staged page = %+v, want one 4%% band under the German name", page)
+	if page.Copy.Name != "Bühne" || len(page.Bands) != 1 || page.Bands[0].Rate.Percent != 200 {
+		t.Errorf("staged page = %+v, want one 2%% band - half of a 4%% commission - under the German name", page)
 	}
 }
 

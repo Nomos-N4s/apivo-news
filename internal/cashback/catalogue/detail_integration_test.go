@@ -19,6 +19,7 @@ import (
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/catalogue"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/catalogue/store"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
 
@@ -43,10 +44,24 @@ func aRoute(ctx context.Context, t *testing.T, tx pgx.Tx, merchant uuid.UUID, ne
 	return id
 }
 
-// aBand seeds one percent rate band on a route and returns its id. A nil
-// closes means an open-ended band.
+// memberShare is the share of the commission every band in this file gives
+// the member. Half, so that the rate a page quotes is visibly not the rate
+// the band records - a share of the whole would make the two indistinguishable
+// and every case below would pass whichever one the page published.
+const memberShare = 5000
+
+// aBand seeds one percent rate band at the standard share and returns its
+// id. A nil closes means an open-ended band.
 func aBand(ctx context.Context, t *testing.T, tx pgx.Tx, route uuid.UUID,
 	bps int32, conditions, exclusions string, opens time.Time, closes any,
+) uuid.UUID {
+	t.Helper()
+	return aSharedBand(ctx, t, tx, route, bps, memberShare, conditions, exclusions, opens, closes)
+}
+
+// aSharedBand seeds one percent rate band on a route and returns its id.
+func aSharedBand(ctx context.Context, t *testing.T, tx pgx.Tx, route uuid.UUID,
+	bps, share int32, conditions, exclusions string, opens time.Time, closes any,
 ) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
@@ -54,9 +69,9 @@ func aBand(ctx context.Context, t *testing.T, tx pgx.Tx, route uuid.UUID,
 		insert into cashback.offer (
 			merchant_network_id, rate_kind, rate_bps, member_share_bps,
 			conditions, exclusions, valid_from, valid_to, deeplink_template)
-		values ($1, 'percent', $2, 5000, $3, $4, $5, $6, 'https://example.test/go')
+		values ($1, 'percent', $2, $3, $4, $5, $6, $7, 'https://example.test/go')
 		returning id`,
-		route, bps, textOrNull(conditions), textOrNull(exclusions), opens, closes).Scan(&id); err != nil {
+		route, bps, share, textOrNull(conditions), textOrNull(exclusions), opens, closes).Scan(&id); err != nil {
 		t.Fatalf("seeding a band: %v", err)
 	}
 	return id
@@ -111,23 +126,26 @@ func TestAMerchantPageShowsEveryPublishedBand(t *testing.T) {
 	for _, band := range page.Bands {
 		byRate[band.Rate.Percent] = band
 	}
-	if _, closed := byRate[9000]; closed {
+	if _, commission := byRate[800]; commission {
+		t.Error("page quotes the network's 8% commission rather than the member's half of it")
+	}
+	if _, closed := byRate[4500]; closed {
 		t.Error("page shows a band that closed yesterday")
 	}
-	if _, early := byRate[7000]; early {
+	if _, early := byRate[3500]; early {
 		t.Error("page shows a band that does not open until next week")
 	}
-	electronics, ok := byRate[800]
+	electronics, ok := byRate[400]
 	if !ok {
-		t.Fatal("page does not show the 8% band")
+		t.Fatal("page does not show the member's half of the 8% band")
 	}
 	if electronics.Conditions != "on electronics" || electronics.Exclusions != "no gift cards" {
 		t.Errorf("8%% band = %q / %q, want its own conditions and exclusions",
 			electronics.Conditions, electronics.Exclusions)
 	}
-	groceries, ok := byRate[200]
+	groceries, ok := byRate[100]
 	if !ok {
-		t.Fatal("page does not show the 2% band")
+		t.Fatal("page does not show the member's half of the 2% band")
 	}
 	if groceries.Conditions != "on groceries" {
 		t.Errorf("2%% band conditions = %q, want its own", groceries.Conditions)
@@ -135,9 +153,6 @@ func TestAMerchantPageShowsEveryPublishedBand(t *testing.T) {
 	if groceries.Exclusions != "" {
 		t.Errorf("2%% band exclusions = %q, want none - the other band's exclusions are not this one's",
 			groceries.Exclusions)
-	}
-	if groceries.MemberShare != 5000 {
-		t.Errorf("member share = %d bps, want the share the band records", groceries.MemberShare)
 	}
 	if !groceries.ValidTo.IsZero() {
 		t.Errorf("open-ended band closes at %s, want the zero time", groceries.ValidTo)
@@ -242,8 +257,8 @@ func TestOnlyThePublishedRoutesBandsAreShown(t *testing.T) {
 	if len(page.Bands) != 1 {
 		t.Fatalf("page shows %d bands, want only the published route's", len(page.Bands))
 	}
-	if page.Bands[0].Rate.Percent != 400 {
-		t.Errorf("page quotes %d bps, want the published route's 400", page.Bands[0].Rate.Percent)
+	if page.Bands[0].Rate.Percent != 200 {
+		t.Errorf("page quotes %d bps, want the member's half of the published route's 400", page.Bands[0].Rate.Percent)
 	}
 }
 
@@ -310,5 +325,55 @@ func TestANamelessMerchantRefusesRatherThanRenderingBlank(t *testing.T) {
 
 	if _, err := pageOf(t, tx).Detail(ctx, slug, "de", detailAt); !errors.Is(err, catalogue.ErrNoCopy) {
 		t.Errorf("Detail() error = %v, want ErrNoCopy rather than a nameless page", err)
+	}
+}
+
+// TestThePageQuotesWhatAMemberEarns. The band records the network's
+// commission and the share of it the member receives; a page that published
+// the first would be promising twice what arrives. The odd rate is here
+// because half of it is half a basis point, which is the case that decides
+// which direction the quote rounds - and it rounds the way the credit will,
+// so the two never disagree over arithmetic.
+func TestThePageQuotesWhatAMemberEarns(t *testing.T) {
+	ctx, tx, net := importTestTx(t)
+	slug := "earns-" + uuid.NewString()[:8]
+
+	merchant := aMerchant(ctx, t, tx, slug, nil, map[string]string{"de": "Anteil"})
+	route := aRoute(ctx, t, tx, merchant, net.id.String(), true)
+	aSharedBand(ctx, t, tx, route, 833, 5000, "", "", detailAt.Add(-time.Hour), nil)
+
+	page, err := pageOf(t, tx).Detail(ctx, slug, "de", detailAt)
+	if err != nil {
+		t.Fatalf("Detail(): %v", err)
+	}
+	if len(page.Bands) != 1 {
+		t.Fatalf("page shows %d bands, want one", len(page.Bands))
+	}
+	if got := page.Bands[0].Rate.Percent; got != 417 {
+		t.Errorf("page quotes %d bps, want 417 - half of 833 rounded the member's way", got)
+	}
+}
+
+// TestTheCatalogueRoundsAMemberShareTheWayTheLedgerWill. The direction is a
+// product promise (Q4), and it is stated in two packages because a
+// member-facing read has no business importing the earnings module. Held
+// equal here rather than left to whoever edits one of them.
+func TestTheCatalogueRoundsAMemberShareTheWayTheLedgerWill(t *testing.T) {
+	// A share of a commission, computed both ways: the catalogue quotes a
+	// rate, the ledger credits an amount, and for every share the two must
+	// round in the same direction.
+	for share := money.BasisPoints(0); share <= money.BasisPointsScale; share++ {
+		quoted, _, err := money.BasisPoints(833).Split(share, catalogue.MemberFavour)
+		if err != nil {
+			t.Fatalf("quoting at a share of %d: %v", int32(share), err)
+		}
+		credited, _, err := money.BasisPoints(833).Split(share, earnings.MemberFavour)
+		if err != nil {
+			t.Fatalf("crediting at a share of %d: %v", int32(share), err)
+		}
+		if quoted != credited {
+			t.Fatalf("at a share of %d the catalogue quotes %d bps and the ledger credits %d",
+				int32(share), int32(quoted), int32(credited))
+		}
 	}
 }

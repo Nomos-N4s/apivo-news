@@ -680,3 +680,94 @@ func TestMoneyValuesAlreadyEncodeAsIntegers(t *testing.T) {
 		})
 	}
 }
+
+// TestABandComposesWhatAMemberEarns. The band records the network's
+// commission; a member is paid a share of it. Both kinds compose, and both
+// come back as a band of the same kind so nothing downstream has to learn a
+// second shape.
+func TestABandComposesWhatAMemberEarns(t *testing.T) {
+	t.Parallel()
+
+	fixed, err := money.New(250, "EUR")
+	if err != nil {
+		t.Fatalf("money.New(): %v", err)
+	}
+	half, err := money.New(125, "EUR")
+	if err != nil {
+		t.Fatalf("money.New(): %v", err)
+	}
+
+	for name, one := range map[string]struct {
+		band  catalogue.RateBand
+		share money.BasisPoints
+		want  catalogue.RateBand
+	}{
+		"half of a percent band": {
+			band:  catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 800},
+			share: 5000,
+			want:  catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 400},
+		},
+		"half of a fixed band": {
+			band:  catalogue.RateBand{Kind: catalogue.RateFixed, Fixed: fixed},
+			share: 5000,
+			want:  catalogue.RateBand{Kind: catalogue.RateFixed, Fixed: half},
+		},
+		"all of a percent band": {
+			band:  catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 800},
+			share: money.BasisPointsScale,
+			want:  catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 800},
+		},
+		"none of a fixed band": {
+			band:  catalogue.RateBand{Kind: catalogue.RateFixed, Fixed: fixed},
+			share: 0,
+			want:  catalogue.RateBand{Kind: catalogue.RateFixed, Fixed: money.Amount{Currency: "EUR"}},
+		},
+	} {
+		got, err := one.band.Earned(one.share, catalogue.MemberFavour)
+		if err != nil {
+			t.Errorf("%s: Earned(): %v", name, err)
+			continue
+		}
+		if got != one.want {
+			t.Errorf("%s: Earned(%d) = %+v, want %+v", name, int32(one.share), got, one.want)
+		}
+	}
+}
+
+// TestABandRefusesAShareItCannotCompose. A share above the whole would quote
+// a member more than the commission it comes out of, and a kind nothing can
+// compute is not a rate to publish half of.
+func TestABandRefusesAShareItCannotCompose(t *testing.T) {
+	t.Parallel()
+
+	fixed, err := money.New(250, "EUR")
+	if err != nil {
+		t.Fatalf("money.New(): %v", err)
+	}
+
+	for name, one := range map[string]struct {
+		band  catalogue.RateBand
+		share money.BasisPoints
+		mode  money.Rounding
+	}{
+		"a percent band at a share above the whole": {
+			catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 800}, money.BasisPointsScale + 1, catalogue.MemberFavour,
+		},
+		"a fixed band at a share above the whole": {
+			catalogue.RateBand{Kind: catalogue.RateFixed, Fixed: fixed}, money.BasisPointsScale + 1, catalogue.MemberFavour,
+		},
+		"a fixed band with no currency to divide": {
+			catalogue.RateBand{Kind: catalogue.RateFixed, Fixed: money.Amount{Minor: 250}}, 5000, catalogue.MemberFavour,
+		},
+		"a rounding nobody chose": {
+			catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 800}, 5000, 0,
+		},
+		"a kind nothing can compute": {
+			catalogue.RateBand{Kind: "handshake"}, 5000, catalogue.MemberFavour,
+		},
+	} {
+		if _, err := one.band.Earned(one.share, one.mode); err == nil {
+			t.Errorf("%s: Earned() succeeded, want a refusal", name)
+		}
+	}
+}

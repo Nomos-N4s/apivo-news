@@ -43,14 +43,17 @@ type Band struct {
 	// ID is the band's identity, the value POST /clickouts is called with.
 	// It is the only thing on this page that turns into a click.
 	ID uuid.UUID
-	// Rate is the published band: percent basis points or a fixed amount
-	// with its currency, never both (C-6).
+	// Rate is what the MEMBER earns on this band: percent basis points or a
+	// fixed amount with its currency, never both (C-6).
+	//
+	// Not the network's commission, and the commission is deliberately not
+	// on this type at all. A published band records the commission and,
+	// separately, the share of it a member receives; showing the first is
+	// promising a member roughly twice what arrives. Composing them here
+	// rather than at each surface is what makes that mistake
+	// unrepresentable - and it keeps the margin, which is a commercial
+	// fact, off a member-facing read entirely.
 	Rate RateBand
-	// MemberShare is the share of that commission the member receives, in
-	// basis points. What a member is actually paid is this share of the
-	// rate, so a page that showed one without the other would be quoting a
-	// number nobody receives.
-	MemberShare money.BasisPoints
 	// Conditions is what the band requires, verbatim as published (FR-011);
 	// empty when it records none.
 	Conditions string
@@ -213,9 +216,9 @@ func bandsFromRows(rows []store.PublishedBandsRow) ([]Band, error) {
 		if err != nil {
 			return nil, err
 		}
-		share, err := shareFromRow(id, row.MemberShareBps)
+		earned, err := rate.Earned(money.BasisPoints(row.MemberShareBps), MemberFavour)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w %s: %w", ErrMalformedOffer, id, err)
 		}
 		validFrom, err := bandStart(id, row.ValidFrom)
 		if err != nil {
@@ -227,14 +230,26 @@ func bandsFromRows(rows []store.PublishedBandsRow) ([]Band, error) {
 		}
 
 		bands = append(bands, Band{
-			ID:          id,
-			Rate:        rate,
-			MemberShare: share,
-			Conditions:  row.Conditions.String,
-			Exclusions:  row.Exclusions.String,
-			ValidFrom:   validFrom,
-			ValidTo:     validTo,
+			ID:         id,
+			Rate:       earned,
+			Conditions: row.Conditions.String,
+			Exclusions: row.Exclusions.String,
+			ValidFrom:  validFrom,
+			ValidTo:    validTo,
 		})
 	}
 	return bands, nil
 }
+
+// MemberFavour is the direction a member's share rounds when a rate does not
+// divide evenly, and it is exported because it is part of what this
+// catalogue promises rather than an implementation detail of it.
+//
+// It is earnings.MemberFavour, the constant the money path itself uses, and
+// it is repeated here rather than imported because a member-facing read has
+// no business depending on the earnings module. A test holds the two equal,
+// so the number a member is shown and the number they are later credited
+// round the same way and any difference between them is about the
+// commission the network actually reported - which is a real difference
+// worth seeing - rather than about arithmetic.
+const MemberFavour = money.RoundCeil

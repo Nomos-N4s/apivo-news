@@ -99,6 +99,45 @@ type RateBand struct {
 	Fixed money.Amount
 }
 
+// Earned composes what a member receives out of the commission this band
+// publishes and the share of it they are promised.
+//
+// A band records the network's commission; what a member is paid is a share
+// of it. Every surface that quotes a rate to a member has to compose the
+// two, and doing it at each surface is how one of them ends up publishing
+// the commission - a promise of roughly twice what arrives. So the
+// composition lives on the band, once.
+//
+// The share is validated here rather than assumed: a share above the whole
+// would quote a member more than the commission it comes out of. mode is
+// named by the caller for the reason [money.Amount.Split] insists on it -
+// the direction is a product promise, not a detail of integer division.
+//
+// The result is a band of the same kind, so it renders through the same
+// encoder and cannot be told apart by shape from the commission it came
+// from. That is deliberate: the two are the same kind of thing, and the
+// only way to hold them apart is to be careful which one a type carries.
+func (b RateBand) Earned(share money.BasisPoints, mode money.Rounding) (RateBand, error) {
+	switch b.Kind {
+	case RatePercent:
+		earned, _, err := b.Percent.Split(share, mode)
+		if err != nil {
+			return RateBand{}, fmt.Errorf("%d bps at a share of %d: %w", int32(b.Percent), int32(share), err)
+		}
+		return RateBand{Kind: RatePercent, Percent: earned}, nil
+
+	case RateFixed:
+		earned, _, err := b.Fixed.Split(share, mode)
+		if err != nil {
+			return RateBand{}, fmt.Errorf("%s at a share of %d: %w", b.Fixed, int32(share), err)
+		}
+		return RateBand{Kind: RateFixed, Fixed: earned}, nil
+
+	default:
+		return RateBand{}, fmt.Errorf("unknown rate kind %s", strconv.Quote(string(b.Kind)))
+	}
+}
+
 // The members a band encodes to, matched exactly rather than resolved
 // through struct tags. [money.Amount] gives the reason and it applies with
 // equal force here: encoding/json matches field names case-insensitively
