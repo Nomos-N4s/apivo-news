@@ -117,3 +117,15 @@ data:
   # (NETWORK_API_KEY, NETWORK_API_SECRET) are Secrets precisely because this
   # one is not. Empty with the fixture adapter, which has no account.
   NETWORK_ACCOUNT_ID: ""
+
+  # The BCP-47 primary language subtag the network supplies its catalogue
+  # copy in ("de", "en", "el"), as an operator states it. Configuration and
+  # not detection: no network says what language a programme name is in, and
+  # a merchant with no copy in the reader's language is shown the source
+  # language LABELLED as a fallback rather than silently, so the label has to
+  # come from somebody who knows.
+  #
+  # This and BRAND_DIR together turn the CATALOGUE IMPORT on. Empty means the
+  # api serves normally, says at ERROR that no import is scheduled, and the
+  # retailers members can click are never refreshed.
+  NETWORK_SOURCE_LANGUAGE: ""

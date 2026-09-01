@@ -234,6 +234,23 @@ type NetworkConfig struct {
 	// where a network issues one. Optional: not every network does, and
 	// the adapter - which knows its own network - is what judges that.
 	APISecret Secret
+	// SourceLanguage (NETWORK_SOURCE_LANGUAGE) is the BCP-47 primary
+	// language subtag the network supplies its catalogue copy in, as an
+	// operator states it.
+	//
+	// Configuration and not detection, deliberately. No network this port
+	// speaks to says what language a programme name is in, and
+	// merchant_copy's whole design is that a fallback is LABELLED rather
+	// than guessed (US5 scenario 2) - so the label has to come from
+	// somebody who knows. A guess here would put a wrong language tag on
+	// every retailer this deployment ever imports.
+	//
+	// Optional, and its absence is not a broken deployment: the catalogue
+	// import is simply not scheduled, one ERROR line says so, and
+	// everything else - clicks on an existing catalogue, the wallet, the
+	// money loop - runs. That is the same stance the network sweeps take on
+	// a missing publisher account.
+	SourceLanguage string
 }
 
 // NeedsCredentials reports whether the selected adapter talks to a real
@@ -332,6 +349,10 @@ func parseCashback(getenv func(string) string) (CashbackConfig, error) {
 			AccountID: strings.TrimSpace(getenv("NETWORK_ACCOUNT_ID")),
 			APIKey:    NewSecret(getenv("NETWORK_API_KEY")),
 			APISecret: NewSecret(getenv("NETWORK_API_SECRET")),
+			// Lower-cased here so "DE" and "de" name one language: the
+			// column this ends up in is keyed by the tag, and a second
+			// casing would be a second row nothing matches.
+			SourceLanguage: strings.ToLower(strings.TrimSpace(getenv("NETWORK_SOURCE_LANGUAGE"))),
 		},
 		HouseAccounts: HouseAccountsConfig{
 			Rounding:          strings.TrimSpace(getenv("HOUSE_ACCOUNT_ROUNDING")),
