@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -55,6 +56,28 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	// document and trailing syntax errors.
 	if err := dec.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
 		platformhttp.Problem(w, http.StatusBadRequest, "request body must contain a single JSON document")
+		return false
+	}
+	return true
+}
+
+// emptyBody refuses a request body on an endpoint that takes none, answering
+// the 400 itself.
+//
+// Silently ignoring one would be the wrong default on this surface. An
+// approval records who and when, both taken from the token and the clock, so
+// a client that sent a body believed it was saying something - most likely
+// naming an approver - and C-4 means that is exactly what must not be
+// accepted quietly.
+func emptyBody(w http.ResponseWriter, r *http.Request) bool {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err != nil {
+		platformhttp.Problem(w, http.StatusBadRequest, "the request body could not be read")
+		return false
+	}
+	if len(bytes.TrimSpace(body)) != 0 {
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"this endpoint takes no request body: who approves and when are read from the token and the clock (C-4)")
 		return false
 	}
 	return true

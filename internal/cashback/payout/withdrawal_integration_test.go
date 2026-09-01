@@ -96,14 +96,13 @@ func ensureWithdrawalDatabase(base string) (string, error) {
 	}
 	defer admin.Close()
 
-	// DROPPED AND REMADE EACH RUN, not reused. These cases commit withdrawal
-	// requests, and a payout will reference one as soon as approving exists -
-	// cashback.payout is append-only (payout_no_delete and payout_no_truncate
-	// are triggers), so nothing can tidy one away, which is correct: money
-	// that has left is not a fixture. That leaves the whole database as the
-	// only unit that can be reset, and it is ours alone to reset. WITH
-	// (FORCE) closes connections a previous run left behind rather than
-	// failing on them.
+	// DROPPED AND REMADE EACH RUN, not reused. These cases commit payouts,
+	// and cashback.payout is append-only - payout_no_delete and
+	// payout_no_truncate are triggers, so nothing can tidy one away, which
+	// is correct: money that has left is not a fixture. That leaves the
+	// whole database as the only unit that can be reset, and it is ours
+	// alone to reset. WITH (FORCE) closes connections a previous run left
+	// behind rather than failing on them.
 	//
 	// What has to be reset at all is the ledger's transfer references. The
 	// memory adapter numbers them from 1 in every process, while
@@ -192,8 +191,16 @@ func seedMember(ctx context.Context, t *testing.T, pool *pgxpool.Pool) uuid.UUID
 	return uuid.UUID(id.Bytes)
 }
 
-// seedDestination writes a payout destination, verified or not.
+// seedDestination writes a stub payout destination, verified or not.
 func seedDestination(ctx context.Context, t *testing.T, pool *pgxpool.Pool, member uuid.UUID, verified bool) uuid.UUID {
+	t.Helper()
+	return seedDestinationOfKind(ctx, t, pool, member, verified, "stub")
+}
+
+// seedDestinationOfKind writes a destination for a named rail, so a case can
+// build the mismatch between where a member asked to be paid and what this
+// deployment can pay through.
+func seedDestinationOfKind(ctx context.Context, t *testing.T, pool *pgxpool.Pool, member uuid.UUID, verified bool, kind string) uuid.UUID {
 	t.Helper()
 	verifiedAt := "null"
 	method := "null"
@@ -203,8 +210,8 @@ func seedDestination(ctx context.Context, t *testing.T, pool *pgxpool.Pool, memb
 	var id pgtype.UUID
 	if err := pool.QueryRow(ctx, `
 		insert into cashback.payout_destination (account_id, kind, details_ref, verified_at, verified_method)
-		values ($1, 'stub', $2, `+verifiedAt+`, `+method+`) returning id`,
-		pgtype.UUID{Bytes: member, Valid: true}, "vault:"+uuid.NewString()).Scan(&id); err != nil {
+		values ($1, $2, $3, `+verifiedAt+`, `+method+`) returning id`,
+		pgtype.UUID{Bytes: member, Valid: true}, kind, "vault:"+uuid.NewString()).Scan(&id); err != nil {
 		t.Fatalf("seeding the destination: %v", err)
 	}
 	return uuid.UUID(id.Bytes)
@@ -253,16 +260,29 @@ func seedReport(ctx context.Context, t *testing.T, pool *pgxpool.Pool, minor int
 	return uuid.UUID(id.Bytes)
 }
 
+// fixtureBrand is the brand every seeded entry is earned under unless a case
+// asks for another (ADR-0004). Not a product name: no fixture may contain one
+// (FR-073).
+const fixtureBrand = "fixture-de"
+
 // seedConfirmedEntry writes one confirmed entry with the evidence C-2 makes
 // mandatory behind it.
 func seedConfirmedEntry(ctx context.Context, t *testing.T, pool *pgxpool.Pool, member uuid.UUID, minor int64) uuid.UUID {
+	t.Helper()
+	return seedConfirmedEntryForBrand(ctx, t, pool, member, minor, fixtureBrand)
+}
+
+// seedConfirmedEntryForBrand writes one confirmed entry under a named brand,
+// so a case can build the balance spanning two that no single payout can pay.
+func seedConfirmedEntryForBrand(ctx context.Context, t *testing.T, pool *pgxpool.Pool, member uuid.UUID, minor int64, brand string) uuid.UUID {
 	t.Helper()
 	report := seedReport(ctx, t, pool, minor)
 	var id pgtype.UUID
 	if err := pool.QueryRow(ctx, `
 		insert into cashback.entry (account_id, brand_id, network_transaction_id, state, amount_minor, currency)
-		values ($1, 'apivo-de', $2, 'confirmed', $3, 'EUR') returning id`,
-		pgtype.UUID{Bytes: member, Valid: true}, pgtype.UUID{Bytes: report, Valid: true}, minor).Scan(&id); err != nil {
+		values ($1, $2, $3, 'confirmed', $4, 'EUR') returning id`,
+		pgtype.UUID{Bytes: member, Valid: true}, brand,
+		pgtype.UUID{Bytes: report, Valid: true}, minor).Scan(&id); err != nil {
 		t.Fatalf("seeding a confirmed entry: %v", err)
 	}
 	return uuid.UUID(id.Bytes)

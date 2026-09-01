@@ -33,6 +33,7 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout/manual"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/blnk"
 	walletmemory "github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/memory"
@@ -504,6 +505,11 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, err
 	}
+	approvals, err := newApprovals(pool, terms)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
 	participations, err := wallet.NewParticipations(pool, walletstore.New(pool), terms)
 	if err != nil {
 		stop()
@@ -523,7 +529,7 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	return append(routes,
 		platformhttp.Route{
 			Pattern: opsPrefix,
-			Handler: ops.NewHandler(log, opsStore, newOperatorAuth(ids, roles)),
+			Handler: ops.NewHandler(log, opsStore, approvals, newOperatorAuth(ids, roles)),
 		},
 		// Mounted at the path AND at its subtree, so a stray sub-path is
 		// answered in problem+json by the module rather than redirected by
@@ -610,6 +616,34 @@ func newWallets(ledger wallet.Ledger, pool *pgxpool.Pool, threshold money.Amount
 		return nil, err
 	}
 	return wallet.NewWallets(projector, walletstore.New(pool), threshold)
+}
+
+// newApprovals assembles the withdrawal approver: the rail this deployment
+// pays through, and the descriptor a member reads on their statement.
+//
+// The MANUAL rail is the alpha's default and its only unconditional one
+// (FR-052). It is not a placeholder: an operator makes the transfer and
+// records the reference, and C-4 and C-5 hold identically either way -
+// the payout row still names the approver and still carries the generated
+// key. A deployment with a real rail selects it here; until one exists,
+// "manual" is the honest answer rather than a stub pretending to move money.
+//
+// The descriptor comes from the brand (FR-070, FR-073), because no rail may
+// contain a product name. A deployment with no BRAND_DIR has no descriptor,
+// and the approver is built without one - which makes every approval answer
+// rather than making the operator queue disappear, the same stance the
+// wallet takes on a missing threshold.
+func newApprovals(pool *pgxpool.Pool, terms wallet.Terms) (*payout.Approvals, error) {
+	descriptor := terms.Brand
+	if descriptor == "" {
+		// payout.NewApprovals refuses a blank one, and the alternative to a
+		// placeholder here is an unmounted operator queue. The name is not
+		// a product name: it is the absence of one, and it reaches a
+		// member's statement only in a deployment that has already been
+		// told at start-up that it has no brand.
+		descriptor = "CASHBACK"
+	}
+	return payout.NewApprovals(pool, manual.New(), descriptor)
 }
 
 // newLedger builds the Ledger port's implementation this deployment selected
