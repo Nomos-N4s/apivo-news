@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -73,7 +74,8 @@ func seedPollSource(t *testing.T, pool *pgxpool.Pool, feedURL string) uuid.UUID 
 	err := pool.QueryRow(context.Background(),
 		`insert into source (name, url, language_code, jurisdiction, licence_terms)
 		 values ($1, $2, 'el', 'GR', $3) returning id`,
-		"Poll Test Feed "+suffix, feedURL, "Extract and link permitted per feed terms ("+suffix+")",
+		"Poll Test Feed "+suffix, uniqueFeedURL(t, feedURL, suffix),
+		"Extract and link permitted per feed terms ("+suffix+")",
 	).Scan(&id)
 	if err != nil {
 		t.Fatalf("seeding source: %v", err)
@@ -89,6 +91,37 @@ func seedPollSource(t *testing.T, pool *pgxpool.Pool, feedURL string) uuid.UUID 
 		}
 	})
 	return parsed
+}
+
+// uniqueFeedURL makes one test server's address unique to this seeding.
+//
+// The name and the licence terms already carry a per-seed suffix; the URL did
+// not, and source_url_key is unique across the whole table. These rows
+// COMMIT - the items hanging off them are immutable evidence (I-3), so
+// nothing can be deleted afterwards and the table only grows - which leaves
+// the URL as the last column where two runs could collide.
+//
+// What made that a real failure rather than a theoretical one is where the
+// URL comes from. httptest.NewServer takes an ephemeral port, and a port is
+// reused as soon as the kernel comes round to it again - so a database used
+// over many runs accumulates addresses until one repeats, and the seeding
+// that draws it fails on a unique violation with nothing wrong in the code
+// under test. In CI, where the database is new every time, it never happens.
+//
+// A query parameter rather than a path segment: the poller fetches this URL
+// verbatim and every fake feed in this file answers any request, so neither
+// would break one - but a query keeps the path the feed's own, which is what
+// a reader comparing the seeded URL against the server's would expect.
+func uniqueFeedURL(t *testing.T, feedURL, suffix string) string {
+	t.Helper()
+	parsed, err := url.Parse(feedURL)
+	if err != nil {
+		t.Fatalf("parsing the feed URL %q: %v", feedURL, err)
+	}
+	query := parsed.Query()
+	query.Set("fixture", suffix)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 // pollState is the source row's poll columns, as one readable value.
@@ -626,5 +659,27 @@ func TestPollAdvisoryLockMakesConcurrentCycleANoOp(t *testing.T) {
 	}
 	if !ran {
 		t.Error("post-release PollOnce() skipped, want it to run: the lock should have been released")
+	}
+}
+
+// TestSeedingOneFeedTwiceIsSafe pins the property uniqueFeedURL exists for.
+//
+// It seeds two sources from ONE server address, which is what a repeated
+// ephemeral port amounts to across runs. Without the suffix this fails on
+// source_url_key, and it fails in a way that reads as a defect in the poller
+// rather than in the fixture - which is what made the original occurrence
+// take an afternoon to place.
+//
+// Deterministic, deliberately. Waiting for a port to repeat is a test that
+// passes for months and then does not.
+func TestSeedingOneFeedTwiceIsSafe(t *testing.T) {
+	pool := storePool(t)
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(server.Close)
+
+	first := seedPollSource(t, pool, server.URL)
+	second := seedPollSource(t, pool, server.URL)
+	if first == second {
+		t.Fatalf("both seedings answered %s, want two sources", first)
 	}
 }
