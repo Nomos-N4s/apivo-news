@@ -261,7 +261,7 @@ func TestTheCycleSeedSurvivesAnAddressAlreadyOnRecord(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = tx.Rollback(ctx) })
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	t.Cleanup(server.Close)
 
 	suffix := randomHex(t)
