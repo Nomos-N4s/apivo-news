@@ -64,7 +64,7 @@ func approvable(ctx context.Context, t *testing.T) (fixture, payout.Withdrawal) 
 }
 
 // approvals builds the approver over the fixture's pool and a stub rail.
-func approvals(t *testing.T, f fixture, rail *stub.Rail) *payout.Approvals {
+func approvals(t *testing.T, f fixture, rail payout.Rail) *payout.Approvals {
 	t.Helper()
 	a, err := payout.NewApprovals(f.pool, rail, descriptor)
 	if err != nil {
