@@ -138,6 +138,32 @@ Create the tracked click and get the redirect target (FR-020, FR-021).
 - 409 `destination_not_verified`.
 - 403 when the destination does not belong to the caller (US4 scenario 6).
 
+**`reserved_amount` is not an echo of `amount`, and this is why it is its own
+field.** Cashback is reserved in WHOLE ENTRIES, oldest first: an entry cites
+the network report that evidences it (C-2), so there is no half of one to
+take. A member with entries of 10.00 and 20.00 who asks for 15.00 has 30.00
+reserved, and 30.00 is what a payout will pay. The alternatives were both
+worse - refusing an amount no prefix of entries adds up to, or reserving
+less than was asked for - and neither can be explained to a member.
+
+Migration 0016 is what forces the reservation to be ONE ledger transfer
+rather than one per entry: it answers C-7 by joining every reserving
+transition against the request's single `reserved_transfer_ref`.
+
+**The two 409 balance refusals share one code.** Below the threshold
+(FR-050) and beyond the confirmed balance are different walls, but a client
+acts on both the same way - make up the shortfall - so both are
+`insufficient_confirmed_balance` and the `detail` says which. Both carry the
+figures as extension members (RFC 9457 §3.2): `shortfall` always, plus
+`threshold`/`confirmed` or `confirmed`/`requested`. No amount is spelled
+into `detail`, because minor units rendered as prose ("2500 EUR") read as a
+price to a member; the client formats the figures for their locale.
+
+**503 when the deployment cannot pay out yet** - no threshold, or no house
+account earnings are credited from. The route is still mounted: a 404 would
+tell a client the API is not there, and refusing to start would take the
+wallet and the operator queue down over a member-facing feature.
+
 ### GET /withdrawals · GET /withdrawals/{id}
 
 State, decision reason where rejected, and payout reference where settled.

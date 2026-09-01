@@ -24,6 +24,7 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/clickout"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/content"
 	"github.com/Nomos-N4s/apivo-news/internal/editorial"
@@ -103,7 +104,7 @@ func documentedOperations(t *testing.T, doc openAPIDocument) map[string]operatio
 // registeredPatterns is every route this binary mounts: the platform's own
 // plus each module's, reported by the same maps the routers are built from.
 func registeredPatterns() []string {
-	return slices.Concat(platformhttp.Patterns(), content.Patterns(), editorial.Patterns(), account.Patterns(), ops.Patterns(), clickout.Patterns(), wallet.Patterns())
+	return slices.Concat(platformhttp.Patterns(), content.Patterns(), editorial.Patterns(), account.Patterns(), ops.Patterns(), clickout.Patterns(), wallet.Patterns(), payout.Patterns())
 }
 
 func TestOpenAPIDocumentDescribesEveryRegisteredRoute(t *testing.T) {
@@ -165,7 +166,8 @@ func TestOpenAPISecurityMatchesTheAuthGate(t *testing.T) {
 			strings.HasPrefix(path, clickoutPrefix) ||
 			strings.HasPrefix(path, walletPrefix) ||
 			strings.HasPrefix(path, participationPrefix) ||
-			strings.HasPrefix(path, exportPrefix)
+			strings.HasPrefix(path, exportPrefix) ||
+			strings.HasPrefix(path, withdrawalPrefix)
 		switch {
 		case gated && !requiresBearer(op):
 			t.Errorf("%s is behind an auth gate but the document does not require bearerAuth on it", pattern)

@@ -876,6 +876,89 @@
         }
       }
     },
+    "/api/v1/cashback/withdrawals": {
+      "post": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "requestCashbackWithdrawal",
+        "summary": "Ask to be paid",
+        "description": "Reserve confirmed cashback and record a request for an operator to approve (US4, FR-050, FR-051).\n\nThe reservation happens in the SAME transaction as the request (D9), before any human reviews it, because the double-spend window is between request and approval. Two concurrent requests for the whole balance therefore produce one 201 and one 409: the second reads what the first left.\n\nThe member is the bearer of the token. There is no path segment and no query parameter naming an account, so asking to be paid out of somebody else's balance is not a request this endpoint can express.\n\nThe whole path is unmounted when cashback is off, and then answers 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CashbackWithdrawalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The request, with what was reserved for it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashbackWithdrawal"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not a single JSON document of the expected shape, the amount is not a positive {minor, currency}, or the currency is not one this deployment pays out in.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "The destination is not the caller's. A destination that does not exist answers the same way, so an id cannot be probed for existence one request at a time.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request cannot be met. `code` is `insufficient_confirmed_balance` - carrying `shortfall`, and `threshold`/`confirmed` or `confirmed`/`requested` - or `destination_not_verified` for a destination of the caller's own that has not been proved theirs (FR-051).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientConfirmedBalance"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "description": "This deployment has not configured a withdrawal threshold or the house account earnings are paid out of. Nothing is broken; the deployment is incomplete, and the log names the keys.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/editorial/approvals": {
       "post": {
         "tags": [
@@ -3666,6 +3749,69 @@
             "description": "The whole history, newest first - the same order and the same item shape as GET /wallet/entries, so a client parses one thing for both."
           }
         }
+      },
+      "CashbackWithdrawalRequest": {
+        "type": "object",
+        "description": "A member asking to be paid their cashback. The member is the bearer of the token and is deliberately absent from the body: there is no field naming an account, so asking to be paid out of somebody else's balance is not a request this endpoint can express.",
+        "required": [
+          "destination_id",
+          "amount"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "destination_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "One of the caller's own verified payout destinations (FR-051). A destination belonging to somebody else answers 403, and so does one that does not exist."
+          },
+          "amount": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ],
+            "description": "What the member is asking for. What is actually reserved may be more - see reserved_amount."
+          }
+        }
+      },
+      "CashbackWithdrawal": {
+        "type": "object",
+        "description": "A cashback withdrawal request as it was recorded, with the reservation already made (D9).",
+        "required": [
+          "request_id",
+          "state",
+          "reserved_amount"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "awaiting_approval"
+            ],
+            "description": "Always awaiting_approval on creation: the money is reserved before any human reviews the request, and the review is an operator's act (C-4)."
+          },
+          "reserved_amount": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ],
+            "description": "What was actually moved out of confirmed, which is at least the amount asked for. Cashback is reserved in whole entries - each cites the network report evidencing it (C-2), so there is no half of one to take - and a member who asks for slightly less than an entry has slightly more reserved. This, not the amount requested, is what a payout will pay."
+          }
+        }
+      },
+      "InsufficientConfirmedBalance": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Problem"
+          }
+        ],
+        "description": "A problem document carrying the arithmetic as RFC 9457 extension members - `code`, `shortfall`, and the two figures it was derived from - so a client shows the member what would work instead of parsing prose. No figure appears in `detail`: amounts travel as {minor, currency} and the client formats them for the member's locale."
       }
     }
   }
