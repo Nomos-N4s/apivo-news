@@ -436,15 +436,19 @@ func offerFromRow(id uuid.UUID, row store.GetLiveOfferRow) (Offer, error) {
 		return Offer{}, fmt.Errorf("%w %s: row carries an unset id", ErrMalformedOffer, id)
 	}
 
-	band, err := bandFromRow(id, row)
+	band, err := bandFromRow(id, rateRow{
+		Kind:       row.RateKind,
+		Bps:        row.RateBps,
+		FixedMinor: row.RateFixedMinor,
+		Currency:   row.Currency,
+	})
 	if err != nil {
 		return Offer{}, err
 	}
 
-	share := money.BasisPoints(row.MemberShareBps)
-	if !share.Valid() {
-		return Offer{}, fmt.Errorf("%w %s: member share of %d bps is outside 0..%d",
-			ErrMalformedOffer, id, row.MemberShareBps, money.BasisPointsScale)
+	share, err := shareFromRow(id, row.MemberShareBps)
+	if err != nil {
+		return Offer{}, err
 	}
 
 	validFrom, err := bandStart(id, row.ValidFrom)
@@ -542,38 +546,58 @@ func bandEnd(id uuid.UUID, ts pgtype.Timestamptz) (time.Time, error) {
 	}
 }
 
+// rateRow is the rate-bearing columns of cashback.offer, lifted out of any
+// one generated row type.
+//
+// sqlc names a struct per query, so the click-out read and the catalogue
+// read arrive as different Go types carrying the same four columns. Mapping
+// each one separately would be two copies of the rule below, free to drift
+// apart - and the rule is the last point at which a malformed band is an
+// error rather than a wrong credit (C-6). One shape, filled in at each call
+// site, keeps it one rule.
+type rateRow struct {
+	// Kind is offer.rate_kind verbatim, still the schema's vocabulary.
+	Kind string
+	// Bps is offer.rate_bps: set on a percent band, null on a fixed one.
+	Bps pgtype.Int4
+	// FixedMinor is offer.rate_fixed_minor, in minor units.
+	FixedMinor pgtype.Int8
+	// Currency is offer.currency, set exactly when FixedMinor is.
+	Currency pgtype.Text
+}
+
 // bandFromRow builds the typed rate band, holding the row to the schema's
 // offer_rate_kind_fields rule: exactly the fields for the chosen kind, and
 // nothing else. A stray field is rejected rather than dropped, because a
 // row carrying both rates is a row where somebody disagrees about which
 // one governs the credit - the wrong moment to pick silently.
-func bandFromRow(id uuid.UUID, row store.GetLiveOfferRow) (RateBand, error) {
-	switch kind := RateKind(row.RateKind); kind {
+func bandFromRow(id uuid.UUID, row rateRow) (RateBand, error) {
+	switch kind := RateKind(row.Kind); kind {
 	case RatePercent:
-		if !row.RateBps.Valid {
+		if !row.Bps.Valid {
 			return RateBand{}, fmt.Errorf("%w %s: percent band with no rate_bps", ErrMalformedOffer, id)
 		}
-		if row.RateFixedMinor.Valid || row.Currency.Valid {
+		if row.FixedMinor.Valid || row.Currency.Valid {
 			return RateBand{}, fmt.Errorf("%w %s: percent band carrying fixed-rate fields", ErrMalformedOffer, id)
 		}
-		rate := money.BasisPoints(row.RateBps.Int32)
+		rate := money.BasisPoints(row.Bps.Int32)
 		if !rate.Valid() {
 			return RateBand{}, fmt.Errorf("%w %s: rate of %d bps is outside 0..%d",
-				ErrMalformedOffer, id, row.RateBps.Int32, money.BasisPointsScale)
+				ErrMalformedOffer, id, row.Bps.Int32, money.BasisPointsScale)
 		}
 		return RateBand{Kind: RatePercent, Percent: rate}, nil
 
 	case RateFixed:
-		if !row.RateFixedMinor.Valid || !row.Currency.Valid {
+		if !row.FixedMinor.Valid || !row.Currency.Valid {
 			return RateBand{}, fmt.Errorf("%w %s: fixed band missing its amount or currency", ErrMalformedOffer, id)
 		}
-		if row.RateBps.Valid {
+		if row.Bps.Valid {
 			return RateBand{}, fmt.Errorf("%w %s: fixed band carrying rate_bps", ErrMalformedOffer, id)
 		}
 		// money.New rejects a malformed currency; the positivity rule is the
 		// schema's own (offer_rate_fixed_positive) - a fixed commission of
 		// nothing or less is not a rate a credit can be computed from.
-		amount, err := money.New(row.RateFixedMinor.Int64, money.Currency(row.Currency.String))
+		amount, err := money.New(row.FixedMinor.Int64, money.Currency(row.Currency.String))
 		if err != nil {
 			return RateBand{}, fmt.Errorf("%w %s: fixed band: %w", ErrMalformedOffer, id, err)
 		}
@@ -585,4 +609,19 @@ func bandFromRow(id uuid.UUID, row store.GetLiveOfferRow) (RateBand, error) {
 	default:
 		return RateBand{}, fmt.Errorf("%w %s: unknown rate kind %q", ErrMalformedOffer, id, string(kind))
 	}
+}
+
+// shareFromRow reads the member's share of the commission, in basis points.
+//
+// Checked rather than trusted for the same reason the band is: a share
+// outside 0..10000 computes a credit larger than the commission it comes
+// out of, and the schema's own offer_member_share_bps_range says so. This
+// is where a disagreement between the two stops being silent.
+func shareFromRow(id uuid.UUID, bps int32) (money.BasisPoints, error) {
+	share := money.BasisPoints(bps)
+	if !share.Valid() {
+		return 0, fmt.Errorf("%w %s: member share of %d bps is outside 0..%d",
+			ErrMalformedOffer, id, bps, money.BasisPointsScale)
+	}
+	return share, nil
 }
