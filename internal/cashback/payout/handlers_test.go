@@ -10,6 +10,7 @@ package payout_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
 
 // stubAuth resolves one token to one member and refuses everything else.
@@ -323,4 +325,60 @@ func TestEveryRouteIsListed(t *testing.T) {
 	if len(patterns) != 1 || patterns[0] != "POST "+payout.Prefix {
 		t.Errorf("Patterns() = %v, want the one POST route", patterns)
 	}
+}
+
+// TestAHandlerMissingAPartIsRefusedAtConstruction. Each of these, discovered
+// later, is discovered inside a request that has already begun moving money.
+func TestAHandlerMissingAPartIsRefusedAtConstruction(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	f := aFixture(ctx, t, 1000, 5000)
+	auth := stubAuth{token: "good-token", member: f.member}
+
+	if _, err := payout.NewHandler(nil, f.withdrawals, auth); err == nil {
+		t.Error("a handler with no logger was built, want a refusal")
+	}
+	if _, err := payout.NewHandler(discardLogger(), nil, auth); !errors.Is(err, payout.ErrNoWithdrawalStore) {
+		t.Errorf("with no service = %v, want one wrapping %v", err, payout.ErrNoWithdrawalStore)
+	}
+	if _, err := payout.NewHandler(discardLogger(), f.withdrawals, nil); err == nil {
+		t.Error("a handler with nowhere to authenticate was built, want a refusal")
+	}
+}
+
+// TestADeploymentThatCannotPayOutAnswers503. Nothing is broken; the
+// deployment is incomplete, and the two are different things to whoever is
+// paged. The keys go to the log, not to the member.
+func TestADeploymentThatCannotPayOutAnswers503(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	f := aFixture(ctx, t, 1000, 5000)
+
+	for name, withdrawals := range map[string]*payout.Withdrawals{
+		"no receivable": mustWithdrawals(t, f, "", euro(t, 1000)),
+		"no threshold":  mustWithdrawals(t, f, receivable, money.Amount{}),
+	} {
+		h, err := payout.NewHandler(discardLogger(), withdrawals,
+			stubAuth{token: "good-token", member: f.member})
+		if err != nil {
+			t.Fatalf("%s: NewHandler(): %v", name, err)
+		}
+		rec := post(t, h, "good-token",
+			`{"destination_id":"`+f.destination.String()+`","amount":{"minor":2000,"currency":"EUR"}}`)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s: status = %d, want 503; body: %s", name, rec.Code, rec.Body.String())
+		}
+		if body := problem(t, rec); body["detail"] == nil {
+			t.Errorf("%s: the document says nothing", name)
+		}
+	}
+}
+
+// mustWithdrawals builds the service over the fixture with the given
+// receivable and threshold.
+func mustWithdrawals(t *testing.T, f fixture, receivable string, threshold money.Amount) *payout.Withdrawals {
+	t.Helper()
+	w, err := payout.NewWithdrawals(f.pool, f.ledger, receivable, threshold)
+	if err != nil {
+		t.Fatalf("NewWithdrawals(): %v", err)
+	}
+	return w
 }

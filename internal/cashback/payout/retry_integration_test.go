@@ -9,6 +9,7 @@ package payout_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -244,4 +245,162 @@ func payoutOf(ctx context.Context, t *testing.T, f fixture, request uuid.UUID) s
 		t.Fatalf("reading the payout for %s: %v", request, err)
 	}
 	return row
+}
+
+// TestRetryingAPaymentTheRailAlreadyTookChangesNothing. The rail is
+// idempotent on the key, so a retry of a submission that in fact landed gets
+// the same reference back - and the payout already carries it. Recording it
+// again would replace the reference an auditor follows, so the retry reads it
+// back instead.
+func TestRetryingAPaymentTheRailAlreadyTookChangesNothing(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f, request := approvable(ctx, t)
+	operator := seedOperator(ctx, t, pool)
+	rail := stub.New()
+
+	// A clean approval: the rail took it and the reference is stored.
+	approved, err := approvals(t, f, rail).Approve(ctx, payout.Approval{
+		Request: request.ID, Operator: operator,
+	})
+	if err != nil {
+		t.Fatalf("Approve(): %v", err)
+	}
+	if approved.RailReference == "" {
+		t.Fatal("the approval recorded no reference; this case needs one")
+	}
+
+	outcome, err := retries(t, f, rail).Retry(ctx, request.ID)
+	if err != nil {
+		t.Fatalf("Retry(): %v", err)
+	}
+
+	if outcome.Payout.RailReference != approved.RailReference {
+		t.Errorf("the retry answered %q, want the reference already on record %q",
+			outcome.Payout.RailReference, approved.RailReference)
+	}
+	if outcome.Payout.ID != approved.ID {
+		t.Errorf("the retry answered payout %s, want %s", outcome.Payout.ID, approved.ID)
+	}
+	if !outcome.Released.IsZero() {
+		t.Errorf("released %s, want nothing: the payment stands", outcome.Released)
+	}
+}
+
+// TestARailsRefusalIsRecordedButNotWholesale. The reason is a member-facing
+// field and the rail's message is the rail's to choose, so a rail that
+// answers with a wall of text must not put all of it there.
+func TestARailsRefusalIsRecordedButNotWholesale(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	rail := stub.New(stub.WithTimeout())
+	f, request := approvedThrough(ctx, t, rail)
+
+	rail.FailNext(payout.Terminal(errors.New(strings.Repeat("verbose ", 400))))
+
+	if _, err := retries(t, f, rail).Retry(ctx, request.ID); err != nil {
+		t.Fatalf("Retry(): %v", err)
+	}
+
+	failed, err := f.withdrawals.Get(ctx, f.member, request.ID)
+	if err != nil {
+		t.Fatalf("re-reading the request: %v", err)
+	}
+	if failed.DecisionReason == "" {
+		t.Fatal("the request records no reason")
+	}
+	if runes := []rune(failed.DecisionReason); len(runes) > 600 {
+		t.Errorf("the reason is %d characters, want it bounded", len(runes))
+	}
+	if !strings.Contains(failed.DecisionReason, "verbose") {
+		t.Errorf("the reason = %q, want the rail's own words in it", failed.DecisionReason)
+	}
+}
+
+// TestADeploymentThatNamedNoReceivableCannotGiveUp. Giving up releases money,
+// and releasing needs the house account earnings came from. Refused before
+// the ledger is touched, leaving the payout submitted for a deployment that
+// has been fixed.
+func TestADeploymentThatNamedNoReceivableCannotGiveUp(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	rail := stub.New(stub.WithTimeout())
+	f, request := approvedThrough(ctx, t, rail)
+
+	retrier, err := payout.NewRetries(f.pool, rail, f.ledger, "", descriptor)
+	if err != nil {
+		t.Fatalf("NewRetries() with no receivable = %v, want it built", err)
+	}
+	rail.FailNext(payout.Terminal(errors.New("the destination account is closed")))
+
+	if _, err := retrier.Retry(ctx, request.ID); !errors.Is(err, payout.ErrNoReceivable) {
+		t.Fatalf("Retry() = %v, want one wrapping %v", err, payout.ErrNoReceivable)
+	}
+	if still := f.stageBalance(ctx, t, wallet.StageReserved); still != request.Amount {
+		t.Errorf("the reserved stage holds %s, want it untouched", still)
+	}
+	if state := payoutOf(ctx, t, f, request.ID).State; state != string(payout.StatusSubmitted) {
+		t.Errorf("the payout is %s, want it left %s for a deployment that has been fixed", state, payout.StatusSubmitted)
+	}
+}
+
+// TestGivingUpOnAWithdrawalThatReservedNothingIsRefused. The release is what
+// gives a member their money back, and a request whose reservation moved no
+// entries has nothing to give. Refused rather than marked failed, which would
+// record a refund that did not happen.
+func TestGivingUpOnAWithdrawalThatReservedNothingIsRefused(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f := aFixture(ctx, t, 1000, approvableAmount*2)
+	operator := seedOperator(ctx, t, pool)
+	rail := stub.New()
+
+	// A request naming a reservation transfer no entry was ever moved under,
+	// approved so there is a payout to retry.
+	var id pgtype.UUID
+	if err := pool.QueryRow(ctx, `
+		insert into cashback.withdrawal_request
+		    (account_id, destination_id, amount_minor, currency, reserved_transfer_ref, state, decided_by, decided_at)
+		values ($1, $2, 3000, 'EUR', $3, 'approved', $4, now()) returning id`,
+		pgtype.UUID{Bytes: f.member, Valid: true},
+		pgtype.UUID{Bytes: f.destination, Valid: true},
+		"transfer:orphaned:"+uuid.NewString(),
+		pgtype.UUID{Bytes: operator, Valid: true}).Scan(&id); err != nil {
+		t.Fatalf("seeding the orphaned request: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		insert into cashback.payout (brand_id, request_id, approved_by, amount_minor, currency, rail)
+		values ($1, $2, $3, 3000, 'EUR', 'stub')`,
+		fixtureBrand, id, pgtype.UUID{Bytes: operator, Valid: true}); err != nil {
+		t.Fatalf("seeding the payout: %v", err)
+	}
+
+	rail.FailNext(payout.Terminal(errors.New("the destination account is closed")))
+	if _, err := retries(t, f, rail).Retry(ctx, uuid.UUID(id.Bytes)); !errors.Is(err, payout.ErrNothingReserved) {
+		t.Fatalf("Retry() = %v, want one wrapping %v", err, payout.ErrNothingReserved)
+	}
+}
+
+// TestASettledPayoutIsNotRetried. Money that has reached the member is
+// terminal (payout_guard says so), and re-sending would be a second payment.
+func TestASettledPayoutIsNotRetried(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f, request := approvable(ctx, t)
+	operator := seedOperator(ctx, t, pool)
+	rail := stub.New()
+
+	approved, err := approvals(t, f, rail).Approve(ctx, payout.Approval{
+		Request: request.ID, Operator: operator,
+	})
+	if err != nil {
+		t.Fatalf("Approve(): %v", err)
+	}
+	// The far end of the journey, driven straight into the row: the rail
+	// tells a deployment this happened, and nothing in the domain writes it
+	// yet (that is the settlement path, not this one).
+	if _, err := pool.Exec(ctx,
+		`update cashback.payout set state = 'settled', settled_at = now() where id = $1`,
+		pgtype.UUID{Bytes: approved.ID, Valid: true}); err != nil {
+		t.Fatalf("settling the payout: %v", err)
+	}
+
+	if _, err := retries(t, f, rail).Retry(ctx, request.ID); !errors.Is(err, payout.ErrNothingToRetry) {
+		t.Fatalf("Retry() on a settled payout = %v, want one wrapping %v", err, payout.ErrNothingToRetry)
+	}
 }
