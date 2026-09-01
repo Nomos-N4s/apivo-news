@@ -1,20 +1,18 @@
 // What this module tells the rest of the world about a member's money
-// leaving (T100, contracts/events.md).
+// leaving (T100, T146, contracts/events.md).
 //
-// Four facts, and each one is appended in the transaction that made it true:
+// Five facts, and each one is appended in the transaction that made it true:
 // a member asked to be paid, an operator released it, an operator refused it,
-// a payment will never happen. That placement is the whole of the contract's
-// atomicity guarantee - there is no code path that publishes an event without
-// its state change, or commits a state change without its event - which is
-// why nothing here opens a transaction, and why an append that fails is fatal
-// to the caller rather than logged.
+// a payment will never happen, a payment reached the member. That placement
+// is the whole of the contract's atomicity guarantee - there is no code path
+// that publishes an event without its state change, or commits a state change
+// without its event - which is why nothing here opens a transaction, and why
+// an append that fails is fatal to the caller rather than logged.
 //
-// cashback.payout.settled is DELIBERATELY ABSENT, and its absence is a fact
-// about this alpha rather than about this file: nothing settles a payout.
-// Settlement arrives from a rail, through Rail.Status, and no sweep asks -
-// so an announcer method for it would be a method nothing could call. It
-// belongs with whatever adds that sweep, which will also give T078's
-// paid_out something other than zero to report.
+// The last of them arrived late, with T146. Settlement comes from a rail
+// through Rail.Status, and until a sweep asked there was no moment at which
+// this fact became true, so an announcer method for it would have been a
+// method nothing could call.
 
 package payout
 
@@ -51,6 +49,10 @@ const (
 	// TypePayoutFailed announces a payment that will never happen and the
 	// money that went back because of it (FR-053).
 	TypePayoutFailed = EventProducer + ".payout.failed"
+	// TypePayoutSettled announces money that reached the member. It is the
+	// last fact in the chain and the only one that says a member was
+	// actually paid - everything before it says a payment was intended.
+	TypePayoutSettled = EventProducer + ".payout.settled"
 )
 
 // ErrNotAnnounced reports an event that could not be appended beside the
@@ -218,6 +220,49 @@ func (a *Announcer) Failed(ctx context.Context, db events.RowQuerier, failed Pay
 		return fmt.Errorf("%w: %s: %w", ErrNotAnnounced, TypePayoutFailed, err)
 	}
 	return a.append(ctx, db, TypePayoutFailed, failed.ID, TypePayoutFailed+":"+failed.ID.String(), payload)
+}
+
+// Settled announces one payment that reached the member.
+//
+// The rail reference travels because it is what a member quotes to their
+// bank and what an auditor follows, and by this point it always exists: a
+// payout cannot settle without having been submitted, and a submission
+// records what the rail called it.
+//
+// Subject is the payout, as for [Announcer.Failed]: both are facts about the
+// payment rather than about the request. Keyed on the payout, which settles
+// once - payout_guard makes settled terminal.
+func (a *Announcer) Settled(ctx context.Context, db events.RowQuerier, settled Payout) error {
+	switch {
+	case settled.ID == uuid.Nil:
+		return fmt.Errorf("%w: %s about a payout the database did not record", ErrNotAnnounced, TypePayoutSettled)
+	case settled.RailReference == "":
+		// A settled payout with no reference is a row the schema would not
+		// hold: it settled, so it was submitted, so the rail named it.
+		return fmt.Errorf("%w: %s about a payment the rail never named", ErrNotAnnounced, TypePayoutSettled)
+	case settled.SettledAt.IsZero():
+		// payout_settled_iff_settlement_time: settled without an instant is
+		// a row the database refuses, so announcing one would put a fact in
+		// the stream that is not in the schema.
+		return fmt.Errorf("%w: %s about a payment with no settlement time", ErrNotAnnounced, TypePayoutSettled)
+	}
+	payload, err := json.Marshal(struct {
+		PayoutID      uuid.UUID `json:"payout_id"`
+		RequestID     uuid.UUID `json:"request_id"`
+		RailReference string    `json:"rail_reference"`
+		At            time.Time `json:"at"`
+	}{
+		PayoutID:      settled.ID,
+		RequestID:     settled.Request,
+		RailReference: settled.RailReference,
+		// The settlement instant the ROW carries, for the reason every other
+		// instant here is read back rather than taken from a clock.
+		At: settled.SettledAt,
+	})
+	if err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrNotAnnounced, TypePayoutSettled, err)
+	}
+	return a.append(ctx, db, TypePayoutSettled, settled.ID, TypePayoutSettled+":"+settled.ID.String(), payload)
 }
 
 // announceWithdrawal marshals and appends one of the three withdrawal facts.
