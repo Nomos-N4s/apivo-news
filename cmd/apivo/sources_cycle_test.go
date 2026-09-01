@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -267,9 +268,33 @@ func TestTheCycleSeedSurvivesAnAddressAlreadyOnRecord(t *testing.T) {
 	suffix := randomHex(t)
 	// Whoever got here first: the bare address, exactly as the pre-fix
 	// seeders wrote it.
-	seedCycleSource(ctx, t, tx, "Occupier "+suffix, server.URL)
+	//
+	// Seeded tolerantly, and that is the case this test is about rather
+	// than a concession. A database that has accumulated real litter may
+	// ALREADY hold this address - which is the precondition, arriving on
+	// its own instead of being staged. Insisting on writing it would make
+	// this reproduction fail on exactly the databases the fix is for, which
+	// is what it did before this line existed.
+	occupy(ctx, t, tx, "Occupier "+suffix, server.URL)
 
 	// The same address, drawn again by this run. Before fixtureFeedURL this
 	// second seeding failed on source_url_key.
 	seedCycleSource(ctx, t, tx, "Cycle Occupied "+suffix, fixtureFeedURL(t, server.URL, suffix))
+}
+
+// occupy puts one source at feedURL, and is satisfied if something already
+// has. A unique violation here means the address is occupied, which is the
+// state the caller wants; anything else is a real failure.
+func occupy(ctx context.Context, t *testing.T, tx pgx.Tx, name, feedURL string) {
+	t.Helper()
+	var id string
+	err := tx.QueryRow(ctx,
+		`insert into source (name, url, language_code, jurisdiction, licence_terms)
+		 values ($1, $2, 'el', 'GR', 'Extract and link permitted (cycle test)')
+		 on conflict (url) do nothing
+		 returning id`,
+		name, feedURL).Scan(&id)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("occupying %s: %v", feedURL, err)
+	}
 }
