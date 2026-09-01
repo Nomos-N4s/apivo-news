@@ -1,8 +1,10 @@
 package payout_test
 
-// The tests for the member read endpoints (T095).
+// The tests for the read endpoints and the destination endpoints (T095).
 //
-// What is under test is WHOSE data comes back and what is left out of it.
+// What is under test on the reads is WHOSE data comes back and what is left
+// out of it; on the POST it is that bank details reach the vault and nothing
+// else (ADR-0003).
 
 import (
 	"encoding/json"
@@ -217,6 +219,110 @@ func TestDestinationsAreListedWithoutTheirDetails(t *testing.T) {
 	}
 	if !sawVerified || !sawUnverified {
 		t.Error("the list is missing one of the member's destinations")
+	}
+}
+
+// TestARecordedDestinationArrivesUnverifiedAndItsDetailsGoToTheVault.
+// Verification is a separate flow (FR-051): one that arrived verified would
+// be one nobody proved belongs to the member.
+func TestARecordedDestinationArrivesUnverifiedAndItsDetailsGoToTheVault(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	f := aFixture(ctx, t, 1000, 5000)
+	vault := &stubVault{}
+	h, err := payout.NewHandler(discardLogger(), f.withdrawals, f.destinations, vault,
+		stubAuth{token: "good-token", member: f.member})
+	if err != nil {
+		t.Fatalf("NewHandler(): %v", err)
+	}
+
+	rec := postTo(t, h, "good-token", payout.DestinationsPrefix,
+		`{"kind":"sepa","details":{"iban":"DE00 0000 0000 0000 0000 00","holder":"A Member"}}`)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+	var item struct {
+		DestinationID string  `json:"destination_id"`
+		Kind          string  `json:"kind"`
+		VerifiedAt    *string `json:"verified_at"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &item); err != nil {
+		t.Fatalf("the body is not JSON: %v (%s)", err, rec.Body.String())
+	}
+	if item.VerifiedAt != nil {
+		t.Errorf("verified_at = %v on a new destination, want null (FR-051)", *item.VerifiedAt)
+	}
+	if item.Kind != "sepa" {
+		t.Errorf("kind = %q, want sepa", item.Kind)
+	}
+	if _, err := uuid.Parse(item.DestinationID); err != nil {
+		t.Errorf("destination_id = %q, want a uuid", item.DestinationID)
+	}
+	// The details went to the vault, and the answer carries no trace of them.
+	if len(vault.seen) != 1 || vault.seen[0] != payout.KindSEPA {
+		t.Errorf("the vault saw %v, want one sepa store", vault.seen)
+	}
+	if strings.Contains(rec.Body.String(), "DE00") || strings.Contains(rec.Body.String(), "iban") {
+		t.Errorf("the answer echoes the details: %s", rec.Body.String())
+	}
+}
+
+// TestADeploymentWithNoVaultCannotRecordADestination. 503 and only here: a
+// deployment that has nowhere to put bank details can still read the
+// destinations it has and withdraw to them.
+func TestADeploymentWithNoVaultCannotRecordADestination(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	f := aFixture(ctx, t, 1000, 5000)
+	h, err := payout.NewHandler(discardLogger(), f.withdrawals, f.destinations, nil,
+		stubAuth{token: "good-token", member: f.member})
+	if err != nil {
+		t.Fatalf("NewHandler() with no vault = %v, want it built", err)
+	}
+
+	rec := postTo(t, h, "good-token", payout.DestinationsPrefix, `{"kind":"sepa","details":{"iban":"x"}}`)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+	}
+	// The rest of the surface is unaffected.
+	if rec := get(t, h, "good-token", payout.DestinationsPrefix); rec.Code != http.StatusOK {
+		t.Errorf("listing destinations: status = %d, want 200", rec.Code)
+	}
+	if rec := get(t, h, "good-token", payout.Prefix); rec.Code != http.StatusOK {
+		t.Errorf("listing withdrawals: status = %d, want 200", rec.Code)
+	}
+}
+
+// TestABadDestinationRequestIsRefusedWithoutQuotingIt. An error is the least
+// controlled string in a system, and this one would otherwise carry an IBAN
+// into a log.
+func TestABadDestinationRequestIsRefusedWithoutQuotingIt(t *testing.T) {
+	ctx, _ := withdrawalPool(t)
+	f := aFixture(ctx, t, 1000, 5000)
+
+	for name, c := range map[string]struct {
+		vault *stubVault
+		body  string
+		want  int
+	}{
+		"an unknown kind":   {&stubVault{}, `{"kind":"carrier-pigeon","details":{"to":"x"}}`, http.StatusBadRequest},
+		"no kind":           {&stubVault{}, `{"details":{"iban":"x"}}`, http.StatusBadRequest},
+		"no details":        {&stubVault{}, `{"kind":"sepa"}`, http.StatusBadRequest},
+		"an unknown field":  {&stubVault{}, `{"kind":"sepa","details":{},"verified":true}`, http.StatusBadRequest},
+		"details refused":   {&stubVault{refuse: true}, `{"kind":"sepa","details":{"iban":"nonsense"}}`, http.StatusBadRequest},
+		"the vault is down": {&stubVault{broken: errAVaultDown}, `{"kind":"sepa","details":{"iban":"x"}}`, http.StatusBadGateway},
+	} {
+		h, err := payout.NewHandler(discardLogger(), f.withdrawals, f.destinations, c.vault,
+			stubAuth{token: "good-token", member: f.member})
+		if err != nil {
+			t.Fatalf("%s: NewHandler(): %v", name, err)
+		}
+		rec := postTo(t, h, "good-token", payout.DestinationsPrefix, c.body)
+		if rec.Code != c.want {
+			t.Errorf("%s: status = %d, want %d; body: %s", name, rec.Code, c.want, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "iban") || strings.Contains(rec.Body.String(), "nonsense") {
+			t.Errorf("%s: the refusal quotes what was sent: %s", name, rec.Body.String())
+		}
 	}
 }
 

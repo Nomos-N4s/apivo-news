@@ -20,6 +20,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -120,10 +121,11 @@ func NewHandler(log *slog.Logger, withdrawals *Withdrawals, destinations *Destin
 // checked against the routes rather than against somebody's memory of them.
 func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
-		"POST " + Prefix:            h.postWithdrawal,
-		"GET " + Prefix:             h.listWithdrawals,
-		"GET " + Prefix + "/{id}":   h.getWithdrawal,
-		"GET " + DestinationsPrefix: h.listDestinations,
+		"POST " + Prefix:             h.postWithdrawal,
+		"GET " + Prefix:              h.listWithdrawals,
+		"GET " + Prefix + "/{id}":    h.getWithdrawal,
+		"GET " + DestinationsPrefix:  h.listDestinations,
+		"POST " + DestinationsPrefix: h.postDestination,
 	}
 }
 
@@ -473,4 +475,85 @@ func (h *Handler) listDestinations(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, r, http.StatusOK, struct {
 		Items []destinationItem `json:"items"`
 	}{Items: items})
+}
+
+// destinationRequestBody is what a member sends.
+//
+// Details arrive as a raw JSON document rather than a typed shape, because
+// what they contain differs by rail and the vault is the only thing
+// positioned to judge. This package does not look inside, does not store the
+// value, and does not put it in an error - it passes straight through to
+// [DetailsVault.Store] and what comes back is a reference.
+type destinationRequestBody struct {
+	Kind    string          `json:"kind"`
+	Details json.RawMessage `json:"details"`
+}
+
+// postDestination implements POST /api/v1/cashback/payout-destinations.
+//
+// It answers 201 with verified_at null, always. Verification is a separate
+// flow (FR-051) and a destination that arrived verified would be one nobody
+// proved belongs to the member, which is the whole thing the check exists to
+// stop.
+func (h *Handler) postDestination(w http.ResponseWriter, r *http.Request) {
+	member := memberFrom(r.Context())
+
+	var body destinationRequestBody
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	kind, err := ParseKind(body.Kind)
+	if err != nil {
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"kind must be one of "+strings.Join(Kinds(), ", "))
+		return
+	}
+	if len(body.Details) == 0 {
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"details are required: a destination that says nowhere is one no rail could pay")
+		return
+	}
+	if h.vault == nil {
+		// 503, not 500: nothing is broken, the deployment has nowhere to
+		// put bank details, and only this one endpoint needs one. Reading
+		// destinations and withdrawing to them keep working.
+		h.log.ErrorContext(r.Context(), "a payout destination was offered and this deployment has no details vault")
+		platformhttp.Problem(w, http.StatusServiceUnavailable,
+			"this deployment cannot record payout details yet")
+		return
+	}
+
+	reference, err := h.vault.Store(r.Context(), kind, body.Details)
+	switch {
+	case errors.Is(err, ErrDetailsRefused):
+		// The member's to act on, and answered WITHOUT quoting what they
+		// sent: an error is the least controlled string in a system, and
+		// this one would otherwise carry an IBAN into a log.
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"those details were refused for a "+kind.String()+" destination")
+		return
+	case err != nil:
+		h.log.ErrorContext(r.Context(), "storing payout details", "kind", kind, "error", err)
+		platformhttp.Problem(w, http.StatusBadGateway,
+			"the details could not be stored; nothing was recorded")
+		return
+	}
+
+	recorded, err := h.destinations.Record(r.Context(), NewDestination{
+		AccountID: member.ID, Kind: kind, DetailsRef: reference,
+	})
+	if err != nil {
+		if errors.Is(err, ErrInvalidDestination) {
+			platformhttp.Problem(w, http.StatusBadRequest, "that does not describe a payout destination")
+			return
+		}
+		// The details are in the vault and no row names them. Worth seeing:
+		// it is an orphan somebody has to clear, not something a member can
+		// do anything about.
+		h.log.ErrorContext(r.Context(), "recording a payout destination after storing its details",
+			"kind", kind, "error", err)
+		platformhttp.Problem(w, http.StatusInternalServerError, "")
+		return
+	}
+	h.writeJSON(w, r, http.StatusCreated, destinationItemOf(recorded))
 }

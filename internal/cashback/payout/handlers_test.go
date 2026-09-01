@@ -326,6 +326,7 @@ func TestEveryRouteIsListed(t *testing.T) {
 		"GET " + payout.DestinationsPrefix,
 		"GET " + payout.Prefix,
 		"GET " + payout.Prefix + "/{id}",
+		"POST " + payout.DestinationsPrefix,
 		"POST " + payout.Prefix,
 	}
 	if got := payout.Patterns(); !slices.Equal(got, want) {

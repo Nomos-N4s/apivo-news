@@ -1261,6 +1261,77 @@
             "$ref": "#/components/responses/InternalError"
           }
         }
+      },
+      "post": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "recordPayoutDestination",
+        "summary": "Record somewhere to be paid",
+        "description": "Record a payout destination. It arrives UNVERIFIED, always: verification is a separate flow (FR-051), and one that arrived verified would be one nobody proved belongs to the member.\n\nThe details are handed straight to this deployment's details store and never held here; what is recorded is a reference (ADR-0003). They are not echoed in the response, not logged, and not quoted in a refusal.\n\nThe member is the bearer of the token; there is no field naming an account.\n\n503 when the deployment has no details store configured. Only this endpoint needs one: listing destinations and withdrawing to those that already exist keep working.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewPayoutDestination"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The destination, unverified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutDestination"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not a single JSON document of the expected shape, the kind is not one this deployment pays out on, the details are missing, or the details store refused them. The refusal never quotes what was sent.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "The details store did not answer. Nothing was recorded, so the request can be repeated.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This deployment has no details store configured, so it has nowhere to put bank details. Nothing is broken; the deployment is incomplete, and the log says so.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/editorial/approvals": {
@@ -4306,6 +4377,30 @@
             "items": {
               "$ref": "#/components/schemas/PayoutDestination"
             }
+          }
+        }
+      },
+      "NewPayoutDestination": {
+        "type": "object",
+        "description": "Somewhere to be paid, as a member sends it. The details go to this deployment's details store and what is recorded is the reference it answers with (ADR-0003); they are never stored here and never come back out of this API.",
+        "required": [
+          "kind",
+          "details"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sepa",
+              "manual",
+              "stub"
+            ],
+            "description": "Which rail should carry the money. It decides what counts as valid details."
+          },
+          "details": {
+            "type": "object",
+            "description": "What the rail needs to pay this member - an IBAN and a holder for sepa, a note for manual. Deliberately unconstrained here: what belongs in it differs by rail and the details store is the only thing positioned to judge, so this API does not restate a shape it does not enforce."
           }
         }
       },
