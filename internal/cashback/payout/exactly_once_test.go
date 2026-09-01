@@ -53,16 +53,60 @@ type countingRail struct {
 	issued   map[string]string
 	keys     []string
 	first    string
+	// loseNext makes the next Submit reach the rail and THEN report a
+	// timeout. See [countingRail.loseNextAnswer].
+	loseNext bool
+	// during runs once, inside the next Submit, before the rail is asked.
+	// See [countingRail.duringNextSubmit].
+	during func()
 }
 
 func counting(inner payout.Rail) *countingRail {
 	return &countingRail{Rail: inner, issued: map[string]string{}}
 }
 
+// loseNextAnswer makes the next submission pay and then fail.
+//
+// This is what a timeout actually is, and the stub rail cannot produce it:
+// its injected failures happen INSTEAD of the payment, which is the harmless
+// shape. The shape that costs a member money is the payment happening and the
+// answer not coming back - everything downstream then believes nothing was
+// paid, and the only thing standing between the member and a second payment
+// is the key.
+func (c *countingRail) loseNextAnswer() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.loseNext = true
+}
+
+// duringNextSubmit runs f inside the next submission, before the rail is
+// asked - the one moment a caller cannot otherwise reach.
+//
+// Approving is two transactions with the rail between them (FR-052): the
+// payout is committed before the money is sent, so that a failure afterwards
+// costs a retry rather than a lost payment. The window between them is real
+// and something else can act in it. This is how a test gets into it.
+//
+// It fires once and clears itself, so the nested call it makes does not
+// recurse.
+func (c *countingRail) duringNextSubmit(f func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.during = f
+}
+
 func (c *countingRail) Submit(ctx context.Context, instruction payout.Instruction) (payout.RailReference, error) {
 	c.mu.Lock()
 	c.attempts++
+	lose := c.loseNext
+	c.loseNext = false
+	during := c.during
+	c.during = nil
 	c.mu.Unlock()
+
+	if during != nil {
+		during()
+	}
 
 	reference, err := c.Rail.Submit(ctx, instruction)
 	if err != nil {
@@ -77,6 +121,10 @@ func (c *countingRail) Submit(ctx context.Context, instruction payout.Instructio
 	}
 	c.issued[instruction.IdempotencyKey] = reference.Ref()
 	c.mu.Unlock()
+
+	if lose {
+		return payout.RailReference{}, payout.Retryable(errors.New("counting: the payment left and the answer did not come back"))
+	}
 	return reference, nil
 }
 
@@ -94,6 +142,14 @@ func (c *countingRail) paidUnder() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.keys...)
+}
+
+// firstReference is the reference the first successful submission issued -
+// the payment a retry must find rather than replace.
+func (c *countingRail) firstReference() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.first
 }
 
 // calls is how many times it was asked. Reported in failures because "one
@@ -363,5 +419,145 @@ func TestTwoRetriesAtOnceProduceOnePayment(t *testing.T) {
 	}
 	if got := payoutRows(ctx, t, f, request.ID); got != 1 {
 		t.Errorf("the request has %d payout rows, want 1", got)
+	}
+}
+
+// TestAPaymentWhoseAnswerWasLostIsNotPaidTwice is SC-004's worst case, and
+// the only one where the member's money is already gone when the retry
+// starts. The rail took the payment; the caller was never told. Everything in
+// this database says nothing was paid.
+//
+// The retry therefore asks again - and must ask under the SAME key, so the
+// rail answers about the payment it already made rather than making another.
+// This is the case the generated key exists for, and the one that would cost
+// a member real money if the key were ever chosen by a caller instead.
+func TestAPaymentWhoseAnswerWasLostIsNotPaidTwice(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f, request := approvable(ctx, t)
+	operator := seedOperator(ctx, t, pool)
+	rail := counting(stub.New())
+	rail.loseNextAnswer()
+
+	if _, err := approvals(t, f, rail).Approve(ctx, payout.Approval{
+		Request: request.ID, Operator: operator,
+	}); !errors.Is(err, payout.ErrRailRetryable) {
+		t.Fatalf("the approval = %v, want a retryable rail failure", err)
+	}
+	// The money has left. The database does not know it.
+	if got := rail.payments(); got != 1 {
+		t.Fatalf("the rail issued %d payments, want the 1 whose answer was lost", got)
+	}
+	if before := payoutOf(ctx, t, f, request.ID); before.RailReference.Valid {
+		t.Fatalf("the payout carries %q, want nothing recorded", before.RailReference.String)
+	}
+
+	outcome, err := retries(t, f, rail).Retry(ctx, request.ID)
+	if err != nil {
+		t.Fatalf("Retry(): %v", err)
+	}
+
+	if got := rail.payments(); got != 1 {
+		t.Errorf("the rail issued %d payments over %d calls, want still 1 - the retry paid again",
+			got, rail.calls())
+	}
+	if outcome.Payout.RailReference != rail.firstReference() {
+		t.Errorf("the retry recorded %q, want the reference the first submission issued %q",
+			outcome.Payout.RailReference, rail.firstReference())
+	}
+	// The key is the claim underneath all of it. Two keys here would be two
+	// payments however they were referenced.
+	if sent := rail.paidUnder(); len(sent) != 1 {
+		t.Errorf("the rail was paid under %v, want the one key twice", sent)
+	} else if before := payoutOf(ctx, t, f, request.ID); sent[0] != before.IdempotencyKey {
+		t.Errorf("the rail was paid under %q, want the row's own %q", sent[0], before.IdempotencyKey)
+	}
+	if got := payoutRows(ctx, t, f, request.ID); got != 1 {
+		t.Errorf("the request has %d payout rows, want 1", got)
+	}
+}
+
+// TestAnApprovalAndARetryRecordingAtOnceKeepOnePayment reaches into the
+// window FR-052 deliberately leaves open: the payout is committed before the
+// rail is asked, so between those two moments something else can look at the
+// row and see a payment owed. A scheduled sweep does exactly that.
+//
+// Both then submit - under the same key, so the rail makes one payment - and
+// both try to record the answer. The one that arrives second must read the
+// reference back rather than overwrite it or report the approval as failed:
+// an operator told their approval failed submits it again.
+func TestAnApprovalAndARetryRecordingAtOnceKeepOnePayment(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f, request := approvable(ctx, t)
+	operator := seedOperator(ctx, t, pool)
+	rail := counting(stub.New())
+
+	var swept payout.Outcome
+	rail.duringNextSubmit(func() {
+		var err error
+		if swept, err = retries(t, f, rail).Retry(ctx, request.ID); err != nil {
+			t.Errorf("the sweep's retry, inside the approval's submission: %v", err)
+		}
+	})
+
+	approved, err := approvals(t, f, rail).Approve(ctx, payout.Approval{
+		Request: request.ID, Operator: operator,
+	})
+	if err != nil {
+		t.Fatalf("Approve(): %v", err)
+	}
+
+	if swept.Payout.RailReference == "" {
+		t.Fatal("the sweep recorded no reference; this case needs it to have won the race")
+	}
+	if approved.RailReference != swept.Payout.RailReference {
+		t.Errorf("the approval answered %q, want the reference the sweep recorded %q",
+			approved.RailReference, swept.Payout.RailReference)
+	}
+	if approved.State != payout.StatusSubmitted {
+		t.Errorf("the payout is %s, want %s", approved.State, payout.StatusSubmitted)
+	}
+	if got := rail.payments(); got != 1 {
+		t.Errorf("the rail issued %d payments over %d calls, want 1", got, rail.calls())
+	}
+	if got := payoutRows(ctx, t, f, request.ID); got != 1 {
+		t.Errorf("the request has %d payout rows, want 1", got)
+	}
+}
+
+// TestADatabaseThatHasGoneAwayDecidesNothing is the boundary the counting
+// above rests on: when this database cannot be reached, nothing happens at
+// all - no payment, no release, no decision recorded anywhere - and every
+// service says so rather than panicking or returning a zero value a caller
+// would read as success.
+//
+// Zero payments is the assertion that matters. A service that reached the
+// rail before finding out it could not record the result would have moved a
+// member's money with nothing to prove it.
+func TestADatabaseThatHasGoneAwayDecidesNothing(t *testing.T) {
+	ctx, pool := withdrawalPool(t)
+	f, request := approvable(ctx, t)
+	operator := seedOperator(ctx, t, pool)
+	rail := counting(stub.New())
+	approver := approvals(t, f, rail)
+	retrier := retries(t, f, rail)
+	refuser := rejections(t, f)
+
+	f.pool.Close()
+
+	if _, err := approver.Approve(ctx, payout.Approval{Request: request.ID, Operator: operator}); err == nil {
+		t.Error("an approval over a closed pool succeeded, want a refusal")
+	}
+	if _, err := retrier.Retry(ctx, request.ID); err == nil {
+		t.Error("a retry over a closed pool succeeded, want a refusal")
+	}
+	if _, err := refuser.Reject(ctx, payout.Rejection{
+		Request: request.ID, Operator: operator, Reason: "the database is not answering",
+	}); err == nil {
+		t.Error("a rejection over a closed pool succeeded, want a refusal")
+	}
+
+	if got := rail.payments(); got != 0 {
+		t.Errorf("the rail issued %d payments over %d calls, want 0 - nothing may be sent that cannot be recorded",
+			got, rail.calls())
 	}
 }
