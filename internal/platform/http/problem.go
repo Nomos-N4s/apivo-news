@@ -22,14 +22,45 @@ type ProblemDetails struct {
 // failure cannot leave a half-written body behind a status line that
 // promised problem+json.
 func Problem(w http.ResponseWriter, status int, detail string) {
-	body, err := json.Marshal(ProblemDetails{
-		Type:   "about:blank",
-		Title:  http.StatusText(status),
-		Status: status,
-		Detail: detail,
-	})
+	ProblemWith(w, status, detail, nil)
+}
+
+// ProblemWith writes the same document carrying EXTENSION MEMBERS - the
+// machine-readable half of RFC 9457 §3.2, alongside the human-readable
+// Detail.
+//
+// It exists because some refusals are ones a client acts on rather than
+// displays. "Insufficient confirmed balance, 4.00 short" is two facts: a
+// code the client branches on and a figure it renders, and a client that had
+// to parse either out of Detail would be parsing prose that changes when
+// somebody improves the wording. The RFC's answer is extension members, so
+// that is the answer here rather than a second error shape.
+//
+// The four standard members always win: an extension named "type", "title",
+// "status" or "detail" is dropped rather than allowed to overwrite the
+// document's own. A caller doing that has made a mistake, and the one thing
+// worse than dropping it is answering with a status field that disagrees
+// with the status line.
+func ProblemWith(w http.ResponseWriter, status int, detail string, extensions map[string]any) {
+	document := map[string]any{}
+	for name, value := range extensions {
+		switch name {
+		case "type", "title", "status", "detail":
+			continue
+		}
+		document[name] = value
+	}
+	document["type"] = "about:blank"
+	document["title"] = http.StatusText(status)
+	document["status"] = status
+	if detail != "" {
+		document["detail"] = detail
+	}
+
+	body, err := json.Marshal(document)
 	if err != nil {
-		// Unreachable with this struct; keep the response well-formed anyway.
+		// Reachable only through an extension value that cannot be
+		// marshalled; the status still has to reach the client.
 		http.Error(w, http.StatusText(status), status)
 		return
 	}
