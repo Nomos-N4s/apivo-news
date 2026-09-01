@@ -52,6 +52,12 @@ type Rail struct {
 	// settled marks the references a caller has declared settled, so
 	// Status can move on without a bank.
 	settled map[string]bool
+	// broke marks the references a caller has declared failed AT THE RAIL:
+	// a payment it accepted and could not complete. Distinct from a
+	// submission it refused - that one never started and the money never
+	// moved, this one started and ended badly - and the two are told apart
+	// because only the first can be re-sent.
+	broke map[string]bool
 	// failNext, when set, is what the next Submit does instead of
 	// succeeding.
 	failNext error
@@ -62,7 +68,7 @@ type Option func(*Rail)
 
 // New builds the stub rail.
 func New(opts ...Option) *Rail {
-	r := &Rail{submitted: map[string]string{}, settled: map[string]bool{}}
+	r := &Rail{submitted: map[string]string{}, settled: map[string]bool{}, broke: map[string]bool{}}
 	for _, opt := range opts {
 		opt(r)
 	}
@@ -156,8 +162,11 @@ func (r *Rail) Status(ctx context.Context, reference payout.RailReference) (payo
 	if !r.knows(reference.Ref()) {
 		return "", payout.Terminal(fmt.Errorf("stub: no payment was submitted under %s", reference))
 	}
-	if r.settled[reference.Ref()] {
+	switch {
+	case r.settled[reference.Ref()]:
 		return payout.StatusSettled, nil
+	case r.broke[reference.Ref()]:
+		return payout.StatusFailed, nil
 	}
 	return payout.StatusSubmitted, nil
 }
@@ -170,6 +179,26 @@ func (r *Rail) knows(ref string) bool {
 		}
 	}
 	return false
+}
+
+// Fail marks a submitted payment as one this rail accepted and could not
+// complete, so a test can drive the other far end of the journey.
+//
+// Not the same as [WithPermanentFailure], and the difference is the whole
+// reason both exist: that one refuses the SUBMISSION, so no payment was ever
+// made and the money never moved; this one is a payment that was made and
+// ended badly. A caller learns the first from Submit and the second only by
+// asking Status.
+//
+// Not part of the port, like [Rail.Settle]: a real rail is told by its bank.
+func (r *Rail) Fail(reference payout.RailReference) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.knows(reference.Ref()) {
+		return fmt.Errorf("stub: nothing was submitted under %s, so it cannot fail", reference)
+	}
+	r.broke[reference.Ref()] = true
+	return nil
 }
 
 // Settle marks a submitted payment as having reached the member, so a test
