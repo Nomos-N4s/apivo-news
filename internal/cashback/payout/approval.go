@@ -176,7 +176,7 @@ func (a *Approvals) claim(ctx context.Context, approval Approval) (Payout, Instr
 	defer func() { _ = tx.Rollback(ctx) }()
 	queries := store.New(tx)
 
-	request, err := a.awaiting(ctx, queries, approval.Request)
+	request, err := awaitingDecision(ctx, queries, approval.Request)
 	if err != nil {
 		return Payout{}, Instruction{}, err
 	}
@@ -232,26 +232,6 @@ func (a *Approvals) claim(ctx context.Context, approval Approval) (Payout, Instr
 		Destination:    destination.ToRef(),
 		Descriptor:     a.descriptor,
 	}, nil
-}
-
-// awaiting reads and locks the request, refusing one that is not the
-// approval queue's to decide.
-func (a *Approvals) awaiting(ctx context.Context, queries *store.Queries, id uuid.UUID) (Withdrawal, error) {
-	row, err := queries.LockWithdrawalRequestForDecision(ctx, pgtype.UUID{Bytes: id, Valid: true})
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		return Withdrawal{}, fmt.Errorf("%w: %s", ErrNoSuchWithdrawal, id)
-	case err != nil:
-		return Withdrawal{}, fmt.Errorf("%w: reading %s: %w", ErrNotApproved, id, err)
-	}
-	request, err := withdrawalFrom(row)
-	if err != nil {
-		return Withdrawal{}, err
-	}
-	if request.State != StateAwaitingApproval {
-		return Withdrawal{}, fmt.Errorf("%w: %s is %s", ErrNotAwaitingApproval, id, request.State)
-	}
-	return request, nil
 }
 
 // brandOf answers which brand the reserved entries were earned under,
