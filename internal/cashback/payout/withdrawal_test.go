@@ -28,8 +28,21 @@ func TestAServiceMissingAPartIsRefusedAtConstruction(t *testing.T) {
 	if _, err := payout.NewWithdrawals(noDatabase{}, nil, "network-receivable", threshold); !errors.Is(err, payout.ErrNoLedger) {
 		t.Errorf("with no ledger = %v, want one wrapping %v", err, payout.ErrNoLedger)
 	}
-	if _, err := payout.NewWithdrawals(noDatabase{}, memory.New(), "", threshold); !errors.Is(err, payout.ErrNoReceivable) {
-		t.Errorf("with no receivable = %v, want one wrapping %v", err, payout.ErrNoReceivable)
+}
+
+// TestADeploymentThatNamedNoReceivableAnswersOnTheEndpoint. It is not
+// refused at construction: doing so would take the wallet, the click-out and
+// the operator queue down over a deployment that simply cannot pay out yet.
+// Production refuses to start without the key; here the endpoint says so.
+func TestADeploymentThatNamedNoReceivableAnswersOnTheEndpoint(t *testing.T) {
+	withdrawals, err := payout.NewWithdrawals(noDatabase{}, memory.New(), "", euro(t, 2500))
+	if err != nil {
+		t.Fatalf("NewWithdrawals() with no receivable = %v, want it built", err)
+	}
+	if _, err := withdrawals.Request(t.Context(), payout.Request{
+		Member: uuid.New(), Destination: uuid.New(), Amount: euro(t, 5000),
+	}); !errors.Is(err, payout.ErrNoReceivable) {
+		t.Errorf("Request() = %v, want one wrapping %v", err, payout.ErrNoReceivable)
 	}
 }
 

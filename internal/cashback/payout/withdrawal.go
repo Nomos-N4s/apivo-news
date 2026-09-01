@@ -49,11 +49,18 @@ var (
 	// it there is nothing to move money with, and a request that reserved
 	// nothing could be approved twice over one balance.
 	ErrNoLedger = errors.New("payout: withdrawing needs a ledger to reserve in")
-	// ErrNoReceivable reports one built without the house account earnings
-	// are credited from. Refused rather than defaulted for the reason
-	// [earnings.ErrNoReceivable] is: an account nobody named is one nobody
-	// meant to open.
-	ErrNoReceivable = errors.New("payout: withdrawing needs the account earnings are paid out of")
+	// ErrNoReceivable reports a deployment that has not named the house
+	// account earnings are credited from (HOUSE_ACCOUNT_NETWORK_RECEIVABLE).
+	//
+	// Never defaulted - an account nobody named is one nobody meant to open,
+	// and money credited from one would be money the business cannot find.
+	// But discovered on REQUEST rather than at construction, for the reason
+	// [ErrNoThreshold] is: production refuses to start without it, and in the
+	// environments that can start without it the honest answer to a
+	// withdrawal is 503 naming the key. Refusing to build would take the
+	// wallet, the click-out and the operator queue down with it, over a
+	// deployment that simply cannot pay out yet.
+	ErrNoReceivable = errors.New("payout: this deployment has not named the account earnings are paid out of")
 	// ErrNoThreshold reports a deployment that has not configured the
 	// confirmed balance a withdrawal is checked against (FR-050).
 	//
@@ -177,17 +184,16 @@ type Withdrawals struct {
 	threshold  money.Amount
 }
 
-// NewWithdrawals builds the service. The threshold may be the zero Amount -
-// see [ErrNoThreshold] for why that is discovered on request rather than
-// here.
+// NewWithdrawals builds the service. The threshold may be the zero Amount
+// and the receivable may be blank - see [ErrNoThreshold] and
+// [ErrNoReceivable] for why an incomplete deployment answers 503 on the
+// endpoint rather than failing to start.
 func NewWithdrawals(db Beginner, ledger wallet.Ledger, receivable string, threshold money.Amount) (*Withdrawals, error) {
 	switch {
 	case db == nil:
 		return nil, ErrNoWithdrawalStore
 	case ledger == nil:
 		return nil, ErrNoLedger
-	case receivable == "":
-		return nil, ErrNoReceivable
 	}
 	return &Withdrawals{db: db, ledger: ledger, receivable: receivable, threshold: threshold}, nil
 }
@@ -266,6 +272,9 @@ func (w *Withdrawals) acceptable(req Request) error {
 		return fmt.Errorf("%w: no member is asking", ErrNotRequested)
 	case req.Destination == uuid.Nil:
 		return fmt.Errorf("%w: no destination to pay", ErrNotRequested)
+	}
+	if w.receivable == "" {
+		return ErrNoReceivable
 	}
 	if !w.threshold.Currency.Valid() {
 		return ErrNoThreshold

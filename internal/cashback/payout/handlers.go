@@ -225,14 +225,27 @@ func (h *Handler) refuse(w http.ResponseWriter, r *http.Request, err error) {
 		// 503, not 500: nothing is broken, the deployment is incomplete,
 		// and the two are different things to whoever is paged. Named keys,
 		// because the person reading this is the person who can set them.
-		h.log.ErrorContext(r.Context(), "a withdrawal was requested and this deployment has no threshold",
-			"keys", "PAYOUT_THRESHOLD_MINOR, PAYOUT_THRESHOLD_CURRENCY")
-		platformhttp.Problem(w, http.StatusServiceUnavailable,
-			"this deployment has not configured a withdrawal threshold, so withdrawals cannot be accepted")
+		h.unconfigured(w, r, "this deployment has no withdrawal threshold",
+			"PAYOUT_THRESHOLD_MINOR, PAYOUT_THRESHOLD_CURRENCY")
+	case errors.Is(err, ErrNoReceivable):
+		h.unconfigured(w, r, "this deployment has not named the account earnings are paid out of",
+			"HOUSE_ACCOUNT_NETWORK_RECEIVABLE")
 	default:
 		h.log.ErrorContext(r.Context(), "recording a withdrawal request", "error", err)
 		platformhttp.Problem(w, http.StatusInternalServerError, "")
 	}
+}
+
+// unconfigured answers 503 and names the environment keys that would fix it.
+//
+// 503 rather than 500 throughout: nothing is broken, the deployment is
+// incomplete, and the two are different things to whoever is paged. The keys
+// go to the log rather than the wire - the person who can set them reads the
+// log, and a member reads only that withdrawals are not available yet.
+func (h *Handler) unconfigured(w http.ResponseWriter, r *http.Request, what, keys string) {
+	h.log.ErrorContext(r.Context(), "a withdrawal was requested and "+what, "keys", keys)
+	platformhttp.Problem(w, http.StatusServiceUnavailable,
+		"this deployment cannot accept withdrawals yet")
 }
 
 // shortfall answers the one 409 a client acts on, carrying the figure that
