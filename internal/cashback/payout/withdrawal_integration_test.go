@@ -143,11 +143,12 @@ func euro(t *testing.T, minor int64) money.Amount {
 // verified destination, and the service over a ledger that agrees with the
 // entries.
 type fixture struct {
-	pool        *pgxpool.Pool
-	member      uuid.UUID
-	destination uuid.UUID
-	ledger      *memory.Ledger
-	withdrawals *payout.Withdrawals
+	pool         *pgxpool.Pool
+	member       uuid.UUID
+	destination  uuid.UUID
+	ledger       *memory.Ledger
+	withdrawals  *payout.Withdrawals
+	destinations *payout.Destinations
 }
 
 // aFixture seeds a member with the given confirmed entries, a verified
@@ -175,7 +176,14 @@ func aFixture(ctx context.Context, t *testing.T, threshold int64, confirmed ...i
 	if err != nil {
 		t.Fatalf("NewWithdrawals(): %v", err)
 	}
-	return fixture{pool: pool, member: member, destination: destination, ledger: ledger, withdrawals: withdrawals}
+	destinations, err := payout.NewDestinations(pool)
+	if err != nil {
+		t.Fatalf("NewDestinations(): %v", err)
+	}
+	return fixture{
+		pool: pool, member: member, destination: destination, ledger: ledger,
+		withdrawals: withdrawals, destinations: destinations,
+	}
 }
 
 // seedMember writes an account for one case to own.

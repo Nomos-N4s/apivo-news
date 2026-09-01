@@ -1133,6 +1133,134 @@
             }
           }
         }
+      },
+      "get": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "listWithdrawals",
+        "summary": "List the caller's withdrawal requests",
+        "description": "Every withdrawal this member has asked for, newest first, with the operator's decision where one has been made and the rail's reference where a payment has been submitted.\n\nThe member is the bearer of the token; reading somebody else's is not a request this endpoint can express.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The member's withdrawal requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberWithdrawalPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/cashback/withdrawals/{id}": {
+      "get": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "getWithdrawal",
+        "summary": "Read one withdrawal request",
+        "description": "One request of the caller's own.\n\nA request belonging to somebody else and one that does not exist both answer 404, so an id cannot be probed for existence one request at a time.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberWithdrawal"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The id in the path is not a UUID.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "description": "No withdrawal request of the caller's has that id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/cashback/payout-destinations": {
+      "get": {
+        "tags": [
+          "cashback-member"
+        ],
+        "operationId": "listPayoutDestinations",
+        "summary": "List the caller's payout destinations",
+        "description": "Every destination this member has recorded, oldest first, with whether each has been proved theirs (FR-051).\n\nNo bank details appear in the response and none ever will: they live outside this service (ADR-0003).\n\nThe member is the bearer of the token; there is no path segment or query parameter naming an account.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The member's destinations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutDestinationPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
       }
     },
     "/api/v1/editorial/approvals": {
@@ -4117,6 +4245,151 @@
           "release_transfer": {
             "type": "string",
             "description": "The ledger transfer that carried the money back. Distinct from the reservation that carried it out: one movement each way, each with its own reference. Sharing one would make the release a replay that recorded nothing."
+          }
+        }
+      },
+      "PayoutDestination": {
+        "type": "object",
+        "description": "Somewhere a member may be paid. It carries NO bank details and never will: the details live outside this service (ADR-0003) and an endpoint that echoed them would be the leak that arrangement exists to prevent.",
+        "required": [
+          "destination_id",
+          "kind",
+          "verified_at",
+          "verified_method",
+          "created_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "destination_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sepa",
+              "manual",
+              "stub"
+            ],
+            "description": "Which rail would carry the money."
+          },
+          "verified_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the member proved this destination is theirs (FR-051), or null. A withdrawal to one that is null is refused with 409, so a client can tell before asking."
+          },
+          "verified_method": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How they proved it. Present exactly when verified_at is: \"verified, method unknown\" is not a verification anyone could defend later."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PayoutDestinationPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayoutDestination"
+            }
+          }
+        }
+      },
+      "MemberWithdrawal": {
+        "type": "object",
+        "description": "One withdrawal request as the member who made it reads it back.",
+        "required": [
+          "request_id",
+          "destination_id",
+          "amount",
+          "state",
+          "requested_at",
+          "decided_at",
+          "decision_reason",
+          "payout_reference"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "destination_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "amount": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ],
+            "description": "What was reserved, which is what a payout pays."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "awaiting_approval",
+              "approved",
+              "rejected",
+              "paid",
+              "failed"
+            ]
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When an operator decided it, or null while it waits."
+          },
+          "decision_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it was refused. A member is owed an explanation for money they asked for and did not get (FR-061), so it reaches them here and not only the operator."
+          },
+          "payout_reference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the rail called the payment, null until a payout exists and the rail has answered. It is the string a member quotes to their bank."
+          }
+        }
+      },
+      "MemberWithdrawalPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemberWithdrawal"
+            }
           }
         }
       }
