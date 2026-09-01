@@ -216,7 +216,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T097 [P] [US4] Build the operator approval queue in `web/src/pages/ops/withdrawals.astro`
 - [x] T098 [P] [US4] Exactly-once suite: concurrent submissions, replayed `Idempotency-Key`, rail timeout then retry, terminal failure (SC-004) in `internal/cashback/payout/exactly_once_test.go`
 - [x] T099 [P] [US4] Contract test: a withdrawal against another member's destination is refused with 403, in `internal/cashback/payout/handlers_test.go`
-- [ ] T100 [P] [US4] Publish `cashback.withdrawal.*` and `cashback.payout.*` events in `internal/cashback/payout/events.go`
+- [x] T100 [P] [US4] Publish `cashback.withdrawal.*` and `cashback.payout.*` events in `internal/cashback/payout/events.go`
 
 **Checkpoint**: The full money loop closes. Cashback is earnable, visible and payable.
 

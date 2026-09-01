@@ -83,6 +83,7 @@ type Rejections struct {
 	db         Beginner
 	ledger     wallet.Ledger
 	receivable string
+	announcer  *Announcer
 }
 
 // NewRejections builds the service. The receivable may be blank - see
@@ -96,7 +97,11 @@ func NewRejections(db Beginner, ledger wallet.Ledger, receivable string) (*Rejec
 	case ledger == nil:
 		return nil, ErrNoLedger
 	}
-	return &Rejections{db: db, ledger: ledger, receivable: receivable}, nil
+	announcer, err := NewAnnouncer()
+	if err != nil {
+		return nil, err
+	}
+	return &Rejections{db: db, ledger: ledger, receivable: receivable, announcer: announcer}, nil
 }
 
 // Reject refuses the request and releases its reservation.
@@ -171,6 +176,11 @@ func (r *Rejections) Reject(ctx context.Context, rejection Rejection) (Rejected,
 	}
 	refused, err := withdrawalFrom(row)
 	if err != nil {
+		return Rejected{}, err
+	}
+	// Beside the release and the decision, so a member's money going back
+	// and the stream saying so are one commit.
+	if err := r.announcer.Rejected(ctx, tx, refused); err != nil {
 		return Rejected{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

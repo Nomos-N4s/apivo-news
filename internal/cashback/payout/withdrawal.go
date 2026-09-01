@@ -182,6 +182,7 @@ type Withdrawals struct {
 	ledger     wallet.Ledger
 	receivable string
 	threshold  money.Amount
+	announcer  *Announcer
 }
 
 // NewWithdrawals builds the service. The threshold may be the zero Amount
@@ -195,7 +196,16 @@ func NewWithdrawals(db Beginner, ledger wallet.Ledger, receivable string, thresh
 	case ledger == nil:
 		return nil, ErrNoLedger
 	}
-	return &Withdrawals{db: db, ledger: ledger, receivable: receivable, threshold: threshold}, nil
+	// Built here rather than injected, for the reason earnings builds its
+	// own: there is nothing about it a deployment could sensibly vary, and
+	// a parameter would invite one to try.
+	announcer, err := NewAnnouncer()
+	if err != nil {
+		return nil, err
+	}
+	return &Withdrawals{
+		db: db, ledger: ledger, receivable: receivable, threshold: threshold, announcer: announcer,
+	}, nil
 }
 
 // Request reserves the money and records the ask.
@@ -259,10 +269,19 @@ func (w *Withdrawals) Request(ctx context.Context, req Request) (Withdrawal, err
 	if err != nil {
 		return Withdrawal{}, fmt.Errorf("%w: %s for member %s: %w", ErrNotRequested, id, req.Member, err)
 	}
+	made, err := withdrawalFrom(row)
+	if err != nil {
+		return Withdrawal{}, err
+	}
+	// Inside the transaction that reserved the money and recorded the ask,
+	// so the event and the fact commit together or neither does.
+	if err := w.announcer.Requested(ctx, tx, made); err != nil {
+		return Withdrawal{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Withdrawal{}, fmt.Errorf("%w: %s: %w", ErrNotRequested, id, err)
 	}
-	return withdrawalFrom(row)
+	return made, nil
 }
 
 // acceptable refuses what can be refused without reading anything.
