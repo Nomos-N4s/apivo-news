@@ -253,3 +253,130 @@ func (h *Handler) rejectWithdrawal(w http.ResponseWriter, r *http.Request) {
 		ReleaseTransfer: refused.ReleaseTransfer,
 	})
 }
+
+// WithdrawalSettler records a payment an operator made by hand.
+// *payout.Settlements satisfies it.
+//
+// A third interface for the same reason there are two already: this one
+// answers a question the other two cannot be asked. Approving and refusing
+// DECIDE a request; this reports what happened to money afterwards, which is
+// not a decision and does not belong on a type that makes them.
+type WithdrawalSettler interface {
+	Record(ctx context.Context, recording payout.Recording) (payout.Settlement, error)
+}
+
+// settleRequest is what an operator sends: what their bank called the
+// transfer, and nothing else.
+//
+// Not the operator, for the reason no operator action on this surface takes
+// one (C-4, FR-061): the acting human is the token subject, so "settle as
+// somebody else" is not a request this endpoint can express. Not the amount
+// either - the payout froze that at approval, and a settlement that could
+// restate it would be a settlement that could pay a different sum.
+type settleRequest struct {
+	RailReference string `json:"rail_reference"`
+}
+
+// settleResponse is the payment as it now stands.
+type settleResponse struct {
+	PayoutID  string `json:"payout_id"`
+	RequestID string `json:"request_id"`
+	// RailReference is what the operator recorded, replacing the manual:
+	// placeholder that meant nobody had made the transfer yet.
+	RailReference string     `json:"rail_reference"`
+	Amount        amountJSON `json:"amount"`
+	State         string     `json:"state"`
+	// SettledAt is never null here: a settled payout has an instant, tied
+	// to the state by payout_settled_iff_settlement_time.
+	SettledAt string `json:"settled_at"`
+	// RequestState follows the payout, and is echoed because an operator
+	// reading one screen should not have to reload another to learn that
+	// the member's request is now paid.
+	RequestState string `json:"request_state"`
+}
+
+// maxReferenceRunes bounds what a bank may be quoted as calling a transfer.
+// Generous, because reference formats vary by rail and by country; bounded,
+// because this reaches a member's screen and a log.
+const maxReferenceRunes = 200
+
+// settleWithdrawal implements POST /ops/withdrawals/{id}/settle.
+//
+// This is the manual rail's whole settlement path, and there is no automatic
+// alternative to it: payout.Settlements sweeps the rails on a schedule, and
+// the manual rail always answers "submitted" because a rail that guessed
+// otherwise would report money as delivered on the strength of a clock. A
+// person went to a bank; a person says so.
+func (h *Handler) settleWithdrawal(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		platformhttp.Problem(w, http.StatusBadRequest, "the withdrawal id is not a UUID")
+		return
+	}
+	if h.settlements == nil {
+		// 503 on this route alone. A deployment that cannot record a
+		// settlement can still run its approval queue, and taking the
+		// whole operator surface down over it would be the larger failure.
+		h.log.ErrorContext(r.Context(), "a settlement was recorded and this deployment has nowhere to record it",
+			"withdrawal", id)
+		platformhttp.Problem(w, http.StatusServiceUnavailable,
+			"this deployment cannot record settlements yet")
+		return
+	}
+	var req settleRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	reference := strings.TrimSpace(req.RailReference)
+	switch {
+	case reference == "":
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"a settlement records what the bank called the transfer: supply a non-blank rail_reference")
+		return
+	case len([]rune(reference)) > maxReferenceRunes:
+		platformhttp.Problem(w, http.StatusBadRequest,
+			"the rail reference is longer than "+strconv.Itoa(maxReferenceRunes)+" characters")
+		return
+	}
+
+	settled, err := h.settlements.Record(r.Context(), payout.Recording{
+		Request:   id,
+		Operator:  operatorFrom(r.Context()).ID,
+		Reference: reference,
+	})
+	switch {
+	case errors.Is(err, payout.ErrNoPayout):
+		// No payment exists, so there is nothing that could have landed.
+		platformhttp.Problem(w, http.StatusNotFound,
+			"this withdrawal has no payout; it has not been approved")
+		return
+	case errors.Is(err, payout.ErrNoSuchWithdrawal):
+		platformhttp.Problem(w, http.StatusNotFound, "no such withdrawal request")
+		return
+	case errors.Is(err, payout.ErrNotSubmitted):
+		platformhttp.Problem(w, http.StatusConflict,
+			"this payment is not waiting on a rail; reload before recording it")
+		return
+	case errors.Is(err, payout.ErrNotSettled):
+		h.log.WarnContext(r.Context(), "a settlement was refused", "withdrawal", id, "error", err)
+		platformhttp.Problem(w, http.StatusConflict,
+			"this payment cannot be settled as it stands")
+		return
+	case err != nil:
+		h.internalError(w, r, "recording a settlement", err)
+		return
+	}
+
+	h.writeJSON(w, r, settleResponse{
+		PayoutID:      settled.Payout.ID.String(),
+		RequestID:     settled.Payout.Request.String(),
+		RailReference: settled.Payout.RailReference,
+		Amount: amountJSON{
+			Minor:    settled.Payout.Amount.Minor,
+			Currency: string(settled.Payout.Amount.Currency),
+		},
+		State:        settled.Payout.State.String(),
+		SettledAt:    stamp(settled.Payout.SettledAt),
+		RequestState: string(payout.StatePaid),
+	})
+}

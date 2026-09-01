@@ -362,7 +362,7 @@ func (unreachableStore) Provenance(context.Context, uuid.UUID) (editorial.Proven
 // a status code alone would dress the loss up as an ordinary 404.
 func TestOperatorPatternsAreReachable(t *testing.T) {
 	t.Parallel()
-	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, unreachableOpsRefuser{}, alwaysOperator{})
+	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, unreachableOpsRefuser{}, unreachableOpsSettler{}, alwaysOperator{})
 
 	for _, pattern := range ops.Patterns() {
 		t.Run(pattern, func(t *testing.T) {
@@ -428,4 +428,12 @@ type unreachableOpsRefuser struct{}
 
 func (unreachableOpsRefuser) Reject(context.Context, payout.Rejection) (payout.Rejected, error) {
 	return payout.Rejected{}, errors.New("the route probes must not refuse anything")
+}
+
+// unreachableOpsSettler stands where this file must not settle anything: it
+// checks which routes exist, never what they do.
+type unreachableOpsSettler struct{}
+
+func (unreachableOpsSettler) Record(context.Context, payout.Recording) (payout.Settlement, error) {
+	return payout.Settlement{}, errors.New("main: the route census must not settle anything")
 }

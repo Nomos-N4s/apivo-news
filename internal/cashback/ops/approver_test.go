@@ -44,3 +44,10 @@ type unreachableRefuser struct{}
 func (unreachableRefuser) Reject(context.Context, payout.Rejection) (payout.Rejected, error) {
 	return payout.Rejected{}, errors.New("ops: this case must not reach the refuser")
 }
+
+// unreachableSettler stands where a case must not settle anything.
+type unreachableSettler struct{}
+
+func (unreachableSettler) Record(context.Context, payout.Recording) (payout.Settlement, error) {
+	return payout.Settlement{}, errors.New("ops: this case must not reach the settler")
+}
