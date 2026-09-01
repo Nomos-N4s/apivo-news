@@ -52,6 +52,10 @@ const (
 	// TypePayoutSettled announces money that reached the member. It is the
 	// last fact in the chain and the only one that says a member was
 	// actually paid - everything before it says a payment was intended.
+	//
+	// It carries an actor when a human recorded it and none when a rail
+	// reported it, which is the one thing a consumer cannot work out for
+	// itself.
 	TypePayoutSettled = EventProducer + ".payout.settled"
 )
 
@@ -232,7 +236,7 @@ func (a *Announcer) Failed(ctx context.Context, db events.RowQuerier, failed Pay
 // Subject is the payout, as for [Announcer.Failed]: both are facts about the
 // payment rather than about the request. Keyed on the payout, which settles
 // once - payout_guard makes settled terminal.
-func (a *Announcer) Settled(ctx context.Context, db events.RowQuerier, settled Payout) error {
+func (a *Announcer) Settled(ctx context.Context, db events.RowQuerier, settled Payout, actor uuid.UUID) error {
 	switch {
 	case settled.ID == uuid.Nil:
 		return fmt.Errorf("%w: %s about a payout the database did not record", ErrNotAnnounced, TypePayoutSettled)
@@ -246,15 +250,25 @@ func (a *Announcer) Settled(ctx context.Context, db events.RowQuerier, settled P
 		// the stream that is not in the schema.
 		return fmt.Errorf("%w: %s about a payment with no settlement time", ErrNotAnnounced, TypePayoutSettled)
 	}
+	// Actor is present exactly when a HUMAN said the payment landed, and
+	// absent when a rail reported it. Both are real settlements and neither
+	// is more true, but only one has somebody to ask about it (FR-061), and
+	// a consumer cannot tell them apart from the payload otherwise.
+	var recordedBy *uuid.UUID
+	if actor != uuid.Nil {
+		recordedBy = &actor
+	}
 	payload, err := json.Marshal(struct {
-		PayoutID      uuid.UUID `json:"payout_id"`
-		RequestID     uuid.UUID `json:"request_id"`
-		RailReference string    `json:"rail_reference"`
-		At            time.Time `json:"at"`
+		PayoutID      uuid.UUID  `json:"payout_id"`
+		RequestID     uuid.UUID  `json:"request_id"`
+		RailReference string     `json:"rail_reference"`
+		Actor         *uuid.UUID `json:"actor,omitempty"`
+		At            time.Time  `json:"at"`
 	}{
 		PayoutID:      settled.ID,
 		RequestID:     settled.Request,
 		RailReference: settled.RailReference,
+		Actor:         recordedBy,
 		// The settlement instant the ROW carries, for the reason every other
 		// instant here is read back rather than taken from a clock.
 		At: settled.SettledAt,

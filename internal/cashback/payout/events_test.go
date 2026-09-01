@@ -103,7 +103,7 @@ func TestWhatTheAnnouncerRefusesToSayAboutASettlement(t *testing.T) {
 	} {
 		spoiled := settled
 		spoil(&spoiled)
-		if err := announcer.Settled(ctx, nil, spoiled); !errors.Is(err, payout.ErrNotAnnounced) {
+		if err := announcer.Settled(ctx, nil, spoiled, uuid.Nil); !errors.Is(err, payout.ErrNotAnnounced) {
 			t.Errorf("%s = %v, want one wrapping %v", name, err, payout.ErrNotAnnounced)
 		}
 	}
