@@ -62,6 +62,15 @@ const (
 	KindStub Kind = "stub"
 )
 
+// Kinds lists every kind the column accepts, in the order they are declared.
+//
+// Exported so an endpoint refusing a kind can name the ones it would take
+// rather than making a client guess, and derived from one place so the list
+// a member reads cannot drift from the list [Kind.Valid] enforces.
+func Kinds() []string {
+	return []string{string(KindSEPA), string(KindManual), string(KindStub)}
+}
+
 // Valid reports whether k is one of the three kinds the column accepts. The
 // zero value is not.
 func (k Kind) Valid() bool {
