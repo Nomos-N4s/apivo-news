@@ -130,7 +130,7 @@ func (r *Retries) Retry(ctx context.Context, request uuid.UUID) (Outcome, error)
 	switch {
 	case errors.Is(err, ErrRailTerminal):
 		// The payment will never happen. Give the member their money back.
-		return r.giveUp(ctx, request, err)
+		return r.Abandon(ctx, request, err)
 	case err != nil:
 		// Retryable, or a rail that did not classify - and an unclassified
 		// failure is treated as retryable, because the safe reading of "I do
@@ -246,8 +246,14 @@ func (r *Retries) reread(ctx context.Context, owed Payout) (Outcome, error) {
 	return Outcome{Payout: sent}, nil
 }
 
-// giveUp marks a terminally failed payment failed and puts the money back
+// Abandon marks a terminally failed payment failed and puts the money back
 // (FR-053, US4 scenario 5).
+//
+// Exported because two callers reach the same end. A retry gets here when the
+// rail refuses the submission; the settlement sweep gets here when the rail
+// reports a payment it took and could not complete. Those are different
+// questions with one answer, and two implementations of "put the money back"
+// would be two rules for moving a member's balance.
 //
 // One transaction, and the ledger is posted inside it for the reason a
 // rejection posts inside its own: there is no rail call left to make. What
@@ -260,7 +266,7 @@ func (r *Retries) reread(ctx context.Context, owed Payout) (Outcome, error) {
 // one of the two can ever happen to a request: a rejection is a decision
 // before approval and a terminal failure is one after it. Sharing the key
 // means that if the impossible happened, the money would come back once.
-func (r *Retries) giveUp(ctx context.Context, request uuid.UUID, cause error) (Outcome, error) {
+func (r *Retries) Abandon(ctx context.Context, request uuid.UUID, cause error) (Outcome, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("%w: %w", ErrNotRetried, err)
@@ -380,7 +386,7 @@ func railRefusal(cause error) string {
 
 // classificationOf names the rail's verdict for the event payload.
 //
-// Only a terminal failure reaches [Retries.giveUp], so this answers
+// Only a terminal failure reaches [Retries.Abandon], so this answers
 // "terminal" in practice - and it is derived rather than written out, because
 // a field that says what the caller assumed rather than what the error
 // carries is a field that goes on saying it after the assumption stops
