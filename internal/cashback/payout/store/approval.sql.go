@@ -148,6 +148,42 @@ func (q *Queries) GetPayoutForRequest(ctx context.Context, requestID pgtype.UUID
 	return i, err
 }
 
+const lockPayoutForRequest = `-- name: LockPayoutForRequest :one
+select id, brand_id, request_id, approved_by, idempotency_key,
+       amount_minor, currency, rail, rail_reference, state,
+       submitted_at, settled_at
+  from cashback.payout
+ where request_id = $1
+   for update
+`
+
+// The payout a request has, held against a second retry of the same one.
+//
+// FOR UPDATE because a retry both reads the payout's state and decides what
+// to do about it, and two retries arriving together must not both conclude
+// that the rail was never asked. The withdrawal request is locked by the
+// caller first, so the order is always request then payout and there is no
+// pair of locks to take the wrong way round.
+func (q *Queries) LockPayoutForRequest(ctx context.Context, requestID pgtype.UUID) (CashbackPayout, error) {
+	row := q.db.QueryRow(ctx, lockPayoutForRequest, requestID)
+	var i CashbackPayout
+	err := row.Scan(
+		&i.ID,
+		&i.BrandID,
+		&i.RequestID,
+		&i.ApprovedBy,
+		&i.IdempotencyKey,
+		&i.AmountMinor,
+		&i.Currency,
+		&i.Rail,
+		&i.RailReference,
+		&i.State,
+		&i.SubmittedAt,
+		&i.SettledAt,
+	)
+	return i, err
+}
+
 const lockWithdrawalRequestForDecision = `-- name: LockWithdrawalRequestForDecision :one
 
 select id, account_id, destination_id, amount_minor, currency, state,
@@ -188,6 +224,65 @@ func (q *Queries) LockWithdrawalRequestForDecision(ctx context.Context, id pgtyp
 		&i.DecidedBy,
 		&i.DecidedAt,
 		&i.DecisionReason,
+	)
+	return i, err
+}
+
+const recordPayoutOutcome = `-- name: RecordPayoutOutcome :one
+update cashback.payout
+   set state = $1,
+       settled_at = case when $1::text = 'settled' then now() else null end,
+       rail_reference = coalesce($2, rail_reference)
+ where id = $3
+   and state = $4
+returning id, brand_id, request_id, approved_by, idempotency_key,
+          amount_minor, currency, rail, rail_reference, state,
+          submitted_at, settled_at
+`
+
+type RecordPayoutOutcomeParams struct {
+	ToState       string
+	RailReference pgtype.Text
+	ID            pgtype.UUID
+	FromState     string
+}
+
+// Move a payout to where the rail says it ended up.
+//
+// Narrowed on the state the caller read, so two retries racing one payout
+// leave one recorded outcome rather than the second overwriting the first -
+// the same conditional-write shape every decision in this schema uses.
+//
+// settled_at is now() for a settlement and null otherwise, computed here
+// rather than passed in because payout_settled_iff_settlement_time ties the
+// two together: a settled payout without an instant, or an unsettled one
+// with, is a row the database refuses. One statement decides both, so they
+// cannot disagree.
+//
+// payout_guard permits exactly this and nothing else: the state, the
+// settlement instant and the rail's reference may move; who approved it,
+// what it pays and on which rail may not, and a settled payout is terminal.
+func (q *Queries) RecordPayoutOutcome(ctx context.Context, arg RecordPayoutOutcomeParams) (CashbackPayout, error) {
+	row := q.db.QueryRow(ctx, recordPayoutOutcome,
+		arg.ToState,
+		arg.RailReference,
+		arg.ID,
+		arg.FromState,
+	)
+	var i CashbackPayout
+	err := row.Scan(
+		&i.ID,
+		&i.BrandID,
+		&i.RequestID,
+		&i.ApprovedBy,
+		&i.IdempotencyKey,
+		&i.AmountMinor,
+		&i.Currency,
+		&i.Rail,
+		&i.RailReference,
+		&i.State,
+		&i.SubmittedAt,
+		&i.SettledAt,
 	)
 	return i, err
 }
