@@ -510,6 +510,11 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, err
 	}
+	refusals, err := payout.NewRejections(pool, ledger, cfg.Cashback.HouseAccounts.NetworkReceivable)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
 	participations, err := wallet.NewParticipations(pool, walletstore.New(pool), terms)
 	if err != nil {
 		stop()
@@ -529,7 +534,7 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	return append(routes,
 		platformhttp.Route{
 			Pattern: opsPrefix,
-			Handler: ops.NewHandler(log, opsStore, approvals, newOperatorAuth(ids, roles)),
+			Handler: ops.NewHandler(log, opsStore, approvals, refusals, newOperatorAuth(ids, roles)),
 		},
 		// Mounted at the path AND at its subtree, so a stray sub-path is
 		// answered in problem+json by the module rather than redirected by

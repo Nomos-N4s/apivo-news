@@ -145,6 +145,62 @@ func (q *Queries) CreateEntry(ctx context.Context, arg CreateEntryParams) (Cashb
 	return i, err
 }
 
+const entriesReservedUnder = `-- name: EntriesReservedUnder :many
+select e.id, e.account_id, e.brand_id, e.network_transaction_id, e.click_id,
+       e.state, e.amount_minor, e.currency, e.hold_rule, e.reversal_of_id,
+       e.created_at
+  from cashback.entry e
+  join cashback.entry_transition et on et.entry_id = e.id
+ where et.ledger_transfer_ref = $1
+   and et.to_state = 'reserved'
+ order by e.created_at, e.id
+   for update of e
+`
+
+// Every entry one reservation claimed, oldest first, locked.
+//
+// The seam is D9's reservation transfer, and it is the same one the
+// provenance view uses (migration 0016): the entries a withdrawal reserved
+// are exactly the entries whose reserving transition carries that reference.
+// Reading them back through the transition rather than through a column on
+// the request is what keeps ONE statement of which entries a payment covers.
+//
+// FOR UPDATE OF e locks the entries and NOT the transitions. The transitions
+// are append-only evidence and nothing may wait on them; the entries are what
+// a concurrent rejection and retry would both try to move, and they are what
+// has to be held.
+func (q *Queries) EntriesReservedUnder(ctx context.Context, ledgerTransferRef string) ([]CashbackEntry, error) {
+	rows, err := q.db.Query(ctx, entriesReservedUnder, ledgerTransferRef)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CashbackEntry
+	for rows.Next() {
+		var i CashbackEntry
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.BrandID,
+			&i.NetworkTransactionID,
+			&i.ClickID,
+			&i.State,
+			&i.AmountMinor,
+			&i.Currency,
+			&i.HoldRule,
+			&i.ReversalOfID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getEntry = `-- name: GetEntry :one
 select id, account_id, brand_id, network_transaction_id, click_id,
        state, amount_minor, currency, hold_rule, reversal_of_id, created_at

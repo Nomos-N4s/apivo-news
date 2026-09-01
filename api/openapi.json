@@ -590,6 +590,94 @@
         }
       }
     },
+    "/api/v1/cashback/ops/withdrawals/{id}/reject": {
+      "post": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "rejectWithdrawal",
+        "summary": "Refuse a withdrawal and release its reservation",
+        "description": "Refuse one withdrawal and put its money back (US4 scenario 5, FR-061).\n\nThe reserved entries move back to confirmed under ONE ledger transfer, distinct from the reservation's own - so the member is exactly where they were before asking, and can ask again.\n\nOne transaction, unlike approving: an approval has to reach a payout rail and a rail is in no transaction, so it commits before it submits. A refusal touches nothing outside this database except the ledger.\n\nWho refuses is the token subject and is not in the body. The reason is, and is required: withdrawal_request_rejection_has_reason refuses a rejected row without one, and a member is owed an explanation for money they did not get.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The withdrawal request being refused."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawalRefusal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The refusal, and what went back.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusedWithdrawal"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The id in the path is not a UUID, the body is not a single JSON document of the expected shape, or the reason is blank or longer than 2000 characters.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "404": {
+            "description": "No withdrawal request has that id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request is no longer awaiting approval, or its reservation moved no entries so there is nothing to release - the second needs looking at rather than deciding.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/cashback/export": {
       "get": {
         "tags": [
@@ -3963,6 +4051,72 @@
           "submitted_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "WithdrawalRefusal": {
+        "type": "object",
+        "description": "An operator refusing a withdrawal. Who refuses is the token subject and is deliberately absent from the body; the reason is not, because a member is owed an explanation for money they asked for and did not get.",
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "Why the withdrawal was refused (FR-061, US7 scenario 3). Required and non-blank - withdrawal_request_rejection_has_reason refuses a rejected row without one. Trimmed of surrounding whitespace and otherwise stored as given."
+          }
+        }
+      },
+      "RefusedWithdrawal": {
+        "type": "object",
+        "description": "A refused withdrawal: the decision, and the ledger movement that put the money back. Two facts, because an operator checking the second against the ledger needs its reference.",
+        "required": [
+          "request_id",
+          "state",
+          "decided_by",
+          "decided_at",
+          "decision_reason",
+          "released_amount",
+          "release_transfer"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "rejected"
+            ]
+          },
+          "decided_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The operator this refusal rests on, taken from the token subject. Echoed so they see which account the server recorded."
+          },
+          "decided_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decision_reason": {
+            "type": "string"
+          },
+          "released_amount": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ],
+            "description": "What went back to confirmed balance - the sum of the entries the reservation held, which is the request's own amount (US4 scenario 5)."
+          },
+          "release_transfer": {
+            "type": "string",
+            "description": "The ledger transfer that carried the money back. Distinct from the reservation that carried it out: one movement each way, each with its own reference. Sharing one would make the release a replay that recorded nothing."
           }
         }
       }

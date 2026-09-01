@@ -361,7 +361,7 @@ func (unreachableStore) Provenance(context.Context, uuid.UUID) (editorial.Proven
 // a status code alone would dress the loss up as an ordinary 404.
 func TestOperatorPatternsAreReachable(t *testing.T) {
 	t.Parallel()
-	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, alwaysOperator{})
+	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, unreachableOpsRefuser{}, alwaysOperator{})
 
 	for _, pattern := range ops.Patterns() {
 		t.Run(pattern, func(t *testing.T) {
@@ -419,4 +419,12 @@ type unreachableOpsApprover struct{}
 
 func (unreachableOpsApprover) Approve(context.Context, payout.Approval) (payout.Payout, error) {
 	return payout.Payout{}, errors.New("the route probes must not approve anything")
+}
+
+// unreachableOpsRefuser stands in for the withdrawal refuser in the route
+// probes, for the reason unreachableOpsApprover does.
+type unreachableOpsRefuser struct{}
+
+func (unreachableOpsRefuser) Reject(context.Context, payout.Rejection) (payout.Rejected, error) {
+	return payout.Rejected{}, errors.New("the route probes must not refuse anything")
 }
