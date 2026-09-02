@@ -168,7 +168,7 @@ func TestTheSettlementSweepIsBuiltAndRegisterable(t *testing.T) {
 	key := newSigningKey(t)
 	jwks := newJWKSServer(t, key)
 
-	_, sweep, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	_, built, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
@@ -177,9 +177,10 @@ func TestTheSettlementSweepIsBuiltAndRegisterable(t *testing.T) {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
 	t.Cleanup(closeVerifier)
-	if sweep == nil {
+	if built == nil || built.settlements == nil {
 		t.Fatal("cashback is on and no settlement sweep was built; no payout would ever leave submitted")
 	}
+	sweep := built.settlements
 
 	// Through the same function serve calls, so this covers the
 	// registration rather than only the sweep's ability to be registered.
@@ -218,13 +219,13 @@ func TestNoSettlementSweepWhereThereIsNothingToSettle(t *testing.T) {
 	key := newSigningKey(t)
 	jwks := newJWKSServer(t, key)
 
-	_, sweep, closeVerifier, err := newAuthenticatedRoutes(ctx,
+	_, built, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
 	t.Cleanup(closeVerifier)
-	if sweep != nil {
+	if built != nil {
 		t.Error("cashback is off and a settlement sweep was built anyway")
 	}
 }
