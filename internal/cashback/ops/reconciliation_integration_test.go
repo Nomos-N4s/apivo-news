@@ -407,7 +407,7 @@ func TestAnOmittedAndAShortedTransactionAreFlaggedAndMoveNoMoney(t *testing.T) {
 		moved(ctx, t, tx, memberID, shorted, nil, "confirmed", "tx-c-"+suffix(t), inAugust.Add(time.Hour), nil, nil)
 		before := moneyFootprint(ctx, t, tx, memberID)
 
-		h := ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, store, stubAuth{op: parties.operator})
+		h := ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, store, unreachableHeld{}, stubAuth{op: parties.operator})
 		call := func(method, path, body string) *httptest.ResponseRecorder {
 			req := httptest.NewRequest(method, ops.Prefix+path, strings.NewReader(body))
 			req.Header.Set("Authorization", "Bearer t")

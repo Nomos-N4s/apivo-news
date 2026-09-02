@@ -41,7 +41,12 @@ type Handler struct {
 	// the four because one type answers them all, and because the import
 	// endpoint needs two of them in sequence.
 	reconciliation ReconciliationStore
-	auth           OperatorAuthenticator
+	// held lists held credits and records the two decisions an operator
+	// may take on one (US7). The earnings module's, because a release
+	// moves money and a rejection posts it back, and only the entry
+	// machine may do either.
+	held HeldReviewer
+	auth OperatorAuthenticator
 	// allow is the 405 classifier, derived from routes() in NewHandler so
 	// it cannot drift from what is actually registered.
 	allow platformhttp.AllowTable
@@ -51,10 +56,10 @@ type Handler struct {
 // composition root to mount. Every route sits behind the requireOperator
 // gate - authentication wraps the whole table, so a future route cannot be
 // added unauthenticated by omission.
-func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, refusals WithdrawalRefuser, settlements WithdrawalSettler, reconciliation ReconciliationStore, auth OperatorAuthenticator) http.Handler {
+func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, refusals WithdrawalRefuser, settlements WithdrawalSettler, reconciliation ReconciliationStore, held HeldReviewer, auth OperatorAuthenticator) http.Handler {
 	h := &Handler{
 		log: log, store: store, approvals: approvals, refusals: refusals,
-		settlements: settlements, reconciliation: reconciliation, auth: auth,
+		settlements: settlements, reconciliation: reconciliation, held: held, auth: auth,
 	}
 	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
@@ -80,6 +85,10 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"POST " + Prefix + "withdrawals/{id}/approve":  h.approveWithdrawal,
 		"POST " + Prefix + "withdrawals/{id}/reject":   h.rejectWithdrawal,
 		"POST " + Prefix + "withdrawals/{id}/settle":   h.settleWithdrawal,
+
+		"GET " + Prefix + "held":               h.listHeld,
+		"POST " + Prefix + "held/{id}/release": h.releaseHeld,
+		"POST " + Prefix + "held/{id}/reject":  h.rejectHeld,
 
 		"POST " + Prefix + "reconciliation/runs":                     h.importStatement,
 		"GET " + Prefix + "reconciliation/runs/{id}/differences":     h.listDifferences,

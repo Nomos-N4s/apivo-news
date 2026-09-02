@@ -220,7 +220,7 @@ func TestTheOperatorSurfaceAnswersProblemJSON(t *testing.T) {
 		t.Fatalf("no %s route among %d authenticated routes", ops.Prefix, len(routes))
 	}
 
-	req := httptest.NewRequest(http.MethodGet, ops.Prefix+"held", strings.NewReader(""))
+	req := httptest.NewRequest(http.MethodGet, ops.Prefix+"nowhere", strings.NewReader(""))
 	req.Header.Set("Authorization", "Bearer "+mintBearer(t, key, operatorID.String()))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

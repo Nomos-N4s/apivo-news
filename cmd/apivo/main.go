@@ -581,6 +581,12 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, nil, err
 	}
+	// The held queue's decisions move money in that ledger too (T119).
+	reviews, err := earnings.NewReviews(pool, ledger, cfg.Cashback.HouseAccounts.NetworkReceivable)
+	if err != nil {
+		stop()
+		return nil, nil, nil, err
+	}
 	// The crediting job posts in that ledger too, which is why it is built
 	// here rather than beside the scheduler that runs it (#435).
 	lifecycle, missing, err := newEarningsLifecycle(log, cfg, pool, ledger)
@@ -677,7 +683,7 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	return append(routes,
 		platformhttp.Route{
 			Pattern: opsPrefix,
-			Handler: ops.NewHandler(log, opsStore, approvals, refusals, settlements, opsStore, newOperatorAuth(ids, roles)),
+			Handler: ops.NewHandler(log, opsStore, approvals, refusals, settlements, opsStore, reviews, newOperatorAuth(ids, roles)),
 		},
 		// Mounted at the path AND at its subtree, so a stray sub-path is
 		// answered in problem+json by the module rather than redirected by
