@@ -248,7 +248,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 
 **Independent Test**: Import a statement that omits one approved transaction and shorts another; assert both are flagged and neither silently changes a confirmed balance.
 
-- [ ] T110 [US6] Implement immutable statement import in `internal/cashback/ops/reconciliation.go` + `store/`
+- [x] T110 [US6] Implement immutable statement import in `internal/cashback/ops/reconciliation.go` + `store/`
 - [ ] T111 [US6] Implement difference detection for reported-not-paid, paid-not-reported and amount mismatch, in `internal/cashback/ops/differences.go`
 - [ ] T112 [US6] Implement difference resolution recording who and why, with any member-facing effect as a new posting, in `internal/cashback/ops/resolve.go`
 - [ ] T113 [US6] Implement `POST /ops/reconciliation/runs`, `GET /ops/reconciliation/runs/{id}/differences`, `POST /ops/reconciliation/differences/{id}/resolve` in `internal/cashback/ops/handlers.go`

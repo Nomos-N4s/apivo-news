@@ -399,6 +399,8 @@ type CashbackReconciliationRun struct {
 	ImportedBy pgtype.UUID
 	// The statement exactly as the network supplied it. Differences are derived from this; the derivation can be re-run, the statement cannot be re-fetched.
 	RawStatement []byte
+	// md5 of the statement as stored, computed by the database from raw_statement. With the account and the period it is what makes a retried import the same run rather than a second one.
+	StatementDigest string
 }
 
 // A network report with no matching click (FR-034). It is queued for an operator and NEVER auto-credited: the row exists so the money is visible, not so it is paid.

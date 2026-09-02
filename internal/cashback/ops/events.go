@@ -21,6 +21,12 @@ const EventProducer = "cashback"
 // history reads its lane in order.
 const TypeUnattributedDismissed = EventProducer + ".unattributed.dismissed"
 
+// TypeStatementImported is published when an operator imports a network's
+// statement (US6, FR-061). The subject is the run, and it is published once
+// per run: a retry that finds its statement already imported announces
+// nothing, because the import it would describe is already in the stream.
+const TypeStatementImported = EventProducer + ".reconciliation.statement_imported"
+
 // dismissedPayload is what the event carries: identifiers, the acting
 // account and the recorded reason.
 //
@@ -56,3 +62,43 @@ func dismissedEvent(d Dismissed) (json.RawMessage, error) {
 // row id is the whole key, and a second append under it means the
 // resolution it describes is already in the stream.
 func dismissedKey(id uuid.UUID) string { return TypeUnattributedDismissed + ":" + id.String() }
+
+// importedPayload is what a statement import announces: which run, for which
+// publisher account and period, how much it says, and who imported it. The
+// statement itself is not in the payload - it is in the run, immutably, and
+// a consumer that needs the lines reads the run by id.
+type importedPayload struct {
+	RunID            string `json:"run_id"`
+	NetworkAccountID string `json:"network_account_id"`
+	NetworkID        string `json:"network_id"`
+	PeriodStart      string `json:"period_start"`
+	PeriodEnd        string `json:"period_end"`
+	Lines            int    `json:"lines"`
+	StatementDigest  string `json:"statement_digest"`
+	ImportedBy       string `json:"imported_by"`
+	At               string `json:"at"`
+}
+
+// importedEvent renders the payload for one recorded import.
+func importedEvent(i ImportedStatement) (json.RawMessage, error) {
+	payload, err := json.Marshal(importedPayload{
+		RunID:            i.ID.String(),
+		NetworkAccountID: i.Account.String(),
+		NetworkID:        i.Network.String(),
+		PeriodStart:      i.Period.Start.UTC().Format(time.RFC3339Nano),
+		PeriodEnd:        i.Period.End.UTC().Format(time.RFC3339Nano),
+		Lines:            i.Lines,
+		StatementDigest:  i.Digest,
+		ImportedBy:       i.ImportedBy.String(),
+		At:               i.ImportedAt.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ops: rendering %s for run %s: %w", TypeStatementImported, i.ID, err)
+	}
+	return payload, nil
+}
+
+// importedKey is the event's idempotency key. A run is written once - the
+// row is immutable and the constraint makes a second identical import the
+// same run - so the run id is the whole key.
+func importedKey(id uuid.UUID) string { return TypeStatementImported + ":" + id.String() }
