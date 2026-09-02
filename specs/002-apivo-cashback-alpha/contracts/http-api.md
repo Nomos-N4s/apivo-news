@@ -69,8 +69,14 @@ records are untouched; pending entries continue to resolve.
 - Query: `lang` (required), `place` (required, repeatable), `category`,
   `q`, `limit`, `cursor`. Language and place stay separate parameters
   (constitution VII).
+- **`category` has nothing behind it.** No table in the schema records one,
+  and inventing a taxonomy would settle four product questions (who owns
+  the set, whether it hangs off the retailer or the band, how it localises,
+  whether it filters or browses) in a member-facing URL. Tracked as issue
+  #414; unbuilt until it is answered.
 - 200 items:
-  `{ merchant_id, slug, name, name_language, name_is_fallback, summary, rates: [{ kind, display_rate, currency?, conditions, exclusions }] }`.
+  `{ merchant_id, slug, name, name_language, name_is_fallback, summary, rates: [...] }`,
+  the rates in the same shape `GET /merchants/{slug}` publishes them.
   `name_is_fallback` is how US5 scenario 2 renders "shown in German" rather
   than silently pretending.
 - 400 on unknown `lang` or `place`. Empty result is an empty list, never a
@@ -78,9 +84,36 @@ records are untouched; pending entries continue to resolve.
 
 ### GET /merchants/{slug}
 
+- Query: `lang`, optional. A merchant with no copy in it falls back to the
+  retailer's source language and says so in `name_is_fallback`; an absent
+  or unrecognised `lang` does the same rather than failing, because a page
+  a member has navigated to should render.
 - 200: merchant detail with **every** published rate band, its conditions
   and its exclusions (US5 scenario 3), plus `typical_confirmation_days`.
-- 404 unknown or inactive.
+- **Every rate is what the member earns**, never the network's commission.
+  A band records the commission and, separately, the share of it the member
+  receives; the two are composed before the response is built, rounding the
+  way the credit itself rounds (the member's favour, Q4). Publishing the
+  commission would promise roughly twice what arrives, and would publish
+  the margin.
+- Each rate is `{ offer_id, kind, bps | amount, conditions, exclusions,
+  valid_to }` — basis points for a `percent` band, `{ minor, currency }`
+  for a `fixed` one. Not a single `display_rate` field: a fixed rate is
+  money, and money on this API is always `{ minor, currency }` (C-6).
+- Bands come from the **preferred route only** — the one route the
+  catalogue publishes, which is the route a click is issued through.
+  Quoting another network's band would quote a rate no click can earn.
+- An empty `rates` list is 200, not 404: a retailer whose bands have lapsed
+  pays nothing today and is still a shop that exists.
+- **`typical_confirmation_days` is always null today.** Nothing in the
+  schema records it — not on the retailer, not on the route, not on the
+  network. It is emitted as null rather than omitted, and never as a
+  plausible constant: a member reads it as "you will be paid in about six
+  weeks".
+- 404 unknown or inactive — one answer for both, because which retailers
+  we have stopped publishing is not a page request's business. A retailer
+  we publish with no copy in any language is 500, not 404: a broken row and
+  a missing one are different facts.
 
 ### POST /clickouts
 

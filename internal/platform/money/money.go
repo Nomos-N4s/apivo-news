@@ -543,6 +543,57 @@ func (a Amount) Split(rate BasisPoints, mode Rounding) (share, remainder Amount,
 	return share, remainder, nil
 }
 
+// Split divides one rate by another, returning the share the second rate
+// buys of the first and the remainder that is left.
+//
+// It is [Amount.Split] on a rate instead of an amount, and it holds the same
+// one-line contract:
+//
+//	share plus remainder equals b, exactly, for every rate and every mode.
+//
+// The reason it exists is the catalogue. A published band records the
+// network's commission and, separately, the share of that commission the
+// member receives; what a member is shown has to be the product of the two,
+// because the commission is not what they are paid. Composing those two
+// rates by hand at each call site is how one surface ends up quoting the
+// commission - a promise of twice what arrives - so the composition lives
+// here beside the amount split it mirrors, with the same exact arithmetic
+// and the same insistence that the caller name a rounding mode.
+//
+// Nothing overflows and nothing is narrowed. Both rates are checked to be
+// at most [BasisPointsScale] before they are multiplied, so their product is
+// at most a hundred million - two hundred times smaller than the largest
+// int32 - and the whole computation stays in the width the result is
+// returned in. Rates are never negative, so the away-from-zero question is
+// asked on the positive side.
+func (b BasisPoints) Split(rate BasisPoints, mode Rounding) (share, remainder BasisPoints, err error) {
+	if !b.Valid() {
+		return 0, 0, fmt.Errorf("%w: %d", ErrRateOutOfRange, int32(b))
+	}
+	if !rate.Valid() {
+		return 0, 0, fmt.Errorf("%w: %d", ErrRateOutOfRange, int32(rate))
+	}
+	if !mode.Valid() {
+		return 0, 0, fmt.Errorf("%w: %s", ErrInvalidRounding, mode)
+	}
+
+	const scale = int32(BasisPointsScale)
+	product := int32(b) * int32(rate)
+	units := product / scale
+	// roundsAway is written for minor units and reads the two quantities as
+	// magnitudes, which is what they are here; widening to int64 for the
+	// call is exact.
+	if roundsAway(int64(units), int64(product%scale), false, mode) {
+		// A fraction was dropped, so the units are strictly short of the
+		// exact quotient and this step cannot pass it - which keeps the
+		// share within b and the remainder at or above zero.
+		units++
+	}
+
+	share = BasisPoints(units)
+	return share, b - share, nil
+}
+
 // String renders the amount for logs, errors and test failures as minor units
 // followed by the currency code - "1234 EUR", not "12.34 EUR".
 //
