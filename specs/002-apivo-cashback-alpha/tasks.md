@@ -236,7 +236,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T106 [P] [US5] Build the catalogue listing page in `web/src/pages/[lang]/[place]/cashback/index.astro`
 - [ ] T107 [P] [US5] Build the merchant detail page in `web/src/pages/[lang]/[place]/cashback/[slug].astro`
 - [x] T108 [P] [US5] Test language fallback is labelled and never blank or invented, in `internal/cashback/catalogue/copy_test.go`
-- [ ] T109 [P] [US5] Test that adding a second network adapter changes no file outside its package (SC-008) in `internal/arch/network_isolation_test.go`
+- [x] T109 [P] [US5] Test that adding a second network adapter changes no file outside its package (SC-008) in `internal/arch/network_isolation_test.go`
 
 **Checkpoint**: The catalogue drives real clicks.
 
