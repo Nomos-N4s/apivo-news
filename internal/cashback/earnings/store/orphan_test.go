@@ -120,14 +120,40 @@ func defeatTheSchema(ctx context.Context, t *testing.T, tx pgx.Tx) {
 	}
 }
 
-// evidenceLockTimeout bounds each attempt at the locks below.
+// evidenceLockTimeout bounds each lock the helper below waits for.
 //
-// Five seconds is long enough that a suite merely holding the table for a
-// moment is waited out rather than retried, and short enough that a genuinely
-// stuck run fails instead of hanging. It is a variable rather than a constant
-// so TestTheRetryOutlastsAContendedLock can lower it and drive the retry in a
-// second rather than in half a minute; nothing else assigns it.
-var evidenceLockTimeout = "5s"
+// It is deliberately SHORTER than the server's deadlock_timeout, which is a
+// second by default, and that relationship is the whole of the fix for the
+// deadlocks this helper used to inflict on other packages (#419). Have the
+// reasoning in front of you before raising it:
+//
+// The helper wants ACCESS EXCLUSIVE on two tables and Postgres grants them
+// one at a time. Between the first and the second, this transaction holds a
+// lock every parallel suite wants while waiting on a lock one of them holds.
+// If that suite now touches the first table, that is a cycle, and Postgres
+// resolves a cycle by aborting whichever side has waited deadlock_timeout.
+// That side was almost never this one: the other suite's statement began
+// waiting later, so its timer fired later, found the cycle, and aborted an
+// insert that had nothing to do with orphans. Seven to nine of those per run
+// of the suite, every run.
+//
+// Under deadlock_timeout, this transaction ALWAYS gives up first, before
+// either timer fires. The attempt is rolled back, the other statement
+// proceeds, and the retry below asks again. Nobody else is ever the victim.
+// TestTheBoundStaysUnderTheDeadlockDetector holds the number to that.
+const evidenceLockTimeout = "200ms"
+
+// evidenceLockAttempts is how many times the helper asks before declaring
+// the tables stuck rather than busy.
+//
+// The two constants together are the patience budget. lock_timeout applies
+// to each lock separately, so an attempt lasts one bound if the first table
+// is busy and two if the second is: 150 attempts is thirty seconds to a
+// minute of waiting. That is the half-minute the previous six attempts at
+// five seconds gave, spent in pieces small enough that no single wait
+// outlives the deadlock detector. A run that exhausts it is not contended,
+// it is stuck, and the failure says so.
+const evidenceLockAttempts = 150
 
 // lockEvidenceExclusively takes every lock the DDL below needs, in one
 // statement, bounded and retried.
@@ -142,12 +168,15 @@ var evidenceLockTimeout = "5s"
 //
 // One statement rather than two, because two would be the same hazard in
 // miniature: between them this transaction would hold the first lock while
-// asking for the second.
+// asking for the second. One statement still takes the locks one at a time,
+// which is why the bound above matters as much as the statement's shape.
 //
 // Bounded, because an unbounded wait for a lock a parallel suite holds is a
-// hung test rather than a failing one. Retried, because contention is not a
-// verdict on the detector: the case asserts what the query sees, and taking
-// the locks a moment later asserts exactly the same thing.
+// hung test rather than a failing one - and bounded UNDER the deadlock
+// detector, so that when the wait is half a cycle it is this side that lets
+// go. Retried, because contention is not a verdict on the detector: the case
+// asserts what the query sees, and taking the locks a moment later asserts
+// exactly the same thing.
 //
 // EACH ATTEMPT INSIDE A SAVEPOINT, and without that the retry is a fiction.
 // A statement that fails aborts its transaction, so a lock_timeout or a
@@ -168,13 +197,12 @@ var evidenceLockTimeout = "5s"
 func lockEvidenceExclusively(ctx context.Context, t *testing.T, tx pgx.Tx) {
 	t.Helper()
 	// set_config rather than SET LOCAL, because SET LOCAL takes no parameter
-	// and the bound has to be a value the retry case can lower - see
-	// evidenceLockTimeout.
+	// and the bound is a Go constant, not a string spliced into SQL.
 	if _, err := tx.Exec(ctx, `select set_config('lock_timeout', $1, true)`, evidenceLockTimeout); err != nil {
 		t.Fatalf("bounding the lock wait: %v", err)
 	}
 	var err error
-	for attempt := 1; attempt <= 6; attempt++ {
+	for attempt := 1; attempt <= evidenceLockAttempts; attempt++ {
 		var attempted pgx.Tx
 		if attempted, err = tx.Begin(ctx); err != nil {
 			t.Fatalf("opening the savepoint for attempt %d: %v", attempt, err)
@@ -194,12 +222,17 @@ func lockEvidenceExclusively(ctx context.Context, t *testing.T, tx pgx.Tx) {
 		if rollback := attempted.Rollback(ctx); rollback != nil {
 			t.Fatalf("rolling back attempt %d: %v (after %v)", attempt, rollback, err)
 		}
+		// DeadlockDetected stays although the bound should make it
+		// unreachable here: on a server whose deadlock_timeout has been
+		// lowered under the bound this side can be the victim again, and
+		// being the victim is still not a verdict on the detector.
 		var pgErr *pgconn.PgError
 		if !errors.As(err, &pgErr) || (pgErr.Code != pgerrcode.LockNotAvailable && pgErr.Code != pgerrcode.DeadlockDetected) {
 			t.Fatalf("locking the evidence: %v", err)
 		}
 	}
-	t.Fatalf("the evidence tables stayed locked by another suite for half a minute: %v", err)
+	t.Fatalf("the evidence tables stayed locked by another suite through %d attempts bounded at %s each: %v",
+		evidenceLockAttempts, evidenceLockTimeout, err)
 }
 
 // onlyOrphan requires exactly one orphan and returns its reason.

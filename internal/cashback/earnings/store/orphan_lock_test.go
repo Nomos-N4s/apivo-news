@@ -144,9 +144,10 @@ func TestASavepointMakesTheRetryPossible(t *testing.T) {
 	// And a second attempt, once the holder lets go, actually takes the lock
 	// and keeps it past the release of its savepoint.
 	release()
-	// The helper's own bound, not the quarter-second the doomed attempt used:
-	// this attempt is meant to SUCCEED, and holding it to a timeout chosen to
-	// make failure quick would make the case fail on a busy machine.
+	// Generous, and deliberately not the helper's bound: the helper gets many
+	// attempts and this case gets one. This attempt is meant to SUCCEED, and
+	// holding a single try to a timeout chosen to make failure quick would
+	// make the case fail on a busy machine.
 	if _, err := tx.Exec(ctx, `set local lock_timeout = '5s'`); err != nil {
 		t.Fatalf("restoring the wait: %v", err)
 	}
@@ -195,16 +196,15 @@ func TestTheRetryOutlastsAContendedLock(t *testing.T) {
 	ctx, tx, done := schemaTx(t)
 	defer done()
 
-	// Short enough that the first attempt gives up while the holder still
-	// holds, so the retry is genuinely exercised.
-	restore := evidenceLockTimeout
-	evidenceLockTimeout = "200ms"
-	defer func() { evidenceLockTimeout = restore }()
+	// The holder holds for longer than the helper's bound, so the first
+	// attempts give up while the holder still holds and the retry is
+	// genuinely exercised.
+	const hold = 700 * time.Millisecond
 
 	release := holdEvidenceLock(ctx, t)
 	releaseOnce := make(chan struct{})
 	go func() {
-		time.Sleep(700 * time.Millisecond)
+		time.Sleep(hold)
 		release()
 		close(releaseOnce)
 	}()
