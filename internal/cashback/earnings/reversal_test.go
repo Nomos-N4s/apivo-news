@@ -358,3 +358,50 @@ func TestAReversalThatCannotBeAnnouncedFails(t *testing.T) {
 		t.Fatalf("Reverse() error = %v, want one wrapping %v", err, earnings.ErrNotAnnounced)
 	}
 }
+
+// TestACreditThatHoldsNoMoneyCannotBeReversed. Paid money has left for the
+// member's destination and reversed money has already gone back; neither
+// sits in a stage account a reversal could debit (Q3 is the paid case).
+func TestACreditThatHoldsNoMoneyCannotBeReversed(t *testing.T) {
+	t.Parallel()
+	for _, state := range []earnings.State{earnings.StatePaid, earnings.StateReversed} {
+		t.Run(string(state), func(t *testing.T) {
+			t.Parallel()
+			entries, ledger := &fakeEntries{}, &fakeLedger{}
+			_, err := reverser(t, entries, ledger).Reverse(t.Context(), &fakeOutbox{}, earnings.Reversal{
+				Original: creditedEntry(t, state), Report: uuid.New(),
+			})
+			if !errors.Is(err, earnings.ErrNotReversible) {
+				t.Fatalf("Reverse() = %v, want one wrapping %v", err, earnings.ErrNotReversible)
+			}
+			if len(ledger.posted) != 0 || entries.creations != 0 {
+				t.Errorf("posted %d and created %d before refusing, want nothing", len(ledger.posted), entries.creations)
+			}
+		})
+	}
+}
+
+// TestAReversalTheDatabaseRefusesIsNotSwallowed. The transfer has posted by
+// then, and the refusal comes back wrapped so the caller cannot report a
+// reversal that is not recorded.
+func TestAReversalTheDatabaseRefusesIsNotSwallowed(t *testing.T) {
+	t.Parallel()
+	entries, ledger := &fakeEntries{createErr: errors.New("entry_reversed_at_most_once")}, &fakeLedger{}
+	_, err := reverser(t, entries, ledger).Reverse(t.Context(), &fakeOutbox{}, earnings.Reversal{
+		Original: creditedEntry(t, earnings.StateConfirmed), Report: uuid.New(),
+	})
+	if !errors.Is(err, earnings.ErrNotReversed) {
+		t.Fatalf("Reverse() = %v, want one wrapping %v", err, earnings.ErrNotReversed)
+	}
+	if len(ledger.posted) != 1 {
+		t.Errorf("posted %d transfer(s), want the one the retry re-posts to", len(ledger.posted))
+	}
+
+	// And a ledger that cannot name the accounts posts nothing at all.
+	entries, ledger = &fakeEntries{}, &fakeLedger{ensureErr: errors.New("the ledger is away")}
+	if _, err := reverser(t, entries, ledger).Reverse(t.Context(), &fakeOutbox{}, earnings.Reversal{
+		Original: creditedEntry(t, earnings.StateConfirmed), Report: uuid.New(),
+	}); !errors.Is(err, earnings.ErrNotPosted) || entries.creations != 0 {
+		t.Errorf("Reverse() with the ledger away = %v (created %d), want ErrNotPosted and nothing created", err, entries.creations)
+	}
+}
