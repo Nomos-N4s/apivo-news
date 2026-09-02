@@ -31,6 +31,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -42,8 +43,32 @@ const (
 	codeForeignKeyViolation = "23503"
 	codeUniqueViolation     = "23505"
 	codeCheckViolation      = "23514"
+	codeLockNotAvailable    = "55P03"
 	codeRaiseException      = "P0001"
 )
+
+// frozenLockTimeout bounds how long a refused write below waits for a table
+// lock, and it is deliberately well under Postgres's one-second
+// deadlock_timeout.
+//
+// The three TRUNCATEs in TestLedgerRowsAreImmutable are the only statements
+// in this repository that ask for ACCESS EXCLUSIVE on the ledger tables, and
+// CASCADE means each one asks on all three. Any reader holding ACCESS SHARE
+// on one of them while reaching for another closes a lock cycle - and
+// ledger.History is exactly that reader: one SELECT joining posting to
+// transfer. `go test ./...` runs the packages concurrently against one
+// database, so the two meeting is the ordinary case rather than a corner.
+//
+// Postgres breaks a cycle by killing somebody, and it chose the history
+// read: an unrelated package's test failed with 40P01 while this one passed.
+// Giving up the wait BEFORE the detector runs is what stops that. The only
+// statement that can lose is then this one, and losing means trying again.
+const frozenLockTimeout = "200ms"
+
+// frozenLockAttempts bounds the retry. Reaching it means something held the
+// ledger tables for the better part of a second, over and over, which is a
+// fault worth failing on rather than waiting out.
+const frozenLockAttempts = 20
 
 // beginTx opens a transaction that is always rolled back, keeping tests
 // independent and the database clean.
@@ -240,19 +265,56 @@ func TestLedgerRowsAreImmutable(t *testing.T) {
 		{name: "truncate the accounts", stmt: `truncate ledger.account cascade`},
 	}
 	for _, tt := range frozen {
-		nested, err := tx.Begin(ctx)
-		if err != nil {
-			t.Fatalf("%s: begin savepoint: %v", tt.name, err)
-		}
-		_, execErr := nested.Exec(ctx, tt.stmt, tt.args...)
-		if err := nested.Rollback(ctx); err != nil {
-			t.Fatalf("%s: rollback savepoint: %v", tt.name, err)
-		}
+		execErr := refusedWrite(t, tx, tt.name, tt.stmt, tt.args...)
 		if execErr == nil {
 			t.Fatalf("%s: want rejection, got success", tt.name)
 		}
 		wantPgCode(t, execErr, codeRaiseException)
 	}
+}
+
+// refusedWrite runs one statement the schema must refuse, in a savepoint
+// that is always rolled back, and returns the refusal.
+//
+// It waits only frozenLockTimeout for any lock the statement needs, and
+// tries again when that runs out - see the constant for why. A caller gets
+// back the database's verdict on the statement itself; a lock it could not
+// take is never one.
+func refusedWrite(t *testing.T, tx pgx.Tx, name, stmt string, args ...any) error {
+	t.Helper()
+	ctx := context.Background()
+
+	for attempt := 1; ; attempt++ {
+		nested, err := tx.Begin(ctx)
+		if err != nil {
+			t.Fatalf("%s: begin savepoint: %v", name, err)
+		}
+		// SET LOCAL inside the savepoint, so the bound covers this
+		// statement and is undone with it.
+		if _, err := nested.Exec(ctx, `set local lock_timeout = `+quoteLiteral(frozenLockTimeout)); err != nil {
+			t.Fatalf("%s: bounding the lock wait: %v", name, err)
+		}
+		_, execErr := nested.Exec(ctx, stmt, args...)
+		if err := nested.Rollback(ctx); err != nil {
+			t.Fatalf("%s: rollback savepoint: %v", name, err)
+		}
+
+		var pgErr *pgconn.PgError
+		if !errors.As(execErr, &pgErr) || pgErr.Code != codeLockNotAvailable {
+			return execErr
+		}
+		if attempt == frozenLockAttempts {
+			t.Fatalf("%s: could not take the tables in %d attempts of %s; something is holding them far longer than a test should",
+				name, attempt, frozenLockTimeout)
+		}
+	}
+}
+
+// quoteLiteral renders a SQL string literal. SET LOCAL takes no parameters,
+// so the value is spliced - and it is a constant in this file, quoted here
+// so that stays true if anyone ever makes it configurable.
+func quoteLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 // TestDatabaseRejectsMalformedMoney is C-6 as writes: every spelling of
