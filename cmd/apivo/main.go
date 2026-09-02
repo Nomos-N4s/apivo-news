@@ -30,6 +30,7 @@ import (
 	cataloguestore "github.com/Nomos-N4s/apivo-news/internal/cashback/catalogue/store"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/clickout"
 	clickoutstore "github.com/Nomos-N4s/apivo-news/internal/cashback/clickout/store"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout"
@@ -211,11 +212,13 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 	}
 
 	var routes []platformhttp.Route
-	// The settlement sweep is built with the cashback surface, because it
-	// needs the one ledger that surface shares, and registered with the
-	// scheduler further down. Nil until then, and nil for good in a
-	// deployment with no authenticated routes or no cashback.
+	// The settlement sweep and the earnings lifecycle are built with the
+	// cashback surface, because they need the one ledger that surface
+	// shares, and registered with the scheduler further down. Nil until
+	// then, and nil for good in a deployment with no authenticated routes
+	// or no cashback.
 	var settlements *payout.Settlements
+	var lifecycle *earnings.Lifecycle
 	if cfg.JWKSURL == "" {
 		// Without a verification endpoint no bearer token can be checked, so
 		// the authenticated routes are not mounted at all: a misconfigured
@@ -229,15 +232,17 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// rather than something to deduce from a 404 later.
 		log.ErrorContext(ctx, "JWKS_URL is not set: every /api/v1/editorial/ and /api/v1/account/ route is UNMOUNTED and will answer 404; reader endpoints are unaffected. Set JWKS_URL to the auth provider JWKS endpoint to enable them")
 	} else {
-		authenticated, sweep, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, log, pool, adapter)
+		authenticated, built, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, log, pool, adapter)
 		if err != nil {
 			return err
 		}
 		defer closeVerifier()
 		routes = append(routes, authenticated...)
 		// Held for the scheduler below, which is built after the routes.
-		// Nil when cashback is off, and the registration there skips it.
-		settlements = sweep
+		// Nil when cashback is off, and the registration there skips them.
+		if built != nil {
+			settlements, lifecycle = built.settlements, built.lifecycle
+		}
 	}
 
 	// The feed poll loop runs beside the HTTP server, on the same pool and
@@ -362,6 +367,16 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		}
 		registered += settling
 
+		// The earnings lifecycle: what the sweeps stored, credited,
+		// confirmed and reversed (#435). Built with the routes because it
+		// posts in their ledger; nil where the house account is unnamed,
+		// which was said at ERROR where it was found.
+		crediting, err := registerLifecycle(ctx, log, jobs, lifecycle)
+		if err != nil {
+			return err
+		}
+		registered += crediting
+
 		// The affiliate-network sweeps, which are opt-in in a way the
 		// zero-sum check is not: polling needs a publisher account row that
 		// only an operator can create, so a deployment configured ahead of
@@ -424,11 +439,11 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		//
 		// Two connections per job plus two reserved is the locker's
 		// arithmetic. The zero-sum check alone needs 4; the settlement
-		// sweep takes that to 6, the two network sweeps to 10, and the
-		// catalogue import to 12. pgx defaults MaxConns to max(4, NumCPU),
-		// which is why a deployment with cashback on may have to raise
-		// pool_max_conns in DATABASE_URL - the error below says so with the
-		// numbers in it.
+		// sweep takes that to 6, the earnings lifecycle to 8, the two
+		// network sweeps to 12, and the catalogue import to 14. pgx
+		// defaults MaxConns to max(4, NumCPU), which is why a deployment
+		// with cashback on may have to raise pool_max_conns in
+		// DATABASE_URL - the error below says so with the numbers in it.
 		if err := locker.CheckCapacity(registered); err != nil {
 			return err
 		}
@@ -511,7 +526,7 @@ func registerSettlement(ctx context.Context, log *slog.Logger, jobs *scheduler.S
 	return 1, nil
 }
 
-func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool, adapter networks.Network) ([]platformhttp.Route, *payout.Settlements, func(), error) {
+func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool, adapter networks.Network) ([]platformhttp.Route, *cashbackJobs, func(), error) {
 	verifier, err := identity.NewVerifier(ctx, identity.VerifierConfig{
 		JWKSURL:  cfg.JWKSURL,
 		Audience: cfg.JWTAudience,
@@ -565,6 +580,17 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	if err != nil {
 		stop()
 		return nil, nil, nil, err
+	}
+	// The crediting job posts in that ledger too, which is why it is built
+	// here rather than beside the scheduler that runs it (#435).
+	lifecycle, missing, err := newEarningsLifecycle(log, cfg, pool, ledger)
+	if err != nil {
+		stop()
+		return nil, nil, nil, err
+	}
+	if len(missing) > 0 {
+		log.ErrorContext(ctx, "NO EARNINGS LIFECYCLE IS SCHEDULED, so nothing the networks report will be credited, confirmed or reversed",
+			"missing", strings.Join(missing, ", "))
 	}
 	wallets, err := newWallets(ledger, pool, cfg.Cashback.PayoutThreshold)
 	if err != nil {
@@ -686,7 +712,16 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		platformhttp.Route{Pattern: withdrawalPrefix + "/", Handler: withdrawalSurface},
 		platformhttp.Route{Pattern: destinationsPrefix, Handler: withdrawalSurface},
 		platformhttp.Route{Pattern: destinationsPrefix + "/", Handler: withdrawalSurface},
-	), settlements, stop, nil
+	), &cashbackJobs{settlements: settlements, lifecycle: lifecycle}, stop, nil
+}
+
+// cashbackJobs is what the authenticated surface builds for the scheduler:
+// the jobs that must post in the same ledger the routes do. Nil as a whole
+// when cashback is off; a nil member when that one job could not be built
+// and the reason was already logged.
+type cashbackJobs struct {
+	settlements *payout.Settlements
+	lifecycle   *earnings.Lifecycle
 }
 
 // brandTerms reads the brand definition BRAND_DIR names and reduces it to
