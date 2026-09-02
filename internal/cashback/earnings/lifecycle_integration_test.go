@@ -19,6 +19,7 @@ import (
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/clickout"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings"
+	earningsstore "github.com/Nomos-N4s/apivo-news/internal/cashback/earnings/store"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/scheduler"
@@ -197,6 +198,13 @@ func TestTheJobTurnsAReportIntoACreditConfirmsItAndTakesItBack(t *testing.T) {
 	}
 	j.wantBalances(t, 0, 0, 0)
 	j.wantZeroSum(t)
+	// And not spendable: the credit's row still says confirmed, because a
+	// reversal edits nothing (SC-010), and a withdrawal reading it as
+	// confirmed money would reserve money the stage no longer holds.
+	machine, _ := j.entries(t)
+	if spendable, err := machine.Confirmed(j.ctx, earningsstore.New(j.tx), j.member, "EUR"); err != nil || len(spendable) != 0 {
+		t.Errorf("a reversed credit is still listed as spendable: %v (err %v)", spendable, err)
+	}
 
 	// 6. And once undone, undone: nothing is reversed twice.
 	if out := j.runs(t, job); out != (earnings.Outcome{}) {
