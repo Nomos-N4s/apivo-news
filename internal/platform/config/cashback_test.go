@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
@@ -888,5 +889,81 @@ func TestProductionNeedsAThreshold(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PAYOUT_THRESHOLD_MINOR and PAYOUT_THRESHOLD_CURRENCY are unset") {
 		t.Errorf("error %q does not name the two keys", err)
+	}
+}
+
+// TestTheHoldRulesAreReadFromTheEnvironment. Every rule is off until its
+// keys are set (US7, T118); set, each is read as the count, window, age or
+// amount it is.
+func TestTheHoldRulesAreReadFromTheEnvironment(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.FromEnv(envFrom(withEnv(enabledCashbackEnv(), map[string]string{
+		"HOLD_SHARED_CONTEXT_ACCOUNTS": "3",
+		"HOLD_SHARED_CONTEXT_WINDOW":   "720h",
+		"HOLD_NEW_ACCOUNT_AGE":         "24h",
+		"HOLD_SALE_CAP_MINOR":          "50000",
+		"HOLD_SALE_CAP_CURRENCY":       "EUR",
+		"HOLD_MEMBER_VELOCITY":         "5",
+		"HOLD_MEMBER_VELOCITY_WINDOW":  "24h",
+	})))
+	if err != nil {
+		t.Fatalf("FromEnv(): %v", err)
+	}
+	h := cfg.Cashback.HoldRules
+	switch {
+	case h.SharedContextAccounts != 3 || h.SharedContextWindow != 720*time.Hour:
+		t.Errorf("shared context = %d in %s, want 3 in 720h", h.SharedContextAccounts, h.SharedContextWindow)
+	case h.NewAccountAge != 24*time.Hour:
+		t.Errorf("new account age = %s, want 24h", h.NewAccountAge)
+	case h.SaleCap.Minor != 50000 || h.SaleCap.Currency != "EUR":
+		t.Errorf("sale cap = %s, want 50000 EUR", h.SaleCap)
+	case h.MemberVelocity != 5 || h.MemberVelocityWindow != 24*time.Hour:
+		t.Errorf("velocity = %d in %s, want 5 in 24h", h.MemberVelocity, h.MemberVelocityWindow)
+	}
+
+	off, err := config.FromEnv(envFrom(enabledCashbackEnv()))
+	if err != nil {
+		t.Fatalf("FromEnv() with no hold keys: %v", err)
+	}
+	if off.Cashback.HoldRules != (config.HoldRulesConfig{}) {
+		t.Errorf("with no HOLD_* keys the rules are %+v, want all off", off.Cashback.HoldRules)
+	}
+}
+
+// TestTheHoldRulesAreRefusedHalfConfigured. A count without its window holds
+// nothing or everything depending on which half is missing, so half a rule
+// is refused in every environment rather than run as whatever it defaults
+// to.
+func TestTheHoldRulesAreRefusedHalfConfigured(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr string
+	}{
+		{"a device count without its window", map[string]string{"HOLD_SHARED_CONTEXT_ACCOUNTS": "3"}, "set both or neither"},
+		{"a device window without its count", map[string]string{"HOLD_SHARED_CONTEXT_WINDOW": "720h"}, "set both or neither"},
+		{"a device count of one", map[string]string{"HOLD_SHARED_CONTEXT_ACCOUNTS": "1", "HOLD_SHARED_CONTEXT_WINDOW": "720h"}, "at least 2"},
+		{"a velocity without its window", map[string]string{"HOLD_MEMBER_VELOCITY": "5"}, "set both or neither"},
+		{"a count that is not a number", map[string]string{"HOLD_MEMBER_VELOCITY": "five", "HOLD_MEMBER_VELOCITY_WINDOW": "24h"}, "not a whole number"},
+		{"a count of nothing", map[string]string{"HOLD_MEMBER_VELOCITY": "0", "HOLD_MEMBER_VELOCITY_WINDOW": "24h"}, "leave it unset"},
+		{"a window in days", map[string]string{"HOLD_NEW_ACCOUNT_AGE": "30d"}, "not a duration such as 24h or 720h"},
+		{"a window of nothing", map[string]string{"HOLD_NEW_ACCOUNT_AGE": "0s"}, "leave it unset"},
+		{"a cap with no currency", map[string]string{"HOLD_SALE_CAP_MINOR": "50000"}, "HOLD_SALE_CAP_MINOR is set"},
+		{"a currency with no cap", map[string]string{"HOLD_SALE_CAP_CURRENCY": "EUR"}, "HOLD_SALE_CAP_CURRENCY is set"},
+		{"a cap of nothing", map[string]string{"HOLD_SALE_CAP_MINOR": "0", "HOLD_SALE_CAP_CURRENCY": "EUR"}, "not a cap"},
+		{"a cap in a currency that is not one", map[string]string{"HOLD_SALE_CAP_MINOR": "1", "HOLD_SALE_CAP_CURRENCY": "euro"}, "HOLD_SALE_CAP_CURRENCY"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := config.FromEnv(envFrom(withEnv(enabledCashbackEnv(), tc.env)))
+			if err == nil {
+				t.Fatalf("FromEnv() accepted %v", tc.env)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error %q does not contain %q", err, tc.wantErr)
+			}
+		})
 	}
 }

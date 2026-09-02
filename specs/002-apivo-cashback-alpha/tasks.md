@@ -266,11 +266,11 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 
 **Independent Test**: Replay abusive click and transaction patterns; assert each lands in the review queue naming its rule, and a normal pattern passes untouched.
 
-- [ ] T117 [US7] Implement the privacy-minimised context digest used by abuse rules in `internal/cashback/clickout/context.go`
-- [ ] T118 [US7] Implement configurable hold rules evaluated at ingestion in `internal/cashback/earnings/holdrules.go`
+- [x] T117 [US7] Implement the privacy-minimised context digest used by abuse rules in `internal/cashback/clickout/context.go` — landed under T066: the digest type and the edge-header reading are already in `internal/cashback/clickout/click.go` and `context.go`, and T118 is the first rule that reads it
+- [x] T118 [US7] Implement configurable hold rules evaluated at ingestion in `internal/cashback/earnings/holdrules.go` — the evaluator, its `HOLD_*` configuration and the three reads it makes; **evaluated at ingestion needs the crediting step that turns a report into an entry, which no task named and nothing in `cmd/apivo` runs (#435)** — until that lands the rules are proved against the schema but run only there
 - [ ] T119 [US7] Implement `GET /ops/held`, `POST /ops/held/{id}/release`, `/reject` requiring a non-blank reason, in `internal/cashback/ops/held.go`
 - [ ] T120 [P] [US7] Build the held-entries queue in `web/src/pages/ops/held.astro`
-- [ ] T121 [P] [US7] Test that a held entry is never credited until released and that release/reject record a named human and reason, in `internal/cashback/earnings/holdrules_test.go`
+- [ ] T121 [P] [US7] Test that a held entry is never credited until released and that release/reject record a named human and reason, in `internal/cashback/earnings/holdrules_test.go` — the release half is `holdrules_integration_test.go`; reject lands with T119
 - [ ] T122 [P] [US7] Test that a blank reason on any operator action is rejected with 400, in `internal/cashback/ops/handlers_test.go`
 
 **Checkpoint**: Fraud has a queue, not a payout.
