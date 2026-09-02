@@ -268,10 +268,10 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 
 - [x] T117 [US7] Implement the privacy-minimised context digest used by abuse rules in `internal/cashback/clickout/context.go` — landed under T066: the digest type and the edge-header reading are already in `internal/cashback/clickout/click.go` and `context.go`, and T118 is the first rule that reads it
 - [x] T118 [US7] Implement configurable hold rules evaluated at ingestion in `internal/cashback/earnings/holdrules.go` — the evaluator, its `HOLD_*` configuration and the three reads it makes; evaluated at ingestion by the earnings lifecycle job (`lifecycle.go`, #435), which no task named: the scheduled step that turns a stored report into an entry, confirms it once the network approves and a statement covers it, and reverses it when the network takes it back
-- [ ] T119 [US7] Implement `GET /ops/held`, `POST /ops/held/{id}/release`, `/reject` requiring a non-blank reason, in `internal/cashback/ops/held.go`
+- [x] T119 [US7] Implement `GET /ops/held`, `POST /ops/held/{id}/release`, `/reject` requiring a non-blank reason, in `internal/cashback/ops/held.go` — the surface; the decisions are `earnings/review.go` (release: held → pending keyed on the transition that held it; reject: a reversing entry citing the credit's own report, admitted by migration 0032)
 - [ ] T120 [P] [US7] Build the held-entries queue in `web/src/pages/ops/held.astro`
-- [ ] T121 [P] [US7] Test that a held entry is never credited until released and that release/reject record a named human and reason, in `internal/cashback/earnings/holdrules_test.go` — the release half is `holdrules_integration_test.go`; reject lands with T119
-- [ ] T122 [P] [US7] Test that a blank reason on any operator action is rejected with 400, in `internal/cashback/ops/handlers_test.go`
+- [x] T121 [P] [US7] Test that a held entry is never credited until released and that release/reject record a named human and reason, in `internal/cashback/earnings/holdrules_test.go` — `holdrules_integration_test.go` (never credited until released) and `review_integration_test.go` (release and reject record who and why, announce it, and are not decided twice)
+- [x] T122 [P] [US7] Test that a blank reason on any operator action is rejected with 400, in `internal/cashback/ops/handlers_test.go` — one table over every reason-taking action (dismiss, refuse a withdrawal, resolve a difference, release, reject), every dependency unreachable
 
 **Checkpoint**: Fraud has a queue, not a payout.
 
