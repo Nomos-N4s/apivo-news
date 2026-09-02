@@ -298,6 +298,82 @@ func TestDifferenceDetectionAgainstSchema(t *testing.T) {
 		}
 	})
 
+	each(ctx, t, tx, "the queue lists every row with what an operator needs to decide it", func(t *testing.T, tx pgx.Tx, store *ops.PGStore) {
+		root := reported(ctx, t, tx, parties, "A", 499, inAugust, uuid.Nil)
+		reported(ctx, t, tx, parties, "B", 300, inAugust, uuid.Nil)
+		run := imports(ctx, t, store, parties, `{"lines":[
+			{"transaction_id":"A","paid":{"minor":450,"currency":"EUR"}},
+			{"transaction_id":"X","paid":{"minor":120,"currency":"EUR"}}]}`)
+		if _, err := store.DetectDifferences(ctx, run); err != nil {
+			t.Fatalf("detecting: %v", err)
+		}
+		// The network restates A after the difference was filed, and an
+		// operator decides B's absence.
+		reported(ctx, t, tx, parties, "A", 450, inAugust, root)
+		rows := differencesOf(ctx, t, tx, run)
+		var omitted uuid.UUID
+		for _, r := range rows {
+			if r.kind == "reported_not_paid" {
+				omitted = r.id
+			}
+		}
+		if _, err := store.ResolveDifference(ctx, ops.Resolution{ID: omitted, Verdict: ops.VerdictExplained, Reason: "paid in September", Operator: parties.operator}); err != nil {
+			t.Fatalf("resolving: %v", err)
+		}
+
+		var all []ops.ListedDifference
+		var after ops.DifferenceAfter
+		for range 5 {
+			page, err := store.ListDifferences(ctx, run, after, 2)
+			if err != nil {
+				t.Fatalf("ListDifferences(): %v", err)
+			}
+			all = append(all, page...)
+			if len(page) < 2 {
+				break
+			}
+			after = page[len(page)-1].After()
+		}
+		if len(all) != 3 {
+			t.Fatalf("paged %d rows, want 3", len(all))
+		}
+		for i := 1; i < len(all); i++ {
+			if all[i].DetectedAt.Before(all[i-1].DetectedAt) {
+				t.Errorf("rows out of order: %s before %s", all[i].DetectedAt, all[i-1].DetectedAt)
+			}
+		}
+		byKind := map[ops.DifferenceKind]ops.ListedDifference{}
+		for _, row := range all {
+			byKind[row.Kind] = row
+		}
+		short := byKind[ops.AmountMismatch]
+		switch {
+		case short.Report != root || short.TransactionID != "A":
+			t.Errorf("the mismatch names %s/%s, want the report it was filed against, A", short.Report, short.TransactionID)
+		case !short.Superseded:
+			t.Error("the mismatch does not say the network has since restated the report")
+		case short.Expected == nil || short.Expected.Minor != 499 || short.Actual == nil || short.Actual.Minor != 450 || short.Delta.Minor != -49:
+			t.Errorf("the mismatch's figures = %v/%v/%v, want 499/450/-49", short.Expected, short.Actual, short.Delta)
+		case short.Resolution != nil:
+			t.Error("the mismatch reads as resolved")
+		}
+		extra := byKind[ops.PaidNotReported]
+		if extra.Report != uuid.Nil || extra.TransactionID != "X" || extra.Expected != nil || extra.Actual == nil || extra.Delta.Minor != 120 || extra.Superseded {
+			t.Errorf("the unmatched payment = %+v, want line X, actual 120, no report, not superseded", extra)
+		}
+		decided := byKind[ops.ReportedNotPaid]
+		if decided.Resolution == nil || decided.Resolution.Verdict != ops.VerdictExplained || decided.Resolution.ResolvedBy != parties.operator.ID || decided.Resolution.Reason != "paid in September" || decided.Delta.Minor != -300 {
+			t.Errorf("the decided row = %+v, want explained by the operator with delta -300", decided)
+		}
+	})
+
+	each(ctx, t, tx, "a run nobody imported has no queue", func(t *testing.T, _ pgx.Tx, store *ops.PGStore) {
+		_, err := store.ListDifferences(ctx, uuid.New(), ops.DifferenceAfter{}, 20)
+		if !errors.Is(err, ops.ErrNoSuchRun) {
+			t.Errorf("ListDifferences() = %v, want one wrapping ErrNoSuchRun", err)
+		}
+	})
+
 	each(ctx, t, tx, "a run nobody imported cannot be detected", func(t *testing.T, _ pgx.Tx, store *ops.PGStore) {
 		_, err := store.DetectDifferences(ctx, uuid.New())
 		if !errors.Is(err, ops.ErrNoSuchRun) {

@@ -58,3 +58,27 @@ values (sqlc.arg(run_id), sqlc.arg(network_account_id), sqlc.arg(kind),
         sqlc.narg(expected_minor), sqlc.narg(actual_minor), sqlc.arg(currency))
 on conflict do nothing
 returning id, detected_at;
+
+-- name: ListDifferencesForRun :many
+-- One page of a run's differences, oldest first, with the report's own id
+-- and whether the network has since restated it.
+--
+-- LEFT JOIN, because paid_not_reported names no report and must still be
+-- listed. superseded is derived the way "current" is everywhere (0012): a
+-- row nothing supersedes is the tip, so a difference against a row that is
+-- not the tip is a disagreement with what the network USED to say - and an
+-- operator should know that before deciding it. Keyset on (detected_at, id),
+-- the order the rows were found in, the same way every operator queue pages.
+select d.id, d.kind, d.network_transaction_id, d.statement_transaction_id,
+       d.expected_minor, d.actual_minor, d.currency, d.detected_at,
+       d.resolved_by, d.resolved_reason, d.resolution, d.resolved_at,
+       nt.external_id,
+       (nt.id is not null and exists (
+           select 1 from cashback.network_transaction s where s.supersedes_id = nt.id
+       ))::boolean as superseded
+  from cashback.reconciliation_difference d
+  left join cashback.network_transaction nt on nt.id = d.network_transaction_id
+ where d.run_id = sqlc.arg(run_id)
+   and (d.detected_at, d.id) > (sqlc.arg(after_detected_at)::timestamptz, sqlc.arg(after_id)::uuid)
+ order by d.detected_at, d.id
+ limit sqlc.arg(page_size);

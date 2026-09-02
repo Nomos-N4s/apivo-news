@@ -132,6 +132,95 @@ func (q *Queries) GetReconciliationRun(ctx context.Context, id pgtype.UUID) (Get
 	return i, err
 }
 
+const listDifferencesForRun = `-- name: ListDifferencesForRun :many
+select d.id, d.kind, d.network_transaction_id, d.statement_transaction_id,
+       d.expected_minor, d.actual_minor, d.currency, d.detected_at,
+       d.resolved_by, d.resolved_reason, d.resolution, d.resolved_at,
+       nt.external_id,
+       (nt.id is not null and exists (
+           select 1 from cashback.network_transaction s where s.supersedes_id = nt.id
+       ))::boolean as superseded
+  from cashback.reconciliation_difference d
+  left join cashback.network_transaction nt on nt.id = d.network_transaction_id
+ where d.run_id = $1
+   and (d.detected_at, d.id) > ($2::timestamptz, $3::uuid)
+ order by d.detected_at, d.id
+ limit $4
+`
+
+type ListDifferencesForRunParams struct {
+	RunID           pgtype.UUID
+	AfterDetectedAt pgtype.Timestamptz
+	AfterID         pgtype.UUID
+	PageSize        int32
+}
+
+type ListDifferencesForRunRow struct {
+	ID                     pgtype.UUID
+	Kind                   string
+	NetworkTransactionID   pgtype.UUID
+	StatementTransactionID pgtype.Text
+	ExpectedMinor          pgtype.Int8
+	ActualMinor            pgtype.Int8
+	Currency               string
+	DetectedAt             pgtype.Timestamptz
+	ResolvedBy             pgtype.UUID
+	ResolvedReason         pgtype.Text
+	Resolution             pgtype.Text
+	ResolvedAt             pgtype.Timestamptz
+	ExternalID             pgtype.Text
+	Superseded             bool
+}
+
+// One page of a run's differences, oldest first, with the report's own id
+// and whether the network has since restated it.
+//
+// LEFT JOIN, because paid_not_reported names no report and must still be
+// listed. superseded is derived the way "current" is everywhere (0012): a
+// row nothing supersedes is the tip, so a difference against a row that is
+// not the tip is a disagreement with what the network USED to say - and an
+// operator should know that before deciding it. Keyset on (detected_at, id),
+// the order the rows were found in, the same way every operator queue pages.
+func (q *Queries) ListDifferencesForRun(ctx context.Context, arg ListDifferencesForRunParams) ([]ListDifferencesForRunRow, error) {
+	rows, err := q.db.Query(ctx, listDifferencesForRun,
+		arg.RunID,
+		arg.AfterDetectedAt,
+		arg.AfterID,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDifferencesForRunRow
+	for rows.Next() {
+		var i ListDifferencesForRunRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.NetworkTransactionID,
+			&i.StatementTransactionID,
+			&i.ExpectedMinor,
+			&i.ActualMinor,
+			&i.Currency,
+			&i.DetectedAt,
+			&i.ResolvedBy,
+			&i.ResolvedReason,
+			&i.Resolution,
+			&i.ResolvedAt,
+			&i.ExternalID,
+			&i.Superseded,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordDifference = `-- name: RecordDifference :one
 insert into cashback.reconciliation_difference
     (run_id, network_account_id, kind, network_transaction_id, statement_transaction_id,
