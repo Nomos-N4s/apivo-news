@@ -359,6 +359,48 @@ func TestCashbackReconciliationRejectsIllegalWrites(t *testing.T) {
 			wantCode: codeNotNullViolation,
 		},
 		{
+			name: "difference resolved without a verdict",
+			rule: "US6",
+			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
+				// Who, when and why, but not what was decided (0030): a
+				// queue item that looks handled and says nothing to the
+				// export about which side was right.
+				_, err := tx.Exec(ctx,
+					`insert into cashback.reconciliation_difference
+					     (run_id, network_account_id, kind, statement_transaction_id, actual_minor, currency, resolved_by, resolved_reason, resolved_at)
+					 values ($1, $2, 'paid_not_reported', 'LINE-1', 100, 'EUR', $3, 'a windfall nobody is owed', now())`,
+					runID, f.networkAccountID, f.approverID)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name: "difference resolved with a verdict nobody knows",
+			rule: "US6",
+			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
+				_, err := tx.Exec(ctx,
+					`insert into cashback.reconciliation_difference
+					     (run_id, network_account_id, kind, statement_transaction_id, actual_minor, currency, resolved_by, resolved_reason, resolution, resolved_at)
+					 values ($1, $2, 'paid_not_reported', 'LINE-1', 100, 'EUR', $3, 'looks fine to me', 'looks_fine', now())`,
+					runID, f.networkAccountID, f.approverID)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name: "a verdict with nobody behind it",
+			rule: "US6",
+			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
+				_, err := tx.Exec(ctx,
+					`insert into cashback.reconciliation_difference
+					     (run_id, network_account_id, kind, statement_transaction_id, actual_minor, currency, resolution)
+					 values ($1, $2, 'paid_not_reported', 'LINE-1', 100, 'EUR', 'explained')`,
+					runID, f.networkAccountID)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
 			name: "difference resolved by somebody who gave no reason",
 			rule: "US6",
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
@@ -416,7 +458,7 @@ func TestReconciliationDifferenceCanBeResolved(t *testing.T) {
 
 	if _, err := tx.Exec(ctx,
 		`update cashback.reconciliation_difference
-		    set resolved_by = $2, resolved_reason = 'network deducted a returns adjustment', resolved_at = now()
+		    set resolved_by = $2, resolved_reason = 'network deducted a returns adjustment', resolution = 'explained', resolved_at = now()
 		  where id = $1`, differenceID, f.approverID); err != nil {
 		t.Fatalf("resolving the difference: %v", err)
 	}

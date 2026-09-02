@@ -255,7 +255,7 @@ func TestDifferenceDetectionAgainstSchema(t *testing.T) {
 		}
 		if _, err := tx.Exec(ctx, `
 			update cashback.reconciliation_difference
-			   set resolved_by = $3, resolved_reason = 'network deducted a returns adjustment', resolved_at = now()
+			   set resolved_by = $3, resolved_reason = 'network deducted a returns adjustment', resolution = 'explained', resolved_at = now()
 			 where run_id = $1 and network_transaction_id = $2`, run, report, parties.operator.ID); err != nil {
 			t.Fatalf("resolving the difference: %v", err)
 		}

@@ -92,6 +92,7 @@ there is a defect, and the dispatcher test asserts it.
 | `cashback.payout.settled` / `.failed` | `{ payout_id, request_id, rail_reference?, classification?, at }` |
 | `cashback.reconciliation.statement_imported` | `{ run_id, network_account_id, network_id, period_start, period_end, lines, statement_digest, imported_by, at }` |
 | `cashback.reconciliation.difference_found` | `{ run_id, difference_id, kind, delta, at }` |
+| `cashback.reconciliation.difference_resolved` | `{ difference_id, run_id, kind, resolution, resolved_by, reason, at }` |
 
 Amounts in payloads are `{ "minor": int, "currency": "EUR" }` — the same
 shape as the HTTP contract, for the same reason (C-6).
@@ -118,6 +119,12 @@ writes it nor announces it again. `delta` is the money as paid less owed, in
 the difference's currency - negative for a shorted or unpaid report,
 positive for an overpayment or for money matching no report. The figures
 behind it are on the row.
+
+`cashback.reconciliation.difference_resolved` carries the acting account,
+the verdict and the reason, for the reason `cashback.unattributed.dismissed`
+does: it is the audit record FR-061 asks for. Its subject and its
+idempotency key are the difference - a row is resolved at most once, so a
+second append under that key means the resolution is already in the stream.
 
 ## Published by `news` (existing)
 

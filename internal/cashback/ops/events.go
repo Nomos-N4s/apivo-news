@@ -34,6 +34,11 @@ const TypeStatementImported = EventProducer + ".reconciliation.statement_importe
 // publishes nothing: the queue already says everything it would have said.
 const TypeDifferenceFound = EventProducer + ".reconciliation.difference_found"
 
+// TypeDifferenceResolved is published when a named human decides a
+// difference (US6, FR-061). The subject is the difference; it is published
+// once, because a row is resolved once.
+const TypeDifferenceResolved = EventProducer + ".reconciliation.difference_resolved"
+
 // dismissedPayload is what the event carries: identifiers, the acting
 // account and the recorded reason.
 //
@@ -145,3 +150,37 @@ func foundEvent(run, id uuid.UUID, d Difference, at time.Time) (json.RawMessage,
 // foundKey is the event's idempotency key. A row is recorded once - the
 // indexes of 0029 make a repeat skip it - so the row id is the whole key.
 func foundKey(id uuid.UUID) string { return TypeDifferenceFound + ":" + id.String() }
+
+// resolvedPayload is what a resolution announces: the row, the run and the
+// kind, and - as the audit record FR-061 asks for - who decided, what, and
+// why, in the payload rather than behind a lookup.
+type resolvedPayload struct {
+	DifferenceID string `json:"difference_id"`
+	RunID        string `json:"run_id"`
+	Kind         string `json:"kind"`
+	Resolution   string `json:"resolution"`
+	ResolvedBy   string `json:"resolved_by"`
+	Reason       string `json:"reason"`
+	At           string `json:"at"`
+}
+
+// resolvedEvent renders the payload for one recorded resolution.
+func resolvedEvent(r Resolved) (json.RawMessage, error) {
+	payload, err := json.Marshal(resolvedPayload{
+		DifferenceID: r.ID.String(),
+		RunID:        r.Run.String(),
+		Kind:         string(r.Kind),
+		Resolution:   string(r.Verdict),
+		ResolvedBy:   r.ResolvedBy.String(),
+		Reason:       r.Reason,
+		At:           r.ResolvedAt.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ops: rendering %s for difference %s: %w", TypeDifferenceResolved, r.ID, err)
+	}
+	return payload, nil
+}
+
+// resolvedKey is the event's idempotency key: the difference, which is
+// resolved at most once.
+func resolvedKey(id uuid.UUID) string { return TypeDifferenceResolved + ":" + id.String() }
