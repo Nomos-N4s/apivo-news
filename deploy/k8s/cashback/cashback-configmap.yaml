@@ -129,3 +129,13 @@ data:
   # api serves normally, says at ERROR that no import is scheduled, and the
   # retailers members can click are never refreshed.
   NETWORK_SOURCE_LANGUAGE: ""
+  # HOLD_* are the hard rules that hold a suspicious credit for review (US7).
+  # Every rule is off until its keys are set; a count and its window are one
+  # rule and are refused apart. Windows are Go durations ("24h", "720h").
+  HOLD_SHARED_CONTEXT_ACCOUNTS: ""
+  HOLD_SHARED_CONTEXT_WINDOW: ""
+  HOLD_NEW_ACCOUNT_AGE: ""
+  HOLD_SALE_CAP_MINOR: ""
+  HOLD_SALE_CAP_CURRENCY: ""
+  HOLD_MEMBER_VELOCITY: ""
+  HOLD_MEMBER_VELOCITY_WINDOW: ""
