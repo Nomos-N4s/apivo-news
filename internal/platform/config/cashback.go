@@ -1,11 +1,13 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
@@ -128,6 +130,40 @@ type CashbackConfig struct {
 	// cannot say whether one was configured, which is why the pair is
 	// checked rather than the number.
 	PayoutThreshold money.Amount
+
+	// HoldRules are the hard rules that hold a suspicious credit for review
+	// rather than crediting it (US7, T118). Every rule is off unless its
+	// keys are set; see HoldRulesConfig.
+	HoldRules HoldRulesConfig
+}
+
+// HoldRulesConfig is the configured set of hold rules (HOLD_*). A rule is
+// off until its keys are set, and a rule that takes a count and a window is
+// refused with only one of them: half a rule holds nothing or everything.
+//
+// Windows and ages are Go durations ("720h", "24h"), because that is the
+// one duration syntax every other interval key here already uses, and a
+// number whose unit lives in the key name is a number somebody sets in days
+// one day and hours the next.
+type HoldRulesConfig struct {
+	// SharedContextAccounts (HOLD_SHARED_CONTEXT_ACCOUNTS) holds a credit
+	// when at least this many distinct member accounts, the member's own
+	// included, clicked from the same device context within
+	// SharedContextWindow (HOLD_SHARED_CONTEXT_WINDOW). At least 2.
+	SharedContextAccounts int
+	SharedContextWindow   time.Duration
+	// NewAccountAge (HOLD_NEW_ACCOUNT_AGE) holds a credit earned by an
+	// account younger than this at the click.
+	NewAccountAge time.Duration
+	// SaleCap (HOLD_SALE_CAP_MINOR, HOLD_SALE_CAP_CURRENCY) holds a credit
+	// on a sale at or above it; one value in two keys, as the payout
+	// threshold is, and refused unless both are set (C-6).
+	SaleCap money.Amount
+	// MemberVelocity (HOLD_MEMBER_VELOCITY) holds a credit for a member
+	// already credited at least this many times within
+	// MemberVelocityWindow (HOLD_MEMBER_VELOCITY_WINDOW).
+	MemberVelocity       int
+	MemberVelocityWindow time.Duration
 }
 
 // HouseAccountsConfig names the house accounts the cashback design needs:
@@ -367,6 +403,12 @@ func parseCashback(getenv func(string) string) (CashbackConfig, error) {
 	}
 	c.PayoutThreshold = threshold
 
+	holds, err := parseHoldRules(getenv)
+	if err != nil {
+		return CashbackConfig{}, err
+	}
+	c.HoldRules = holds
+
 	if raw := getenv("CASHBACK_ENABLED"); raw != "" {
 		enabled, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -588,4 +630,97 @@ func parsePayoutThreshold(getenv func(string) string) (money.Amount, error) {
 		return money.Amount{}, fmt.Errorf("config: PAYOUT_THRESHOLD_CURRENCY %q: %w", currency, err)
 	}
 	return threshold, nil
+}
+
+// parseHoldRules reads the HOLD_* keys. Unset is off; set is checked.
+func parseHoldRules(getenv func(string) string) (HoldRulesConfig, error) {
+	var h HoldRulesConfig
+	var err error
+	if h.SharedContextAccounts, err = parseHoldCount(getenv, "HOLD_SHARED_CONTEXT_ACCOUNTS"); err != nil {
+		return HoldRulesConfig{}, err
+	}
+	if h.SharedContextWindow, err = parseHoldDuration(getenv, "HOLD_SHARED_CONTEXT_WINDOW"); err != nil {
+		return HoldRulesConfig{}, err
+	}
+	if (h.SharedContextAccounts > 0) != (h.SharedContextWindow > 0) {
+		return HoldRulesConfig{}, errors.New("config: HOLD_SHARED_CONTEXT_ACCOUNTS and HOLD_SHARED_CONTEXT_WINDOW are one rule; set both or neither")
+	}
+	if h.SharedContextAccounts == 1 {
+		return HoldRulesConfig{}, errors.New("config: HOLD_SHARED_CONTEXT_ACCOUNTS must be at least 2; the member's own account is counted, so 1 would hold every click")
+	}
+	if h.NewAccountAge, err = parseHoldDuration(getenv, "HOLD_NEW_ACCOUNT_AGE"); err != nil {
+		return HoldRulesConfig{}, err
+	}
+	if h.SaleCap, err = parseMoneyPair(getenv, "HOLD_SALE_CAP_MINOR", "HOLD_SALE_CAP_CURRENCY"); err != nil {
+		return HoldRulesConfig{}, err
+	}
+	if h.SaleCap.Currency != "" && h.SaleCap.Minor <= 0 {
+		return HoldRulesConfig{}, fmt.Errorf("config: HOLD_SALE_CAP_MINOR %d is not a cap: a sale can only be held for being at or above a positive amount", h.SaleCap.Minor)
+	}
+	if h.MemberVelocity, err = parseHoldCount(getenv, "HOLD_MEMBER_VELOCITY"); err != nil {
+		return HoldRulesConfig{}, err
+	}
+	if h.MemberVelocityWindow, err = parseHoldDuration(getenv, "HOLD_MEMBER_VELOCITY_WINDOW"); err != nil {
+		return HoldRulesConfig{}, err
+	}
+	if (h.MemberVelocity > 0) != (h.MemberVelocityWindow > 0) {
+		return HoldRulesConfig{}, errors.New("config: HOLD_MEMBER_VELOCITY and HOLD_MEMBER_VELOCITY_WINDOW are one rule; set both or neither")
+	}
+	return h, nil
+}
+
+// parseHoldCount reads a whole, positive count; empty is off.
+func parseHoldCount(getenv func(string) string, key string) (int, error) {
+	raw := strings.TrimSpace(getenv(key))
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s %q is not a whole number: %w", key, raw, err)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("config: %s %d is not a count; leave it unset to turn the rule off", key, n)
+	}
+	return n, nil
+}
+
+// parseHoldDuration reads a positive Go duration; empty is off.
+func parseHoldDuration(getenv func(string) string, key string) (time.Duration, error) {
+	raw := strings.TrimSpace(getenv(key))
+	if raw == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s %q is not a duration such as 24h or 720h: %w", key, raw, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("config: %s %s is not a window; leave it unset to turn the rule off", key, d)
+	}
+	return d, nil
+}
+
+// parseMoneyPair reads one amount from its two keys, refusing one without
+// the other (C-6). Both empty is unset.
+func parseMoneyPair(getenv func(string) string, minorKey, currencyKey string) (money.Amount, error) {
+	minor := strings.TrimSpace(getenv(minorKey))
+	currency := strings.TrimSpace(getenv(currencyKey))
+	switch {
+	case minor == "" && currency == "":
+		return money.Amount{}, nil
+	case minor == "":
+		return money.Amount{}, fmt.Errorf("config: %s is set to %q and %s is not: a currency with no amount is not an amount", currencyKey, currency, minorKey)
+	case currency == "":
+		return money.Amount{}, fmt.Errorf("config: %s is set to %q and %s is not: an amount with no currency is a number nobody can compare against (C-6)", minorKey, minor, currencyKey)
+	}
+	value, err := strconv.ParseInt(minor, 10, 64)
+	if err != nil {
+		return money.Amount{}, fmt.Errorf("config: %s %q is not a whole number of minor units: %w", minorKey, minor, err)
+	}
+	amount, err := money.New(value, money.Currency(currency))
+	if err != nil {
+		return money.Amount{}, fmt.Errorf("config: %s %q: %w", currencyKey, currency, err)
+	}
+	return amount, nil
 }
