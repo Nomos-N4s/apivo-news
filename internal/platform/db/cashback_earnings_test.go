@@ -15,9 +15,12 @@ package db_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // TestCashbackEarningsRejectIllegalWrites is the C-2 rejection table.
@@ -823,4 +826,66 @@ func TestValidEarningsChainIsAccepted(t *testing.T) {
 	if state != "confirmed" {
 		t.Fatalf("entry state is %q, want confirmed", state)
 	}
+}
+
+// TestOneReportEarnsOneCreditAndMayBeRejectedAgainstIt is 0032: the unique
+// on the report keeps exactly-once crediting for CREDITS, and lets a
+// reversal rest on the report of the credit it undoes - which an operator's
+// rejection has to, since no superseding report exists (US7 scenario 3).
+// What 0013 feared, a credit undone twice, is still refused.
+func TestOneReportEarnsOneCreditAndMayBeRejectedAgainstIt(t *testing.T) {
+	t.Parallel()
+	tx := beginTx(t)
+	ctx := context.Background()
+	f := seedCashbackEntry(t, tx)
+
+	// A second credit on the same report: still refused, by name. Under a
+	// savepoint, so the refusal does not abort the transaction the rest of
+	// the test runs in.
+	var pgErr *pgconn.PgError
+	if err := refused(ctx, tx, func(sp pgx.Tx) error {
+		_, err := sp.Exec(ctx,
+			`insert into cashback.entry
+			     (brand_id, account_id, network_transaction_id, click_id, state, amount_minor, currency)
+			 values ('fixture', $1, $2, $3, 'pending', 250, 'EUR')`,
+			f.accountID, f.networkTxn, f.clickID)
+		return err
+	}); !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.UniqueViolation || pgErr.ConstraintName != "entry_one_per_report" {
+		t.Fatalf("a second credit on one report = %v, want a unique violation on entry_one_per_report", err)
+	}
+
+	// A reversal citing the credit's own report: accepted.
+	var rejection string
+	if err := tx.QueryRow(ctx,
+		`insert into cashback.entry
+		     (brand_id, account_id, network_transaction_id, click_id, state, amount_minor, currency, reversal_of_id)
+		 values ('fixture', $1, $2, $3, 'reversed', 250, 'EUR', $4) returning id`,
+		f.accountID, f.networkTxn, f.clickID, f.entryID).Scan(&rejection); err != nil {
+		t.Fatalf("a reversal citing the credit's own report was refused: %v", err)
+	}
+
+	// The same credit undone a second time, against the same report or
+	// any other: still refused, by entry_reversed_at_most_once.
+	if err := refused(ctx, tx, func(sp pgx.Tx) error {
+		_, err := sp.Exec(ctx,
+			`insert into cashback.entry
+			     (brand_id, account_id, network_transaction_id, click_id, state, amount_minor, currency, reversal_of_id)
+			 values ('fixture', $1, $2, $3, 'reversed', 250, 'EUR', $4)`,
+			f.accountID, f.networkTxn, f.clickID, f.entryID)
+		return err
+	}); !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.UniqueViolation || pgErr.ConstraintName != "entry_reversed_at_most_once" {
+		t.Fatalf("a second reversal of one credit = %v, want a unique violation on entry_reversed_at_most_once", err)
+	}
+}
+
+// refused runs one statement expected to fail under a savepoint, so the
+// refusal leaves the enclosing transaction usable, and answers its error.
+func refused(ctx context.Context, tx pgx.Tx, run func(sp pgx.Tx) error) error {
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	err = run(sp)
+	_ = sp.Rollback(ctx)
+	return err
 }
