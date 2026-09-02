@@ -25,7 +25,7 @@ select e.id, e.account_id, e.brand_id, e.network_transaction_id, e.click_id,
  where e.state = 'held'
    and e.reversal_of_id is null
    and not exists (select 1 from cashback.entry r where r.reversal_of_id = e.id)
-   and (e.created_at, e.id) > (sqlc.arg(after_created_at), sqlc.arg(after_id))
+   and (e.created_at, e.id) > (sqlc.arg(after_created_at)::timestamptz, sqlc.arg(after_id)::uuid)
  order by e.created_at, e.id
  limit sqlc.arg(page_size);
 
@@ -56,15 +56,5 @@ select id
   from cashback.entry_transition
  where entry_id = sqlc.arg(entry_id)
    and to_state = 'held'
- order by occurred_at desc, id desc
- limit 1;
-
--- name: LatestTransition :one
--- The most recent transition an entry made, read back so what a review
--- announces - who, why, when, which transfer - is what the row holds.
-select id, entry_id, from_state, to_state, ledger_transfer_ref, reason,
-       actor_id, occurred_at
-  from cashback.entry_transition
- where entry_id = sqlc.arg(entry_id)
  order by occurred_at desc, id desc
  limit 1;

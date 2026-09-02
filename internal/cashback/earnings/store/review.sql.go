@@ -32,33 +32,6 @@ func (q *Queries) HeldTransition(ctx context.Context, entryID pgtype.UUID) (pgty
 	return id, err
 }
 
-const latestTransition = `-- name: LatestTransition :one
-select id, entry_id, from_state, to_state, ledger_transfer_ref, reason,
-       actor_id, occurred_at
-  from cashback.entry_transition
- where entry_id = $1
- order by occurred_at desc, id desc
- limit 1
-`
-
-// The most recent transition an entry made, read back so what a review
-// announces - who, why, when, which transfer - is what the row holds.
-func (q *Queries) LatestTransition(ctx context.Context, entryID pgtype.UUID) (CashbackEntryTransition, error) {
-	row := q.db.QueryRow(ctx, latestTransition, entryID)
-	var i CashbackEntryTransition
-	err := row.Scan(
-		&i.ID,
-		&i.EntryID,
-		&i.FromState,
-		&i.ToState,
-		&i.LedgerTransferRef,
-		&i.Reason,
-		&i.ActorID,
-		&i.OccurredAt,
-	)
-	return i, err
-}
-
 const listHeldEntries = `-- name: ListHeldEntries :many
 
 select e.id, e.account_id, e.brand_id, e.network_transaction_id, e.click_id,
@@ -75,14 +48,14 @@ select e.id, e.account_id, e.brand_id, e.network_transaction_id, e.click_id,
  where e.state = 'held'
    and e.reversal_of_id is null
    and not exists (select 1 from cashback.entry r where r.reversal_of_id = e.id)
-   and (e.created_at, e.id) > ($1, $2)
+   and (e.created_at, e.id) > ($1::timestamptz, $2::uuid)
  order by e.created_at, e.id
  limit $3
 `
 
 type ListHeldEntriesParams struct {
 	AfterCreatedAt pgtype.Timestamptz
-	AfterID        pgtype.Timestamptz
+	AfterID        pgtype.UUID
 	PageSize       int32
 }
 
