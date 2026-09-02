@@ -685,13 +685,7 @@ func TestEarningsTablesRejectTruncate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tx := beginTx(t)
-			ctx := context.Background()
-			if _, err := tx.Exec(ctx, `set local lock_timeout = '10s'`); err != nil {
-				t.Fatalf("set lock_timeout: %v", err)
-			}
-			_, err := tx.Exec(ctx, tt.stmt)
-			wantPgCode(t, err, codeRaiseException)
+			wantPgCode(t, refusedTruncate(t, tt.stmt), codeRaiseException)
 		})
 	}
 }

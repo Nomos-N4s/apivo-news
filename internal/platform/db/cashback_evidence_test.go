@@ -125,13 +125,7 @@ func TestCashbackEvidenceRejectsTruncate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tx := beginTx(t)
-			ctx := context.Background()
-			if _, err := tx.Exec(ctx, `set local lock_timeout = '10s'`); err != nil {
-				t.Fatalf("set lock_timeout: %v", err)
-			}
-			_, err := tx.Exec(ctx, tt.stmt)
-			wantImmutableRefusal(t, err, tt.name, "TRUNCATE")
+			wantImmutableRefusal(t, refusedTruncate(t, tt.stmt), tt.name, "TRUNCATE")
 		})
 	}
 }
