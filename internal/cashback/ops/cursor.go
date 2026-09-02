@@ -22,6 +22,7 @@ const cursorSeparator = "|"
 const (
 	unattributedCursors = "unattributed"
 	differenceCursors   = "differences"
+	heldCursors         = "held"
 )
 
 // maxCursorBytes bounds the encoded cursor the endpoints will even look at,

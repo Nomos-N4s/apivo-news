@@ -169,10 +169,31 @@ func TestTheMoneyLeavesTheStageTheCreditReached(t *testing.T) {
 	}
 }
 
+// TestAnOperatorsRejectionRestsOnTheCreditsOwnReport (T119). The network
+// has restated nothing, so there is no superseding row; the credit's own
+// report is the only evidence, and the named operator is the cause.
+func TestAnOperatorsRejectionRestsOnTheCreditsOwnReport(t *testing.T) {
+	t.Parallel()
+	original := creditedEntry(t, earnings.StateHeld)
+	entries, ledger := &fakeEntries{row: anEntry(original.Member, earnings.StateReversed)}, &fakeLedger{}
+
+	if _, err := reverser(t, entries, ledger).Reverse(t.Context(), &fakeOutbox{}, earnings.Reversal{
+		Original: original, Report: original.Report, Reason: "the second account is the member's own", Actor: uuid.New(),
+	}); err != nil {
+		t.Fatalf("Reverse() by an operator citing the credit's own report: %v", err)
+	}
+	if got := uuid.UUID(entries.created.NetworkTransactionID.Bytes); got != original.Report {
+		t.Errorf("the rejection cites %v, want the credit's own report %v", got, original.Report)
+	}
+	if len(ledger.posted) != 1 {
+		t.Errorf("posted %d transfer(s), want the one that carries the money back", len(ledger.posted))
+	}
+}
+
 // TestAReversalNeedsEvidenceOfItsOwn. A status change is a new superseding
-// row, so the reversing report always exists; citing the original's would be
-// refused by entry_one_per_report only AFTER the transfer had posted, which
-// is a reconciliation problem rather than an answer.
+// row, so when the network reverses the reversing report always exists;
+// citing the original's with nobody named as the cause is a caller that
+// lost track of which row it read.
 func TestAReversalNeedsEvidenceOfItsOwn(t *testing.T) {
 	t.Parallel()
 

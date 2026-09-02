@@ -107,14 +107,20 @@ select id, account_id, brand_id, network_transaction_id, click_id,
 -- One currency, because an account holds one currency (C-6) and a withdrawal
 -- is denominated in one. Confirmed money in another currency is a different
 -- balance and a different withdrawal.
-select id, account_id, brand_id, network_transaction_id, click_id,
-       state, amount_minor, currency, hold_rule, reversal_of_id, created_at
-  from cashback.entry
- where account_id = sqlc.arg(account_id)
-   and currency = sqlc.arg(currency)
-   and state = 'confirmed'
- order by created_at, id
-   for update;
+--
+-- Not a credit the network has since taken back. A reversal never edits the
+-- credit it undoes (SC-010): the row stays confirmed and a reversing entry
+-- beside it carries the money out of the confirmed stage. A withdrawal that
+-- reserved such a row would move money the stage no longer holds.
+select e.id, e.account_id, e.brand_id, e.network_transaction_id, e.click_id,
+       e.state, e.amount_minor, e.currency, e.hold_rule, e.reversal_of_id, e.created_at
+  from cashback.entry e
+ where e.account_id = sqlc.arg(account_id)
+   and e.currency = sqlc.arg(currency)
+   and e.state = 'confirmed'
+   and not exists (select 1 from cashback.entry r where r.reversal_of_id = e.id)
+ order by e.created_at, e.id
+   for update of e;
 
 -- name: EntriesReservedUnder :many
 -- Every entry one reservation claimed, oldest first, locked.

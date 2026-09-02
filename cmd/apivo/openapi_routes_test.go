@@ -23,6 +23,7 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/account"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/catalogue"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/clickout"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout"
@@ -364,7 +365,7 @@ func (unreachableStore) Provenance(context.Context, uuid.UUID) (editorial.Proven
 // a status code alone would dress the loss up as an ordinary 404.
 func TestOperatorPatternsAreReachable(t *testing.T) {
 	t.Parallel()
-	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, unreachableOpsRefuser{}, unreachableOpsSettler{}, unreachableOpsReconciliation{}, alwaysOperator{})
+	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, unreachableOpsRefuser{}, unreachableOpsSettler{}, unreachableOpsReconciliation{}, unreachableOpsHeld{}, alwaysOperator{})
 
 	for _, pattern := range ops.Patterns() {
 		t.Run(pattern, func(t *testing.T) {
@@ -467,4 +468,20 @@ type unreachableOpsSettler struct{}
 
 func (unreachableOpsSettler) Record(context.Context, payout.Recording) (payout.Settlement, error) {
 	return payout.Settlement{}, errors.New("main: the route census must not settle anything")
+}
+
+// unreachableOpsHeld stands where the held queue would be; this test never
+// reaches it.
+type unreachableOpsHeld struct{}
+
+func (unreachableOpsHeld) Held(context.Context, earnings.HeldAfter, int) ([]earnings.HeldCredit, error) {
+	return nil, errors.New("unreachable")
+}
+
+func (unreachableOpsHeld) Release(context.Context, earnings.Review) (earnings.Released, error) {
+	return earnings.Released{}, errors.New("unreachable")
+}
+
+func (unreachableOpsHeld) Reject(context.Context, earnings.Review) (earnings.Rejected, error) {
+	return earnings.Rejected{}, errors.New("unreachable")
 }

@@ -54,6 +54,15 @@ const (
 	// announce one report twice however they race; they never see the same
 	// report anyway, because a report either named a reference or did not.
 	TypeTransactionUnattributed = EventProducer + ".transaction.unattributed"
+	// TypeHoldReleased announces a named operator releasing a held credit
+	// (T119, FR-061): who, why, and the transfer that moved the money to
+	// pending. The state change itself is announced beside it as
+	// TypeEntryStateChanged; this is the decision, with the reason in the
+	// payload, so the audit record needs no lookup.
+	TypeHoldReleased = EventProducer + ".hold.released"
+	// TypeHoldRejected announces a named operator rejecting a held credit:
+	// which reversing entry undoes it, who decided, and why.
+	TypeHoldRejected = EventProducer + ".hold.rejected"
 )
 
 // ErrNotAnnounced reports an event that could not be appended beside the
@@ -176,6 +185,80 @@ func (a *Announcer) StateChanged(ctx context.Context, db events.RowQuerier, move
 	}
 	return a.append(ctx, db, TypeEntryStateChanged, moved.Entry,
 		TypeEntryStateChanged+":"+string(moved.Transfer)+":"+moved.Entry.String(), payload)
+}
+
+// HoldReleased announces one release an operator recorded.
+//
+// Keyed on the entry AND the transfer, because a credit can be held and
+// released more than once in its life and each release is its own
+// decision; a retry of one release re-posts to the same transfer and
+// re-derives the same key.
+func (a *Announcer) HoldReleased(ctx context.Context, db events.RowQuerier, released Released) error {
+	switch {
+	case released.Entry.ID == uuid.Nil:
+		return fmt.Errorf("%w: %s about an entry the database did not move", ErrNotAnnounced, TypeHoldReleased)
+	case released.ReleasedBy == uuid.Nil:
+		return fmt.Errorf("%w: %s names nobody as the operator", ErrNotAnnounced, TypeHoldReleased)
+	case released.Transfer == "":
+		return fmt.Errorf("%w: %s about a release naming no transfer", ErrNotAnnounced, TypeHoldReleased)
+	}
+	payload, err := json.Marshal(struct {
+		EntryID           uuid.UUID `json:"entry_id"`
+		AccountID         uuid.UUID `json:"account_id"`
+		HoldRule          string    `json:"hold_rule"`
+		ReleasedBy        uuid.UUID `json:"released_by"`
+		Reason            string    `json:"reason"`
+		LedgerTransferRef string    `json:"ledger_transfer_ref"`
+		At                time.Time `json:"at"`
+	}{
+		EntryID:           released.Entry.ID,
+		AccountID:         released.Entry.Member,
+		HoldRule:          released.Rule,
+		ReleasedBy:        released.ReleasedBy,
+		Reason:            released.Reason,
+		LedgerTransferRef: string(released.Transfer),
+		At:                released.At,
+	})
+	if err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrNotAnnounced, TypeHoldReleased, err)
+	}
+	return a.append(ctx, db, TypeHoldReleased, released.Entry.ID,
+		TypeHoldReleased+":"+released.Entry.ID.String()+":"+string(released.Transfer), payload)
+}
+
+// HoldRejected announces one rejection an operator recorded. Keyed on the
+// credit, which is rejected at most once (entry_reversed_at_most_once).
+func (a *Announcer) HoldRejected(ctx context.Context, db events.RowQuerier, rejected Rejected) error {
+	switch {
+	case rejected.Credit.ID == uuid.Nil || rejected.Reversal.ID == uuid.Nil:
+		return fmt.Errorf("%w: %s about a rejection the database did not record", ErrNotAnnounced, TypeHoldRejected)
+	case rejected.RejectedBy == uuid.Nil:
+		return fmt.Errorf("%w: %s names nobody as the operator", ErrNotAnnounced, TypeHoldRejected)
+	}
+	payload, err := json.Marshal(struct {
+		EntryID         uuid.UUID    `json:"entry_id"`
+		ReversalEntryID uuid.UUID    `json:"reversal_entry_id"`
+		AccountID       uuid.UUID    `json:"account_id"`
+		HoldRule        string       `json:"hold_rule"`
+		Amount          money.Amount `json:"amount"`
+		RejectedBy      uuid.UUID    `json:"rejected_by"`
+		Reason          string       `json:"reason"`
+		At              time.Time    `json:"at"`
+	}{
+		EntryID:         rejected.Credit.ID,
+		ReversalEntryID: rejected.Reversal.ID,
+		AccountID:       rejected.Credit.Member,
+		HoldRule:        rejected.Rule,
+		Amount:          rejected.Credit.Amount,
+		RejectedBy:      rejected.RejectedBy,
+		Reason:          rejected.Reason,
+		At:              rejected.At,
+	})
+	if err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrNotAnnounced, TypeHoldRejected, err)
+	}
+	return a.append(ctx, db, TypeHoldRejected, rejected.Credit.ID,
+		TypeHoldRejected+":"+rejected.Credit.ID.String(), payload)
 }
 
 // Unattributed announces one report whose reference matched no click.

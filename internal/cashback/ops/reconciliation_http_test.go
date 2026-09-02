@@ -96,7 +96,7 @@ func reconcile(t *testing.T, store ops.ReconciliationStore, method, path, body s
 	req := httptest.NewRequest(method, ops.Prefix+path, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer t")
 	rec := httptest.NewRecorder()
-	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, store, stubAuth{op: anOperator}).ServeHTTP(rec, req)
+	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, store, unreachableHeld{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
 	return rec
 }
 

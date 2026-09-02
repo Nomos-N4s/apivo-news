@@ -230,8 +230,8 @@ what the network last said about the transaction, and nothing has been
 credited against it. A stale page acting on a row that has since moved gets
 409 with which of the three it is; an id that names no row gets 404,
 because a queue row is never deleted and so an unknown id was never issued.
-| `GET /ops/held` | entries in `held` with the rule that held them |
-| `POST /ops/held/{id}/release` · `/reject` | body `{ reason }`, required and non-blank (US7 scenario 3) |
+| `GET /ops/held` | entries in `held` with the rule that held them and what it said; see below |
+| `POST /ops/held/{id}/release` · `/reject` | body `{ reason }`, required and non-blank (US7 scenario 3); see below |
 | `GET /ops/withdrawals?state=awaiting_approval` | approval queue |
 | `POST /ops/withdrawals/{id}/approve` | **records `approved_by` from the token subject** (C-4); submits the payout with the request-derived idempotency key (C-5, D8) |
 | `POST /ops/withdrawals/{id}/reject` | body `{ reason }`; releases the reservation back to confirmed |
@@ -244,6 +244,45 @@ because a queue row is never deleted and so an unknown id was never issued.
 Every operator action appends to `domain_event` with the acting account and
 the reason (FR-061). An action with a blank reason is rejected with 400 —
 the audit record is part of the action, not an afterthought.
+
+### GET /ops/held
+
+Every credit a hold rule kept out of a member's pending balance and nobody
+has yet decided (US7), oldest first, paged like every operator queue. Each
+row carries the credit (`id`, `account_id`, `brand_id`,
+`network_transaction_id`, `click_id`, `amount`, `held_since`), the rule
+holding it and what the rule said (`hold_rule`, `hold_reason`), and what the
+network reported (`network_id`, `external_id`, `report_status`, `sale`,
+`commission`, `transacted_at`) — so an operator decides from one screen.
+
+"Still to decide" is derived, not stored: the row is `held`, and nothing
+undoes it. A rejected credit's own row keeps the state it was rejected in,
+because a rejection is a reversing entry beside it, never an edit.
+
+### POST /ops/held/{id}/release · /reject
+
+Body `{ reason }`, required and non-blank; the acting account is the token
+subject (C-4). Both record who and why on the transition they write and
+publish their event in the same transaction (FR-061).
+
+**Release** moves the credit to `pending` under the ordinary lifecycle. It
+confirms nothing: an operator can assert that the credit is ordinary, not
+that the network paid, so it still waits on the network's word and a
+reconciled statement (FR-043). The response is the recorded release —
+`state`, the `hold_rule` it was held under, `released_by`, `reason`,
+`ledger_transfer_ref`, `released_at`.
+
+**Reject** undoes the credit the way a network reversal does: a reversing
+entry beside it, born `reversed`, citing the credit's own report with the
+operator as its cause, carrying the member's share back to the network
+receivable (SC-010). The credit's own row is never edited, and a credit is
+rejected once. The response names both — `id` and `reversal_entry_id` —
+with `rejected_by`, `reason` and `rejected_at`.
+
+400 for a blank reason; 404 for an id that was never issued; 409 for a credit
+that is not held (the detail names its state), was already rejected, or moved
+between the read and the decision; 503 where the deployment has not named
+`HOUSE_ACCOUNT_NETWORK_RECEIVABLE` — the queue itself stays readable.
 
 ### POST /ops/reconciliation/runs
 
