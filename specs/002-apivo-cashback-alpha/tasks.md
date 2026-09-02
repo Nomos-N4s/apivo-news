@@ -229,7 +229,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 **Independent Test**: Seed merchants across two countries and two languages; load the catalogue as an `el` reader scoped to Munich and verify scoping, labelled fallback and rate rendering.
 
 - [x] T101 [US5] Implement per-language copy resolution with explicit fallback labelling in `internal/cashback/catalogue/copy.go`
-- [ ] T102 [US5] Implement place-scoped merchant queries over `merchant_place` in `internal/cashback/catalogue/store/queries/`
+- [x] T102 [US5] Implement place-scoped merchant queries over `merchant_place` in `internal/cashback/catalogue/store/queries/`
 - [ ] T103 [US5] Implement `GET /catalogue` with separate `lang` and `place` parameters in `internal/cashback/catalogue/handlers.go`
 - [ ] T104 [US5] Implement `GET /merchants/{slug}` returning every published rate band with conditions and exclusions, in `internal/cashback/catalogue/handlers.go`
 - [ ] T105 [US5] Implement catalogue import from `Network.FetchCatalogue` recording source and retrieval time, in `internal/cashback/catalogue/import.go`
