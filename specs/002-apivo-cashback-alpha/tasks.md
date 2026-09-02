@@ -254,7 +254,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [x] T113 [US6] Implement `POST /ops/reconciliation/runs`, `GET /ops/reconciliation/runs/{id}/differences`, `POST /ops/reconciliation/differences/{id}/resolve` in `internal/cashback/ops/handlers.go`
 - [x] T114 [US6] Implement `GET /ops/exports/ledger` and `/exports/reconciliation` for accounting in `internal/cashback/ops/exports.go`
 - [ ] T115 [P] [US6] Build the reconciliation queue pages in `web/src/pages/ops/reconciliation.astro`
-- [ ] T116 [P] [US6] Integration test: an omitted and a shorted transaction are both flagged with deltas and change no balance, in `internal/cashback/ops/reconciliation_integration_test.go`
+- [x] T116 [P] [US6] Integration test: an omitted and a shorted transaction are both flagged with deltas and change no balance, in `internal/cashback/ops/reconciliation_integration_test.go`
 
 **Checkpoint**: The business knows what it was actually paid.
 

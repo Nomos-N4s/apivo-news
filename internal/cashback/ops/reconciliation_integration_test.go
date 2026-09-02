@@ -12,8 +12,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -336,6 +340,174 @@ func TestStatementImportAgainstSchema(t *testing.T) {
 		}
 		if n := runsFor(ctx, t, tx, parties.account); n != 0 {
 			t.Errorf("%d runs written from a statement with no lines", n)
+		}
+	})
+}
+
+// US6's independent test (T116), end to end through the endpoints and the
+// real store: a statement that omits one approved transaction and shorts
+// another. Both must be flagged with their deltas, and neither may silently
+// change a member's balance - which here means no entry changes state, no
+// transition is written, no ledger posting is made, and the confirmation
+// gate (FR-043) holds both transactions until an operator decides them.
+
+// gateHolds answers the confirmation gate's own question for a report - the
+// same reading earnings makes - without importing another module's store.
+func gateHolds(ctx context.Context, t *testing.T, tx pgx.Tx, report uuid.UUID) bool {
+	t.Helper()
+	var reconciled bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+		    select 1 from cashback.reconciliation_run run
+		     where run.network_account_id = nt.network_account_id
+		       and nt.transacted_at >= run.statement_period_start
+		       and nt.transacted_at < run.statement_period_end
+		) and not exists (
+		    select 1 from cashback.reconciliation_difference diff
+		      join cashback.network_transaction named on named.id = diff.network_transaction_id
+		     where named.network_id = nt.network_id and named.external_id = nt.external_id
+		       and diff.resolved_at is null
+		)
+		  from cashback.network_transaction nt where nt.id = $1`, report).Scan(&reconciled); err != nil {
+		t.Fatalf("asking the gate about %s: %v", report, err)
+	}
+	return reconciled
+}
+
+// moneyFootprint is everything a balance is made of: entry states,
+// transitions and ledger postings. Two equal footprints mean no member's
+// balance moved.
+func moneyFootprint(ctx context.Context, t *testing.T, tx pgx.Tx, memberID uuid.UUID) string {
+	t.Helper()
+	var footprint string
+	if err := tx.QueryRow(ctx, `
+		select (select string_agg(e.network_transaction_id::text || ':' || e.state || ':' || e.amount_minor, ',' order by e.network_transaction_id)
+		          from cashback.entry e where e.account_id = $1)
+		    || ' | transitions ' || (select count(*) from cashback.entry_transition)
+		    || ' | postings ' || (select count(*) from ledger.posting)
+		    || ' | posted ' || (select coalesce(sum(amount_minor), 0) from ledger.posting)`, memberID).Scan(&footprint); err != nil {
+		t.Fatalf("reading the money footprint: %v", err)
+	}
+	return footprint
+}
+
+func TestAnOmittedAndAShortedTransactionAreFlaggedAndMoveNoMoney(t *testing.T) {
+	t.Parallel()
+	ctx, tx, done := schemaPool(t)
+	defer done()
+	parties := seedStatementParties(ctx, t, tx)
+
+	each(ctx, t, tx, "US6", func(t *testing.T, tx pgx.Tx, store *ops.PGStore) {
+		memberID := member(ctx, t, tx)
+		omitted := reported(ctx, t, tx, parties, "A", 499, inAugust, uuid.Nil)
+		matched := reported(ctx, t, tx, parties, "B", 300, inAugust, uuid.Nil)
+		shorted := reported(ctx, t, tx, parties, "C", 499, inAugust, uuid.Nil)
+		moved(ctx, t, tx, memberID, omitted, nil, "pending", "tx-a-"+suffix(t), inAugust.Add(time.Hour), nil, nil)
+		moved(ctx, t, tx, memberID, matched, nil, "pending", "tx-b-"+suffix(t), inAugust.Add(time.Hour), nil, nil)
+		moved(ctx, t, tx, memberID, shorted, nil, "confirmed", "tx-c-"+suffix(t), inAugust.Add(time.Hour), nil, nil)
+		before := moneyFootprint(ctx, t, tx, memberID)
+
+		h := ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, store, stubAuth{op: parties.operator})
+		call := func(method, path, body string) *httptest.ResponseRecorder {
+			req := httptest.NewRequest(method, ops.Prefix+path, strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer t")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			return rec
+		}
+
+		// The statement pays B in full, shorts C, and never mentions A.
+		rec := call(http.MethodPost, "reconciliation/runs",
+			`{"network_account_id":"`+parties.account.String()+`","period":{"start":"2026-08-01T00:00:00Z","end":"2026-09-01T00:00:00Z"},`+
+				`"statement":{"lines":[{"transaction_id":"B","paid":{"minor":300,"currency":"EUR"}},{"transaction_id":"C","paid":{"minor":450,"currency":"EUR"}}]}}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("import status = %d (body %q)", rec.Code, rec.Body.String())
+		}
+		var imported struct {
+			RunID       string `json:"run_id"`
+			Differences struct {
+				Found    int `json:"found"`
+				Recorded int `json:"recorded"`
+			} `json:"differences"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &imported); err != nil {
+			t.Fatalf("import body: %v", err)
+		}
+		if imported.Differences.Found != 2 || imported.Differences.Recorded != 2 {
+			t.Fatalf("differences = %+v, want the omitted and the shorted transaction, both recorded", imported.Differences)
+		}
+
+		// Scenario 1: both listed, each with its amount difference.
+		rec = call(http.MethodGet, "reconciliation/runs/"+imported.RunID+"/differences", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("listing status = %d (body %q)", rec.Code, rec.Body.String())
+		}
+		var page struct {
+			Items []struct {
+				ID                   string  `json:"id"`
+				Kind                 string  `json:"kind"`
+				NetworkTransactionID *string `json:"network_transaction_id"`
+				TransactionID        string  `json:"transaction_id"`
+				Delta                struct {
+					Minor    int64  `json:"minor"`
+					Currency string `json:"currency"`
+				} `json:"delta"`
+				Resolution *map[string]any `json:"resolution"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+			t.Fatalf("listing body: %v", err)
+		}
+		if len(page.Items) != 2 {
+			t.Fatalf("%d differences listed, want 2", len(page.Items))
+		}
+		var shortedID string
+		for _, item := range page.Items {
+			switch item.TransactionID {
+			case "A":
+				if item.Kind != "reported_not_paid" || item.Delta.Minor != -499 || item.Delta.Currency != "EUR" || item.NetworkTransactionID == nil || *item.NetworkTransactionID != omitted.String() {
+					t.Errorf("the omitted transaction is listed as %+v, want reported_not_paid, -499 EUR, naming its report", item)
+				}
+			case "C":
+				shortedID = item.ID
+				if item.Kind != "amount_mismatch" || item.Delta.Minor != -49 || item.NetworkTransactionID == nil || *item.NetworkTransactionID != shorted.String() {
+					t.Errorf("the shorted transaction is listed as %+v, want amount_mismatch, -49 EUR, naming its report", item)
+				}
+			default:
+				t.Errorf("an unexpected difference was listed: %+v", item)
+			}
+		}
+
+		// Nothing moved, and the gate holds exactly the two disputed ones.
+		if after := moneyFootprint(ctx, t, tx, memberID); after != before {
+			t.Errorf("importing changed the money:\n before %s\n after  %s", before, after)
+		}
+		if gateHolds(ctx, t, tx, omitted) || gateHolds(ctx, t, tx, shorted) {
+			t.Error("the gate would confirm a transaction the statement disputes")
+		}
+		if !gateHolds(ctx, t, tx, matched) {
+			t.Error("the gate holds the transaction the statement paid in full")
+		}
+
+		// Scenario 2: a resolution records who and why, and moves nothing
+		// either - the shortfall is absorbed, and only that gate opens.
+		rec = call(http.MethodPost, "reconciliation/differences/"+shortedID+"/resolve",
+			`{"resolution":"absorbed","reason":"a 49 cent shortfall is not worth disputing"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("resolve status = %d (body %q)", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `"resolved_by":"`+parties.operator.ID.String()+`"`) ||
+			!strings.Contains(rec.Body.String(), `"reason":"a 49 cent shortfall is not worth disputing"`) {
+			t.Errorf("the resolution does not record who and why: %s", rec.Body.String())
+		}
+		if after := moneyFootprint(ctx, t, tx, memberID); after != before {
+			t.Errorf("resolving changed the money:\n before %s\n after  %s", before, after)
+		}
+		if !gateHolds(ctx, t, tx, shorted) {
+			t.Error("the absorbed shortfall still holds its transaction at the gate")
+		}
+		if gateHolds(ctx, t, tx, omitted) {
+			t.Error("resolving one difference opened the gate for the other")
 		}
 	})
 }
