@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
@@ -21,16 +22,21 @@ const timeFormat = time.RFC3339Nano
 // stamp renders one timestamp for the wire.
 func stamp(at time.Time) string { return at.UTC().Format(timeFormat) }
 
-// writeJSON writes a JSON response body.
+// writeJSON writes a JSON response body with 200.
 //
-// Always 200, and the status is not a parameter because there is no second
-// answer for this surface to give. Every operator endpoint decides an
-// existing row - dismissing, approving, refusing - so none of them creates a
-// resource and none of them answers 201. A parameter that only ever took one
-// value would be an invitation to pass another without meaning to.
+// Nearly every operator endpoint decides an existing row - dismissing,
+// approving, refusing, resolving - and none of those creates a resource, so
+// 200 is the whole answer. The one that does create, the statement import,
+// says so through writeJSONStatus; keeping 200 the default here means a
+// future endpoint has to ask for 201 rather than getting it by accident.
 func (h *Handler) writeJSON(w http.ResponseWriter, r *http.Request, body any) {
+	h.writeJSONStatus(w, r, http.StatusOK, body)
+}
+
+// writeJSONStatus writes a JSON response body with the given status.
+func (h *Handler) writeJSONStatus(w http.ResponseWriter, r *http.Request, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		h.log.WarnContext(r.Context(), "writing operator response", "error", err)
 	}
@@ -47,10 +53,28 @@ func (h *Handler) internalError(w http.ResponseWriter, r *http.Request, doing st
 // when the body is not the expected shape. Unknown fields are rejected: on
 // a surface where every action records a reason, a misspelled field
 // silently ignored would read as acceptance of a decision nobody described.
+//
+// Bounded at maxBodyBytes, which every decision body fits in with room to
+// spare; the statement import, whose body is a network's document, asks
+// decodeJSONUpTo for more.
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	return decodeJSONUpTo(w, r, dst, maxBodyBytes)
+}
+
+// decodeJSONUpTo is decodeJSON with the body bounded at limit bytes.
+func decodeJSONUpTo(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		// Too large is its own answer, not a syntax error: the body may
+		// have been perfectly well formed, and a client told its JSON was
+		// invalid would look in the wrong place.
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			platformhttp.Problem(w, http.StatusRequestEntityTooLarge,
+				"request body is larger than this endpoint accepts ("+strconv.FormatInt(limit, 10)+" bytes)")
+			return false
+		}
 		platformhttp.Problem(w, http.StatusBadRequest, "request body is not valid JSON for this endpoint: "+err.Error())
 		return false
 	}
