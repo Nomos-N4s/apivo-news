@@ -115,11 +115,13 @@ func announcementsOfImports(ctx context.Context, t *testing.T, tx pgx.Tx) int {
 	return n
 }
 
-func TestStatementImportAgainstSchema(t *testing.T) {
-	t.Parallel()
+// schemaPool opens the migrated database and one transaction every case
+// nests a savepoint under, or skips the test when there is no database.
+func schemaPool(t *testing.T) (context.Context, pgx.Tx, func()) {
+	t.Helper()
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
-		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise statement import")
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise reconciliation")
 	}
 	if err := db.Migrate(url); err != nil {
 		t.Fatalf("migrating: %v", err)
@@ -129,12 +131,21 @@ func TestStatementImportAgainstSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connecting: %v", err)
 	}
-	defer pool.Close()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
+		pool.Close()
 		t.Fatalf("beginning: %v", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	return ctx, tx, func() {
+		_ = tx.Rollback(ctx)
+		pool.Close()
+	}
+}
+
+func TestStatementImportAgainstSchema(t *testing.T) {
+	t.Parallel()
+	ctx, tx, done := schemaPool(t)
+	defer done()
 	parties := seedStatementParties(ctx, t, tx)
 
 	each(ctx, t, tx, "a statement becomes an immutable run and is announced", func(t *testing.T, tx pgx.Tx, store *ops.PGStore) {
