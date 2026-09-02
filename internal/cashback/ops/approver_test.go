@@ -75,3 +75,11 @@ func (unreachableReconciliation) ListDifferences(context.Context, uuid.UUID, ops
 func (unreachableReconciliation) ResolveDifference(context.Context, ops.Resolution) (ops.Resolved, error) {
 	return ops.Resolved{}, errors.New("this case must not resolve a difference")
 }
+
+func (unreachableReconciliation) ExportLedger(context.Context, ops.ExportWindow) ([]ops.LedgerRow, error) {
+	return nil, errors.New("this case must not export the ledger")
+}
+
+func (unreachableReconciliation) ExportReconciliation(context.Context, ops.ExportWindow) ([]ops.ReconciliationRow, error) {
+	return nil, errors.New("this case must not export reconciliation")
+}

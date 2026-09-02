@@ -239,7 +239,7 @@ because a queue row is never deleted and so an unknown id was never issued.
 | `GET /ops/reconciliation/runs/{id}/differences` | every difference with its amount delta (US6 scenario 1); see below |
 | `POST /ops/reconciliation/differences/{id}/resolve` | body `{ resolution, reason }`; see below |
 | `GET /ops/provenance/payouts/{id}` | the C-7 chain in one response |
-| `GET /ops/exports/ledger` · `/exports/reconciliation` | accounting exports (FR-062) |
+| `GET /ops/exports/ledger` · `/exports/reconciliation` | accounting exports (FR-062); see below |
 
 Every operator action appends to `domain_event` with the acting account and
 the reason (FR-061). An action with a blank reason is rejected with 400 —
@@ -313,6 +313,40 @@ early would confirm a member's balance out of money never received, which
 is the one thing US6 exists to prevent. Any member-facing effect of a
 disagreement is a new posting resting on the network's own restated report
 (C-3), never on an operator's reading of it.
+
+### GET /ops/exports/ledger · GET /ops/exports/reconciliation
+
+The two accounting journals (FR-062), whole for a window: `from` and `to`
+are required RFC 3339 timestamps, the window is half-open `[from, to)` so
+two adjacent exports share no row and miss none, and `format` is `json`
+(default) or `csv`. Both are sent as attachments named for the journal and
+the window's dates. An export is always the complete journal for its
+window: it takes no filter, and a window holding more than 50,000 rows is
+refused with 413 rather than truncated, because a truncated journal is one
+an accountant sums.
+
+**The ledger journal** is every movement of a member's money as the
+earnings module recorded it, in the order it occurred: `transition_id`,
+`entry_id`, `account_id`, `brand_id`, `network_transaction_id`,
+`from_state` (null for the opening transition), `to_state`, `amount`,
+`ledger_transfer_ref` (the ledger's own reference, C-7), `reason`,
+`actor_id` (null where a poll caused the move) and `occurred_at`. It is
+read against the ledger provider's statement.
+
+**The reconciliation journal** is every difference detection found, in the
+order it was found, with the statement it came from: `run_id`,
+`network_account_id`, `network_id`, `external_publisher_id`,
+`statement_period`, then `kind`, the report named, the network's own
+`transaction_id`, `expected`, `actual`, `delta`, `detected_at`, and the
+`resolution` if an operator made one. It is read against the network's
+statements.
+
+The JSON document carries `exported_at`, the window and `row_count`, so a
+truncated file is one a reader can detect. The CSV is the JSON flattened,
+every amount as two columns - minor units and currency - because C-6 holds
+in a spreadsheet exactly as it holds on the wire; text that this process
+did not write (reasons, network ids, brand and publisher ids) is guarded
+against being read as a formula.
 
 ## Contract test obligations
 
