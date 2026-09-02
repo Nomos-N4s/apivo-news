@@ -3000,6 +3000,256 @@
           }
         }
       }
+    },
+    "/api/v1/cashback/ops/held": {
+      "get": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "listHeldCredits",
+        "summary": "The held queue",
+        "description": "Every credit a hold rule kept out of a member's pending balance and nobody has yet decided (US7), oldest first. Each row carries the rule that held it and what the rule said, beside what the network reported - the sale, the commission, the network's own transaction id and status - so an operator decides from one screen.\n\nA credit leaves the queue by being released or rejected. A rejected credit's own row keeps the state it was rejected in (a rejection is a reversing entry beside it, never an edit), so \"still to decide\" is derived: held, and nothing undoes it.\n\nPaged like every operator queue: a `next_cursor` is present only when a further page exists.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the held queue.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldQueue"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A limit outside 1-100, an unknown or repeated query parameter, or a cursor this endpoint did not issue."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/cashback/ops/held/{id}/release": {
+      "post": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "releaseHeldCredit",
+        "summary": "Release a held credit",
+        "description": "Moves the credit to pending under the ordinary lifecycle, recording who released it and why on the transition and publishing `cashback.hold.released` in the same transaction (FR-061). Releasing confirms nothing: an operator can only assert that the credit is ordinary, not that the network paid, so the credit still waits on the network's word and a reconciled statement (FR-043) like any other.\n\nThe acting account is the token subject and is never part of the body (C-4).",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The held credit, as listed.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeldDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The recorded release, read back rather than echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldRelease"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An id that is not a UUID, a body that is not this endpoint's shape, or a blank reason (US7 scenario 3)."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No entry has this id. Entries are never deleted, so this id was never issued."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The credit is not held - the detail names the state it is in - or was already rejected, or moved between the read and the decision. Reload the queue before deciding it."
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "This deployment has not named HOUSE_ACCOUNT_NETWORK_RECEIVABLE, so no credit can be released or rejected. The queue itself stays readable."
+          }
+        }
+      }
+    },
+    "/api/v1/cashback/ops/held/{id}/reject": {
+      "post": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "rejectHeldCredit",
+        "summary": "Reject a held credit",
+        "description": "Undoes the credit the way a network reversal does: a reversing entry beside it, born reversed, citing the credit's own report with the operator as its cause, carrying the member's share back to the network receivable (SC-010). The credit's own row is never edited. Who rejected it and why are recorded on the reversing entry's opening transition, and `cashback.hold.rejected` is published in the same transaction (FR-061). A credit is rejected once.\n\nThe acting account is the token subject and is never part of the body (C-4).",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The held credit, as listed.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeldDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The recorded rejection: the credit, left as it was, and the reversing entry that undoes it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldRejection"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An id that is not a UUID, a body that is not this endpoint's shape, or a blank reason (US7 scenario 3)."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No entry has this id. Entries are never deleted, so this id was never issued."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The credit is not held - the detail names the state it is in - or was already rejected, or moved between the read and the decision. Reload the queue before deciding it."
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "This deployment has not named HOUSE_ACCOUNT_NETWORK_RECEIVABLE, so no credit can be released or rejected. The queue itself stays readable."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5919,6 +6169,251 @@
             "items": {
               "$ref": "#/components/schemas/MemberWithdrawal"
             }
+          }
+        }
+      },
+      "HeldCredit": {
+        "type": "object",
+        "description": "One held credit as the queue lists it: the credit, the rule holding it and what the rule said, and what the network reported.",
+        "required": [
+          "id",
+          "account_id",
+          "brand_id",
+          "network_transaction_id",
+          "click_id",
+          "hold_rule",
+          "hold_reason",
+          "amount",
+          "held_since",
+          "network_id",
+          "external_id",
+          "report_status",
+          "sale",
+          "commission",
+          "transacted_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "brand_id": {
+            "type": "string",
+            "description": "Which brand owes the credit (ADR-0004)."
+          },
+          "network_transaction_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The report the credit rests on (C-2)."
+          },
+          "click_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The click that earned it; null where an operator attributed the purchase by hand."
+          },
+          "hold_rule": {
+            "type": "string",
+            "enum": [
+              "shared-context",
+              "new-account",
+              "sale-cap",
+              "member-velocity"
+            ],
+            "description": "The rule holding it (US7)."
+          },
+          "hold_reason": {
+            "type": "string",
+            "description": "What the rule said when it held the credit; empty where a hold was recorded with no reason."
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "held_since": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "network_id": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string",
+            "description": "The network's own id for the transaction."
+          },
+          "report_status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "confirmed",
+              "declined",
+              "reversed"
+            ],
+            "description": "What the network last said about the transaction."
+          },
+          "sale": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "commission": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "transacted_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "HeldQueue": {
+        "type": "object",
+        "description": "One page of the held queue, oldest first.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeldCredit"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 256,
+            "description": "Null on the last page. Present only when a further page exists, so a cursor never leads to an empty one."
+          }
+        }
+      },
+      "HeldDecisionRequest": {
+        "type": "object",
+        "description": "Why an operator released or rejected a held credit. The acting account is taken from the bearer token and is never part of the body.",
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "The recorded reason (FR-061). Trimmed; a blank or whitespace-only reason is rejected with 400."
+          }
+        }
+      },
+      "HeldRelease": {
+        "type": "object",
+        "description": "The release the database recorded, read back rather than echoed.",
+        "required": [
+          "id",
+          "account_id",
+          "state",
+          "hold_rule",
+          "amount",
+          "released_by",
+          "reason",
+          "ledger_transfer_ref",
+          "released_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending"
+            ],
+            "description": "Where the credit now sits. Releasing never confirms."
+          },
+          "hold_rule": {
+            "type": "string",
+            "description": "The rule the credit was held under, which its row no longer carries."
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "released_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The operator account that released it, taken from the token subject."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "ledger_transfer_ref": {
+            "type": "string",
+            "description": "The posting that moved the money from the held stage to pending (D7)."
+          },
+          "released_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Stamped by the database, not supplied by the caller."
+          }
+        }
+      },
+      "HeldRejection": {
+        "type": "object",
+        "description": "The rejection the database recorded: the credit, left exactly as it was, and the reversing entry that undoes it (SC-010).",
+        "required": [
+          "id",
+          "reversal_entry_id",
+          "account_id",
+          "hold_rule",
+          "amount",
+          "rejected_by",
+          "reason",
+          "rejected_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The rejected credit. Its row is never edited."
+          },
+          "reversal_entry_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The reversing entry, born reversed, citing the credit's own report."
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "hold_rule": {
+            "type": "string"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "rejected_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The operator account that rejected it, taken from the token subject."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "rejected_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Stamped by the database, not supplied by the caller."
           }
         }
       }

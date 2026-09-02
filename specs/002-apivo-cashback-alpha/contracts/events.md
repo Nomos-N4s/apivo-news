@@ -88,6 +88,8 @@ there is a defect, and the dispatcher test asserts it.
 | `cashback.entry.created` | `{ entry_id, account_id, state, amount, at }` |
 | `cashback.entry.state_changed` | `{ entry_id, from, to, ledger_transfer_ref, at }` |
 | `cashback.entry.reversed` | `{ entry_id, reversal_entry_id, reason, at }` |
+| `cashback.hold.released` | `{ entry_id, account_id, hold_rule, released_by, reason, ledger_transfer_ref, at }` |
+| `cashback.hold.rejected` | `{ entry_id, reversal_entry_id, account_id, hold_rule, amount, rejected_by, reason, at }` |
 | `cashback.withdrawal.requested` / `.approved` / `.rejected` | `{ request_id, account_id, amount, actor?, reason?, at }` |
 | `cashback.payout.settled` / `.failed` | `{ payout_id, request_id, rail_reference?, classification?, at }` |
 | `cashback.reconciliation.statement_imported` | `{ run_id, network_account_id, network_id, period_start, period_end, lines, statement_digest, imported_by, at }` |
