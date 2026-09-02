@@ -388,7 +388,7 @@ type CashbackReconciliationDifference struct {
 	ResolvedAt     pgtype.Timestamptz
 	// The statement's own identifier for the line, carried only by paid_not_reported: money matching no report has no report to name, and without this an operator could not tell two such lines apart. For the kinds that name a report, the report's external_id is the line, and this stays null.
 	StatementTransactionID pgtype.Text
-	// What the operator decided (US6). statement_stands: the network's figure is the truth and our records follow its evidence. report_stands: our report is the truth and the network is being chased. explained: another fact accounts for the disagreement. Set with resolved_by, resolved_reason and resolved_at - all four or none.
+	// What the operator decided (US6). explained: another fact accounts for the disagreement and nothing is owed either way. absorbed: the delta is the business's to bear or to keep, and the member's figure stands as reported. Either lifts the difference from the confirmation gate; a difference the network still owes on stays open. Set with resolved_by, resolved_reason and resolved_at - all four or none.
 	Resolution pgtype.Text
 }
 
