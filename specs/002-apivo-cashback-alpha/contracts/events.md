@@ -103,6 +103,14 @@ consumer rule 2 forbids. Its subject is the queue row, and its idempotency
 key is the row — a row is resolved at most once, so a second append under
 that key means the resolution is already in the stream.
 
+`cashback.reconciliation.difference_found` is published once per difference
+detection records, never per pass: its subject and its idempotency key are
+the difference, and a repeat pass that finds a row already recorded neither
+writes it nor announces it again. `delta` is the money as paid less owed, in
+the difference's currency - negative for a shorted or unpaid report,
+positive for an overpayment or for money matching no report. The figures
+behind it are on the row.
+
 ## Published by `news` (existing)
 
 Cashback consumes **none** of them today. It may not start consuming one
