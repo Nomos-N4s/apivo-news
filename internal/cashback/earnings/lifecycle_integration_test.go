@@ -322,3 +322,26 @@ func TestTheJobRunsUnderItsOwnNameOnTheScheduler(t *testing.T) {
 		t.Errorf("driven by the scheduler the credit is %s, want pending", got.State)
 	}
 }
+
+// TestAReportThatEarnsNothingIsNeitherCreditedNorFailed. A band that
+// promises the member no share divides every commission to nothing; a
+// credit of nothing is not a credit (open.go), and the run says so without
+// counting it as a failure.
+func TestAReportThatEarnsNothingIsNeitherCreditedNorFailed(t *testing.T) {
+	t.Parallel()
+	j := begin(t)
+	j.seed(t)
+	if _, err := j.tx.Exec(j.ctx, `update cashback.offer set member_share_bps = 0 where id = $1`, j.offer); err != nil {
+		t.Fatalf("publishing a band with no member share: %v", err)
+	}
+	click := j.clickOut(t)
+	report := j.reports(t, click.Ref.Ref(), networks.StatusConfirmed)
+
+	if out := j.runs(t, j.lifecycle(t, earnings.HoldRules{})); out != (earnings.Outcome{}) {
+		t.Fatalf("the run did %+v over a share of nothing, want nothing done and nothing failed", out)
+	}
+	if entries := j.entriesCiting(t, report); len(entries) != 0 {
+		t.Errorf("a share of nothing earned %+v", entries)
+	}
+	j.wantBalances(t, 0, 0, 0)
+}

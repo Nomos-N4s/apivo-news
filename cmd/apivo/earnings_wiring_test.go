@@ -172,3 +172,48 @@ func TestNoCreditingJobWhereTheHouseAccountIsUnnamed(t *testing.T) {
 		t.Error("no house account is named and a crediting job was built anyway")
 	}
 }
+
+// TestRegisteringTheJobTwiceIsRefused. The name is what the fleet-wide lock
+// is taken on, so a second registration must fail rather than give two
+// jobs one lock - and the count must not say a job was added.
+func TestRegisteringTheJobTwiceIsRefused(t *testing.T) {
+	t.Parallel()
+	_, pool := opsWiringPool(t)
+	job, _, err := newEarningsLifecycle(discardLogger(), creditingConfigured(), pool, walletmemory.New())
+	if err != nil {
+		t.Fatalf("newEarningsLifecycle(): %v", err)
+	}
+	jobs := scheduler.New(slog.New(slog.DiscardHandler), &networkWiringLocker{}, scheduler.Config{})
+	if added, err := registerLifecycle(t.Context(), discardLogger(), jobs, job); err != nil || added != 1 {
+		t.Fatalf("first registration: added %d, err %v", added, err)
+	}
+	if added, err := registerLifecycle(t.Context(), discardLogger(), jobs, job); err == nil || added != 0 {
+		t.Errorf("second registration: added %d, err %v; want refused and counted as none", added, err)
+	}
+}
+
+// TestAJobWithNoRulesIsRegisteredAndSaysSo. Alpha may run without HOLD_*;
+// a deployment that meant to have rules and set none would credit every
+// self-dealing pattern straight to pending, so it is said at WARN.
+func TestAJobWithNoRulesIsRegisteredAndSaysSo(t *testing.T) {
+	t.Parallel()
+	_, pool := opsWiringPool(t)
+	cfg := creditingConfigured()
+	cfg.Cashback.HoldRules = config.HoldRulesConfig{}
+	job, missing, err := newEarningsLifecycle(discardLogger(), cfg, pool, walletmemory.New())
+	if err != nil || len(missing) != 0 || job == nil {
+		t.Fatalf("newEarningsLifecycle() = %v, %v, %v", job, missing, err)
+	}
+	if rules := job.Rules().Active(); len(rules) != 0 {
+		t.Fatalf("a deployment with no HOLD_* runs %v", rules)
+	}
+	var logged strings.Builder
+	log := slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	jobs := scheduler.New(slog.New(slog.DiscardHandler), &networkWiringLocker{}, scheduler.Config{})
+	if added, err := registerLifecycle(t.Context(), log, jobs, job); err != nil || added != 1 {
+		t.Fatalf("registerLifecycle(): added %d, err %v", added, err)
+	}
+	if !strings.Contains(logged.String(), "level=WARN") || !strings.Contains(logged.String(), "no HOLD_* rule") {
+		t.Errorf("registering with no rules logged %q, want a WARN naming HOLD_*", logged.String())
+	}
+}

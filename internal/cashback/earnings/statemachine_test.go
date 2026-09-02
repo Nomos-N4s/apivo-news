@@ -442,3 +442,40 @@ func TestAMoveThatCannotBeAnnouncedFails(t *testing.T) {
 		t.Fatalf("Apply() error = %v, want one wrapping %v", err, earnings.ErrNotAnnounced)
 	}
 }
+
+// TestAMoveIntoHeldCarriesItsRule. The schema checks the rule and the state
+// on the row as a whole, so a move into held has to write the rule in the
+// same statement - and a move out of it has to clear it.
+func TestAMoveIntoHeldCarriesItsRule(t *testing.T) {
+	t.Parallel()
+
+	row := anEntry(uuid.New(), earnings.StatePending)
+	entries, ledger := &fakeEntries{row: row}, &fakeLedger{}
+	hold := aMove(t, row)
+	hold.From, hold.To, hold.HoldRule = earnings.StatePending, earnings.StateHeld, earnings.RuleSaleCap
+
+	if _, err := machine(t, entries, ledger).Apply(t.Context(), &fakeOutbox{}, hold); err != nil {
+		t.Fatalf("Apply(pending to held): %v", err)
+	}
+	if len(entries.moves) != 1 || entries.moves[0].HoldRule.String != earnings.RuleSaleCap {
+		t.Errorf("the move wrote hold_rule %+v, want %q", entries.moves, earnings.RuleSaleCap)
+	}
+}
+
+// TestALedgerThatCannotNameAnAccountPostsNothing. EnsureAccount is the first
+// thing a posting asks; a ledger that cannot answer it must not be asked
+// to move anything, and the entry stays where it was read.
+func TestALedgerThatCannotNameAnAccountPostsNothing(t *testing.T) {
+	t.Parallel()
+
+	row := anEntry(uuid.New(), earnings.StatePending)
+	entries, ledger := &fakeEntries{row: row}, &fakeLedger{ensureErr: errors.New("the ledger is away")}
+
+	_, err := machine(t, entries, ledger).Apply(t.Context(), &fakeOutbox{}, aMove(t, row))
+	if !errors.Is(err, earnings.ErrNotPosted) {
+		t.Fatalf("Apply() = %v, want one wrapping %v", err, earnings.ErrNotPosted)
+	}
+	if len(ledger.posted) != 0 || len(entries.moves) != 0 || len(entries.transitions) != 0 {
+		t.Errorf("posted %d, moved %d, recorded %d; want nothing touched", len(ledger.posted), len(entries.moves), len(entries.transitions))
+	}
+}

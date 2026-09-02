@@ -395,3 +395,35 @@ func TestNothingIsAnnouncedAboutAReportTheDatabaseDidNotQueue(t *testing.T) {
 		t.Errorf("Unattributed(zero) = %v, want one wrapping %v", err, earnings.ErrNotAnnounced)
 	}
 }
+
+// TestNothingIsAnnouncedAboutADecisionNobodyTook. A release or a rejection
+// is a named human's act (FR-061); one naming no entry, no operator, or -
+// for a release - no transfer is a decision the database would not hold,
+// and it must not reach the stream.
+func TestNothingIsAnnouncedAboutADecisionNobodyTook(t *testing.T) {
+	ctx, tx := outboxTx(t)
+	a := announcer(t)
+	entry := earnings.Entry{ID: uuid.New(), Member: uuid.New()}
+
+	for name, released := range map[string]earnings.Released{
+		"no entry":    {ReleasedBy: uuid.New(), Transfer: "transfer-1"},
+		"no operator": {Entry: entry, Transfer: "transfer-1"},
+		"no transfer": {Entry: entry, ReleasedBy: uuid.New()},
+	} {
+		if err := a.HoldReleased(ctx, tx, released); !errors.Is(err, earnings.ErrNotAnnounced) {
+			t.Errorf("HoldReleased(%s) = %v, want one wrapping %v", name, err, earnings.ErrNotAnnounced)
+		}
+	}
+	for name, rejected := range map[string]earnings.Rejected{
+		"no credit":   {Reversal: entry, RejectedBy: uuid.New()},
+		"no reversal": {Credit: entry, RejectedBy: uuid.New()},
+		"no operator": {Credit: entry, Reversal: earnings.Entry{ID: uuid.New()}},
+	} {
+		if err := a.HoldRejected(ctx, tx, rejected); !errors.Is(err, earnings.ErrNotAnnounced) {
+			t.Errorf("HoldRejected(%s) = %v, want one wrapping %v", name, err, earnings.ErrNotAnnounced)
+		}
+	}
+	if stored := outboxAbout(ctx, t, tx, entry.ID); len(stored) != 0 {
+		t.Errorf("appended %d event(s) about refused decisions, want none", len(stored))
+	}
+}

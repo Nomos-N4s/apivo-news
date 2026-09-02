@@ -7,6 +7,7 @@ package earnings_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -294,4 +295,56 @@ func TestTheHeldQueuePagesOldestFirst(t *testing.T) {
 			t.Errorf("credit %s was listed %d times across the pages, want once", id, n)
 		}
 	}
+}
+
+// TestAReviewNeedsTheHouseAccountNamed. The receivable is refused at the
+// decision rather than at construction, so the queue stays readable in a
+// deployment that cannot move money yet - and neither decision moves any.
+func TestAReviewNeedsTheHouseAccountNamed(t *testing.T) {
+	t.Parallel()
+	j := begin(t)
+	j.seed(t)
+	report, held := j.heldByTheRules(t)
+	unnamed, err := earnings.NewReviews(j.tx, j.ledger, "")
+	if err != nil {
+		t.Fatalf("NewReviews(): %v", err)
+	}
+	if queue, err := unnamed.Held(j.ctx, earnings.HeldAfter{}, 10); err != nil || !listed(queue, held.ID) {
+		t.Errorf("the queue is not readable without a receivable: %v (err %v)", queue, err)
+	}
+	if _, err := unnamed.Release(j.ctx, earnings.Review{Entry: held.ID, Operator: j.operator, Reason: "fine"}); !errors.Is(err, earnings.ErrNoReceivable) {
+		t.Errorf("Release() without a receivable = %v, want ErrNoReceivable", err)
+	}
+	if _, err := unnamed.Reject(j.ctx, earnings.Review{Entry: held.ID, Operator: j.operator, Reason: "not fine"}); !errors.Is(err, earnings.ErrNoReceivable) {
+		t.Errorf("Reject() without a receivable = %v, want ErrNoReceivable", err)
+	}
+	j.wantBalances(t, clickTimeMemberShare, 0, 0)
+	if got := j.theOneEntryCiting(t, report); got.State != string(earnings.StateHeld) {
+		t.Errorf("a refused decision left the credit %s", got.State)
+	}
+}
+
+// TestAHeldRowNothingHeldCannotBeReleased. D7 forbids a state without its
+// transition; a held row with no transition into held is one somebody
+// wrote around the machine, and a release keyed on the hold that put it
+// there has nothing to derive its key from.
+func TestAHeldRowNothingHeldCannotBeReleased(t *testing.T) {
+	t.Parallel()
+	j := begin(t)
+	j.seed(t)
+	click := j.clickOut(t)
+	report := j.reports(t, click.Ref.Ref(), networks.StatusPending)
+	var orphan uuid.UUID
+	if err := j.tx.QueryRow(j.ctx, `
+		insert into cashback.entry
+		    (brand_id, account_id, network_transaction_id, click_id, state, amount_minor, currency, hold_rule)
+		values ('apivo-de', $1, $2, $3, 'held', 150, 'EUR', $4) returning id`,
+		j.member, report, click.ID, earnings.RuleSaleCap).Scan(&orphan); err != nil {
+		t.Fatalf("writing a held row around the machine: %v", err)
+	}
+	_, err := j.reviews(t).Release(j.ctx, earnings.Review{Entry: orphan, Operator: j.operator, Reason: "looks fine"})
+	if !errors.Is(err, earnings.ErrNotReviewed) || !strings.Contains(err.Error(), "no transition held it") {
+		t.Errorf("Release() of a row nothing held = %v, want ErrNotReviewed saying no transition held it", err)
+	}
+	j.wantBalances(t, 0, 0, 0)
 }
