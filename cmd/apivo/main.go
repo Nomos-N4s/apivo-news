@@ -651,7 +651,7 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	return append(routes,
 		platformhttp.Route{
 			Pattern: opsPrefix,
-			Handler: ops.NewHandler(log, opsStore, approvals, refusals, settlements, newOperatorAuth(ids, roles)),
+			Handler: ops.NewHandler(log, opsStore, approvals, refusals, settlements, opsStore, newOperatorAuth(ids, roles)),
 		},
 		// Mounted at the path AND at its subtree, so a stray sub-path is
 		// answered in problem+json by the module rather than redirected by

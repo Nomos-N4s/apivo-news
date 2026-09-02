@@ -36,7 +36,12 @@ type Handler struct {
 	// see [Handler.settleWithdrawal] for why a deployment without one
 	// answers 503 on that route alone rather than not serving the queue.
 	settlements WithdrawalSettler
-	auth        OperatorAuthenticator
+	// reconciliation imports statements, derives and lists their
+	// differences, and records decisions on them (US6). One dependency for
+	// the four because one type answers them all, and because the import
+	// endpoint needs two of them in sequence.
+	reconciliation ReconciliationStore
+	auth           OperatorAuthenticator
 	// allow is the 405 classifier, derived from routes() in NewHandler so
 	// it cannot drift from what is actually registered.
 	allow platformhttp.AllowTable
@@ -46,10 +51,10 @@ type Handler struct {
 // composition root to mount. Every route sits behind the requireOperator
 // gate - authentication wraps the whole table, so a future route cannot be
 // added unauthenticated by omission.
-func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, refusals WithdrawalRefuser, settlements WithdrawalSettler, auth OperatorAuthenticator) http.Handler {
+func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, refusals WithdrawalRefuser, settlements WithdrawalSettler, reconciliation ReconciliationStore, auth OperatorAuthenticator) http.Handler {
 	h := &Handler{
 		log: log, store: store, approvals: approvals, refusals: refusals,
-		settlements: settlements, auth: auth,
+		settlements: settlements, reconciliation: reconciliation, auth: auth,
 	}
 	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
@@ -75,6 +80,10 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"POST " + Prefix + "withdrawals/{id}/approve":  h.approveWithdrawal,
 		"POST " + Prefix + "withdrawals/{id}/reject":   h.rejectWithdrawal,
 		"POST " + Prefix + "withdrawals/{id}/settle":   h.settleWithdrawal,
+
+		"POST " + Prefix + "reconciliation/runs":                     h.importStatement,
+		"GET " + Prefix + "reconciliation/runs/{id}/differences":     h.listDifferences,
+		"POST " + Prefix + "reconciliation/differences/{id}/resolve": h.resolveDifference,
 	}
 }
 

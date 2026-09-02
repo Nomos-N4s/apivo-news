@@ -7,6 +7,9 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
+
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/payout"
 )
 
@@ -50,4 +53,25 @@ type unreachableSettler struct{}
 
 func (unreachableSettler) Record(context.Context, payout.Recording) (payout.Settlement, error) {
 	return payout.Settlement{}, errors.New("ops: this case must not reach the settler")
+}
+
+// unreachableReconciliation stands in for the reconciliation store where a
+// case is about something else: every path to it is refused before the
+// handler reaches it.
+type unreachableReconciliation struct{}
+
+func (unreachableReconciliation) ImportStatement(context.Context, ops.Statement) (ops.ImportedStatement, error) {
+	return ops.ImportedStatement{}, errors.New("this case must not import a statement")
+}
+
+func (unreachableReconciliation) DetectDifferences(context.Context, uuid.UUID) (ops.Detection, error) {
+	return ops.Detection{}, errors.New("this case must not detect differences")
+}
+
+func (unreachableReconciliation) ListDifferences(context.Context, uuid.UUID, ops.DifferenceAfter, int) ([]ops.ListedDifference, error) {
+	return nil, errors.New("this case must not list differences")
+}
+
+func (unreachableReconciliation) ResolveDifference(context.Context, ops.Resolution) (ops.Resolved, error) {
+	return ops.Resolved{}, errors.New("this case must not resolve a difference")
 }

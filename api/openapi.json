@@ -742,6 +742,254 @@
         }
       }
     },
+    "/api/v1/cashback/ops/reconciliation/runs": {
+      "post": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "importStatement",
+        "summary": "Import a network's payment statement and derive its differences",
+        "description": "Records the statement verbatim and immutably as a reconciliation run (C-3), with who imported it, then lays it beside the current reports for the same publisher account and records every disagreement (US6 scenario 1): a confirmed report in the period no line paid, a line paying a report a different figure than it is owed, and a line naming no report at all.\n\nThe same statement for the same account and period imported again is the same run, answered 200 rather than 201, and detection runs again recording only what the first pass did not - so a retry of an upload that timed out is safe. The document is read in full before anything is written: a statement whose lines cannot be read is refused with 400 naming the line, because the row it would land in cannot be corrected afterwards.\n\nImporting moves no money and changes no entry. The differences it records keep the affected transactions from confirming (FR-043) until an operator resolves them.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatementImport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The statement became a new run; detection has run over it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationRun"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "This exact statement for this account and period was already imported; this is that run, with detection run again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A body that is not this endpoint's shape or is larger than 4 MiB, an account id that is not a UUID, a period end that is not a timestamp or is not after the start, a document without a `lines` array, or a line that names no transaction, names one twice, or states what it paid in anything but minor units and a currency. The detail names the line and the field."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No publisher account has this id."
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The body is larger than 4 MiB."
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/cashback/ops/reconciliation/runs/{id}/differences": {
+      "get": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "listRunDifferences",
+        "summary": "The differences a reconciliation run produced",
+        "description": "Every disagreement between the statement and the reports, oldest first, each with the figures behind it and the money as a delta - what was paid less what was owed, negative for a shorted or unpaid report, positive for an overpayment or money nothing expected. Resolved rows stay listed with their decision; `superseded` flags a difference filed against a report the network has since restated, so an operator knows the disagreement is with what the network used to say.\n\nPaged like every operator queue: a `next_cursor` is present only when a further page exists.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The run, as returned by the import.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the run's differences.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DifferenceQueue"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A run id that is not a UUID, a limit outside 1-100, an unknown or repeated query parameter, or a cursor this endpoint did not issue."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No reconciliation run has this id."
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/cashback/ops/reconciliation/differences/{id}/resolve": {
+      "post": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "resolveDifference",
+        "summary": "Decide a difference",
+        "description": "Records who decided, what, why and when, together and once, and publishes that fact in the same transaction (FR-061). Either verdict lifts the difference from the confirmation gate (FR-043): `explained` - another fact accounts for the disagreement and nothing is owed either way; `absorbed` - the delta is the business's to bear or to keep, and the member's figure stands as reported.\n\nThere is deliberately no verdict for \"the network owes us and we are chasing it\": an open difference is the chase, and it keeps the gate shut until the money arrives or the network restates the report. Nothing else moves: any member-facing effect of a disagreement is a new posting resting on the network's own restated report (C-3), never on an operator's reading of it.\n\nThe acting account is the token subject and is never part of the body. A row is decided once; a second decision answers 409 naming the first.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The difference, as listed.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DifferenceResolutionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The recorded decision, read back rather than echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DifferenceResolution"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An id that is not a UUID, a body that is not this endpoint's shape, a verdict other than `explained` or `absorbed`, or a blank reason."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No difference has this id. Rows are never deleted, so this id was never issued."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Somebody already decided this difference. The detail says who, what and when."
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/cashback/export": {
       "get": {
         "tags": [
@@ -3959,6 +4207,375 @@
             "type": "string",
             "format": "uuid",
             "description": "The operator account that closed it, taken from the token subject."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "resolved_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Stamped by the database, not supplied by the caller."
+          }
+        }
+      },
+      "StatementPeriod": {
+        "type": "object",
+        "description": "The half-open interval [start, end) a statement covers. Reports are matched to it on when the purchase happened, not on when it was polled.",
+        "required": [
+          "start",
+          "end"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Must be after start, once both are truncated to the microseconds the database keeps."
+          }
+        }
+      },
+      "StatementImport": {
+        "type": "object",
+        "description": "A network's payment statement as an operator imports it. The acting account is taken from the bearer token.",
+        "required": [
+          "network_account_id",
+          "period",
+          "statement"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "network_account_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The publisher account the statement is for."
+          },
+          "period": {
+            "$ref": "#/components/schemas/StatementPeriod"
+          },
+          "statement": {
+            "type": "object",
+            "description": "The network's document, stored verbatim. `lines` is required - a statement that paid nothing says so with an empty list - and every line names one transaction once and says what was paid for it in minor units and a currency (C-6); a negative amount is a deduction. Any other member, here or on a line, is kept and ignored.",
+            "required": [
+              "lines"
+            ],
+            "properties": {
+              "lines": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "transaction_id",
+                    "paid"
+                  ],
+                  "properties": {
+                    "transaction_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The network's own id for the transaction, as its reports carry it. Surrounding whitespace is removed."
+                    },
+                    "paid": {
+                      "$ref": "#/components/schemas/Money"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "DifferenceDetection": {
+        "type": "object",
+        "description": "What the detection pass over the run derived and recorded.",
+        "required": [
+          "found",
+          "recorded"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "found": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Every difference derived this pass, recorded or already there."
+          },
+          "recorded": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many of those were new rows. The rest were already recorded, resolved or not, and were not raised again."
+          }
+        }
+      },
+      "ReconciliationRun": {
+        "type": "object",
+        "description": "An imported statement, as recorded, and what detection made of it.",
+        "required": [
+          "run_id",
+          "network_account_id",
+          "network_id",
+          "period",
+          "lines",
+          "statement_digest",
+          "imported_by",
+          "imported_at",
+          "already_imported",
+          "differences"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "network_account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "network_id": {
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/StatementPeriod"
+          },
+          "lines": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many payments the statement names."
+          },
+          "statement_digest": {
+            "type": "string",
+            "description": "md5 of the statement as stored, computed by the database. With the account and the period it is what makes a retried import the same run."
+          },
+          "imported_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The operator account, taken from the token subject."
+          },
+          "imported_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Stamped by the database."
+          },
+          "already_imported": {
+            "type": "boolean",
+            "description": "True when this exact statement for this account and period was here before this call; run_id, imported_by and imported_at are then the earlier import's."
+          },
+          "differences": {
+            "$ref": "#/components/schemas/DifferenceDetection"
+          }
+        }
+      },
+      "DifferenceResolutionRecord": {
+        "type": "object",
+        "description": "A recorded decision on a difference.",
+        "required": [
+          "resolution",
+          "resolved_by",
+          "reason",
+          "resolved_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "explained",
+              "absorbed"
+            ]
+          },
+          "resolved_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The operator account, taken from the token subject."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "resolved_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Stamped by the database."
+          }
+        }
+      },
+      "Difference": {
+        "type": "object",
+        "description": "One disagreement between a statement and the reports.",
+        "required": [
+          "id",
+          "kind",
+          "network_transaction_id",
+          "transaction_id",
+          "expected",
+          "actual",
+          "delta",
+          "detected_at",
+          "superseded",
+          "resolution"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "reported_not_paid",
+              "paid_not_reported",
+              "amount_mismatch"
+            ]
+          },
+          "network_transaction_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The report named; null for money matching no report."
+          },
+          "transaction_id": {
+            "type": "string",
+            "description": "The network's own id for the transaction: the report's where one is named, the statement line's otherwise."
+          },
+          "expected": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "actual": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delta": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "detected_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "superseded": {
+            "type": "boolean",
+            "description": "The network has restated the report this difference names since it was filed: the disagreement is with what the network used to say."
+          },
+          "resolution": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DifferenceResolutionRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null while the row is open."
+          }
+        }
+      },
+      "DifferenceQueue": {
+        "type": "object",
+        "description": "One page of a run's differences, oldest first.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Difference"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 256,
+            "description": "Null on the last page. Present only when a further page exists, so a cursor never leads to an empty one."
+          }
+        }
+      },
+      "DifferenceResolutionRequest": {
+        "type": "object",
+        "description": "What an operator decided about a difference and why. The acting account is taken from the bearer token and is never part of the body.",
+        "required": [
+          "resolution",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "explained",
+              "absorbed"
+            ],
+            "description": "explained: another fact accounts for the disagreement and nothing is owed either way. absorbed: the delta is the business's to bear or to keep."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "The recorded reason (FR-061). Trimmed; a blank or whitespace-only reason is rejected with 400."
+          }
+        }
+      },
+      "DifferenceResolution": {
+        "type": "object",
+        "description": "The decision the database recorded, read back rather than echoed.",
+        "required": [
+          "id",
+          "run_id",
+          "kind",
+          "resolution",
+          "resolved_by",
+          "reason",
+          "resolved_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "reported_not_paid",
+              "paid_not_reported",
+              "amount_mismatch"
+            ]
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "explained",
+              "absorbed"
+            ]
+          },
+          "resolved_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The operator account that decided it, taken from the token subject."
           },
           "reason": {
             "type": "string"

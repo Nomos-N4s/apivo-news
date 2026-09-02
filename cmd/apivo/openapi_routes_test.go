@@ -364,7 +364,7 @@ func (unreachableStore) Provenance(context.Context, uuid.UUID) (editorial.Proven
 // a status code alone would dress the loss up as an ordinary 404.
 func TestOperatorPatternsAreReachable(t *testing.T) {
 	t.Parallel()
-	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, unreachableOpsRefuser{}, unreachableOpsSettler{}, alwaysOperator{})
+	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, unreachableOpsRefuser{}, unreachableOpsSettler{}, unreachableOpsReconciliation{}, alwaysOperator{})
 
 	for _, pattern := range ops.Patterns() {
 		t.Run(pattern, func(t *testing.T) {
@@ -413,6 +413,27 @@ func (unreachableOpsStore) Open(context.Context, networks.After, int) ([]network
 
 func (unreachableOpsStore) Dismiss(context.Context, ops.Dismissal) (ops.Dismissed, error) {
 	return ops.Dismissed{}, errors.New("the route probe must not reach the store")
+}
+
+// unreachableOpsReconciliation stands in for the reconciliation store in
+// the route probes. The probes send bodies no handler accepts and ids no
+// row has, so nothing here is reached.
+type unreachableOpsReconciliation struct{}
+
+func (unreachableOpsReconciliation) ImportStatement(context.Context, ops.Statement) (ops.ImportedStatement, error) {
+	return ops.ImportedStatement{}, errors.New("the route probe must not reach the store")
+}
+
+func (unreachableOpsReconciliation) DetectDifferences(context.Context, uuid.UUID) (ops.Detection, error) {
+	return ops.Detection{}, errors.New("the route probe must not reach the store")
+}
+
+func (unreachableOpsReconciliation) ListDifferences(context.Context, uuid.UUID, ops.DifferenceAfter, int) ([]ops.ListedDifference, error) {
+	return nil, errors.New("the route probe must not reach the store")
+}
+
+func (unreachableOpsReconciliation) ResolveDifference(context.Context, ops.Resolution) (ops.Resolved, error) {
+	return ops.Resolved{}, errors.New("the route probe must not reach the store")
 }
 
 // unreachableOpsApprover stands in for the withdrawal approver in the route

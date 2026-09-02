@@ -235,15 +235,84 @@ because a queue row is never deleted and so an unknown id was never issued.
 | `GET /ops/withdrawals?state=awaiting_approval` | approval queue |
 | `POST /ops/withdrawals/{id}/approve` | **records `approved_by` from the token subject** (C-4); submits the payout with the request-derived idempotency key (C-5, D8) |
 | `POST /ops/withdrawals/{id}/reject` | body `{ reason }`; releases the reservation back to confirmed |
-| `POST /ops/reconciliation/runs` | import a network statement; stores it verbatim and immutably |
-| `GET /ops/reconciliation/runs/{id}/differences` | every difference with its amount delta (US6 scenario 1) |
-| `POST /ops/reconciliation/differences/{id}/resolve` | body `{ resolution, reason }`; any member-facing effect is a new posting, never an edit |
+| `POST /ops/reconciliation/runs` | import a network statement and derive its differences; see below |
+| `GET /ops/reconciliation/runs/{id}/differences` | every difference with its amount delta (US6 scenario 1); see below |
+| `POST /ops/reconciliation/differences/{id}/resolve` | body `{ resolution, reason }`; see below |
 | `GET /ops/provenance/payouts/{id}` | the C-7 chain in one response |
 | `GET /ops/exports/ledger` · `/exports/reconciliation` | accounting exports (FR-062) |
 
 Every operator action appends to `domain_event` with the acting account and
 the reason (FR-061). An action with a blank reason is rejected with 400 —
 the audit record is part of the action, not an afterthought.
+
+### POST /ops/reconciliation/runs
+
+Body `{ network_account_id, period: { start, end }, statement }`. The
+statement is the network's document and is stored verbatim and immutably
+(C-3); the only shape this API reads from it is
+
+```json
+{"lines": [{"transaction_id": "<the network's own id>", "paid": {"minor": 250, "currency": "EUR"}}]}
+```
+
+`lines` is required — a statement that paid nothing says so with an empty
+list — and every line names one transaction once and says what was paid in
+minor units and a currency; a negative amount is a deduction. Everything
+else in the document is kept and ignored. The document is read in full
+before anything is written: a statement whose lines cannot be read is
+refused with 400 naming the line, because the row it would land in cannot
+be corrected afterwards.
+
+**The same statement for the same account and period is one run.** A
+second import answers 200 with the first run rather than 201 with a second
+one, so a retry of an upload that timed out is safe. Detection runs on every
+import, recording only what an earlier pass did not.
+
+**Detection derives three kinds of difference**, laying the lines beside the
+*current* report of every transaction the statement names plus every
+current confirmed report for the period: `reported_not_paid` (a confirmed
+report in the period no line paid), `amount_mismatch` (a line paying a
+report a different figure than it is owed — the commission while the
+network intends to pay, nothing once it declined or reversed), and
+`paid_not_reported` (a line naming no report, or one in another currency).
+A pending report is not yet expected on a statement; if the statement pays
+it anyway, the amount must still match.
+
+Importing moves no money and changes no entry. An open difference keeps its
+transaction from confirming (FR-043); resolving it lifts that.
+
+### GET /ops/reconciliation/runs/{id}/differences
+
+One page of the run's differences, oldest first, paged with `limit` and
+`cursor` like every operator queue. Each item carries `kind`, the report
+named (`network_transaction_id`, null for money matching no report), the
+network's own `transaction_id` either way, `expected` and `actual` as
+`{ minor, currency }` where the kind has them, `delta` (paid less owed:
+negative for a shorted or unpaid report, positive for an overpayment or
+money nothing expected), `superseded` (the network has restated the report
+since the difference was filed), and `resolution` — null while open,
+otherwise `{ resolution, resolved_by, reason, resolved_at }`.
+
+### POST /ops/reconciliation/differences/{id}/resolve
+
+Body `{ resolution, reason }`. The reason is required and non-blank; the
+acting account is the token subject. A row is decided once: a second
+decision answers 409 naming the first.
+
+**Two verdicts, and neither moves money.** `explained` — another fact
+accounts for the disagreement and nothing is owed either way (a later
+statement paid it, the network has since restated the report and the
+reversal followed, two lines were one payment). `absorbed` — the delta is
+the business's to bear or to keep, and the member's figure stands as
+reported. Either lifts the difference from the confirmation gate.
+
+**"The network owes us and we are chasing it" is deliberately not a
+verdict.** An open difference *is* the chase, and it keeps the gate shut
+until the money arrives or the network restates the report; resolving it
+early would confirm a member's balance out of money never received, which
+is the one thing US6 exists to prevent. Any member-facing effect of a
+disagreement is a new posting resting on the network's own restated report
+(C-3), never on an operator's reading of it.
 
 ## Contract test obligations
 

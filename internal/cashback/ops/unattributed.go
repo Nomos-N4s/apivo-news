@@ -15,6 +15,9 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
@@ -157,14 +160,22 @@ func unattributedItemOf(row networks.OpenReport) unattributedItem {
 // the first, so `?limit=10&limit=20` would silently answer one of two
 // contradictory requests.
 func parseQueuePage(values url.Values) (after networks.After, limit int, detail string, ok bool) {
+	at, rowID, limit, detail, ok := parsePage(values, unattributedCursors)
+	return networks.After{DetectedAt: at, ID: rowID}, limit, detail, ok
+}
+
+// parsePage reads the paging parameters every operator queue shares, for
+// the list whose cursors it accepts. The position is the zero value when no
+// cursor was supplied.
+func parsePage(values url.Values, list string) (at time.Time, rowID uuid.UUID, limit int, detail string, ok bool) {
 	for name, supplied := range values {
 		switch name {
 		case "limit", "cursor":
 			if len(supplied) > 1 {
-				return networks.After{}, 0, "query parameter " + strconv.Quote(name) + " was supplied " + strconv.Itoa(len(supplied)) + " times; supply it at most once", false
+				return time.Time{}, uuid.Nil, 0, "query parameter " + strconv.Quote(name) + " was supplied " + strconv.Itoa(len(supplied)) + " times; supply it at most once", false
 			}
 		default:
-			return networks.After{}, 0, "unknown query parameter " + strconv.Quote(name) + "; this endpoint accepts limit and cursor", false
+			return time.Time{}, uuid.Nil, 0, "unknown query parameter " + strconv.Quote(name) + "; this endpoint accepts limit and cursor", false
 		}
 	}
 
@@ -175,17 +186,17 @@ func parseQueuePage(values url.Values) (after networks.After, limit int, detail 
 	if values.Has("limit") {
 		parsed, err := strconv.ParseInt(values.Get("limit"), 10, 32)
 		if err != nil || parsed < 1 || parsed > maxQueueLimit {
-			return networks.After{}, 0, "limit must be a whole number between 1 and " + strconv.Itoa(maxQueueLimit), false
+			return time.Time{}, uuid.Nil, 0, "limit must be a whole number between 1 and " + strconv.Itoa(maxQueueLimit), false
 		}
 		limit = int(parsed)
 	}
 
 	if values.Has("cursor") {
-		at, rowID, err := decodeCursor(unattributedCursors, values.Get("cursor"))
+		at, rowID, err := decodeCursor(list, values.Get("cursor"))
 		if err != nil {
-			return networks.After{}, 0, "cursor is not one this endpoint issued", false
+			return time.Time{}, uuid.Nil, 0, "cursor is not one this endpoint issued", false
 		}
-		after = networks.After{DetectedAt: at, ID: rowID}
+		return at, rowID, limit, "", true
 	}
-	return after, limit, "", true
+	return time.Time{}, uuid.Nil, limit, "", true
 }

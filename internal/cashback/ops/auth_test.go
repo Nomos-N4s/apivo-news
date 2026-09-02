@@ -57,7 +57,7 @@ func probe(t *testing.T, auth ops.OperatorAuthenticator, authorization string) *
 		req.Header.Set("Authorization", authorization)
 	}
 	rec := httptest.NewRecorder()
-	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, auth).ServeHTTP(rec, req)
+	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, unreachableReconciliation{}, auth).ServeHTTP(rec, req)
 	return rec
 }
 

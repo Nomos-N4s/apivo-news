@@ -28,7 +28,7 @@ func approve(t *testing.T, approver ops.WithdrawalApprover, id, body string) *ht
 		ops.Prefix+"withdrawals/"+id+"/approve", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer t")
 	rec := httptest.NewRecorder()
-	ops.NewHandler(discardLogger(), unreachableStore{}, approver, unreachableRefuser{}, unreachableSettler{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
+	ops.NewHandler(discardLogger(), unreachableStore{}, approver, unreachableRefuser{}, unreachableSettler{}, unreachableReconciliation{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
 	return rec
 }
 
@@ -233,7 +233,7 @@ func TestApprovingNeedsTheOperatorRole(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost,
 		ops.Prefix+"withdrawals/"+uuid.NewString()+"/approve", nil)
 	rec := httptest.NewRecorder()
-	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{},
+	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, unreachableReconciliation{},
 		stubAuth{err: fmt.Errorf("%w: a reader", ops.ErrNotOperator)}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden && rec.Code != http.StatusUnauthorized {
@@ -276,7 +276,7 @@ func reject(t *testing.T, refuser ops.WithdrawalRefuser, id, body string) *httpt
 		ops.Prefix+"withdrawals/"+id+"/reject", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer t")
 	rec := httptest.NewRecorder()
-	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, refuser, unreachableSettler{},
+	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, refuser, unreachableSettler{}, unreachableReconciliation{},
 		stubAuth{op: anOperator}).ServeHTTP(rec, req)
 	return rec
 }
@@ -442,7 +442,7 @@ func settle(t *testing.T, settler ops.WithdrawalSettler, id, body string) *httpt
 	req.Header.Set("Authorization", "Bearer t")
 	rec := httptest.NewRecorder()
 	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{},
-		settler, stubAuth{op: anOperator}).ServeHTTP(rec, req)
+		settler, unreachableReconciliation{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
 	return rec
 }
 

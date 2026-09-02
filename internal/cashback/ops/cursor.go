@@ -19,7 +19,10 @@ const cursorSeparator = "|"
 // cleanly as a position in another - and a client replaying one against the
 // wrong queue would get a 200 with rows silently missing instead of the 400
 // the contract promises for a cursor the endpoint did not issue.
-const unattributedCursors = "unattributed"
+const (
+	unattributedCursors = "unattributed"
+	differenceCursors   = "differences"
+)
 
 // maxCursorBytes bounds the encoded cursor the endpoints will even look at,
 // mirroring the other modules: a real one is a short tag, an RFC 3339
