@@ -86,6 +86,62 @@ func TestMain(m *testing.M) {
 
 // beginTx opens a transaction that is always rolled back, keeping tests
 // independent and the database clean.
+// truncateLockTimeout bounds how long a TRUNCATE below waits for the table
+// locks it needs, and it is deliberately well under Postgres's one-second
+// deadlock_timeout.
+//
+// These tests were already setting a lock_timeout - of ten seconds, which is
+// ten times the detector's own interval and so could never do this job. A
+// TRUNCATE ... CASCADE takes ACCESS EXCLUSIVE on a table and every table the
+// cascade reaches, one at a time; any reader holding ACCESS SHARE on one of
+// them while reaching for another closes a lock cycle. Postgres breaks a
+// cycle by aborting somebody, and with a ten-second bound the somebody is
+// never this transaction - it is the reader, in whatever package happened to
+// be running alongside. `go test ./...` runs the packages concurrently
+// against one database, so there is always such a reader.
+//
+// That is not hypothetical: the merchant catalogue's own history read died
+// with 40P01 on main while the ledger's truncate test passed. Giving up the
+// wait BEFORE the detector runs is what stops it. The only statement that
+// can lose is then this one, and losing means trying again.
+const truncateLockTimeout = "200ms"
+
+// truncateLockAttempts bounds the retry. Reaching it means something held
+// the tables for several seconds running, which is a fault worth failing on
+// rather than waiting out.
+const truncateLockAttempts = 20
+
+// refusedTruncate runs a TRUNCATE the schema must refuse and returns the
+// refusal, retrying while another session holds the tables it needs.
+//
+// Each attempt gets its own transaction, because a statement that fails
+// aborts the one it ran in. A caller gets back the database's verdict on the
+// TRUNCATE itself; a lock it could not take is never one.
+func refusedTruncate(t *testing.T, stmt string) error {
+	t.Helper()
+	ctx := context.Background()
+
+	for attempt := 1; ; attempt++ {
+		tx := beginTx(t)
+		if _, err := tx.Exec(ctx, `set local lock_timeout = '`+truncateLockTimeout+`'`); err != nil {
+			t.Fatalf("bounding the lock wait: %v", err)
+		}
+		_, err := tx.Exec(ctx, stmt)
+		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
+			t.Fatalf("rolling back after %q: %v", stmt, rollbackErr)
+		}
+
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != codeLockNotAvailable {
+			return err
+		}
+		if attempt == truncateLockAttempts {
+			t.Fatalf("%q could not take its tables in %d attempts of %s; something is holding them far longer than a test should",
+				stmt, attempt, truncateLockTimeout)
+		}
+	}
+}
+
 func beginTx(t *testing.T) pgx.Tx {
 	t.Helper()
 	if testPool == nil {
@@ -1612,13 +1668,7 @@ func TestImmutableTablesRejectTruncate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tx := beginTx(t)
-			ctx := context.Background()
-			if _, err := tx.Exec(ctx, `set local lock_timeout = '10s'`); err != nil {
-				t.Fatalf("set lock_timeout: %v", err)
-			}
-			_, err := tx.Exec(ctx, tt.stmt)
-			wantPgCode(t, err, codeRaiseException)
+			wantPgCode(t, refusedTruncate(t, tt.stmt), codeRaiseException)
 		})
 	}
 }

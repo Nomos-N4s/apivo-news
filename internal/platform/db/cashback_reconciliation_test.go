@@ -64,12 +64,7 @@ func TestReconciliationRunIsImmutable(t *testing.T) {
 // TRUNCATE takes ACCESS EXCLUSIVE locks that would contend with the other
 // subtests' open transactions.
 func TestReconciliationRunRejectsTruncate(t *testing.T) {
-	tx := beginTx(t)
-	ctx := context.Background()
-	if _, err := tx.Exec(ctx, `set local lock_timeout = '10s'`); err != nil {
-		t.Fatalf("set lock_timeout: %v", err)
-	}
-	_, err := tx.Exec(ctx, `truncate cashback.reconciliation_run cascade`)
+	err := refusedTruncate(t, `truncate cashback.reconciliation_run cascade`)
 	wantImmutableRefusal(t, err, "reconciliation_run", "TRUNCATE")
 }
 
