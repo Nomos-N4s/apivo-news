@@ -111,6 +111,14 @@ for the same account and period is the same run, so it is announced once.
 It carries who imported it (FR-061) and how many lines the statement names;
 the statement itself stays in the run.
 
+`cashback.reconciliation.difference_found` is published once per difference
+detection records, never per pass: its subject and its idempotency key are
+the difference, and a repeat pass that finds a row already recorded neither
+writes it nor announces it again. `delta` is the money as paid less owed, in
+the difference's currency - negative for a shorted or unpaid report,
+positive for an overpayment or for money matching no report. The figures
+behind it are on the row.
+
 ## Published by `news` (existing)
 
 Cashback consumes **none** of them today. It may not start consuming one

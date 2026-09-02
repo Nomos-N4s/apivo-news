@@ -21,7 +21,9 @@ select exists (
 ) and not exists (
     select 1
       from cashback.reconciliation_difference diff
-     where diff.network_transaction_id = nt.id
+      join cashback.network_transaction named on named.id = diff.network_transaction_id
+     where named.network_id = nt.network_id
+       and named.external_id = nt.external_id
        and diff.resolved_at is null
 ) as reconciled
   from cashback.network_transaction nt
@@ -58,6 +60,15 @@ select exists (
 // difference is money on the statement matching no report at all, so it
 // names none and cannot be about this transaction; the shape constraint on
 // the table makes that structural rather than a convention.
+//
+// A difference blocks the TRANSACTION, not one row of it. Detection (T111)
+// names the report as the network currently states it - the tip of the
+// chain - while an entry cites the report it was opened on, which may since
+// have been superseded. Matching differences on the row alone would let an
+// entry confirm past a disagreement filed against the same transaction's
+// newer row. So the match is on the chain: any unresolved difference naming
+// a row with this transaction's network and external id. The join is served
+// by the (network_id, external_id, ...) unique index.
 func (q *Queries) ReportIsReconciled(ctx context.Context, networkTransactionID pgtype.UUID) (pgtype.Bool, error) {
 	row := q.db.QueryRow(ctx, reportIsReconciled, networkTransactionID)
 	var reconciled pgtype.Bool

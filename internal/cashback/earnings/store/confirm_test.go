@@ -236,15 +236,123 @@ func TestTheReconciliationGateAgainstSchema(t *testing.T) {
 		run := statement(ctx, t, tx, publisher, operator(ctx, t, tx), from, to)
 		if _, err := tx.Exec(ctx, `
 			insert into cashback.reconciliation_difference (
-				run_id, network_account_id, kind, network_transaction_id,
+				run_id, network_account_id, kind, network_transaction_id, statement_transaction_id,
 				expected_minor, actual_minor, currency)
-			values ($1, $2, 'paid_not_reported', null, null, 700, 'EUR')`,
+			values ($1, $2, 'paid_not_reported', null, 'UNKNOWN-1', null, 700, 'EUR')`,
 			run, publisher); err != nil {
 			t.Fatalf("filing the unmatched payment: %v", err)
 		}
 
 		if !reconciled(ctx, t, q, report) {
 			t.Error("a payment matching no report blocked a report it does not name")
+		}
+	})
+}
+
+// supersededBy stores a newer report of the same transaction, so that the
+// chain's tip is no longer the row an entry would cite.
+func supersededBy(ctx context.Context, t *testing.T, tx pgx.Tx, networkID string, publisher, predecessor pgtype.UUID, externalID string) pgtype.UUID {
+	t.Helper()
+	var id pgtype.UUID
+	if err := tx.QueryRow(ctx, `
+		insert into cashback.network_transaction (
+			network_id, network_account_id, external_id, click_ref,
+			status_raw, status, sale_amount_minor, commission_minor, currency,
+			transacted_at, retrieved_at, query_window_start, query_window_end,
+			raw_payload, supersedes_id)
+		values ($1, $2, $3, null, 'confirmed', 'confirmed', 4999, 450, 'EUR', $4, $5, $6, $7, $8, $9)
+		returning id`,
+		networkID, publisher, externalID,
+		purchasedAt, purchasedAt.Add(2*time.Hour),
+		purchasedAt.Add(-48*time.Hour), purchasedAt.Add(48*time.Hour),
+		[]byte(`{"transaction_id":"RECON","commission":450}`), predecessor,
+	).Scan(&id); err != nil {
+		t.Fatalf("storing the superseding report: %v", err)
+	}
+	return id
+}
+
+// TestADifferenceBlocksTheWholeChain is the gate read against a transaction
+// the network has restated. Detection names the report as the network
+// currently states it; the entry cites the report it was opened on. If the
+// two rows were matched separately, the entry would confirm past a
+// disagreement filed against its own transaction.
+func TestADifferenceBlocksTheWholeChain(t *testing.T) {
+	t.Parallel()
+	ctx, tx, done := schemaTx(t)
+	defer done()
+
+	each(ctx, t, tx, "a difference against the current report blocks the row an entry cites", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, _, _ := world(ctx, t, tx)
+		original := reportAt(ctx, t, tx, networkID, publisher)
+		var externalID string
+		if err := tx.QueryRow(ctx, `select external_id from cashback.network_transaction where id = $1`, original).Scan(&externalID); err != nil {
+			t.Fatalf("reading the report's external id: %v", err)
+		}
+		current := supersededBy(ctx, t, tx, networkID, publisher, original, externalID)
+		from, to := covering()
+		run := statement(ctx, t, tx, publisher, operator(ctx, t, tx), from, to)
+		if _, err := tx.Exec(ctx, `
+			insert into cashback.reconciliation_difference (
+				run_id, network_account_id, kind, network_transaction_id,
+				expected_minor, actual_minor, currency)
+			values ($1, $2, 'amount_mismatch', $3, 450, 400, 'EUR')`,
+			run, publisher, current); err != nil {
+			t.Fatalf("filing the difference against the current report: %v", err)
+		}
+
+		if reconciled(ctx, t, q, original) {
+			t.Error("the row an entry cites was reported as reconciled while its transaction's current report carries an unresolved difference")
+		}
+		if reconciled(ctx, t, q, current) {
+			t.Error("the current report was reported as reconciled with its own unresolved difference")
+		}
+	})
+
+	each(ctx, t, tx, "a difference resolved on the current report unblocks the chain", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, _, _ := world(ctx, t, tx)
+		original := reportAt(ctx, t, tx, networkID, publisher)
+		var externalID string
+		if err := tx.QueryRow(ctx, `select external_id from cashback.network_transaction where id = $1`, original).Scan(&externalID); err != nil {
+			t.Fatalf("reading the report's external id: %v", err)
+		}
+		current := supersededBy(ctx, t, tx, networkID, publisher, original, externalID)
+		from, to := covering()
+		operatorID := operator(ctx, t, tx)
+		run := statement(ctx, t, tx, publisher, operatorID, from, to)
+		if _, err := tx.Exec(ctx, `
+			insert into cashback.reconciliation_difference (
+				run_id, network_account_id, kind, network_transaction_id,
+				expected_minor, actual_minor, currency, resolved_by, resolved_reason, resolved_at)
+			values ($1, $2, 'amount_mismatch', $3, 450, 400, 'EUR', $4, 'network deducted a returns adjustment', now())`,
+			run, publisher, current, operatorID); err != nil {
+			t.Fatalf("filing the resolved difference: %v", err)
+		}
+
+		if !reconciled(ctx, t, q, original) {
+			t.Error("a resolved difference on the current report still blocked the row an entry cites")
+		}
+	})
+
+	// Another transaction at the same network is another transaction: its
+	// disagreement is not this one's.
+	each(ctx, t, tx, "a difference against another transaction does not block it", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, _, _ := world(ctx, t, tx)
+		report := reportAt(ctx, t, tx, networkID, publisher)
+		other := reportAt(ctx, t, tx, networkID, publisher)
+		from, to := covering()
+		run := statement(ctx, t, tx, publisher, operator(ctx, t, tx), from, to)
+		if _, err := tx.Exec(ctx, `
+			insert into cashback.reconciliation_difference (
+				run_id, network_account_id, kind, network_transaction_id,
+				expected_minor, actual_minor, currency)
+			values ($1, $2, 'reported_not_paid', $3, 499, null, 'EUR')`,
+			run, publisher, other); err != nil {
+			t.Fatalf("filing the other transaction's difference: %v", err)
+		}
+
+		if !reconciled(ctx, t, q, report) {
+			t.Error("a difference against another transaction blocked this one")
 		}
 	})
 }

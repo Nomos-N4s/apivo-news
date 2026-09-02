@@ -27,6 +27,13 @@ const TypeUnattributedDismissed = EventProducer + ".unattributed.dismissed"
 // nothing, because the import it would describe is already in the stream.
 const TypeStatementImported = EventProducer + ".reconciliation.statement_imported"
 
+// TypeDifferenceFound is published once for every difference detection
+// records (US6, FR-060), as the events contract lists it: one event per
+// row, its subject the difference itself, so a consumer following one
+// disagreement reads its lane in order. A pass that records nothing
+// publishes nothing: the queue already says everything it would have said.
+const TypeDifferenceFound = EventProducer + ".reconciliation.difference_found"
+
 // dismissedPayload is what the event carries: identifiers, the acting
 // account and the recorded reason.
 //
@@ -102,3 +109,39 @@ func importedEvent(i ImportedStatement) (json.RawMessage, error) {
 // row is immutable and the constraint makes a second identical import the
 // same run - so the run id is the whole key.
 func importedKey(id uuid.UUID) string { return TypeStatementImported + ":" + id.String() }
+
+// foundPayload is what one recorded difference announces: which run, which
+// row, what kind, and the money as a delta - what was paid less what was
+// owed, in the shape C-6 mandates. The figures behind the delta are on the
+// row, which the operator queue reads; the event is the fact that a
+// disagreement now exists.
+type foundPayload struct {
+	RunID        string     `json:"run_id"`
+	DifferenceID string     `json:"difference_id"`
+	Kind         string     `json:"kind"`
+	Delta        amountJSON `json:"delta"`
+	At           string     `json:"at"`
+}
+
+// foundEvent renders the payload for one recorded difference.
+func foundEvent(run, id uuid.UUID, d Difference, at time.Time) (json.RawMessage, error) {
+	delta, err := d.Delta()
+	if err != nil {
+		return nil, fmt.Errorf("ops: rendering %s for difference %s: %w", TypeDifferenceFound, id, err)
+	}
+	payload, err := json.Marshal(foundPayload{
+		RunID:        run.String(),
+		DifferenceID: id.String(),
+		Kind:         string(d.Kind),
+		Delta:        amountJSON{Minor: delta.Minor, Currency: delta.Currency.String()},
+		At:           at.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ops: rendering %s for difference %s: %w", TypeDifferenceFound, id, err)
+	}
+	return payload, nil
+}
+
+// foundKey is the event's idempotency key. A row is recorded once - the
+// indexes of 0029 make a repeat skip it - so the row id is the whole key.
+func foundKey(id uuid.UUID) string { return TypeDifferenceFound + ":" + id.String() }
