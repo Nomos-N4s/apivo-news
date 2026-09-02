@@ -90,6 +90,7 @@ there is a defect, and the dispatcher test asserts it.
 | `cashback.entry.reversed` | `{ entry_id, reversal_entry_id, reason, at }` |
 | `cashback.withdrawal.requested` / `.approved` / `.rejected` | `{ request_id, account_id, amount, actor?, reason?, at }` |
 | `cashback.payout.settled` / `.failed` | `{ payout_id, request_id, rail_reference?, classification?, at }` |
+| `cashback.reconciliation.statement_imported` | `{ run_id, network_account_id, network_id, period_start, period_end, lines, statement_digest, imported_by, at }` |
 | `cashback.reconciliation.difference_found` | `{ run_id, difference_id, kind, delta, at }` |
 | `cashback.reconciliation.difference_resolved` | `{ difference_id, run_id, kind, resolution, resolved_by, reason, at }` |
 
@@ -103,6 +104,13 @@ the cashback schema why would be making exactly the synchronous call-back
 consumer rule 2 forbids. Its subject is the queue row, and its idempotency
 key is the row — a row is resolved at most once, so a second append under
 that key means the resolution is already in the stream.
+
+`cashback.reconciliation.statement_imported` is published once per run, when
+an operator's statement becomes an immutable run (US6). Its subject is the
+run and its idempotency key is the run: the same statement imported again
+for the same account and period is the same run, so it is announced once.
+It carries who imported it (FR-061) and how many lines the statement names;
+the statement itself stays in the run.
 
 `cashback.reconciliation.difference_found` is published once per difference
 detection records, never per pass: its subject and its idempotency key are
