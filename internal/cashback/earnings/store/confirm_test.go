@@ -215,8 +215,8 @@ func TestTheReconciliationGateAgainstSchema(t *testing.T) {
 			insert into cashback.reconciliation_difference (
 				run_id, network_account_id, kind, network_transaction_id,
 				expected_minor, actual_minor, currency,
-				resolved_by, resolved_reason, resolved_at)
-			values ($1, $2, 'amount_mismatch', $3, 499, 450, 'EUR', $4, 'the network applied a partial refund', now())`,
+				resolved_by, resolved_reason, resolution, resolved_at)
+			values ($1, $2, 'amount_mismatch', $3, 499, 450, 'EUR', $4, 'the network applied a partial refund', 'explained', now())`,
 			run, publisher, report, operatorID); err != nil {
 			t.Fatalf("filing the resolved difference: %v", err)
 		}
@@ -323,8 +323,8 @@ func TestADifferenceBlocksTheWholeChain(t *testing.T) {
 		if _, err := tx.Exec(ctx, `
 			insert into cashback.reconciliation_difference (
 				run_id, network_account_id, kind, network_transaction_id,
-				expected_minor, actual_minor, currency, resolved_by, resolved_reason, resolved_at)
-			values ($1, $2, 'amount_mismatch', $3, 450, 400, 'EUR', $4, 'network deducted a returns adjustment', now())`,
+				expected_minor, actual_minor, currency, resolved_by, resolved_reason, resolution, resolved_at)
+			values ($1, $2, 'amount_mismatch', $3, 450, 400, 'EUR', $4, 'network deducted a returns adjustment', 'explained', now())`,
 			run, publisher, current, operatorID); err != nil {
 			t.Fatalf("filing the resolved difference: %v", err)
 		}
