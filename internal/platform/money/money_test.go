@@ -1524,3 +1524,118 @@ func TestPackageHasNoFloatPath(t *testing.T) {
 		t.Fatalf("scanned %d Go files; expected at least the package and its tests", scanned)
 	}
 }
+
+// rateSplitCases are the rates a rate-of-a-rate split is exercised on: the
+// bounds, a couple of ordinary commissions, and 833 - which at half share
+// lands exactly on half a basis point and is therefore the only value that
+// tells the rounding modes apart.
+var rateSplitCases = []money.BasisPoints{0, 1, 7, 333, 833, 1000, 4999, 5000, 9999, 10000}
+
+func TestARateSplitCompletesAtEveryRate(t *testing.T) {
+	t.Parallel()
+
+	// The same one-line contract Amount.Split holds: share plus remainder is
+	// the rate that was split, exactly, at every rate and in every mode. A
+	// catalogue that quoted a member rate which did not add up with the
+	// house's cut would be quoting a rate the ledger cannot later produce.
+	for _, mode := range allModes {
+		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
+
+			for _, whole := range rateSplitCases {
+				for rate := money.BasisPoints(0); rate <= money.BasisPointsScale; rate++ {
+					share, remainder, err := whole.Split(rate, mode)
+					if err != nil {
+						t.Fatalf("(%d).Split(%d, %s): %v", int32(whole), int32(rate), mode, err)
+					}
+					if share+remainder != whole {
+						t.Fatalf("(%d).Split(%d, %s) = %d + %d, which is not %d",
+							int32(whole), int32(rate), mode, int32(share), int32(remainder), int32(whole))
+					}
+					if share < 0 || share > whole {
+						t.Fatalf("(%d).Split(%d, %s) share = %d, outside 0..%d",
+							int32(whole), int32(rate), mode, int32(share), int32(whole))
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestARateSplitAndAnAmountSplitCannotDrift(t *testing.T) {
+	t.Parallel()
+
+	// Ten thousand minor units divided at a rate is the same arithmetic as a
+	// rate of ten thousand basis points divided at that rate, so the two
+	// splits must agree digit for digit. Asserted rather than assumed: they
+	// are separate implementations, and the day they disagree is the day a
+	// member is shown one number and paid another.
+	for _, mode := range allModes {
+		for _, whole := range rateSplitCases {
+			amount := money.Amount{Minor: int64(whole), Currency: eur}
+			for rate := money.BasisPoints(0); rate <= money.BasisPointsScale; rate++ {
+				rateShare, _, err := whole.Split(rate, mode)
+				if err != nil {
+					t.Fatalf("(%d).Split(%d, %s): %v", int32(whole), int32(rate), mode, err)
+				}
+				amountShare, _, err := amount.Split(rate, mode)
+				if err != nil {
+					t.Fatalf("(%v).Split(%d, %s): %v", amount, int32(rate), mode, err)
+				}
+				if int64(rateShare) != amountShare.Minor {
+					t.Fatalf("splitting %d at %d bps in %s: the rate says %d, the amount says %d",
+						int32(whole), int32(rate), mode, int32(rateShare), amountShare.Minor)
+				}
+			}
+		}
+	}
+}
+
+func TestARateSplitRoundsWhereItIsTold(t *testing.T) {
+	t.Parallel()
+
+	// Half of 833 basis points is 416 and a half, so this is the value every
+	// mode answers differently on - and the one that shows a catalogue
+	// quoting 4.17% where the member earns 4.16%, or the reverse.
+	for mode, want := range map[money.Rounding]money.BasisPoints{
+		money.RoundTowardZero:       416,
+		money.RoundAwayFromZero:     417,
+		money.RoundFloor:            416,
+		money.RoundCeil:             417,
+		money.RoundHalfAwayFromZero: 417,
+		// Exactly half, and 416 is the even one.
+		money.RoundHalfEven: 416,
+	} {
+		share, remainder, err := money.BasisPoints(833).Split(5000, mode)
+		if err != nil {
+			t.Fatalf("(833).Split(5000, %s): %v", mode, err)
+		}
+		if share != want {
+			t.Errorf("(833).Split(5000, %s) share = %d, want %d", mode, int32(share), int32(want))
+		}
+		if share+remainder != 833 {
+			t.Errorf("(833).Split(5000, %s) = %d + %d, which is not 833", mode, int32(share), int32(remainder))
+		}
+	}
+}
+
+func TestARateSplitRefusesWhatItCannotCompute(t *testing.T) {
+	t.Parallel()
+
+	for name, one := range map[string]struct {
+		whole, rate money.BasisPoints
+		mode        money.Rounding
+		want        error
+	}{
+		"a whole above the scale":   {money.BasisPointsScale + 1, 5000, money.RoundTowardZero, money.ErrRateOutOfRange},
+		"a negative whole":          {-1, 5000, money.RoundTowardZero, money.ErrRateOutOfRange},
+		"a rate above the scale":    {5000, money.BasisPointsScale + 1, money.RoundTowardZero, money.ErrRateOutOfRange},
+		"a negative rate":           {5000, -1, money.RoundTowardZero, money.ErrRateOutOfRange},
+		"a rounding nobody chose":   {5000, 5000, 0, money.ErrInvalidRounding},
+		"a rounding nobody defined": {5000, 5000, 99, money.ErrInvalidRounding},
+	} {
+		if _, _, err := one.whole.Split(one.rate, one.mode); !errors.Is(err, one.want) {
+			t.Errorf("%s: error = %v, want %v", name, err, one.want)
+		}
+	}
+}
