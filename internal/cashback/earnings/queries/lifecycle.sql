@@ -76,11 +76,11 @@ select sqlc.embed(e), tip.id as current_report
 -- name: EntriesAwaitingReversal :many
 -- Credits whose transaction the network has since declined or reversed,
 -- and that no reversing entry undoes yet. The tip must be a DIFFERENT row
--- from the one the entry cites: a reversal cites the superseding report as
--- its own evidence (C-3), and entry_one_per_report would refuse a second
--- entry on the original's. Held, pending and confirmed all hold money that
--- can go back; reserved and paid do not - money a withdrawal has claimed is
--- the clawback posture's (Q3), not this read's.
+-- from the one the entry cites: a reversal the network caused cites the
+-- superseding report that carried the network's word as its own evidence
+-- (C-3). Held, pending and confirmed all hold money that can go back;
+-- reserved and paid do not - money a withdrawal has claimed is the clawback
+-- posture's (Q3), not this read's.
 select sqlc.embed(e), tip.id as current_report, tip.status as current_status
   from cashback.entry e
   join cashback.network_transaction cited on cited.id = e.network_transaction_id

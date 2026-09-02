@@ -1,4 +1,5 @@
-// Undoing a credit the network took back (T071, SC-010, C-3).
+// Undoing a credit the network took back, or an operator refused (T071,
+// T119, SC-010, C-3).
 //
 // A reversal never edits the entry it undoes. It is a second entry, citing
 // the superseding report the network sent, carrying reversal_of_id and born
@@ -6,6 +7,13 @@
 // original credit and this - is what makes the correction auditable: both
 // facts stay readable, and the balance is the sum of what happened rather
 // than the last thing anybody wrote.
+//
+// An operator rejecting a held credit (US7 scenario 3) undoes it the same
+// way, with one difference: the network has restated nothing, so there is
+// no superseding report, and the reversing entry rests on the credit's own
+// report - the only evidence there is (C-2) - with the operator as its cause
+// and their reason on the transition (FR-061). Migration 0032 admits that
+// row; entry_reversed_at_most_once still keeps a credit undone once.
 //
 // The schema says the same thing three times, which is how much it matters:
 // entry_guard freezes the original's evidence and makes reversed terminal,
@@ -28,10 +36,12 @@ import (
 
 var (
 	// ErrNoReversingReport reports a reversal with no evidence of its own.
-	// A status change is a new superseding row (C-3), never an edit, so the
-	// reversing report always exists by the time this is called - and citing
-	// the original's report instead would be refused by
-	// entry_one_per_report, after the money had already moved.
+	// A status change is a new superseding row (C-3), never an edit, so
+	// when the NETWORK reverses, the reversing report always exists by the
+	// time this is called, and a reversal citing the original's report with
+	// nobody named as its cause is a caller that lost track of which row it
+	// read. Only a named operator's rejection may rest on the credit's own
+	// report, because only then is there no other row to cite.
 	ErrNoReversingReport = errors.New("earnings: a reversal cites the report that reversed it, not the one it undoes")
 	// ErrNotReversible reports an attempt to reverse an entry that is
 	// already reversed, or that never held money.
@@ -62,7 +72,8 @@ type Reversal struct {
 	// written: this is the fact the pair exists to preserve.
 	Original Entry
 	// Report is the SUPERSEDING report carrying the reversal, and becomes
-	// the new entry's own evidence (C-2).
+	// the new entry's own evidence (C-2). For an operator's rejection it is
+	// the original's own report, and Actor must then be named.
 	Report uuid.UUID
 	// Reason is recorded with the opening transition, and Actor names the
 	// operator where a human caused it rather than a poll.
@@ -90,8 +101,10 @@ func (r *Reversals) Reverse(ctx context.Context, db events.RowQuerier, reversal 
 	case uuid.Nil:
 		return Entry{}, fmt.Errorf("%w: entry %s", ErrNoReversingReport, reversal.Original.ID)
 	case reversal.Original.Report:
-		return Entry{}, fmt.Errorf("%w: entry %s cites %s already", ErrNoReversingReport,
-			reversal.Original.ID, reversal.Report)
+		if reversal.Actor == uuid.Nil {
+			return Entry{}, fmt.Errorf("%w: entry %s cites %s already", ErrNoReversingReport,
+				reversal.Original.ID, reversal.Report)
+		}
 	}
 	if _, holds := stages[reversal.Original.State]; !holds {
 		return Entry{}, fmt.Errorf("%w: %s is %s", ErrNotReversible,
@@ -109,10 +122,10 @@ func (r *Reversals) Reverse(ctx context.Context, db events.RowQuerier, reversal 
 	}
 
 	// The reversing entry carries the original's member, brand, click and
-	// amount, because it undoes exactly that credit and nothing else. Only
-	// the evidence differs, and it must: entry_one_per_report gives each
-	// report one entry, so a reversal citing the original's report would be
-	// refused here - after the transfer above had already moved the money.
+	// amount, because it undoes exactly that credit and nothing else. The
+	// evidence is the network's superseding report where the network caused
+	// it, and the credit's own where an operator did; entry_one_per_report
+	// (0032) refuses a second CREDIT on a report and admits the reversal.
 	created, err := r.entries.store.CreateEntry(ctx, store.CreateEntryParams{
 		AccountID:            pgUUID(reversal.Original.Member),
 		BrandID:              reversal.Original.Brand,
