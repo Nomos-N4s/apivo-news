@@ -10,7 +10,10 @@ package store_test
 // message pointed nowhere near the cause.
 //
 // This file asserts the two facts the fix rests on, against a real database
-// and with no timing race: the holder holds until this test lets go.
+// and with no timing race: the holder holds until this test lets go. It also
+// holds the helper's bound to the one relationship that keeps it from
+// deadlocking OTHER suites (#419): shorter than the server's deadlock
+// detector, so that this side is always the one that gives up.
 
 import (
 	"context"
@@ -69,6 +72,41 @@ func lockTimedOut(err error) bool {
 func transactionAborted(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == pgerrcode.InFailedSQLTransaction
+}
+
+// TestTheBoundStaysUnderTheDeadlockDetector guards the number that fixes
+// #419, against the server it actually runs on.
+//
+// Postgres resolves a lock cycle by aborting whichever side has waited
+// deadlock_timeout. The helper takes two table locks one after the other, so
+// half its wait is spent holding a lock every parallel suite wants; a bound
+// under the detector means the helper always lets go before either timer
+// fires and no other suite's statement is ever the victim. Raise the bound
+// past the detector and the helper passes exactly as before - it retries on
+// 40P01 - while inserts in unrelated packages start dying with it. That is
+// how it shipped, at five seconds, and this is what would have caught it.
+//
+// Compared as intervals on the server rather than parsed in Go, because
+// Postgres spells durations its own way ("1s", "1min") and the setting is
+// whatever the operator made it.
+func TestTheBoundStaysUnderTheDeadlockDetector(t *testing.T) {
+	t.Parallel()
+	ctx, tx, done := schemaTx(t)
+	defer done()
+
+	var detector string
+	var under bool
+	if err := tx.QueryRow(ctx, `
+		select current_setting('deadlock_timeout'),
+		       $1::interval < current_setting('deadlock_timeout')::interval`,
+		evidenceLockTimeout).Scan(&detector, &under); err != nil {
+		t.Fatalf("comparing the bound with deadlock_timeout: %v", err)
+	}
+	if !under {
+		t.Fatalf("evidenceLockTimeout is %s and this server's deadlock_timeout is %s; "+
+			"a bound that outlasts the detector makes other suites' statements the "+
+			"deadlock victims (#419)", evidenceLockTimeout, detector)
+	}
 }
 
 // TestAFailedLockAbortsTheTransaction is the bug, stated as a fact about
@@ -144,9 +182,10 @@ func TestASavepointMakesTheRetryPossible(t *testing.T) {
 	// And a second attempt, once the holder lets go, actually takes the lock
 	// and keeps it past the release of its savepoint.
 	release()
-	// The helper's own bound, not the quarter-second the doomed attempt used:
-	// this attempt is meant to SUCCEED, and holding it to a timeout chosen to
-	// make failure quick would make the case fail on a busy machine.
+	// Generous, and deliberately not the helper's bound: the helper gets many
+	// attempts and this case gets one. This attempt is meant to SUCCEED, and
+	// holding a single try to a timeout chosen to make failure quick would
+	// make the case fail on a busy machine.
 	if _, err := tx.Exec(ctx, `set local lock_timeout = '5s'`); err != nil {
 		t.Fatalf("restoring the wait: %v", err)
 	}
@@ -195,16 +234,25 @@ func TestTheRetryOutlastsAContendedLock(t *testing.T) {
 	ctx, tx, done := schemaTx(t)
 	defer done()
 
-	// Short enough that the first attempt gives up while the holder still
-	// holds, so the retry is genuinely exercised.
-	restore := evidenceLockTimeout
-	evidenceLockTimeout = "200ms"
-	defer func() { evidenceLockTimeout = restore }()
+	// The holder holds for longer than the helper's bound, so the first
+	// attempts give up while the holder still holds and the retry is
+	// genuinely exercised. Asserted rather than assumed: a bound that grew
+	// past the hold would let this case pass on its first attempt and guard
+	// nothing.
+	const hold = 700 * time.Millisecond
+	bound, err := time.ParseDuration(evidenceLockTimeout)
+	if err != nil {
+		t.Fatalf("evidenceLockTimeout %q is not a duration Go can read: %v", evidenceLockTimeout, err)
+	}
+	if bound >= hold {
+		t.Fatalf("evidenceLockTimeout is %s and the holder lets go after %s; the retry would never run",
+			bound, hold)
+	}
 
 	release := holdEvidenceLock(ctx, t)
 	releaseOnce := make(chan struct{})
 	go func() {
-		time.Sleep(700 * time.Millisecond)
+		time.Sleep(hold)
 		release()
 		close(releaseOnce)
 	}()
