@@ -97,28 +97,35 @@ type Reversal struct {
 // [Entries.Apply] takes one: the reversing entry and the announcement that
 // it exists commit together or neither does.
 func (r *Reversals) Reverse(ctx context.Context, db events.RowQuerier, reversal Reversal) (Entry, error) {
+	reversing, _, err := r.reverse(ctx, db, reversal)
+	return reversing, err
+}
+
+// reverse is Reverse, also answering the opening transition it recorded,
+// for the reason [Entries.apply] does.
+func (r *Reversals) reverse(ctx context.Context, db events.RowQuerier, reversal Reversal) (Entry, Transition, error) {
 	switch reversal.Report {
 	case uuid.Nil:
-		return Entry{}, fmt.Errorf("%w: entry %s", ErrNoReversingReport, reversal.Original.ID)
+		return Entry{}, Transition{}, fmt.Errorf("%w: entry %s", ErrNoReversingReport, reversal.Original.ID)
 	case reversal.Original.Report:
 		if reversal.Actor == uuid.Nil {
-			return Entry{}, fmt.Errorf("%w: entry %s cites %s already", ErrNoReversingReport,
+			return Entry{}, Transition{}, fmt.Errorf("%w: entry %s cites %s already", ErrNoReversingReport,
 				reversal.Original.ID, reversal.Report)
 		}
 	}
 	if _, holds := stages[reversal.Original.State]; !holds {
-		return Entry{}, fmt.Errorf("%w: %s is %s", ErrNotReversible,
+		return Entry{}, Transition{}, fmt.Errorf("%w: %s is %s", ErrNotReversible,
 			reversal.Original.ID, reversal.Original.State)
 	}
 
 	where, err := postingsFor(reversal.Original.Member, reversal.Original.State, StateReversed, r.entries.receivable)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, Transition{}, err
 	}
 	ref, err := r.entries.post(ctx, where, reversal.Original.Amount,
 		idempotencyKey(reversal.Original.ID, reversal.Report, StateReversed))
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, Transition{}, err
 	}
 
 	// The reversing entry carries the original's member, brand, click and
@@ -137,7 +144,7 @@ func (r *Reversals) Reverse(ctx context.Context, db events.RowQuerier, reversal 
 		ReversalOfID:         pgUUID(reversal.Original.ID),
 	})
 	if err != nil {
-		return Entry{}, fmt.Errorf("%w: reversing %s: %w", ErrNotReversed, reversal.Original.ID, err)
+		return Entry{}, Transition{}, fmt.Errorf("%w: reversing %s: %w", ErrNotReversed, reversal.Original.ID, err)
 	}
 
 	// The opening transition, from nothing. Recorded like any other, because
@@ -146,11 +153,11 @@ func (r *Reversals) Reverse(ctx context.Context, db events.RowQuerier, reversal 
 	recorded, err := r.entries.record(ctx, uuid.UUID(created.ID.Bytes), "", StateReversed,
 		ref, reversal.Reason, reversal.Actor)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, Transition{}, err
 	}
 	reversing, err := entryFrom(created)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, Transition{}, err
 	}
 	// Two facts, because two things happened: an entry that did not exist
 	// now does, and it moved into the state it was born in. Announcing only
@@ -159,10 +166,10 @@ func (r *Reversals) Reverse(ctx context.Context, db events.RowQuerier, reversal 
 	// announcing only the move would leave one following creations blind to
 	// an entry that owes a member's money back.
 	if err := r.entries.announcer.Created(ctx, db, reversing); err != nil {
-		return Entry{}, err
+		return Entry{}, Transition{}, err
 	}
 	if err := r.entries.announcer.StateChanged(ctx, db, recorded); err != nil {
-		return Entry{}, err
+		return Entry{}, Transition{}, err
 	}
-	return reversing, nil
+	return reversing, recorded, nil
 }

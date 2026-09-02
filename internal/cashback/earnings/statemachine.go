@@ -104,6 +104,13 @@ type Transition struct {
 	To       State
 	Transfer wallet.TransferRef
 	At       time.Time
+	// Actor and Reason are what the row recorded about who caused the move
+	// and why (FR-061): the operator where a human did, the zero uuid and
+	// the caller's text otherwise. Read back for the caller that announces
+	// a decision; not part of the state-changed event, which is about the
+	// money.
+	Actor  uuid.UUID
+	Reason string
 }
 
 // Move is one requested transition, and everything the two writes need.
@@ -158,17 +165,28 @@ type Move struct {
 // atomicity guarantee forbids: the event and the move commit together or
 // neither exists.
 func (e *Entries) Apply(ctx context.Context, db events.RowQuerier, move Move) (Entry, error) {
+	moved, _, err := e.apply(ctx, db, move)
+	return moved, err
+}
+
+// apply is Apply, also answering the transition it recorded - for the one
+// caller that announces a decision about the move and needs the row's own
+// actor, reason and instant without re-reading them. Re-reading is not an
+// option: every row one transaction writes carries the same occurred_at,
+// so "the latest transition" is not a question the table can answer from
+// inside the transaction that wrote it.
+func (e *Entries) apply(ctx context.Context, db events.RowQuerier, move Move) (Entry, Transition, error) {
 	if !CanFollow(move.From, move.To) {
-		return Entry{}, ErrIllegalTransition{From: move.From, To: move.To}
+		return Entry{}, Transition{}, ErrIllegalTransition{From: move.From, To: move.To}
 	}
 	where, err := postingsFor(move.Member, move.From, move.To, e.receivable)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, Transition{}, err
 	}
 
 	ref, err := e.post(ctx, where, move.Amount, idempotencyKey(move.Entry, move.Cause, move.To))
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, Transition{}, err
 	}
 
 	moved, err := e.store.MoveEntry(ctx, store.MoveEntryParams{
@@ -183,19 +201,23 @@ func (e *Entries) Apply(ctx context.Context, db events.RowQuerier, move Move) (E
 		// posted and this returns without recording it, which is the one
 		// place that is right: recording a transition the entry did not make
 		// would be worse than a posting whose retry will find its transition.
-		return Entry{}, fmt.Errorf("%w: %s was not %s", ErrEntryMoved, move.Entry, move.From)
+		return Entry{}, Transition{}, fmt.Errorf("%w: %s was not %s", ErrEntryMoved, move.Entry, move.From)
 	case err != nil:
-		return Entry{}, fmt.Errorf("%w: moving %s: %w", ErrNotRecorded, move.Entry, err)
+		return Entry{}, Transition{}, fmt.Errorf("%w: moving %s: %w", ErrNotRecorded, move.Entry, err)
 	}
 
 	recorded, err := e.record(ctx, move.Entry, move.From, move.To, ref, move.Reason, move.Actor)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, Transition{}, err
 	}
 	if err := e.announcer.StateChanged(ctx, db, recorded); err != nil {
-		return Entry{}, err
+		return Entry{}, Transition{}, err
 	}
-	return entryFrom(moved)
+	entry, err := entryFrom(moved)
+	if err != nil {
+		return Entry{}, Transition{}, err
+	}
+	return entry, recorded, nil
 }
 
 // post moves the amount between the two accounts under the given key.
@@ -259,6 +281,8 @@ func (e *Entries) record(ctx context.Context, entry uuid.UUID, from, to State, r
 		To:       State(transition.ToState),
 		Transfer: wallet.TransferRef(transition.LedgerTransferRef),
 		At:       transition.OccurredAt.Time,
+		Actor:    uuid.UUID(transition.ActorID.Bytes),
+		Reason:   transition.Reason.String,
 	}, nil
 }
 
