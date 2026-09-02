@@ -41,6 +41,11 @@ type ReconciliationStore interface {
 	// first, starting after the given position; ErrNoSuchRun for a run
 	// nobody imported.
 	ListDifferences(ctx context.Context, run uuid.UUID, after DifferenceAfter, limit int) ([]ListedDifference, error)
+	// ExportLedger and ExportReconciliation are the accounting journals
+	// FR-062 pairs with reconciliation, whole for a window; ErrExportTooLarge
+	// when the window holds more than one document carries.
+	ExportLedger(ctx context.Context, w ExportWindow) ([]LedgerRow, error)
+	ExportReconciliation(ctx context.Context, w ExportWindow) ([]ReconciliationRow, error)
 }
 
 // periodJSON is a statement period on the wire, both ends RFC 3339.

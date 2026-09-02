@@ -84,6 +84,9 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"POST " + Prefix + "reconciliation/runs":                     h.importStatement,
 		"GET " + Prefix + "reconciliation/runs/{id}/differences":     h.listDifferences,
 		"POST " + Prefix + "reconciliation/differences/{id}/resolve": h.resolveDifference,
+
+		"GET " + Prefix + "exports/ledger":         h.exportLedger,
+		"GET " + Prefix + "exports/reconciliation": h.exportReconciliation,
 	}
 }
 

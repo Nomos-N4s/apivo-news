@@ -990,6 +990,202 @@
         }
       }
     },
+    "/api/v1/cashback/ops/exports/ledger": {
+      "get": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "exportLedger",
+        "summary": "The ledger journal for a window (FR-062)",
+        "description": "Every movement of a member's money as the earnings module recorded it, in the order it occurred: the entry, whose money and under which brand, the report it cites, the states it moved between, the amount, and the ledger transfer reference that pins the movement to the ledger's own record (C-7). An accountant reads this against the ledger provider's statement.\n\nThe window is half-open, [from, to), so two adjacent exports share no row and miss none. An export is always the complete journal for its window: it takes no filter, and a window holding more than one document carries is refused rather than truncated.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "description": "Start of the window, inclusive, RFC 3339.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "description": "End of the window, exclusive, RFC 3339. Must be after from.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "`json` (default) or `csv`. The CSV is the JSON flattened, every amount as two columns: minor units and currency (C-6).",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "csv"
+              ],
+              "default": "json"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The journal for the window, as an attachment named for the journal and the window's dates.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerExport"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string",
+                  "description": "A header row and one row per journal entry, in the same order as the JSON."
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A missing or unreadable from or to, a window that does not end after it starts, a format other than json or csv, or an unknown or repeated query parameter."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The window holds more than 50,000 rows, more than one export carries. Nothing is wrong; ask for a narrower window."
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/cashback/ops/exports/reconciliation": {
+      "get": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "exportReconciliation",
+        "summary": "The reconciliation journal for a window (FR-062)",
+        "description": "Every difference detection found in the window, in the order it was found: which statement (publisher account, network, period), the transaction in the network's own terms, the figures and the delta, and the decision if an operator made one. An accountant reads this against the network's statements.\n\nThe window is half-open, [from, to). An export is always the complete journal for its window; a window holding more than one document carries is refused rather than truncated.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "description": "Start of the window, inclusive, RFC 3339.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "description": "End of the window, exclusive, RFC 3339. Must be after from.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "`json` (default) or `csv`. The CSV is the JSON flattened, every amount as two columns: minor units and currency (C-6).",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "csv"
+              ],
+              "default": "json"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The journal for the window, as an attachment named for the journal and the window's dates.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationExport"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string",
+                  "description": "A header row and one row per journal entry, in the same order as the JSON."
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A missing or unreadable from or to, a window that does not end after it starts, a format other than json or csv, or an unknown or repeated query parameter."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotOperator"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The window holds more than 50,000 rows, more than one export carries. Nothing is wrong; ask for a narrower window."
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/cashback/export": {
       "get": {
         "tags": [
@@ -4584,6 +4780,271 @@
             "type": "string",
             "format": "date-time",
             "description": "Stamped by the database, not supplied by the caller."
+          }
+        }
+      },
+      "LedgerJournalRow": {
+        "type": "object",
+        "description": "One movement of a member's money.",
+        "required": [
+          "transition_id",
+          "entry_id",
+          "account_id",
+          "brand_id",
+          "network_transaction_id",
+          "from_state",
+          "to_state",
+          "amount",
+          "ledger_transfer_ref",
+          "reason",
+          "actor_id",
+          "occurred_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "transition_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "entry_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The member whose money moved."
+          },
+          "brand_id": {
+            "type": "string"
+          },
+          "network_transaction_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The report the entry cites."
+          },
+          "from_state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null for the transition that opened the entry."
+          },
+          "to_state": {
+            "type": "string",
+            "enum": [
+              "held",
+              "pending",
+              "confirmed",
+              "reserved",
+              "paid",
+              "reversed"
+            ]
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "ledger_transfer_ref": {
+            "type": "string",
+            "description": "The ledger's own reference for the transfer this transition posted (C-7)."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Recorded with the transition, where there was one."
+          },
+          "actor_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The named human who caused the move; null where a poll did."
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LedgerExport": {
+        "type": "object",
+        "description": "The ledger journal for a window, oldest first.",
+        "required": [
+          "exported_at",
+          "from",
+          "to",
+          "row_count",
+          "rows"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "exported_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the document was taken."
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "row_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many rows follow, written out so a truncated file is one a reader can detect."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LedgerJournalRow"
+            }
+          }
+        }
+      },
+      "ReconciliationJournalRow": {
+        "type": "object",
+        "description": "One difference, with the statement it came from.",
+        "required": [
+          "difference_id",
+          "run_id",
+          "network_account_id",
+          "network_id",
+          "external_publisher_id",
+          "statement_period",
+          "kind",
+          "network_transaction_id",
+          "transaction_id",
+          "expected",
+          "actual",
+          "delta",
+          "detected_at",
+          "resolution"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "difference_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "network_account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "network_id": {
+            "type": "string"
+          },
+          "external_publisher_id": {
+            "type": "string",
+            "description": "The publisher account in the network's own terms."
+          },
+          "statement_period": {
+            "$ref": "#/components/schemas/StatementPeriod"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "reported_not_paid",
+              "paid_not_reported",
+              "amount_mismatch"
+            ]
+          },
+          "network_transaction_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The report named; null for money matching no report."
+          },
+          "transaction_id": {
+            "type": "string",
+            "description": "The network's own id for the transaction."
+          },
+          "expected": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "actual": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delta": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "detected_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resolution": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DifferenceResolutionRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null while the row is open."
+          }
+        }
+      },
+      "ReconciliationExport": {
+        "type": "object",
+        "description": "The reconciliation journal for a window, oldest first.",
+        "required": [
+          "exported_at",
+          "from",
+          "to",
+          "row_count",
+          "rows"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "exported_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the document was taken."
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "row_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many rows follow, written out so a truncated file is one a reader can detect."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReconciliationJournalRow"
+            }
           }
         }
       },

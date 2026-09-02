@@ -436,6 +436,14 @@ func (unreachableOpsReconciliation) ResolveDifference(context.Context, ops.Resol
 	return ops.Resolved{}, errors.New("the route probe must not reach the store")
 }
 
+func (unreachableOpsReconciliation) ExportLedger(context.Context, ops.ExportWindow) ([]ops.LedgerRow, error) {
+	return nil, errors.New("the route probe must not reach the store")
+}
+
+func (unreachableOpsReconciliation) ExportReconciliation(context.Context, ops.ExportWindow) ([]ops.ReconciliationRow, error) {
+	return nil, errors.New("the route probe must not reach the store")
+}
+
 // unreachableOpsApprover stands in for the withdrawal approver in the route
 // probes. Every probe here is refused before the handler reaches it, which is
 // what makes an approver that cannot work safe.

@@ -46,6 +46,12 @@ type reconciliationStore struct {
 	resolveErr    error
 	gotResolution ops.Resolution
 	resolutions   int
+
+	ledger         []ops.LedgerRow
+	reconciliation []ops.ReconciliationRow
+	exportErr      error
+	gotWindow      ops.ExportWindow
+	exports        int
 }
 
 func (s *reconciliationStore) ImportStatement(_ context.Context, st ops.Statement) (ops.ImportedStatement, error) {
@@ -72,6 +78,16 @@ func (s *reconciliationStore) ListDifferences(_ context.Context, run uuid.UUID, 
 func (s *reconciliationStore) ResolveDifference(_ context.Context, r ops.Resolution) (ops.Resolved, error) {
 	s.gotResolution, s.resolutions = r, s.resolutions+1
 	return s.resolved, s.resolveErr
+}
+
+func (s *reconciliationStore) ExportLedger(_ context.Context, w ops.ExportWindow) ([]ops.LedgerRow, error) {
+	s.gotWindow, s.exports = w, s.exports+1
+	return s.ledger, s.exportErr
+}
+
+func (s *reconciliationStore) ExportReconciliation(_ context.Context, w ops.ExportWindow) ([]ops.ReconciliationRow, error) {
+	s.gotWindow, s.exports = w, s.exports+1
+	return s.reconciliation, s.exportErr
 }
 
 // reconcile sends an authenticated request to the reconciliation surface.
