@@ -386,6 +386,8 @@ type CashbackReconciliationDifference struct {
 	ResolvedBy     pgtype.UUID
 	ResolvedReason pgtype.Text
 	ResolvedAt     pgtype.Timestamptz
+	// The statement's own identifier for the line, carried only by paid_not_reported: money matching no report has no report to name, and without this an operator could not tell two such lines apart. For the kinds that name a report, the report's external_id is the line, and this stays null.
+	StatementTransactionID pgtype.Text
 }
 
 // IMMUTABLE (C-3). One import of a network's payment statement: which publisher account, which period, by whom, and the statement verbatim. It is the counterparty's own account of the money, and an editable one would be worth nothing in a dispute.

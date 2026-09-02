@@ -200,6 +200,102 @@ func TestCashbackReconciliationRejectsIllegalWrites(t *testing.T) {
 			wantCode: codeCheckViolation,
 		},
 		{
+			name: "paid-not-reported naming no statement line",
+			rule: "US6",
+			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
+				// Money matching no report has no report to name, so the
+				// line it came from is the only thing that says which money
+				// this is (0029). Without it two such rows for the same
+				// amount are the same row twice.
+				_, err := tx.Exec(ctx,
+					`insert into cashback.reconciliation_difference (run_id, network_account_id, kind, actual_minor, currency)
+					 values ($1, $2, 'paid_not_reported', 100, 'EUR')`, runID, f.networkAccountID)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name: "paid-not-reported naming a blank statement line",
+			rule: "US6",
+			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
+				_, err := tx.Exec(ctx,
+					`insert into cashback.reconciliation_difference
+					     (run_id, network_account_id, kind, statement_transaction_id, actual_minor, currency)
+					 values ($1, $2, 'paid_not_reported', '  ', 100, 'EUR')`, runID, f.networkAccountID)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name: "mismatch naming a statement line as well as its report",
+			rule: "US6",
+			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
+				// The report's external_id IS the line. A second spelling of
+				// it on the row could disagree with the first.
+				_, err := tx.Exec(ctx,
+					`insert into cashback.reconciliation_difference
+					     (run_id, network_account_id, kind, network_transaction_id, statement_transaction_id, expected_minor, actual_minor, currency)
+					 values ($1, $2, 'amount_mismatch', $3, 'LINE-1', 500, 450, 'EUR')`,
+					runID, f.networkAccountID, f.networkTxn)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name: "reported-not-paid naming a statement line",
+			rule: "US6",
+			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
+				// The whole claim is that no line paid it.
+				_, err := tx.Exec(ctx,
+					`insert into cashback.reconciliation_difference
+					     (run_id, network_account_id, kind, network_transaction_id, statement_transaction_id, expected_minor, currency)
+					 values ($1, $2, 'reported_not_paid', $3, 'LINE-1', 500, 'EUR')`,
+					runID, f.networkAccountID, f.networkTxn)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name: "the same report twice in one run",
+			rule: "US6",
+			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
+				// Detection is re-runnable because a repeat cannot add what
+				// is there (0029): one difference per report per run.
+				if _, err := tx.Exec(ctx,
+					`insert into cashback.reconciliation_difference
+					     (run_id, network_account_id, kind, network_transaction_id, expected_minor, actual_minor, currency)
+					 values ($1, $2, 'amount_mismatch', $3, 500, 450, 'EUR')`,
+					runID, f.networkAccountID, f.networkTxn); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx,
+					`insert into cashback.reconciliation_difference
+					     (run_id, network_account_id, kind, network_transaction_id, expected_minor, currency)
+					 values ($1, $2, 'reported_not_paid', $3, 500, 'EUR')`,
+					runID, f.networkAccountID, f.networkTxn)
+				return err
+			},
+			wantCode: codeUniqueViolation,
+		},
+		{
+			name: "the same statement line twice in one run",
+			rule: "US6",
+			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
+				if _, err := tx.Exec(ctx,
+					`insert into cashback.reconciliation_difference
+					     (run_id, network_account_id, kind, statement_transaction_id, actual_minor, currency)
+					 values ($1, $2, 'paid_not_reported', 'LINE-1', 100, 'EUR')`, runID, f.networkAccountID); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx,
+					`insert into cashback.reconciliation_difference
+					     (run_id, network_account_id, kind, statement_transaction_id, actual_minor, currency)
+					 values ($1, $2, 'paid_not_reported', 'LINE-1', 250, 'EUR')`, runID, f.networkAccountID)
+				return err
+			},
+			wantCode: codeUniqueViolation,
+		},
+		{
 			name: "difference citing another publisher account's report",
 			rule: "US6",
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
@@ -245,8 +341,8 @@ func TestCashbackReconciliationRejectsIllegalWrites(t *testing.T) {
 				}
 				_, err := tx.Exec(ctx,
 					`insert into cashback.reconciliation_difference
-					     (run_id, network_account_id, kind, actual_minor, currency)
-					 values ($1, $2, 'paid_not_reported', 100, 'EUR')`, runID, otherAccount)
+					     (run_id, network_account_id, kind, statement_transaction_id, actual_minor, currency)
+					 values ($1, $2, 'paid_not_reported', 'LINE-1', 100, 'EUR')`, runID, otherAccount)
 				return err
 			},
 			wantCode: codeForeignKeyViolation,
@@ -256,8 +352,8 @@ func TestCashbackReconciliationRejectsIllegalWrites(t *testing.T) {
 			rule: "C-6",
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
 				_, err := tx.Exec(ctx,
-					`insert into cashback.reconciliation_difference (run_id, network_account_id, kind, actual_minor, currency)
-					 values ($1, $2, 'paid_not_reported', 100, null)`, runID, f.networkAccountID)
+					`insert into cashback.reconciliation_difference (run_id, network_account_id, kind, statement_transaction_id, actual_minor, currency)
+					 values ($1, $2, 'paid_not_reported', 'LINE-1', 100, null)`, runID, f.networkAccountID)
 				return err
 			},
 			wantCode: codeNotNullViolation,
@@ -268,8 +364,8 @@ func TestCashbackReconciliationRejectsIllegalWrites(t *testing.T) {
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures, runID string) error {
 				_, err := tx.Exec(ctx,
 					`insert into cashback.reconciliation_difference
-					     (run_id, network_account_id, kind, actual_minor, currency, resolved_by, resolved_at)
-					 values ($1, $2, 'paid_not_reported', 100, 'EUR', $3, now())`,
+					     (run_id, network_account_id, kind, statement_transaction_id, actual_minor, currency, resolved_by, resolved_at)
+					 values ($1, $2, 'paid_not_reported', 'LINE-1', 100, 'EUR', $3, now())`,
 					runID, f.networkAccountID, f.approverID)
 				return err
 			},

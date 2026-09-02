@@ -236,9 +236,9 @@ func TestTheReconciliationGateAgainstSchema(t *testing.T) {
 		run := statement(ctx, t, tx, publisher, operator(ctx, t, tx), from, to)
 		if _, err := tx.Exec(ctx, `
 			insert into cashback.reconciliation_difference (
-				run_id, network_account_id, kind, network_transaction_id,
+				run_id, network_account_id, kind, network_transaction_id, statement_transaction_id,
 				expected_minor, actual_minor, currency)
-			values ($1, $2, 'paid_not_reported', null, null, 700, 'EUR')`,
+			values ($1, $2, 'paid_not_reported', null, 'UNKNOWN-1', null, 700, 'EUR')`,
 			run, publisher); err != nil {
 			t.Fatalf("filing the unmatched payment: %v", err)
 		}
