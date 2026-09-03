@@ -14,6 +14,7 @@ import {
 } from './fixtures';
 import type {
   CatalogueItem,
+  Clickout,
   EntryPage,
   EntryState,
   HeldEntry,
@@ -113,6 +114,13 @@ export interface CashbackApi {
   catalogue(query: CatalogueQuery): Promise<OperatorPage<CatalogueItem>>;
   /** Null for an unknown or inactive retailer — one answer for both. */
   merchant(slug: string, lang?: string): Promise<MerchantDetail | null>;
+  /**
+   * The tracked click. The row and its rate snapshot are committed before
+   * the API answers, so a member who reaches the shop is a member whose
+   * click exists — the reverse order would produce purchases with nothing
+   * to attribute them to.
+   */
+  clickout(offerId: string): Promise<Clickout>;
 
   wallet(): Promise<WalletTotals>;
   entries(query?: EntryQuery): Promise<EntryPage>;
@@ -167,6 +175,14 @@ function fixtureApi(): CashbackApi {
     },
     merchant: (slug) =>
       Promise.resolve(CATALOGUE_FIXTURES.find((item) => item.slug === slug) ?? null),
+    clickout: (offerId) =>
+      Promise.resolve({
+        click_ref: `fx-click-${offerId}`,
+        // A preview must not send anybody to a real shop under a click that
+        // was never recorded: the redirect goes back to this deployment.
+        redirect_url: '/',
+        expires_at: '2026-12-31T23:59:59Z',
+      }),
     wallet: () => Promise.resolve(WALLET_FIXTURE),
     entries: (query) => {
       const state = query?.state;
@@ -290,6 +306,11 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
         {},
         true,
       ),
+    clickout: (offerId) =>
+      required<Clickout>('/clickouts', {
+        method: 'POST',
+        body: JSON.stringify({ offer_id: offerId }),
+      }),
     wallet: () => required<WalletTotals>('/wallet'),
     entries: (query) =>
       required<EntryPage>(
