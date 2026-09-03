@@ -252,6 +252,78 @@ report passed **eleven of the twelve** scenarios. Filed as
 [#497](https://github.com/Nomos-N4s/apivo-news/pull/497) before this feature
 begins, because the suite is what a second adapter is held to.
 
+### 4.5 The one thing that unifies a retailer across networks cannot name a Greek one
+
+`catalogue/import.go:246-260` (`merchantForSlug`) is the **only** mechanism
+that recognises a retailer already imported from another network: it matches
+on `Slug(name)`. A name that produces no slug falls to
+`FallbackSlug(network, externalID)` (`identity.go:104`), which by
+construction contains **the network's own id** — so it can never equal the
+other network's slug for the same shop.
+
+`Slug` keeps a rune only when `r < unicode.MaxASCII && (IsLetter || IsDigit)`
+(`identity.go:66`). Greek letters are all above `MaxASCII`, and the fold that
+runs first strips Latin diacritics rather than transliterating. Run against
+real Greek retailer names:
+
+| Programme name | `Slug(name)` |
+|---|---|
+| `Πλαίσιο` | `""` |
+| `Κωτσόβολος` | `""` |
+| `Γερμανός` | `""` |
+| `Σκρουτζ Α.Ε.` | `""` |
+| `Public` | `public` |
+| `Zara` | `zara` |
+| `e-shop.gr` | `e-shop-gr` |
+
+**Every Greek-named retailer slugs to the empty string.** So the headline use
+case of this feature — one retailer, two networks, the better route
+published (US3) — is structurally impossible for exactly the network being
+added, and it fails silently: two `merchant` rows, two catalogue entries, two
+different rates, and nothing anywhere saying they are one shop.
+
+It is worse than a missed match. `FallbackSlug` embeds the network id, so a
+member-facing identifier for a Greek retailer would read as the network's
+internal reference rather than as a shop.
+
+The slug is also doing a second job here it was never asked to do: it is
+*identity*, not just a URL segment. A retailer's identity across networks
+cannot rest on how its name transliterates.
+
+### 4.6 A second currency is a trapped balance, not a rejected report
+
+This is the finding with the worst consequence, and nothing refuses it at
+any point.
+
+An entry's currency is whatever the network reported
+(`earnings/lifecycle.go:250-256`: `money.New(report.CommissionMinor,
+money.Currency(report.Currency))`). Withdrawal, however, is
+deployment-wide single-currency:
+
+- `earnings.Confirmed` selects only entries in the requested currency
+  (`reserve.go:107-114`, `ConfirmedEntriesFor` with `Currency`);
+- and the request's currency must equal the deployment's payout threshold
+  currency, or it is refused (`payout/withdrawal.go:306-309`:
+  `ErrCurrencyNotPaid`, *"%s was asked for and payouts are in %s"*).
+
+So a second network reporting in a currency other than
+`PAYOUT_THRESHOLD_CURRENCY` produces entries that are credited, confirmed,
+counted in the member's wallet — and **can never be withdrawn**. Not
+refused, not queued, not flagged. The money is simply unreachable, and every
+diagnostic is green.
+
+Note what this is *not*: it is not §4.3, which is one report carrying two
+currencies and is refused at the port by `Reported.Validate`. This is one
+report, internally consistent, in a currency this deployment cannot pay out.
+The port has nothing to say about it, because the port does not know what
+this deployment pays in.
+
+The constitution puts **multi-currency wallets out of scope**, which makes
+this a *refusal* to design, not a feature: a network whose reports arrive in
+a currency the deployment cannot pay must be refused at connection time —
+loudly, once, at the point somebody configures it — rather than discovered
+by a member who cannot withdraw.
+
 ---
 
 ## 5. Linkwise
