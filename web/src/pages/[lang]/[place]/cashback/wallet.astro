@@ -1,8 +1,7 @@
 ---
 import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
-import CashbackNav from '../../../../components/CashbackNav.astro';
+import CashbackBar from '../../../../components/CashbackBar.astro';
 import FixtureNotice from '../../../../components/FixtureNotice.astro';
-import Masthead from '../../../../components/Masthead.astro';
 import ReaderLayout from '../../../../layouts/ReaderLayout.astro';
 import {
   CashbackConfigurationError,
@@ -18,28 +17,35 @@ import type {
 } from '../../../../lib/cashback/types';
 import { editorSession } from '../../../../lib/editorial/session';
 import { frontPagePath, parseAxes } from '../../../../lib/reader/axes';
-import { formatItemDate } from '../../../../lib/reader/format';
+import { formatDateTime, formatItemDate } from '../../../../lib/reader/format';
 import { cashbackStrings } from '../../../../i18n/cashback';
 
-// The member's wallet and entry list — mockup 4a, bound to the contract
-// rather than to the drawing (T082 #229).
+// The member's wallet and entry list — mockup 4a, composed as the mockup
+// draws it and bound to the contract rather than to the drawing (T082 #229).
 //
 // Four differences from the mockup, each of them a fact about the money
 // rather than a design preference:
 //
-//   1. There is a `reserved` tile. `GET /wallet` returns five totals and
+//   1. There is a `reserved` cell. `GET /wallet` returns five totals and
 //      the mockup drew three; without reserved, a member whose withdrawal
 //      is awaiting approval sees a confirmed balance that dropped for no
 //      visible reason. Recorded as issue #444.
-//   2. The threshold is stated. FR-050 puts a floor under a withdrawal and
-//      a member who cannot reach it should learn that here, not from a 409.
+//   2. The threshold is stated where a withdrawal cannot be asked for.
+//      FR-050 puts a floor under a withdrawal and a member who cannot reach
+//      it should learn that here, not from a 409.
 //   3. No entry is card-linked. The mockup's fuel, bakery and taverna rows
 //      are in-store purchases tracked by a linked card, which the
 //      constitution puts out of scope and for which no evidence path
-//      exists (issue #445).
+//      exists (issue #445). The first step of every entry's life is the
+//      click.
 //   4. A reversal is a row of its own, beside the credit it reverses, with
 //      its reason. US3 scenario 2 requires both to be visible, so the
 //      filter cannot hide one and there is no control that would.
+//
+// The "Report a problem" and "Missing a purchase?" affordances the mockup
+// draws belong to the claims flow (feature 003), which is not built. The
+// ghost "Share" beside them stays: it is the entry's own link, and where the
+// platform can share a URL it shares that one.
 const axes = parseAxes(Astro.params['lang'], Astro.params['place']);
 if (axes === null) {
   return Astro.rewrite('/404');
@@ -58,9 +64,11 @@ const FILTERS: readonly { readonly key: string; readonly state: EntryState | und
 
 // The filter travels in the URL rather than in client state: a filtered
 // wallet is a thing a member links to and returns to, and a tab that only
-// exists in memory cannot be either.
+// exists in memory cannot be either. The selected entry travels the same
+// way, for the same reason.
 const requested = Astro.url.searchParams.get('state');
 const active = FILTERS.find((filter) => filter.key === requested) ?? FILTERS[0]!;
+const requestedEntry = Astro.url.searchParams.get('entry');
 
 const session = editorSession(Astro.request);
 
@@ -104,6 +112,16 @@ const homeHref = frontPagePath(lang, slugs);
 const filterHref = (key: string): string =>
   key === 'all' ? walletPath(lang, slugs) : `${walletPath(lang, slugs)}?state=${key}`;
 
+/** An entry row's URL — the current filter plus the entry it selects. */
+const entryHref = (entry: WalletEntry): string => {
+  const params = new URLSearchParams();
+  if (active.key !== 'all') {
+    params.set('state', active.key);
+  }
+  params.set('entry', entry.entry_id);
+  return `${walletPath(lang, slugs)}?${params.toString()}`;
+};
+
 /** The label for a filter key, from the catalogue. */
 const filterLabel = (key: string): string =>
   ({
@@ -116,6 +134,75 @@ const filterLabel = (key: string): string =>
 /** Whether a withdrawal can be asked for at all, on today's figures. */
 const canWithdraw =
   totals !== null && totals.confirmed.minor >= totals.payout_threshold.minor && totals.confirmed.minor > 0;
+
+// The selected entry: the one the URL names, or the first in the list. On
+// the phone the detail only opens when the URL names one — the list is the
+// screen, and the entry is a screen of its own.
+const explicit = entries.find((entry) => entry.entry_id === requestedEntry) ?? null;
+const selected = explicit ?? entries[0] ?? null;
+
+/** "22 Aug" — the day in a list row, in the reader's zone. */
+const shortDate = (iso: string): string =>
+  new Intl.DateTimeFormat(lang, { day: 'numeric', month: 'short', timeZone: 'Europe/Berlin' }).format(
+    new Date(iso),
+  );
+
+/** The tag class an entry's state draws with, as the mockup colours them. */
+const tagClass = (state: EntryState): string =>
+  ({
+    pending: 'tag-outline',
+    confirmed: 'tag-accent',
+    paid: 'tag-neutral',
+    held: 'tag-outline',
+    reversed: 'tag-neutral',
+    declined: 'tag-neutral',
+  })[state];
+
+/** The tag text: the state, and for a pending entry the day it should clear. */
+const tagText = (entry: WalletEntry): string =>
+  entry.state === 'pending' && entry.expected_confirmation_at !== null
+    ? `${t.entryStates.pending} · ${shortDate(entry.expected_confirmation_at)}`
+    : t.entryStates[entry.state];
+
+const SETTLED: readonly EntryState[] = ['confirmed', 'paid'];
+const VOID: readonly EntryState[] = ['reversed', 'declined'];
+
+interface Step {
+  readonly title: string;
+  readonly body: string;
+  readonly done: boolean;
+}
+
+/**
+ * The entry's life so far, from what the entry carries: the click, the
+ * dated rate (no figure — the entry does not carry one), the state it is
+ * in, and the payout that follows a confirmation.
+ */
+const stepsFor = (entry: WalletEntry): readonly Step[] => {
+  const when = formatDateTime(lang, new Date(entry.transacted_at));
+  const steps: Step[] = [
+    { title: `${t.tracked} · ${when}`, body: t.trackedVia, done: true },
+    { title: t.rateApplied, body: t.rateSince, done: true },
+  ];
+  if (entry.state === 'pending') {
+    steps.push({
+      title:
+        entry.expected_confirmation_at === null
+          ? t.expectedConfirmation
+          : `${t.expectedConfirmation} · ${shortDate(entry.expected_confirmation_at)}`,
+      body: t.pendingExplained,
+      done: false,
+    });
+  } else if (SETTLED.includes(entry.state)) {
+    steps.push({ title: t.entryStates.confirmed, body: t.networkConfirmed, done: true });
+  } else {
+    steps.push({ title: t.entryStates[entry.state], body: entry.reason ?? '', done: true });
+  }
+  if (!VOID.includes(entry.state)) {
+    steps.push({ title: t.paysOut, body: t.paysOutBatch, done: entry.state === 'paid' });
+  }
+  return steps;
+};
 ---
 
 <ReaderLayout
@@ -124,10 +211,16 @@ const canWithdraw =
   description={t.cashback}
   homeHref={homeHref}
 >
-  <Masthead homeHref={homeHref} />
-  <CashbackNav lang={lang} slugs={slugs} current="wallet" />
+  <div class="bar">
+    <CashbackBar
+      lang={lang}
+      slugs={slugs}
+      current="wallet"
+      aside={participating && !apiUnavailable ? t.verifiedPayoutsOn : undefined}
+    />
+  </div>
 
-  <main class="wallet">
+  <main class:list={['wallet', { 'entry-open': explicit !== null }]}>
     {
       fixtures && (
         <FixtureNotice title={t.cashback} body={t.fixtureNotice} />
@@ -158,34 +251,61 @@ const canWithdraw =
     {
       totals !== null && (
         <>
-          <section class="totals" aria-label={t.wallet}>
-            <div class="total">
+          {/* Phone: the dark header block. */}
+          <section class="hero" aria-label={t.wallet}>
+            <div class="hero-top">
+              <span class="hero-kicker">{t.cashback}</span>
+              <span class="hero-status">{t.verifiedPayoutsOn}</span>
+            </div>
+            <p class="hero-label">{t.confirmedWithdrawable}</p>
+            <p class="hero-figure">{formatMoney(lang, totals.confirmed)}</p>
+            <p class="hero-pending">{t.pendingLine(formatMoney(lang, totals.pending))}</p>
+            <p class="hero-more">
+              {t.reserved} {formatMoney(lang, totals.reserved)} · {t.paidOut}{' '}
+              {formatMoney(lang, totals.paid_out)}
+            </p>
+            <div class="hero-actions">
+              {
+                canWithdraw ? (
+                  <a class="btn btn-primary" href={withdrawPath(lang, slugs)}>{t.withdraw}</a>
+                ) : (
+                  <span class="btn btn-primary" aria-disabled="true">{t.withdraw}</span>
+                )
+              }
+              <a class="btn hero-browse" href={cataloguePath(lang, slugs)}>{t.browseOffers}</a>
+            </div>
+          </section>
+
+          {/* Desktop: the balance strip. */}
+          <section class="strip" aria-label={t.wallet}>
+            <div class="cell">
               <h2>{t.confirmedWithdrawable}</h2>
               <p class="figure">{formatMoney(lang, totals.confirmed)}</p>
-              <p class="note">{t.belowThreshold(formatMoney(lang, totals.payout_threshold))}</p>
             </div>
-            <div class="total">
+            <div class="cell">
               <h2>{t.pending}</h2>
               <p class="figure muted">{formatMoney(lang, totals.pending)}</p>
-              <p class="note">{t.pendingExplained}</p>
             </div>
-            <div class="total">
+            <div class="cell">
               <h2>{t.reserved}</h2>
               <p class="figure muted">{formatMoney(lang, totals.reserved)}</p>
-              <p class="note">{t.reservedExplained}</p>
             </div>
-            <div class="total">
+            <div class="cell">
               <h2>{t.paidOut}</h2>
-              <p class="figure muted">{formatMoney(lang, totals.paid_out)}</p>
-              <div class="actions">
-                {
-                  canWithdraw ? (
-                    <a class="btn btn-primary" href={withdrawPath(lang, slugs)}>{t.withdraw}</a>
-                  ) : (
-                    <a class="btn btn-secondary" href={cataloguePath(lang, slugs)}>{t.catalogue}</a>
-                  )
-                }
-              </div>
+              <p class="figure">{formatMoney(lang, totals.paid_out)}</p>
+            </div>
+            <div class="cell buttons">
+              {
+                canWithdraw ? (
+                  <a class="btn btn-primary" href={withdrawPath(lang, slugs)}>{t.withdraw}</a>
+                ) : (
+                  <>
+                    <span class="btn btn-primary" aria-disabled="true">{t.withdraw}</span>
+                    <span class="threshold">{t.belowThreshold(formatMoney(lang, totals.payout_threshold))}</span>
+                  </>
+                )
+              }
+              <a class="btn btn-secondary" href={cataloguePath(lang, slugs)}>{t.browseOffers}</a>
             </div>
           </section>
 
@@ -204,215 +324,679 @@ const canWithdraw =
             <span class="count">{t.entryCount(entries.length, allCount)}</span>
           </nav>
 
-          <section class="entries" aria-label={t.entries}>
-            {
-              entries.length === 0 && (
-                <p class="empty">{allCount === 0 ? t.noEntries : t.noEntriesInFilter}</p>
-              )
-            }
-            {
-              entries.map((entry) => (
-                <details class="entry" open={entry.reversal_of_id !== null}>
-                  <summary>
+          <div class="master">
+            <section class="list" aria-label={t.entries}>
+              {
+                entries.length === 0 && (
+                  <p class="empty">{allCount === 0 ? t.noEntries : t.noEntriesInFilter}</p>
+                )
+              }
+              {
+                entries.map((entry) => (
+                  <a
+                    href={entryHref(entry)}
+                    class:list={[
+                      'row',
+                      entry.state,
+                      { on: selected !== null && entry.entry_id === selected.entry_id },
+                    ]}
+                    aria-current={
+                      selected !== null && entry.entry_id === selected.entry_id ? 'true' : undefined
+                    }
+                  >
                     <span class="who">
                       <span class="merchant">{entry.merchant_name}</span>
                       <span class="meta">
-                        {formatItemDate(lang, new Date(entry.transacted_at))}
-                        {' · '}
-                        {t.sale} {formatMoney(lang, entry.sale_amount)}
+                        {shortDate(entry.transacted_at)} · {t.sale} {formatMoney(lang, entry.sale_amount)}
+                        {entry.reversal_of_id !== null && (
+                          <>
+                            {' · '}
+                            {t.reversalOf} <span class="ref">{entry.reversal_of_id}</span>
+                          </>
+                        )}
+                        {entry.reason !== null && ` · ${entry.reason}`}
                       </span>
                     </span>
-                    <span class="tag tag-neutral state">{t.entryStates[entry.state]}</span>
+                    <span class:list={['tag', tagClass(entry.state), 'state']}>{tagText(entry)}</span>
                     <span class="amount">{formatSignedMoney(lang, entry.cashback_amount)}</span>
-                  </summary>
-                  <div class="record">
-                    <dl>
-                      <dt>{t.sale}</dt>
-                      <dd>{formatMoney(lang, entry.sale_amount)}</dd>
-                      {
-                        entry.expected_confirmation_at !== null && (
-                          <>
-                            <dt>{t.expectedConfirmation}</dt>
-                            <dd>
-                              {formatItemDate(lang, new Date(entry.expected_confirmation_at))}
-                            </dd>
-                          </>
-                        )
-                      }
-                      {
-                        entry.reversal_of_id !== null && (
-                          <>
-                            <dt>{t.reversalOf}</dt>
-                            <dd class="ref">{entry.reversal_of_id}</dd>
-                          </>
-                        )
-                      }
-                      {
-                        entry.reason !== null && (
-                          <>
-                            <dt>{t.reversalReason}</dt>
-                            <dd>{entry.reason}</dd>
-                          </>
-                        )
-                      }
-                    </dl>
-                    <p class="note">{t.rateAtClick}</p>
-                  </div>
-                </details>
-              ))
-            }
-          </section>
+                  </a>
+                ))
+              }
+            </section>
+
+            <aside class:list={['detail', { explicit: explicit !== null }]} aria-label={t.selectedEntry}>
+              {
+                selected === null ? (
+                  <p class="empty">{t.selectRow}</p>
+                ) : (
+                  <>
+                    {/* Phone: the back bar and the big figure. */}
+                    <div class="back-bar">
+                      <a class="back" href={filterHref(active.key)}>← {t.backToWallet}</a>
+                      <span class="back-label">{t.selectedEntry}</span>
+                    </div>
+                    <div class="head">
+                      <p class="head-meta">
+                        {selected.merchant_name} · {formatDateTime(lang, new Date(selected.transacted_at))}
+                      </p>
+                      <p class="head-figure">
+                        {formatSignedMoney(lang, selected.cashback_amount)}
+                      </p>
+                      <span class:list={['tag', tagClass(selected.state), 'head-tag']}>{tagText(selected)}</span>
+                    </div>
+
+                    <div class="body">
+                      {/* Desktop: the rail's own head. */}
+                      <span class="card-kicker kicker">{t.selectedEntry}</span>
+                      <div class="rail-title">
+                        <h3>{selected.merchant_name}</h3>
+                        <span class:list={['rail-amount', selected.state]}>
+                          {formatSignedMoney(lang, selected.cashback_amount)}
+                        </span>
+                      </div>
+                      <p class="rail-meta">
+                        {formatDateTime(lang, new Date(selected.transacted_at))} ·{' '}
+                        <span class:list={['tag', tagClass(selected.state), 'rail-tag']}>
+                          {t.entryStates[selected.state]}
+                        </span>
+                      </p>
+
+                      {/* Phone: the timeline. */}
+                      <h2 class="life">{t.entryLife}</h2>
+                      <ol class="timeline">
+                        {
+                          stepsFor(selected).map((step) => (
+                            <li class:list={['step', { done: step.done }]}>
+                              <span class="dot" aria-hidden="true"></span>
+                              <div>
+                                <div class="step-title">{step.title}</div>
+                                {step.body !== '' && <div class="step-body">{step.body}</div>}
+                              </div>
+                            </li>
+                          ))
+                        }
+                      </ol>
+
+                      <dl class="record">
+                        <div class="record-row">
+                          <dt>{t.sale}</dt>
+                          <dd>{formatMoney(lang, selected.sale_amount)}</dd>
+                        </div>
+                        <div class="record-row desk">
+                          <dt>{t.tracked}</dt>
+                          <dd>{formatDateTime(lang, new Date(selected.transacted_at))}</dd>
+                        </div>
+                        <div class="record-row">
+                          <dt>{t.rateApplied}</dt>
+                          <dd>{t.rateSince}</dd>
+                        </div>
+                        {
+                          selected.state === 'pending' && (
+                            <div class="record-row desk">
+                              <dt>{t.expectedConfirmation}</dt>
+                              <dd>
+                                {selected.expected_confirmation_at === null
+                                  ? t.pendingExplained
+                                  : formatItemDate(lang, new Date(selected.expected_confirmation_at))}
+                              </dd>
+                            </div>
+                          )
+                        }
+                        {
+                          SETTLED.includes(selected.state) && (
+                            <>
+                              <div class="record-row desk">
+                                <dt>{t.entryStates.confirmed}</dt>
+                                <dd>{t.networkConfirmed}</dd>
+                              </div>
+                              <div class="record-row desk">
+                                <dt>{t.paysOut}</dt>
+                                <dd>{selected.state === 'paid' ? t.entryStates.paid : t.paysOutBatch}</dd>
+                              </div>
+                            </>
+                          )
+                        }
+                        {
+                          selected.reversal_of_id !== null && (
+                            <div class="record-row">
+                              <dt>{t.reversalOf}</dt>
+                              <dd class="ref">{selected.reversal_of_id}</dd>
+                            </div>
+                          )
+                        }
+                        {
+                          selected.reason !== null && (
+                            <div class="record-row desk">
+                              <dt>{t.reversalReason}</dt>
+                              <dd>{selected.reason}</dd>
+                            </div>
+                          )
+                        }
+                        <div class="record-row">
+                          <dt>{t.reference}</dt>
+                          <dd class="ref">{selected.entry_id}</dd>
+                        </div>
+                      </dl>
+
+                      <p class="note">{t.rateAtClick}</p>
+                      <div class="actions">
+                        <a class="btn btn-ghost share" href={entryHref(selected)} data-share>
+                          {t.openEntry}
+                        </a>
+                      </div>
+                    </div>
+                  </>
+                )
+              }
+            </aside>
+          </div>
         </>
       )
     }
   </main>
 </ReaderLayout>
 
+<script>
+  // The ghost button is the entry's own link. Where the platform can share
+  // a URL, sharing it beats reloading the page the member is already on.
+  for (const link of document.querySelectorAll<HTMLAnchorElement>('a[data-share]')) {
+    link.addEventListener('click', (event) => {
+      if (typeof navigator.share !== 'function') {
+        return;
+      }
+      event.preventDefault();
+      void navigator.share({ url: link.href }).catch(() => undefined);
+    });
+  }
+</script>
+
 <style>
   .wallet {
     flex: 1;
-    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) 28px;
+    display: flex;
+    flex-direction: column;
+    padding: 0 0 28px;
   }
   .band {
     border: 2px solid var(--color-divider);
     background: var(--color-surface);
     padding: 20px;
-    margin: 0 0 var(--space-6);
+    margin: 20px 28px;
     font-size: 14px;
   }
-  .totals {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    border: 2px solid var(--color-divider);
-    margin-bottom: var(--space-6);
+
+  /* — phone header block (hidden on desktop) — */
+  .hero {
+    display: none;
+    padding: 14px 18px 18px;
+    background: var(--color-text);
+    color: var(--color-bg);
   }
-  .total {
-    padding: 20px;
-    border-right: 1px solid var(--color-divider);
+  .hero-top {
     display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
   }
-  .total:last-child {
+  .hero-kicker {
+    font: 600 11px var(--font-heading);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.7;
+  }
+  .hero-status {
+    font-size: 11px;
+    opacity: 0.7;
+  }
+  .hero-label {
+    margin: 0 0 4px;
+    font: 400 12px/1.55 var(--font-body);
+    letter-spacing: 0;
+    opacity: 0.7;
+  }
+  .hero-figure {
+    margin: 0 0 6px;
+    font: var(--font-heading-weight) 44px/1 var(--font-heading);
+  }
+  .hero-pending {
+    margin: 0 0 6px;
+    font-size: 12.5px;
+    opacity: 0.75;
+    text-wrap: pretty;
+  }
+  .hero-more {
+    margin: 0 0 16px;
+    font-size: 12px;
+    opacity: 0.7;
+  }
+  .hero-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .hero-actions .btn {
+    font-size: 13px;
+    padding: 10px 14px;
+  }
+  .hero-browse {
+    border-color: color-mix(in srgb, var(--color-bg) 40%, transparent);
+    color: var(--color-bg);
+  }
+  .btn[aria-disabled='true'] {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* — desktop balance strip — */
+  .strip {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    border-bottom: 2px solid var(--color-divider);
+  }
+  .cell {
+    padding: 20px 24px;
+    border-right: 1px solid var(--color-divider);
+  }
+  .cell:last-child {
     border-right: 0;
   }
-  .total h2 {
-    margin: 0;
-    font: 600 11px/1.3 var(--font-heading);
-    letter-spacing: 0.06em;
+  .cell h2 {
+    margin: 0 0 8px;
+    font: var(--font-heading-weight) 13px/1.12 var(--font-heading);
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--ink-muted);
   }
   .figure {
     margin: 0;
-    font: var(--font-heading-weight) 30px/1 var(--font-heading);
+    font: var(--font-heading-weight) 28px/1 var(--font-heading);
   }
   .figure.muted {
-    color: var(--ink-soft);
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
   }
-  .note {
-    margin: 0;
-    font-size: 12px;
-    color: var(--ink-muted);
+  .buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    justify-content: center;
+  }
+  .buttons .btn {
+    font-size: 13px;
+  }
+  .threshold {
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
     text-wrap: pretty;
   }
-  .actions {
-    margin-top: auto;
-    padding-top: var(--space-3);
-  }
+
+  /* — filter bar — */
   .filters {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-1);
     border-bottom: 2px solid var(--color-divider);
-    margin-bottom: var(--space-2);
   }
   .filter {
-    padding: var(--space-3) 20px;
-    font: 600 13px/1.2 var(--font-heading);
+    border-right: 1px solid var(--color-divider);
+    padding: 11px 22px;
+    text-align: left;
+    background: transparent;
     color: var(--color-text);
+    font: 600 12.5px var(--font-heading);
     text-decoration: none;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -2px;
   }
   .filter.on {
-    color: var(--color-accent);
-    border-bottom-color: var(--color-accent);
+    background: var(--color-accent);
+    color: var(--color-bg);
   }
   .count {
     margin-left: auto;
-    padding: 0 var(--space-4);
-    font-size: 12px;
-    color: var(--ink-muted);
+    padding: 0 22px;
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
   }
-  .entry {
-    border-bottom: 1px solid var(--color-divider);
+
+  /* — master-detail — */
+  .master {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    flex: 1;
   }
-  .entry summary {
+  .list {
+    border-right: 1px solid var(--color-divider);
+  }
+  .row {
     display: flex;
-    align-items: baseline;
-    gap: var(--space-4);
-    padding: var(--space-4) var(--space-2);
-    cursor: pointer;
+    gap: 14px;
+    align-items: center;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--color-divider);
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  .row.on {
+    border-left: 3px solid var(--color-accent);
+    background: var(--color-accent-100);
+  }
+  .row.declined,
+  .row.reversed {
+    opacity: 0.55;
   }
   .who {
     flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
     min-width: 0;
   }
   .merchant {
-    font-size: 15px;
+    display: block;
+    font-size: 14px;
     font-weight: 600;
   }
   .meta {
-    font-size: 12px;
-    color: var(--ink-muted);
+    display: block;
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
   }
-  .amount {
-    font: var(--font-heading-weight) 16px/1 var(--font-heading);
+  .state {
+    font-size: 10px;
     white-space: nowrap;
   }
-  .record {
-    padding: 0 var(--space-2) 20px var(--space-6);
+  .amount {
+    font: var(--font-heading-weight) 15px var(--font-heading);
+    width: 70px;
+    text-align: right;
+    white-space: nowrap;
   }
-  .record dl {
-    display: grid;
-    grid-template-columns: minmax(120px, auto) 1fr;
-    gap: var(--space-2) 20px;
-    margin: 0 0 var(--space-4);
-    font-size: 13px;
-  }
-  .record dt {
-    color: var(--ink-muted);
-  }
-  .record dd {
-    margin: 0;
+  .row.confirmed .amount {
+    color: var(--color-accent-700);
   }
   .ref {
     font-family: ui-monospace, Menlo, monospace;
-    font-size: 12px;
+    font-size: 11px;
+    white-space: nowrap;
   }
   .empty {
-    padding: var(--space-6) var(--space-2);
-    font-size: 14px;
-    color: var(--ink-muted);
+    padding: 20px 22px;
+    font-size: 12px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
     text-wrap: pretty;
   }
-  @media (max-width: 560px) {
-    .wallet {
-      padding: 20px var(--space-4) var(--space-6);
+
+  /* — the right rail — */
+  .detail {
+    background: var(--color-surface);
+  }
+  .back-bar,
+  .head,
+  .life,
+  .timeline {
+    display: none;
+  }
+  .body {
+    padding: 20px 24px;
+  }
+  .kicker {
+    font-size: 10.5px;
+  }
+  .rail-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 10px 0 4px;
+  }
+  .rail-title h3 {
+    margin: 0;
+    font-size: 22px;
+  }
+  .rail-amount {
+    font: var(--font-heading-weight) 22px var(--font-heading);
+    white-space: nowrap;
+  }
+  .rail-amount.confirmed {
+    color: var(--color-accent-700);
+  }
+  .rail-meta {
+    margin: 0 0 14px;
+    font-size: 12px;
+    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  }
+  .rail-tag {
+    font-size: 10px;
+  }
+  .record {
+    display: flex;
+    flex-direction: column;
+    margin: 0 0 14px;
+    border-top: 1px solid var(--color-divider);
+    font-size: 12.5px;
+    background: var(--color-bg);
+  }
+  .record-row {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--color-divider);
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .record-row:last-child {
+    border-bottom: 0;
+  }
+  .record dt {
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    white-space: nowrap;
+  }
+  .record dd {
+    margin: 0;
+    text-align: right;
+    text-wrap: pretty;
+  }
+  .note {
+    margin: 0 0 14px;
+    font-size: 12px;
+    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+    text-wrap: pretty;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+  }
+  .actions .btn {
+    font-size: 12.5px;
+  }
+
+  /* — phone — */
+  @media (max-width: 660px) {
+    .bar :global(.masthead) {
+      display: none;
     }
-    .entry summary {
+    .hero {
+      display: block;
+    }
+    .strip {
+      display: none;
+    }
+    .band {
+      margin: 16px 18px;
+    }
+    .filters {
       flex-wrap: wrap;
     }
+    .filter {
+      flex: 1;
+      padding: 10px 0 10px 14px;
+      font-size: 12px;
+    }
+    .filter:nth-child(4) {
+      border-right: 0;
+    }
+    .count {
+      flex-basis: 100%;
+      margin-left: 0;
+      padding: 10px 18px;
+      border-top: 2px solid var(--color-divider);
+    }
+    .master {
+      display: flex;
+      flex-direction: column;
+    }
+    .list {
+      border-right: 0;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        'who amount'
+        'who tag';
+      gap: 4px 12px;
+      align-items: baseline;
+      padding: 13px 18px;
+    }
+    .who {
+      grid-area: who;
+    }
     .state {
-      order: 3;
+      grid-area: tag;
+      justify-self: end;
+      font-size: 9.5px;
     }
     .amount {
+      grid-area: amount;
+      width: auto;
+    }
+    .empty {
+      padding: 14px 18px;
+    }
+
+    /* The entry as a screen of its own, above the list, only when the URL names one. */
+    .detail {
+      display: none;
+      order: -1;
+      background: var(--color-bg);
+      border-bottom: 2px solid var(--color-divider);
+    }
+    .detail.explicit {
+      display: block;
+    }
+    .entry-open .hero,
+    .entry-open .filters,
+    .entry-open .list {
+      display: none;
+    }
+    .back-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 18px 12px;
+      border-bottom: 2px solid var(--color-divider);
+    }
+    .back {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--color-accent);
+      text-decoration: none;
+    }
+    .back-label {
       margin-left: auto;
+      font-size: 11.5px;
+      color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    }
+    .head {
+      display: block;
+      padding: 22px 18px;
+      border-bottom: 2px solid var(--color-divider);
+    }
+    .head-meta {
+      margin: 0 0 6px;
+      font-size: 12px;
+      color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    }
+    .head-figure {
+      margin: 0 0 8px;
+      font: var(--font-heading-weight) 40px/1 var(--font-heading);
+    }
+    .head-tag {
+      font-size: 11px;
+    }
+    .body {
+      padding: 18px;
+    }
+    .kicker,
+    .rail-title,
+    .rail-meta {
+      display: none;
+    }
+    .life {
+      display: block;
+      margin: 0 0 14px;
+      font: var(--font-heading-weight) 13px/1.12 var(--font-heading);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .timeline {
+      display: flex;
+      flex-direction: column;
+      margin: 0 0 18px;
+      padding: 0;
+      list-style: none;
+    }
+    .step {
+      display: flex;
+      gap: 12px;
+      padding-bottom: 14px;
+      border-left: 1px solid var(--color-divider);
+      margin-left: 5px;
+      padding-left: 16px;
+      position: relative;
+    }
+    .step:last-child {
+      padding-bottom: 0;
+      border-left: 0;
+      margin-left: 6px;
+      padding-left: 15px;
+    }
+    .dot {
+      position: absolute;
+      left: -5px;
+      top: 4px;
+      width: 9px;
+      height: 9px;
+      border: 1.5px solid var(--color-accent);
+      background: var(--color-bg);
+    }
+    .step.done .dot {
+      background: var(--color-accent);
+    }
+    .step-title {
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+    .step-body {
+      font-size: 11.5px;
+      color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    }
+    .record {
+      margin: 0 0 16px;
+      font-size: 13px;
+      background: transparent;
+    }
+    .record-row {
+      padding: 10px 0;
+    }
+    .record-row.desk {
+      display: none;
+    }
+    .record-row:last-child {
+      border-bottom: 1px solid var(--color-divider);
+    }
+    .record .ref {
+      font-size: 11.5px;
+    }
+    .note {
+      margin: 0 0 16px;
+      padding: 12px 14px;
+      background: var(--color-surface);
+      color: var(--color-text);
+    }
+    .actions .btn {
+      font-size: 13px;
     }
   }
 </style>
