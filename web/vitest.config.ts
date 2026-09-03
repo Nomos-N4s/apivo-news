@@ -37,6 +37,10 @@ export default getViteConfig({
         // The brand loader. brand.types.ts beside it is generated from
         // the Go types and carries no logic to measure.
         'src/lib/brand/index.ts',
+        // Cashback. money.ts is the C-6 boundary on this side of the wire:
+        // every figure a member reads is assembled here out of integer
+        // minor units, so it is measured like the invariant it carries.
+        'src/lib/cashback/money.ts',
         'src/lib/csrf.ts',
         'src/lib/secure-request.ts',
         'src/lib/editorial/api.ts',
