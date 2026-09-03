@@ -1,5 +1,5 @@
 ---
-import { API_BASE_URL, APP_ENV, CASHBACK_PREVIEW_FIXTURES } from 'astro:env/server';
+import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
 import CashbackNav from '../../../../components/CashbackNav.astro';
 import FixtureNotice from '../../../../components/FixtureNotice.astro';
 import Masthead from '../../../../components/Masthead.astro';
@@ -58,7 +58,7 @@ try {
   api = createCashbackApi(API_BASE_URL, {
     appEnv: APP_ENV,
     token: session.token,
-    previewFixtures: CASHBACK_PREVIEW_FIXTURES,
+    appVersion: PUBLIC_APP_VERSION,
   });
   items = (await api.catalogue({ lang, places: slugs, q: query === '' ? undefined : query })).items;
 } catch (error) {
@@ -137,15 +137,15 @@ const placeNames = places.map((place) => place.endonym).join(' · ');
 <style>
   .catalogue {
     flex: 1;
-    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-7);
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) 28px;
   }
   .filters {
     display: grid;
     grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
     align-items: end;
-    gap: var(--space-5);
+    gap: 20px;
     border: 2px solid var(--color-divider);
-    padding: var(--space-5);
+    padding: 20px;
   }
   .place .label {
     display: block;
@@ -175,7 +175,7 @@ const placeNames = places.map((place) => place.endonym).join(' · ');
     border-left: 1px solid var(--color-divider);
   }
   .shop {
-    padding: var(--space-5);
+    padding: 20px;
     border-right: 1px solid var(--color-divider);
     border-bottom: 1px solid var(--color-divider);
     display: flex;
@@ -219,7 +219,7 @@ const placeNames = places.map((place) => place.endonym).join(' · ');
   }
   @media (max-width: 700px) {
     .catalogue {
-      padding: var(--space-5) var(--space-4) var(--space-6);
+      padding: 20px var(--space-4) var(--space-6);
     }
     .filters {
       grid-template-columns: 1fr;

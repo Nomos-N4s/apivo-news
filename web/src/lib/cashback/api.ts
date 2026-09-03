@@ -437,6 +437,19 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
   };
 }
 
+/**
+ * Whether a version stamp names a per-pull-request preview.
+ *
+ * Exactly `pr-` followed by digits, the shape `.github/workflows/preview.yml`
+ * writes. A release tag never matches, an unset version never matches, and
+ * `preview` - the compose default when no number was passed - does not
+ * match either: a stamp that does not name a pull request is not proof of
+ * one.
+ */
+export function isPreviewVersion(version: string | undefined | null): boolean {
+  return typeof version === 'string' && /^pr-\d+$/.test(version);
+}
+
 /** How a cashback client is built. */
 export interface CashbackApiOptions {
   /** The member's or operator's bearer token; every endpoint requires one. */
@@ -446,10 +459,11 @@ export interface CashbackApiOptions {
   /** `APP_ENV`. In `prod` an absent base URL is a refusal, never a fallback. */
   readonly appEnv?: string | undefined;
   /**
-   * `CASHBACK_PREVIEW_FIXTURES`. Exactly `"1"` makes the cashback surfaces
-   * answer from fixtures even under `APP_ENV=prod`. See `createCashbackApi`.
+   * `PUBLIC_APP_VERSION`. A per-pull-request preview is the one deployment
+   * stamped `pr-<n>`, and that stamp is what identifies it here. See
+   * `createCashbackApi` and `isPreviewVersion`.
    */
-  readonly previewFixtures?: string | undefined;
+  readonly appVersion?: string | undefined;
 }
 
 /**
@@ -484,23 +498,22 @@ export function createCashbackApi(
   // call is a 404, and the screens render an unavailable band. A preview that
   // cannot show the change defeats the reason previews exist.
   //
-  // So exactly one escape hatch, and it is narrow on purpose:
+  // A preview is recognised by the one thing only a preview carries: its
+  // version stamp. preview.yml writes `pr-<n>` into VERSION and the preview
+  // compose passes it as PUBLIC_APP_VERSION; every other environment carries
+  // the release tag the pipeline deployed, or nothing. Reading that stamp
+  // reaches a preview from the pull request itself - an environment variable
+  // in the compose file would not, because the host copies compose files at
+  // provision time and a pull request cannot change them.
   //
-  //   - an OPERATOR sets it, in the preview compose file and nowhere else. It
-  //     is not a query parameter, a cookie or a header, so no visitor can turn
-  //     it on and no link can carry it.
-  //   - it is read as the exact string "1". Anything else, "true" included, is
-  //     off; a variable that leaked into another environment half-set does
-  //     nothing.
-  //   - it moves NO money and reaches no operator decision: the fixture client
-  //     refuses every decision call with a 503 naming itself.
-  //   - every surface renders the fixture band above the content, which says
-  //     in the reading language that the figures are invented.
-  //
-  // It is scoped to cashback. The reader client keeps its own refusal
-  // untouched, because an invented publisher under an invented approver is a
-  // different claim from an invented balance on a page that says so.
-  if (options.previewFixtures === '1') {
+  // What keeps this narrow: CI stamps the version, not a visitor, so no query
+  // parameter, cookie, header or link can trigger it; a fixture client moves
+  // no money and refuses every operator decision with a 503 naming itself;
+  // its click-out redirects back to the deployment rather than to a shop; and
+  // every surface renders the fixture band above its content, in the reading
+  // language, saying the figures are invented. It is scoped to cashback - the
+  // reader client keeps its own refusal untouched.
+  if (isPreviewVersion(options.appVersion)) {
     return fixtureApi();
   }
   if (appEnv === null) {

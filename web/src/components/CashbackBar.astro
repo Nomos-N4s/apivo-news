@@ -1,0 +1,54 @@
+---
+import Masthead from './Masthead.astro';
+import type { ReadingLanguage } from '../lib/reader/axes';
+import { frontPagePath } from '../lib/reader/axes';
+import { cataloguePath, walletPath } from '../lib/cashback/paths';
+import { cashbackStrings } from '../i18n/cashback';
+
+// The cashback top bar — mockups 4a/4b: the wordmark, a vertical rule, the
+// section links with the current one underlined in accent, and a muted line
+// on the right (who is signed in, or how many partners the catalogue has).
+//
+// The wordmark comes from Masthead, which is where the product name already
+// lives and is budgeted by the brand-literal lint; this component adds no
+// literal of its own. Directory and Routes, which the mockup lists, are not
+// products in this repository and are not linked (#447).
+interface Props {
+  lang: ReadingLanguage;
+  slugs: readonly string[];
+  current: 'catalogue' | 'wallet' | 'merchant';
+  /** The muted line at the right edge. */
+  aside?: string | undefined;
+}
+
+const { lang, slugs, current, aside } = Astro.props;
+const t = cashbackStrings(lang);
+const homeHref = frontPagePath(lang, slugs);
+const links = [
+  { key: 'news', href: homeHref, label: t.news, on: false },
+  { key: 'catalogue', href: cataloguePath(lang, slugs), label: t.cashback, on: current === 'catalogue' || current === 'merchant' },
+  { key: 'wallet', href: walletPath(lang, slugs), label: t.wallet, on: current === 'wallet' },
+] as const;
+---
+
+<Masthead homeHref={homeHref}>
+  <span class="rule" aria-hidden="true"></span>
+  <nav class="links" aria-label={t.cashback}>
+    {links.map((link) => (
+      <a href={link.href} class:list={['link', { on: link.on }]} aria-current={link.on ? 'page' : undefined}>{link.label}</a>
+    ))}
+  </nav>
+  {aside !== undefined && aside !== '' && <span class="aside">{aside}</span>}
+</Masthead>
+
+<style>
+  .rule { width: 1px; height: 16px; background: var(--color-divider); }
+  .links { display: flex; gap: 18px; font-size: 13.5px; }
+  .link { color: var(--color-text); text-decoration: none; padding-bottom: 2px; border-bottom: 2px solid transparent; }
+  .link.on { color: var(--color-accent); font-weight: 600; border-bottom-color: var(--color-accent); }
+  .aside { margin-left: auto; font-size: 12px; color: color-mix(in srgb, var(--color-text) 60%, transparent); }
+  @media (max-width: 660px) {
+    .rule { display: none; }
+    .aside { display: none; }
+  }
+</style>

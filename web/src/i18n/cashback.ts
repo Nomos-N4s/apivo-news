@@ -145,6 +145,84 @@ export interface CashbackStrings {
   readonly period: string;
   readonly openDifferences: string;
   readonly noRuns: string;
+
+  /* Composition — mockups 4a to 4f, bound to the contract */
+  readonly news: string;
+  readonly verifiedPayoutsOn: string;
+  readonly pendingLine: (amount: string) => string;
+  readonly browseOffers: string;
+  readonly selectedEntry: string;
+  readonly entryLife: string;
+  readonly tracked: string;
+  readonly trackedVia: string;
+  readonly rateApplied: string;
+  readonly rateSince: string;
+  readonly networkConfirmed: string;
+  readonly paysOut: string;
+  readonly paysOutBatch: string;
+  readonly reference: string;
+  readonly openEntry: string;
+  readonly partnersCount: (count: number, places: string) => string;
+  readonly sortedNote: string;
+  readonly howShelfOrdered: string;
+  readonly shelfP1: string;
+  readonly shelfP2: string;
+  readonly trackedLink: string;
+  readonly online: string;
+  readonly ratesDated: string;
+  readonly rateColumn: string;
+  readonly noteColumn: string;
+  readonly howTrackingWorks: string;
+  readonly tracking1: string;
+  readonly tracking2: string;
+  readonly tracking3: string;
+  readonly whatVoids: string;
+  readonly void1: string;
+  readonly void2: string;
+  readonly void3: string;
+  readonly statedBefore: string;
+  readonly shopAtTracking: (name: string) => string;
+  readonly opensTracked: string;
+  readonly yourHistoryHere: string;
+  readonly ordersTracked: string;
+  readonly earned: string;
+  readonly lastOrder: string;
+  readonly noHistoryHere: string;
+  readonly whereMoney: string;
+  readonly whereMoneyP: (name: string) => string;
+  readonly available: string;
+  readonly pendingNotWithdrawable: string;
+  readonly all: string;
+  readonly continueLabel: string;
+  readonly back: string;
+  readonly review: string;
+  readonly withdrawRow: string;
+  readonly executedBy: string;
+  readonly licensedPartner: string;
+  readonly recorded: string;
+  readonly awaitingNamedApproval: (amount: string) => string;
+  readonly receipt: string;
+  readonly newBalance: string;
+  readonly receiptNote: string;
+  readonly cancel: string;
+  readonly steps: string;
+  readonly openQueue: string;
+  readonly theRecord: string;
+  readonly whatRecordsSay: string;
+  readonly purchase: string;
+  readonly evidence: string;
+  readonly trackingLog: string;
+  readonly partnerFeed: string;
+  readonly rateTable: string;
+  readonly daysOld: (days: number) => string;
+  readonly none: string;
+  readonly noClick: string;
+  readonly clickRecorded: string;
+  readonly selectRow: string;
+  readonly member: string;
+  readonly destination: string;
+  readonly requested: string;
+  readonly decide: string;
 }
 
 const el: CashbackStrings = {
@@ -295,6 +373,83 @@ const el: CashbackStrings = {
   period: 'Περίοδος',
   openDifferences: 'Ανοιχτές',
   noRuns: 'Καμία εισαγωγή κατάστασης ακόμη.',
+
+  news: 'Ειδήσεις',
+  verifiedPayoutsOn: 'Επαληθευμένο · οι πληρωμές είναι ενεργές',
+  pendingLine: (amount) => `+ ${amount} σε εκκρεμότητα · επιβεβαιώνεται με το ρολόι του συνεργάτη, όχι με το δικό μας`,
+  browseOffers: 'Δες τα καταστήματα',
+  selectedEntry: 'Επιλεγμένη καταχώριση',
+  entryLife: 'Η πορεία της καταχώρισης ως τώρα',
+  tracked: 'Καταγράφηκε',
+  trackedVia: 'Άνοιξες το κατάστημα μέσα από εδώ — το κλικ καταγράφηκε',
+  rateApplied: 'Εφαρμόστηκε ποσοστό',
+  rateSince: 'Το ποσοστό που ίσχυε τη στιγμή του κλικ — ημερομηνιακό, ποτέ αναδρομικό',
+  networkConfirmed: 'Το δίκτυο επιβεβαίωσε την αγορά',
+  paysOut: 'Πληρώνεται',
+  paysOutBatch: 'Με την επόμενη έγκριση ανάληψης — ή ζήτησέ το εσύ νωρίτερα',
+  reference: 'Αναφορά',
+  openEntry: 'Άνοιγμα',
+  partnersCount: (count, places) => `${count} συνεργάτες · ${places}`,
+  sortedNote: 'Ταξινόμηση κατά τους τόπους και τη γλώσσα σου · καμία θέση δεν πωλείται',
+  howShelfOrdered: 'Πώς ταξινομείται το ράφι',
+  shelfP1: 'Οι τόποι σου, η γλώσσα σου, οι συνήθειές σου — ποτέ μια αμοιβή για θέση. Ένας συνεργάτης δεν μπορεί να αγοράσει την κορυφή αυτής της σελίδας.',
+  shelfP2: 'Κάθε ποσοστό έχει ημερομηνία. Το ποσοστό τη στιγμή του κλικ είναι αυτό που παίρνεις, και η καταχώριση κρατά την απόδειξη.',
+  trackedLink: 'Καταγεγραμμένος σύνδεσμος',
+  online: 'Online',
+  ratesDated: 'Ποσοστά — με ημερομηνία',
+  rateColumn: 'Ποσοστό',
+  noteColumn: 'Σημείωση',
+  howTrackingWorks: 'Πώς λειτουργεί η καταγραφή',
+  tracking1: 'Άνοιξε το κατάστημα μέσα από αυτή τη σελίδα — το κλικ καταγράφεται πριν μεταφερθείς',
+  tracking2: 'Παράγγειλε κανονικά — η καταχώριση εμφανίζεται ως εκκρεμής μόλις το δίκτυο την αναφέρει',
+  tracking3: 'Επιβεβαιώνεται όταν το δίκτυο την επιβεβαιώσει και πληρώνεται μετά από έγκριση ανάληψης',
+  whatVoids: 'Τι ακυρώνει μια καταχώριση',
+  void1: 'Παραγγελία εκτός της καταγεγραμμένης συνεδρίας',
+  void2: 'Κουπόνι που δεν προήλθε από εδώ',
+  void3: 'Επιστροφή ή ακύρωση της παραγγελίας',
+  statedBefore: 'Δηλωμένο εδώ, πριν ψωνίσεις — όχι σε ένα email απόρριψης.',
+  shopAtTracking: (name) => `Άνοιγμα ${name} ↗ — με καταγραφή`,
+  opensTracked: 'Ανοίγει το κατάστημα με καταγεγραμμένο κλικ',
+  yourHistoryHere: 'Το ιστορικό σου εδώ',
+  ordersTracked: 'Καταγεγραμμένες παραγγελίες',
+  earned: 'Κέρδισες',
+  lastOrder: 'Τελευταία παραγγελία',
+  noHistoryHere: 'Καμία καταγεγραμμένη παραγγελία σε αυτό το κατάστημα ακόμη.',
+  whereMoney: 'Από πού προέρχονται τα χρήματα',
+  whereMoneyP: (name) => `Το ${name} μάς πληρώνει προμήθεια για τις καταγεγραμμένες παραγγελίες· η επιστροφή σου πληρώνεται από αυτήν. Η προμήθεια δεν αλλάζει ποτέ τη θέση αυτής της σελίδας στον κατάλογο.`,
+  available: 'Διαθέσιμα',
+  pendingNotWithdrawable: 'Σε εκκρεμότητα, όχι διαθέσιμα για ανάληψη',
+  all: 'Όλα',
+  continueLabel: 'Συνέχεια',
+  back: 'Πίσω',
+  review: 'Έλεγχος',
+  withdrawRow: 'Ανάληψη',
+  executedBy: 'Εκτελείται από',
+  licensedPartner: 'Αδειοδοτημένος συνεργάτης πληρωμών',
+  recorded: 'Καταγράφηκε',
+  awaitingNamedApproval: (amount) => `${amount} δεσμεύτηκαν · περιμένουν ονομαστική έγκριση`,
+  receipt: 'Απόδειξη',
+  newBalance: 'Νέο υπόλοιπο',
+  receiptNote: 'Αυτή η απόδειξη αναφέρει κάθε καταχώριση που δεσμεύει, με το ποσοστό της ημερομηνίας της. Ο έλεγχος βλέπει τις ίδιες γραμμές — δεν υπάρχει δεύτερο βιβλίο.',
+  cancel: 'Ακύρωση',
+  steps: 'Βήμα',
+  openQueue: 'Ανοιχτά',
+  theRecord: 'Η εγγραφή',
+  whatRecordsSay: 'Τι λένε τα αρχεία μας',
+  purchase: 'Αγορά',
+  evidence: 'Απόδειξη',
+  trackingLog: 'Αρχείο καταγραφής',
+  partnerFeed: 'Ροή δικτύου',
+  rateTable: 'Πίνακας ποσοστών',
+  daysOld: (days) => (days === 1 ? '1 ημέρα' : `${days} ημέρες`),
+  none: '—',
+  noClick: 'Κανένα κλικ',
+  clickRecorded: 'Κλικ καταγεγραμμένο',
+  selectRow: 'Επίλεξε μια γραμμή για λεπτομέρειες.',
+  member: 'Μέλος',
+  destination: 'Προορισμός',
+  requested: 'Ζητήθηκε',
+  decide: 'Απόφαση',
 };
 
 const de: CashbackStrings = {
@@ -443,6 +598,83 @@ const de: CashbackStrings = {
   period: 'Zeitraum',
   openDifferences: 'Offen',
   noRuns: 'Noch kein Kontoauszug importiert.',
+
+  news: 'Nachrichten',
+  verifiedPayoutsOn: 'Verifiziert · Auszahlungen aktiv',
+  pendingLine: (amount) => `+ ${amount} offen · bestätigt nach der Uhr des Partners, nicht nach unserer`,
+  browseOffers: 'Shops ansehen',
+  selectedEntry: 'Ausgewählte Buchung',
+  entryLife: 'Der bisherige Weg dieser Buchung',
+  tracked: 'Erfasst',
+  trackedVia: 'Du hast den Shop von hier aus geöffnet — der Klick wurde erfasst',
+  rateApplied: 'Satz angewandt',
+  rateSince: 'Der Satz, der beim Klick galt — datiert, nie rückwirkend',
+  networkConfirmed: 'Das Netzwerk hat den Einkauf bestätigt',
+  paysOut: 'Auszahlung',
+  paysOutBatch: 'Mit der nächsten freigegebenen Auszahlung — oder du forderst sie früher an',
+  reference: 'Referenz',
+  openEntry: 'Öffnen',
+  partnersCount: (count, places) => `${count} Partner · ${places}`,
+  sortedNote: 'Sortiert nach deinen Orten und deiner Sprache · kein Platz ist käuflich',
+  howShelfOrdered: 'Wie das Regal sortiert ist',
+  shelfP1: 'Deine Orte, deine Sprache, deine Gewohnheiten — nie eine Platzierungsgebühr. Ein Partner kann sich den Anfang dieser Seite nicht kaufen.',
+  shelfP2: 'Jeder Satz ist datiert. Der Satz beim Klick ist der, den du bekommst, und die Buchung hält den Beleg fest.',
+  trackedLink: 'Erfasster Link',
+  online: 'Online',
+  ratesDated: 'Sätze — datiert',
+  rateColumn: 'Satz',
+  noteColumn: 'Hinweis',
+  howTrackingWorks: 'So funktioniert die Erfassung',
+  tracking1: 'Öffne den Shop über diese Seite — der Klick wird erfasst, bevor du weitergeleitet wirst',
+  tracking2: 'Bestell wie gewohnt — die Buchung erscheint als offen, sobald das Netzwerk sie meldet',
+  tracking3: 'Bestätigt wird sie, wenn das Netzwerk bestätigt; ausgezahlt nach einer freigegebenen Auszahlung',
+  whatVoids: 'Was eine Buchung ungültig macht',
+  void1: 'Eine Bestellung außerhalb der erfassten Sitzung',
+  void2: 'Ein Gutscheincode, der nicht von hier stammt',
+  void3: 'Rücksendung oder Stornierung der Bestellung',
+  statedBefore: 'Hier gesagt, bevor du einkaufst — nicht in einer Ablehnungsmail entdeckt.',
+  shopAtTracking: (name) => `${name} öffnen ↗ — mit Erfassung`,
+  opensTracked: 'Öffnet den Shop mit einem erfassten Klick',
+  yourHistoryHere: 'Deine Historie hier',
+  ordersTracked: 'Erfasste Bestellungen',
+  earned: 'Verdient',
+  lastOrder: 'Letzte Bestellung',
+  noHistoryHere: 'Noch keine erfasste Bestellung bei diesem Shop.',
+  whereMoney: 'Woher das Geld kommt',
+  whereMoneyP: (name) => `${name} zahlt uns eine Provision auf erfasste Bestellungen; dein Cashback wird daraus bezahlt. Die Provision ändert nie die Position dieser Seite im Katalog.`,
+  available: 'Verfügbar',
+  pendingNotWithdrawable: 'Offen, nicht auszahlbar',
+  all: 'Alles',
+  continueLabel: 'Weiter',
+  back: 'Zurück',
+  review: 'Prüfen',
+  withdrawRow: 'Auszahlung',
+  executedBy: 'Ausgeführt von',
+  licensedPartner: 'Lizenzierter Zahlungspartner',
+  recorded: 'Erfasst',
+  awaitingNamedApproval: (amount) => `${amount} reserviert · wartet auf namentliche Freigabe`,
+  receipt: 'Beleg',
+  newBalance: 'Neuer Stand',
+  receiptNote: 'Dieser Beleg nennt jede Buchung, die er reserviert, zu ihrem datierten Satz. Die Prüfung sieht dieselben Zeilen — es gibt kein zweites Buch.',
+  cancel: 'Abbrechen',
+  steps: 'Schritt',
+  openQueue: 'Offen',
+  theRecord: 'Der Vorgang',
+  whatRecordsSay: 'Was unsere Aufzeichnungen sagen',
+  purchase: 'Einkauf',
+  evidence: 'Beleg',
+  trackingLog: 'Erfassungsprotokoll',
+  partnerFeed: 'Netzwerk-Feed',
+  rateTable: 'Satztabelle',
+  daysOld: (days) => (days === 1 ? '1 Tag' : `${days} Tage`),
+  none: '—',
+  noClick: 'Kein Klick',
+  clickRecorded: 'Klick erfasst',
+  selectRow: 'Wähl eine Zeile für Details.',
+  member: 'Mitglied',
+  destination: 'Ziel',
+  requested: 'Beauftragt',
+  decide: 'Entscheiden',
 };
 
 const CATALOGUES: Readonly<Record<ReadingLanguage, CashbackStrings>> = { el, de };

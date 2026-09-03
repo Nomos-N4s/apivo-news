@@ -1,5 +1,5 @@
 ---
-import { API_BASE_URL, APP_ENV, CASHBACK_PREVIEW_FIXTURES } from 'astro:env/server';
+import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
 import OpsLayout from '../../layouts/OpsLayout.astro';
 import {
   CashbackApiError,
@@ -42,7 +42,7 @@ try {
   api = createCashbackApi(API_BASE_URL, {
     appEnv: APP_ENV,
     token: session.token,
-    previewFixtures: CASHBACK_PREVIEW_FIXTURES,
+    appVersion: PUBLIC_APP_VERSION,
   });
   const access = opsAccess(session, api.source);
 
@@ -173,7 +173,7 @@ if (access.blocked && !apiUnavailable) {
   }
   .row {
     border-top: 1px solid var(--color-divider);
-    padding: var(--space-5) 0;
+    padding: 20px 0;
   }
   .head {
     display: flex;
@@ -188,7 +188,7 @@ if (access.blocked && !apiUnavailable) {
   dl {
     display: grid;
     grid-template-columns: minmax(130px, auto) 1fr;
-    gap: var(--space-2) var(--space-5);
+    gap: var(--space-2) 20px;
     margin: 0 0 var(--space-4);
     font-size: 13px;
   }

@@ -1,5 +1,5 @@
 ---
-import { API_BASE_URL, APP_ENV, CASHBACK_PREVIEW_FIXTURES } from 'astro:env/server';
+import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
 import CashbackNav from '../../../../components/CashbackNav.astro';
 import FixtureNotice from '../../../../components/FixtureNotice.astro';
 import Masthead from '../../../../components/Masthead.astro';
@@ -76,7 +76,7 @@ try {
   api = createCashbackApi(API_BASE_URL, {
     appEnv: APP_ENV,
     token: session.token,
-    previewFixtures: CASHBACK_PREVIEW_FIXTURES,
+    appVersion: PUBLIC_APP_VERSION,
   });
 
   if (Astro.request.method === 'POST') {
@@ -290,7 +290,7 @@ const currency = totals?.confirmed.currency ?? 'EUR';
 <style>
   .withdraw {
     flex: 1;
-    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-7);
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) 28px;
     max-width: 72ch;
   }
   .crumb {
@@ -309,7 +309,7 @@ const currency = totals?.confirmed.currency ?? 'EUR';
   .recorded {
     border: 2px solid var(--color-divider);
     background: var(--color-surface);
-    padding: var(--space-5);
+    padding: 20px;
     margin: 0 0 var(--space-6);
     font-size: 14px;
     text-wrap: pretty;
@@ -327,7 +327,7 @@ const currency = totals?.confirmed.currency ?? 'EUR';
   .figures {
     display: grid;
     grid-template-columns: 1fr auto;
-    gap: var(--space-3) var(--space-5);
+    gap: var(--space-3) 20px;
     border-top: 1px solid var(--color-divider);
     padding-top: var(--space-4);
     margin: 0 0 var(--space-6);
@@ -351,7 +351,7 @@ const currency = totals?.confirmed.currency ?? 'EUR';
   .destinations {
     border: 0;
     padding: 0;
-    margin: var(--space-5) 0;
+    margin: 20px 0;
   }
   .destinations legend {
     font: 600 11px/1.3 var(--font-heading);
@@ -389,7 +389,7 @@ const currency = totals?.confirmed.currency ?? 'EUR';
     text-wrap: pretty;
     border-left: 2px solid var(--color-accent);
     padding-left: var(--space-4);
-    margin: var(--space-5) 0;
+    margin: 20px 0;
   }
   .next h2,
   .history h2 {
@@ -407,11 +407,11 @@ const currency = totals?.confirmed.currency ?? 'EUR';
   }
   .history {
     border-top: 2px solid var(--color-divider);
-    margin-top: var(--space-7);
+    margin-top: 28px;
   }
   .row {
     border-bottom: 1px solid var(--color-divider);
-    padding: var(--space-5) 0;
+    padding: 20px 0;
   }
   .row-head {
     display: flex;
@@ -425,7 +425,7 @@ const currency = totals?.confirmed.currency ?? 'EUR';
   .row dl {
     display: grid;
     grid-template-columns: minmax(120px, auto) 1fr;
-    gap: var(--space-2) var(--space-5);
+    gap: var(--space-2) 20px;
     margin: 0;
     font-size: 13px;
   }
@@ -441,7 +441,7 @@ const currency = totals?.confirmed.currency ?? 'EUR';
   }
   @media (max-width: 560px) {
     .withdraw {
-      padding: var(--space-5) var(--space-4) var(--space-6);
+      padding: 20px var(--space-4) var(--space-6);
     }
   }
 </style>

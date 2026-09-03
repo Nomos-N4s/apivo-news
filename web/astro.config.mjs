@@ -74,23 +74,6 @@ export default defineConfig({
         access: 'secret',
         optional: true,
       }),
-      // Exactly "1" makes the CASHBACK surfaces answer from built-in
-      // fixtures even under APP_ENV=prod. It exists for the per-pull-request
-      // preview, which runs APP_ENV=prod for fidelity and does not include
-      // the cashback compose file — so without it every cashback call 404s
-      // and a reviewer sees an error band instead of the change they were
-      // sent to look at.
-      //
-      // Set in deploy/hetzner/compose/docker-compose.preview.yml and nowhere
-      // else. It is an operator's variable, never a query parameter: no
-      // visitor can turn it on and no link can carry it. See
-      // src/lib/cashback/api.ts for the full reasoning and the four things
-      // that keep it narrow.
-      CASHBACK_PREVIEW_FIXTURES: envField.string({
-        context: 'server',
-        access: 'secret',
-        optional: true,
-      }),
     },
   },
 });

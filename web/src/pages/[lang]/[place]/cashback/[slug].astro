@@ -1,5 +1,5 @@
 ---
-import { API_BASE_URL, APP_ENV, CASHBACK_PREVIEW_FIXTURES } from 'astro:env/server';
+import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
 import CashbackNav from '../../../../components/CashbackNav.astro';
 import FixtureNotice from '../../../../components/FixtureNotice.astro';
 import Masthead from '../../../../components/Masthead.astro';
@@ -50,7 +50,7 @@ try {
   api = createCashbackApi(API_BASE_URL, {
     appEnv: APP_ENV,
     token: session.token,
-    previewFixtures: CASHBACK_PREVIEW_FIXTURES,
+    appVersion: PUBLIC_APP_VERSION,
   });
   merchant = await api.merchant(slug, lang);
 } catch (error) {
@@ -145,13 +145,13 @@ const backHere = merchantPath(lang, slugs, slug);
 <style>
   .merchant {
     flex: 1;
-    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-7);
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) 28px;
     max-width: 78ch;
   }
   .band {
     border: 2px solid var(--color-accent-700);
     background: var(--color-surface);
-    padding: var(--space-5);
+    padding: 20px;
     margin: 0 0 var(--space-6);
     font-size: 14px;
     text-wrap: pretty;
@@ -170,7 +170,7 @@ const backHere = merchantPath(lang, slugs, slug);
     color: var(--ink-muted);
   }
   .summary {
-    margin: 0 0 var(--space-5);
+    margin: 0 0 20px;
     font-size: 15px;
     text-wrap: pretty;
   }
@@ -182,7 +182,7 @@ const backHere = merchantPath(lang, slugs, slug);
   }
   .band-row {
     border-bottom: 1px solid var(--color-divider);
-    padding: var(--space-5) 0;
+    padding: 20px 0;
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
@@ -196,7 +196,7 @@ const backHere = merchantPath(lang, slugs, slug);
   .band-row dl {
     display: grid;
     grid-template-columns: minmax(110px, auto) 1fr;
-    gap: var(--space-2) var(--space-5);
+    gap: var(--space-2) 20px;
     margin: 0;
     font-size: 13.5px;
   }
@@ -216,11 +216,11 @@ const backHere = merchantPath(lang, slugs, slug);
   }
   @media (max-width: 560px) {
     .merchant {
-      padding: var(--space-5) var(--space-4) var(--space-6);
+      padding: 20px var(--space-4) var(--space-6);
     }
     .band-row dl {
       grid-template-columns: 1fr;
-      gap: 2px var(--space-5);
+      gap: 2px 20px;
     }
     .band-row dt {
       margin-top: var(--space-2);

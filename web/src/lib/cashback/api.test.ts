@@ -4,6 +4,7 @@ import {
   CashbackApiError,
   CashbackConfigurationError,
   createCashbackApi,
+  isPreviewVersion,
 } from './api';
 
 const BASE = 'http://api.internal';
@@ -258,54 +259,34 @@ describe('operator decisions', () => {
   });
 });
 
-describe('the preview fixtures escape hatch', () => {
-  it('answers from fixtures under APP_ENV=prod when an operator set it to "1"', () => {
-    const api = createCashbackApi('http://api.internal', {
-      appEnv: 'prod',
-      previewFixtures: '1',
-    });
+describe('a pull request preview', () => {
+  it('is recognised by its pr-<n> version stamp under APP_ENV=prod', () => {
+    const api = createCashbackApi('http://api.internal', { appEnv: 'prod', appVersion: 'pr-493' });
     expect(api.source).toBe('fixture');
   });
 
-  it('answers from fixtures even with no base URL, instead of refusing', () => {
-    // The preview always sets a base URL, but the flag must not depend on
-    // that: its meaning is "this deployment exists to be looked at".
-    const api = createCashbackApi(undefined, { appEnv: 'prod', previewFixtures: '1' });
-    expect(api.source).toBe('fixture');
-  });
-
-  it.each(['true', 'yes', 'on', '0', '', ' 1', '1 ', 'TRUE', undefined])(
-    'is off for %o — only the exact string "1" turns it on',
+  it.each(['v1.4.0', '1.4.0', 'preview', 'pr-', 'pr-x', 'PR-493', ' pr-493', 'pr-493 ', '', undefined])(
+    'is not claimed by %o - only pr-<digits> is a preview',
     (value) => {
-      const api = createCashbackApi('http://api.internal', {
-        appEnv: 'prod',
-        previewFixtures: value,
-      });
+      expect(isPreviewVersion(value)).toBe(false);
+      const api = createCashbackApi('http://api.internal', { appEnv: 'prod', appVersion: value });
       expect(api.source).toBe('api');
     },
   );
 
-  it('still refuses a deployment with no base URL and no flag', () => {
-    expect(() => createCashbackApi(undefined, { appEnv: 'prod' })).toThrow(
-      CashbackConfigurationError,
-    );
+  it('still refuses a deployment with no base URL and no preview stamp', () => {
+    expect(() => createCashbackApi(undefined, { appEnv: 'prod' })).toThrow(CashbackConfigurationError);
   });
 
-  it('moves no money: every operator decision is refused even with the flag on', async () => {
-    const api = createCashbackApi('http://api.internal', {
-      appEnv: 'prod',
-      previewFixtures: '1',
-    });
+  it('moves no money: every operator decision is refused on a preview', async () => {
+    const api = createCashbackApi('http://api.internal', { appEnv: 'prod', appVersion: 'pr-1' });
     await expect(api.approveWithdrawal('w1')).rejects.toMatchObject({ status: 503 });
     await expect(api.releaseHeld('h1', 'ok')).rejects.toThrow(/record nothing/);
     await expect(api.resolveDifference('d1', 'absorbed', 'ok')).rejects.toThrow(/fixtures/);
   });
 
   it('sends nobody to a real shop under a click that was never recorded', async () => {
-    const api = createCashbackApi('http://api.internal', {
-      appEnv: 'prod',
-      previewFixtures: '1',
-    });
+    const api = createCashbackApi('http://api.internal', { appEnv: 'prod', appVersion: 'pr-1' });
     const { redirect_url } = await api.clickout('offer-1');
     expect(redirect_url.startsWith('/')).toBe(true);
   });

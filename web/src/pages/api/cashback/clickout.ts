@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { API_BASE_URL, APP_ENV, CASHBACK_PREVIEW_FIXTURES } from 'astro:env/server';
+import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
 
 import { CashbackApiError, createCashbackApi } from '../../../lib/cashback/api';
 import { isSameOrigin } from '../../../lib/csrf';
@@ -38,7 +38,7 @@ export const POST: APIRoute = async ({ request, redirect, url }) => {
   const api = createCashbackApi(API_BASE_URL, {
     appEnv: APP_ENV,
     token: session.token,
-    previewFixtures: CASHBACK_PREVIEW_FIXTURES,
+    appVersion: PUBLIC_APP_VERSION,
   });
 
   try {
