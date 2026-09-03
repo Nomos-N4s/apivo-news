@@ -254,6 +254,108 @@ does not belong to; assert refusal by SQLSTATE `23503` naming
 
 ---
 
+## 0036 — A member's entry is in a currency they can be paid in
+
+### The defect
+
+An entry's currency is whatever the network reported
+(`earnings/lifecycle.go:250-256`). Withdrawal is deployment-wide
+single-currency: `earnings.Confirmed` selects only entries in the requested
+currency (`reserve.go:107-114`), and the request's currency must equal the
+payout threshold's or it is refused (`payout/withdrawal.go:306-309`,
+`ErrCurrencyNotPaid`).
+
+So an entry in any other currency is **credited, confirmed, counted in the
+member's wallet, and unwithdrawable**. Not refused, not queued, not flagged.
+With one network and one market this could not arise. With two it is one
+configuration away, and its symptom is a member looking at money that does
+not move.
+
+### The change
+
+The deployment's payout currency is configuration and cannot be a check
+constraint. But the **member's own** currency is a column —
+`cashback.participation.default_currency`, recorded at the moment they
+accepted terms — and an entry already belongs to an account. So the rule
+that matters is expressible exactly:
+
+```sql
+-- The key the composite foreign key joins on. Redundant against
+-- participation's own primary key; it exists so the rule below can be a
+-- key rather than a trigger, which is the technique 0012 and 0035 both use.
+alter table cashback.participation
+    add constraint participation_account_currency_unique
+    unique (account_id, default_currency);
+
+alter table cashback.entry
+    add constraint entry_currency_is_the_members
+    foreign key (account_id, currency)
+    references cashback.participation (account_id, default_currency);
+
+comment on constraint entry_currency_is_the_members on cashback.entry is
+    'A member is only ever credited in the currency their participation is denominated in - the one a withdrawal can actually reserve and pay out. Without this, a network reporting in another currency produces a balance the member can see and can never withdraw, and nothing anywhere says so.';
+```
+
+Two things follow, and both are wanted:
+
+- **An entry in a foreign currency is unrepresentable.** The insert is
+  refused, the crediting path recognises the refusal by name, and the report
+  is queued for an operator naming the currency (FR-109) — the same shape as
+  an unattributable report.
+- **A member's currency cannot change while they hold a balance in the old
+  one.** `0017` lets a re-joining member restate `default_currency`; that
+  update is now refused while entries reference the old value. That is the
+  correct answer to a question nobody had asked: their money is denominated
+  in what they were credited in.
+
+### The consequence this constraint forces, stated rather than smuggled
+
+Joining through `participation` makes crediting **require** an opt-in. That
+is correct — an entry for a member who never accepted terms was always
+wrong, and nothing said so — but today **nothing stops it**: the click-out
+path has no participation check anywhere
+(`internal/cashback/clickout/` contains no reference to it), so a signed-in
+member who never opted in can click out and be credited.
+
+Left alone, this constraint would turn that into the wrong failure: the
+member clicks, buys, and their report is refused at crediting. So the
+click-out gate (FR-110) lands **before** this migration, not after. It is a
+widening of this feature, forced by the choice above, and it is a small one:
+FR-002 already says participation is an explicit opt-in, and an opt-in that
+a credit can precede is not one.
+
+### And the earlier refusal
+
+The constraint catches a report that arrived. FR-108 asks for the refusal
+one step earlier, where a person can act on it, so `network_account` records
+what its network reports in:
+
+```sql
+alter table cashback.network_account
+    add column reports_currency char(3)
+        constraint network_account_reports_currency_iso4217_format
+            check (reports_currency is null or reports_currency ~ '^[A-Z]{3}$');
+
+comment on column cashback.network_account.reports_currency is
+    'The currency this publisher account''s network reports commission in, as its adapter declares it. Null means nobody has established it yet - which is itself the state that produces an unwithdrawable balance, so an operator listing shows it as such rather than as blank.';
+```
+
+Nullable on purpose. An account connected before its adapter has a recording
+has nothing honest to declare, and a default would be a guess about money.
+`connect-network` refuses a **declared** currency this deployment cannot pay
+out (FR-108); a null is reported, not refused.
+
+### Test
+
+Real Postgres. Insert an entry whose currency differs from the member's
+participation currency; assert SQLSTATE `23503` naming
+`entry_currency_is_the_members`. Then attempt to restate a participating
+member's `default_currency` while an entry references the old one; assert
+the same. And connect an account declaring a currency other than the payout
+threshold's; assert the refusal names both currencies.
+
+---
+
 ## Read-path consequences
 
 | Query | Change |
