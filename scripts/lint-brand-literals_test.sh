@@ -154,7 +154,7 @@ expect_clean "a longer word that merely starts like a brand literal is not one"
 
 fixture
 write "internal/editorial/handler_test.go" '// Wire shape per specs/001-epiloyes-alpha/contracts/http-api.md.'
-write "web/src/lib/reader/api.ts" ' * (`specs/001-epiloyes-alpha/contracts/http-api.md`).'
+write "web/src/lib/reader/api.ts" ' * See specs/001-epiloyes-alpha/contracts/http-api.md.'
 commit_all
 expect_clean "a path to a specification is the address of a file, not a literal"
 
