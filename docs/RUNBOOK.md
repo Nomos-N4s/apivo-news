@@ -541,7 +541,7 @@ Read the shape of it first, because it decides how much time you have:
 | Symptom | How bad | Time you have |
 |---|---|---|
 | The zero-sum check is failing | **Incident.** The ledger and the wallets disagree | None. Stop writes if you cannot explain it in ten minutes |
-| The catalogue emptied | **Incident.** Members see no retailers, and the routes say they left | Minutes. It is usually recoverable, and only before the next import runs |
+| The catalogue emptied | **Incident.** Members see no retailers, and the routes say they left | Hours. The next complete import is the remedy, not the deadline |
 | A payout is stuck | Serious. One member's money is in flight | Hours |
 | The poller has stalled | Serious, and silent. Commissions are not arriving | Hours, but the backlog grows |
 | The unattributed queue is growing | Ordinary, unless it is growing *fast* | Days |
@@ -564,34 +564,66 @@ make cashback-verify-ledger
 ```
 
 C-1 is the one invariant that lives outside our own schema (ADR-0002), which
-is exactly why it is checked continuously rather than trusted. A failure
-means the wallet projection and the ledger disagree, and one of them is
-telling members a number that is not true.
+is exactly why it is checked continuously rather than trusted. That target
+proves two different things, and they fail for different reasons. Find out
+which one is red before doing anything else.
 
 **Do not** adjust the ledger to match the wallet, or the wallet to match the
 ledger. You do not yet know which is right.
 
-Find the entry transition with no posting behind it. `entry_transition`
-requires a `ledger_transfer_ref` on every row precisely so that this
-question has an answer:
+### Every currency sums to zero — and one does not
 
 ```sql
-select et.id, et.entry_id, et.from_state, et.to_state, et.ledger_transfer_ref, et.occurred_at
-  from cashback.entry_transition et
-  left join cashback.ledger_link ll on ll.transition_id = et.id
- where ll.transition_id is null
- order by et.occurred_at desc
+select currency, net_minor from cashback.ledger_zero_sum where net_minor <> 0;
+```
+
+The ledger's own postings do not net. Nothing in the application can cause
+this: a transfer's postings are written together, inside one transaction,
+by the ledger driver, and the ledger refuses an unbalanced one. So a row
+here is the substrate disagreeing with itself, not a bug in the crediting
+path — an ADR-0002 exit-route conversation, not a runbook step. Escalate,
+and do not post anything else until somebody has looked.
+
+### A wallet does not match the ledger
+
+This is the common one, and it has a known cause worth learning.
+
+The money moves **before** the state is recorded. `earnings/statemachine.go`
+posts the transfer first and records the transition and its link second,
+and it says so in two error sentinels you will find in the log:
+
+- `ErrNotRecorded` — *"the transfer posted but the transition could not be
+  recorded"*;
+- `ErrEntryMoved` — the entry left the state its caller had read, so the
+  code deliberately returns **having posted and not recorded**, on the
+  grounds that recording a transition the entry did not make would be worse.
+
+So the divergence is always the same shape: **money in the ledger with no
+transition behind it.** The opposite — a transition with no posting — is
+close to unrepresentable, because the transition, its link and the entry's
+new state are one commit or none.
+
+Look for the posting, not for the transition:
+
+```sql
+select t.ref, t.posted_at, t.idempotency_key
+  from ledger.transfer t
+  left join cashback.ledger_link ll on ll.ledger_transfer_ref = t.ref
+ where ll.ledger_transfer_ref is null
+ order by t.posted_at desc
  limit 20;
 ```
 
-A transition with no link is a state we recorded and a posting we did not
-make — the outbox stopped, or the ledger refused. Fix the cause, then
-**replay**: the transfer reference is idempotent, so re-posting it is safe
-and re-posting it twice is refused.
+Read the result with the schema in mind: `ledger_link` records **entry**
+transitions only, so a transfer that belongs to something else — the
+house-account seeding a balance, anything posted by hand — appears here
+legitimately. What you are looking for is a transfer whose idempotency key
+names an entry, with no link beside it and a `ErrNotRecorded` in the log at
+the same moment.
 
-If the check fails and *every* transition has its link, the disagreement is
-inside the ledger. That is an ADR-0002 exit-route conversation, not a
-runbook step. Escalate.
+The fix is to **replay**, never to edit: the transfer key is derived from
+the move, so re-running it re-posts to the same transfer and the second
+attempt is refused rather than duplicating the money.
 
 ## The catalogue emptied
 
@@ -617,10 +649,21 @@ select status, count(*), min(retrieved_at), max(retrieved_at)
 ```
 
 If every departure carries one `retrieved_at`, it was one bad import, not
-the network. **Do not run the import again to fix it** — a second truncated
-answer confirms the departures. Stop the import job first, then restore
-`status` from the routes' own history and re-import only once you know why
-the first answer was short.
+the network.
+
+**There is nothing to restore from.** `merchant_network` keeps no history:
+`MarkRoutesNotSeen` updates `status` in place and `UpsertRoute`'s
+`ON CONFLICT` overwrites it, so the previous value is recorded nowhere. Do
+not go looking for an audit table.
+
+What puts it back is **a complete import**, and that is the good news:
+`TestAReturningRetailerComesBack` is exactly this case, and a later import
+that returns the retailer moves the route from `left_network` back to
+`active` with no operator action at all. So the sequence is: find out why
+the answer was short, fix that, and let the next import run. The danger is
+not the next import — it is running one while the network is *still*
+answering short, which re-confirms the departures. If you cannot fix the
+cause quickly, stop the import job until you can.
 
 ## A payout is stuck
 
@@ -685,8 +728,8 @@ infinite loop with a frozen cursor. `ErrNetworkUnavailable` and
 changes nothing today** — the adapters use compiled-in constants, and the
 one read of the row discards it. If a network is complaining that we are
 hammering it, lowering that column will not help; the limit is a release.
-This is recorded as a defect in `specs/003-multi-network-linkwise/research.md`
-§4.7.
+This is recorded as a defect in
+`specs/004-multi-network-linkwise/research.md` §4.7.
 
 ## The unattributed queue is growing
 
