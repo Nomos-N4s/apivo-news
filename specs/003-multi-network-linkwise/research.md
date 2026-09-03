@@ -348,3 +348,4 @@ Each should be corrected rather than worked around:
 | `002/contracts/ports.md` §2 | a live contract test, skipped without credentials | no such test exists |
 | `networks/network.go:169-220` | nine numbered contract rules | `ports.md` numbers ten; the tenth is unnumbered prose at `:162-167` |
 | `002/tasks.md` | Phases 1-6 largely unticked | most are implemented; the file is stale |
+| `networks/network.go:198-199` | SC-008's isolation rule "is not written yet" | `internal/arch/network_isolation_test.go` exists (T109) |

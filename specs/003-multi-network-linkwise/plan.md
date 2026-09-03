@@ -101,7 +101,7 @@ evidence changes are listed; every other row is unchanged and still passes.*
 | I. Sole authorship, signed commits | PASS | Unchanged. Branch is `xcoder/003-multi-network`; `make ref-lint` and `scripts/lint-commit-authors.sh` run before every push |
 | III. I-2 provenance at retrieval | PASS (strengthened) | Every adapter records retrieval time, **its own** publisher account and the query window — with two adapters, the account is what tells two provenance rows apart |
 | VI. I-5 traceability | PASS (strengthened) | The `cashback.provenance` view already joins through `merchant_network`, so it names the network per row without change |
-| VIII. DB-enforced invariants | PASS (extended) | Two new database rules, each with a SQLSTATE-asserting test: **one click backs at most one credit** (0033), and **a published route must be alive** (0034). Both are today's application-level assumptions made structural |
+| VIII. DB-enforced invariants | PASS (extended) | Two new database rules, each with a SQLSTATE-asserting test: **one click backs at most one credit** (0033), and **a published route must be usable** (0034). Both are today's application-level assumptions made structural |
 | IX. Money is double entry, evidence-backed, exactly once | PASS (sharpened) | C-2 gains its missing half: a credit's click must belong to the **reporting** network. Enforced in the query *and* in the database, because a query is a habit and a constraint is a rule |
 | Architecture: adapters swappable in < 5 engineer-days | **PASS — and finally proved** | The constitution requires every external dependency be proved by *a second working implementation in the repository*, and names affiliate network adapters. Today the second implementation is a fixture. This feature makes it a second **real** network, which is what the clause actually asks for |
 | Architecture: module boundaries | PASS (guarded) | The registry that ends the two-switch disagreement lives in the **composition root**, not in the domain, because `internal/arch/network_isolation_test.go` rule A forbids any domain package naming an adapter. Putting it anywhere else fails that test, and correctly |
@@ -154,7 +154,7 @@ internal/cashback/
 
 internal/platform/db/migrations/
 ├── 0033_click_backs_one_credit.{up,down}.sql
-├── 0034_preferred_route_must_be_alive.{up,down}.sql
+├── 0034_preferred_route_must_be_publishable.{up,down}.sql
 └── 0035_click_carries_its_network.{up,down}.sql
 ```
 
@@ -264,7 +264,7 @@ already there. **Rejected**: leaving it joined — then D-C's query predicate
 is a three-table join on the hot attribution path, and FR-096 becomes a
 performance argument instead of a rule.
 
-### D-E. Arbitration: a published route must be alive (0034)
+### D-E. Arbitration: a published route must be usable (0034)
 
 `merchant_network_one_preferred` already guarantees **at most one** preferred
 route per retailer (`0011:181-183`). Two things it does not guarantee, and
@@ -272,11 +272,14 @@ neither matters until a retailer is on two networks:
 
 - a preferred route may be `left_network` or `paused` — a dead route keeps
   publishing over a live one;
+- a preferred route may be one that **cannot carry a click reference** —
+  contract rule 10, and the failure where the member is never credited while
+  every diagnostic reads healthy;
 - there may be **zero** preferred routes — the retailer publishes nothing
   while a perfectly good route sits beside it.
 
-**Decision**: 0034 narrows the index to alive routes and adds the demotion
-path — when a route leaves or its network goes inactive, its preference is
+**Decision**: 0034 constrains the published route to one that is alive *and*
+attributable, and adds the demotion path — when a route leaves or its network goes inactive, its preference is
 withdrawn and a surviving active route takes over. Which one is **a recorded
 decision** (FR-099) with a named human and a non-blank reason where an
 operator makes it (FR-101), and first-import as the initial value.
@@ -340,7 +343,8 @@ not announce themselves.
 - 0035 click carries its network; 0033 one click backs one credit; the
   network-predicated lookup; the unattributed reason that distinguishes
   "wrong network".
-- 0034 a published route must be alive, and the demotion path.
+- 0034 a published route must be alive and attributable, and the demotion
+  path.
 - Each with a real-Postgres test asserting the **database** refuses.
 
 ### Phase A — The seam
