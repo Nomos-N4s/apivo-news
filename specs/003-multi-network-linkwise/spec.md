@@ -253,6 +253,13 @@ unmodified.
   or overruns the slow one.
 - Two networks with **different catalogue languages** —
   `NETWORK_SOURCE_LANGUAGE` is one global scalar today.
+- **A retailer whose name is not in the Latin alphabet.** The only thing
+  that recognises a retailer already imported from another network is a
+  match on the slug of its name, and the slug keeps only ASCII letters and
+  digits — so every Greek name slugs to the empty string and falls back to
+  an identifier containing the network's own id (research.md §4.5). US3 is
+  then impossible for exactly the network being added, silently: two
+  merchant rows, two rates, nothing saying they are one shop.
 - A retailer is reachable **only through a route that cannot carry a click
   reference** — Linkwise publishes `allow_deeplinking` per programme
   (research.md §5.2). Nothing fails: the member clicks, buys, and the
@@ -346,6 +353,18 @@ them quietly:
   that cannot tell declares the whole network unattributable rather than
   guessing per route.
 
+**Retailer identity across networks**
+
+- **FR-111**: A retailer's slug MUST be derivable from its name in any
+  script the deployment's source languages use. A name that produces no slug
+  is a defect, not a fallback case, and an identifier carrying the network's
+  own id is not a name for a shop.
+- **FR-112**: Recognising that two routes reach the same retailer MUST NOT
+  rest solely on how their names transliterate. An operator MUST be able to
+  declare two routes one retailer, and to undo it, with the decision
+  recorded — the importer's own comment already notes that two programmes
+  with one name may be two businesses.
+
 **Currency (money safety)**
 
 - **FR-108**: A publisher account MUST declare the currency its network
@@ -403,6 +422,9 @@ No new entity. Three existing ones gain meaning:
   in a currency the deployment does not pay out opens **no** entry and
   appears in an operator queue naming the currency — proved end to end
   against a real Postgres, and refused earlier still at connection time.
+- **SC-028**: Two routes to one retailer whose name is written in Greek
+  resolve to **one** merchant publishing **one** route — proved by a test
+  over real Greek programme names, which today all slug to the empty string.
 
 ---
 
@@ -442,6 +464,16 @@ resolve them.
   Both defaults follow from the constitution putting **multi-currency
   wallets out of scope** — this is a refusal to design, not a missing
   feature, and reversing either default means designing them.
+
+---
+
+- **Q14 — What does a Greek retailer's address say?** The slug is
+  member-facing. Transliterated Latin (`kotsovolos`), the Greek itself, or a
+  slug an operator chooses? *Default*: **transliterated Latin**, because it
+  is stable, typeable and shareable, with an operator override where the
+  transliteration reads badly. What it must not stay is today's answer — an
+  identifier built from the network's own id for the shop, which is not a
+  name and is different on each network.
 
 ---
 

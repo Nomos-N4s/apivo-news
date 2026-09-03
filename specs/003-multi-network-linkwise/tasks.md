@@ -52,6 +52,14 @@ the failures that do not announce themselves. See
 - [ ] T209 [US3] The demotion path in `internal/cashback/catalogue/`: when a route becomes `paused`/`left_network`, or its network becomes inactive, its preference is withdrawn and a surviving publishable route takes over — recorded, with who and why
 - [ ] T210 [P] [US3] Operator query: retailers that have publishable routes and publish nothing. This is the cross-row rule [data-model.md](data-model.md) deliberately does not make a constraint, and it must be visible rather than silent
 
+- [ ] T254 [US2] **The click-out refuses a member who has not opted in** (FR-110), in `internal/cashback/clickout/`. Nothing checks it today, so a signed-in member who never accepted terms can click out and be credited. This lands **before** T255, or that constraint would refuse a member who had already bought something
+- [ ] T255 [US2] Migration `0036_entry_currency_is_the_members.{up,down}.sql`: `participation_account_currency_unique`, and `entry_currency_is_the_members` as a composite foreign key from `(account_id, currency)`. Plus `network_account.reports_currency`, nullable, with its format check
+- [ ] T256 [US2] Test against real Postgres: an entry whose currency differs from the member's participation currency is refused with SQLSTATE `23503` naming the constraint; and a participating member's `default_currency` cannot be restated while an entry references the old one (SC-027)
+- [ ] T257 [US2] The crediting path recognises that refusal by name and queues the report for an operator with the currency in it (FR-109), rather than failing the whole window
+- [ ] T258 [US1] `connect-network` and the seed refuse a publisher account whose **declared** `reports_currency` is not the deployment's payout currency, naming both (FR-108). A null is reported, never refused — nobody has established it yet, and that is the state to make visible
+- [ ] T259 [P] [US3] **A slug can name a retailer in any script the deployment publishes in** (FR-111), in `internal/cashback/catalogue/identity.go`. Every Greek name currently slugs to the empty string; the test is a table of real Greek programme names, none of which may produce `""` or a slug containing a network id (SC-028)
+- [ ] T260 [US3] Cross-network unification stops resting on a name coincidence alone (FR-112): an operator declares two routes one retailer and can undo it, recorded, in `internal/cashback/catalogue/`. The importer's own comment already says two programmes with one name may be two businesses
+
 **Checkpoint**: one click cannot back two credits; a dead or unattributable route cannot publish; a foreign-network reference is a named outcome rather than a mystery.
 
 ---
@@ -153,6 +161,8 @@ Phase E follows whatever has landed.
 ```
 
 - **T200–T210** depend on nothing and unblock everything. T203 (0035) must precede T205 (the query that uses `click.network_id`).
+- **T254 must precede T255.** The currency constraint reaches the member's currency through their participation, so it makes crediting require an opt-in; without the click-out gate in front of it, the refusal lands on somebody who has already bought something.
+- **T259 must precede T248** (the retailer live on both networks), and precede any Linkwise catalogue import that would otherwise write fallback slugs nothing can later match.
 - **T211–T214** (the registry) must precede T215–T220 (configuration reading it) and T231 (the suite reading it).
 - **T231** must precede T240 and T248, or an adapter ships unmeasured.
 - **T224** (the second fixture) must precede **T234** (two networks polling) and **T235** (the isolation test with a second adapter package present) — without it neither can be run without credentials.
