@@ -20,16 +20,24 @@
 // It follows that when a scenario fails, the module beneath it is where the
 // fault is. This package holds no logic of its own to be wrong.
 //
-// # Why one transaction, rolled back
+// # Two isolation models, and why
 //
-// Each scenario runs inside a transaction against the database DATABASE_URL
-// names, and rolls it back. Not a throwaway database: the point of an
+// Five of the six run inside a transaction against the database DATABASE_URL
+// names, and roll it back. Not a throwaway database: the point of an
 // acceptance gate is the real schema, with its real constraints, and a
-// rollback leaves the founder's own database untouched afterwards. The
-// refusals a scenario provokes deliberately - an UPDATE against evidence, a
-// second payout - raise inside nested transactions, which pgx runs as
-// savepoints, so a refusal aborts the savepoint rather than poisoning the
-// scenario around it.
+// rollback leaves the founder's own database untouched afterwards. A refusal
+// such a scenario provokes deliberately - an UPDATE against evidence - is
+// wrapped in an explicit SQL savepoint, so it aborts the savepoint rather
+// than poisoning the scenario around it.
+//
+// The withdrawal gate cannot. Approving a withdrawal COMMITS, twice and
+// deliberately, so that a rail answering slowly cannot hold a transaction
+// open across a network call - so a gate running it inside a rollback would
+// be testing something the product does not do. It gets a scratch database
+// of its own instead, dropped and remade on each run rather than cleaned up,
+// because cashback.payout is append-only by design and that is exactly what
+// makes tidying impossible and remaking cheap. Running it leaves that one
+// database behind; nothing else does.
 //
 // [quickstart.md]: https://github.com/Nomos-N4s/apivo-news/blob/main/specs/002-apivo-cashback-alpha/quickstart.md
 package scenarios

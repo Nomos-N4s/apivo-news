@@ -100,14 +100,9 @@ func earnConfirm(t *testing.T) {
 		t.Fatalf("Open(): %v", err)
 	}
 
-	// Wallet Pending, equal to an independently computed ledger sum
-	// (SC-006).
-	if got := w.balance(t, wallet.StagePending); got != memberShareMinor {
-		t.Errorf("pending balance is %d, want %d", got, memberShareMinor)
-	}
-	if got := w.balance(t, wallet.StageConfirmed); got != 0 {
-		t.Errorf("confirmed balance is %d before the network approved, want 0", got)
-	}
+	// Wallet Pending, reconciled against the ledger and against the figure
+	// this scenario computed for itself (SC-006).
+	w.wantWalletMatchesLedger(t, memberShareMinor, 0)
 	w.wantZeroSum(t)
 	w.wantNoOrphanCredits(t)
 
@@ -123,12 +118,7 @@ func earnConfirm(t *testing.T) {
 
 	// The member's total did not change. Only which bucket counts toward the
 	// withdrawal threshold did (FR-050).
-	if got := w.balance(t, wallet.StagePending); got != 0 {
-		t.Errorf("pending balance is %d after confirmation, want 0", got)
-	}
-	if got := w.balance(t, wallet.StageConfirmed); got != memberShareMinor {
-		t.Errorf("confirmed balance is %d, want %d", got, memberShareMinor)
-	}
+	w.wantWalletMatchesLedger(t, 0, memberShareMinor)
 	w.wantZeroSum(t)
 	w.wantNoOrphanCredits(t)
 
@@ -165,10 +155,14 @@ func evidenceImmutable(t *testing.T) {
 
 	first := w.reportsAs(t, "SCEN-DUP-"+suffix(t), click.Ref.Ref(), networks.StatusPending, reportedCommission)
 
-	// 1. Re-polling the same window creates no duplicate row. The rule is a
-	//    unique key on (network, external id, status), so the second insert
-	//    of the same fact is refused rather than accepted and deduplicated
-	//    later.
+	// 1. Re-polling the same window creates no duplicate row. Two keys say
+	//    so, and status is a column of neither: network_transaction_unique_report
+	//    is unique on (network_id, external_id, content_digest) - the digest
+	//    being the database's own hash of the reported facts, status among
+	//    them - and network_transaction_one_root is unique on (network_id,
+	//    external_id) where supersedes_id is null. Re-reporting an unchanged
+	//    fact is refused rather than accepted and deduplicated later; this
+	//    asserts the refusal, whichever of the two fires.
 	if _, err := w.tx.Exec(w.ctx, `savepoint repoll`); err != nil {
 		t.Fatalf("savepoint: %v", err)
 	}

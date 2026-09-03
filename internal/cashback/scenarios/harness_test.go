@@ -316,9 +316,13 @@ func (w *world) shareOf(t *testing.T, click clickout.Click) money.Amount {
 	return share.Member
 }
 
-// balance answers what one of the member's stage accounts holds, read from
-// the ledger rather than from the wallet's own projection - which is what
-// makes SC-006's "independently computed" independent.
+// balance answers what one of the member's stage accounts holds, read
+// straight from the ledger.
+//
+// This is NOT independent of the wallet: [wallet.Projector] reads a stage by
+// making these same two calls in this same order, so a bug in either would
+// move both together. Reconciling the two against each other is
+// [world.wantWalletMatchesLedger]'s job, and SC-006 is that, not this.
 func (w *world) balance(t *testing.T, stage wallet.Stage) int64 {
 	t.Helper()
 	account, err := w.ledger.EnsureAccount(w.ctx, wallet.MemberAccount(w.member, stage), scenarioCurrency)
@@ -577,4 +581,41 @@ func (w *world) confirmedPurchase(t *testing.T, external string) reported {
 		t.Fatalf("Confirm(): %v", err)
 	}
 	return report
+}
+
+// wantWalletMatchesLedger is SC-006: the totals a member is SHOWN reconcile
+// with the ledger, to the minor unit.
+//
+// It reads both sides through the code each one actually uses - the wallet's
+// own projection for what a member sees, and the ledger directly for what
+// was posted - and then holds both to the figure the scenario computed for
+// itself. Two agreeing numbers could still both be wrong; three cannot, not
+// without the arithmetic being wrong in the same direction twice.
+func (w *world) wantWalletMatchesLedger(t *testing.T, pending, confirmed int64) {
+	t.Helper()
+	projector, err := wallet.NewProjector(w.ledger)
+	if err != nil {
+		t.Fatalf("NewProjector(): %v", err)
+	}
+	shown, err := projector.Of(w.ctx, w.member, scenarioCurrency)
+	if err != nil {
+		t.Fatalf("Of(): %v", err)
+	}
+	for _, check := range []struct {
+		stage  wallet.Stage
+		shown  int64
+		posted int64
+		want   int64
+	}{
+		{wallet.StagePending, shown.Pending.Minor, w.balance(t, wallet.StagePending), pending},
+		{wallet.StageConfirmed, shown.Confirmed.Minor, w.balance(t, wallet.StageConfirmed), confirmed},
+	} {
+		if check.shown != check.posted {
+			t.Errorf("the member is shown %d %s and the ledger holds %d: the wallet and the ledger disagree (SC-006)",
+				check.shown, check.stage, check.posted)
+		}
+		if check.shown != check.want {
+			t.Errorf("the member is shown %d %s, want %d", check.shown, check.stage, check.want)
+		}
+	}
 }

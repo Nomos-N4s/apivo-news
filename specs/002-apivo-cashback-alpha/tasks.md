@@ -290,7 +290,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T131 Bring Go statement coverage for `internal/cashback/...` and `internal/platform/{money,brand,events,scheduler}` to ≥90% and TypeScript to ≥80%
 - [ ] T132 [P] Add the cashback runbook (poller stalls, zero-sum alarm, stuck payout, network outage) to `docs/RUNBOOK.md`
 - [ ] T133 [P] Document the cashback deployment topology and the Blnk/Redis operational contract in `docs/ENVIRONMENTS.md`
-- [x] T134 Run the full quickstart validation and record which checks ran locally versus in CI, in the PR description — recorded on the T129 pull request: V1–V10 all pass, coverage 90.3% against a 90% gate, and the one local failure (`TestCurrentOfferQueryUsesTheValidityIndex`) named as local-only with the plan that explains it
+- [x] T134 Run the full quickstart validation and record which checks ran locally versus in CI, in the PR description — recorded on the T129 pull request: V1–V10 all pass, the repository-wide coverage gate holds, and the one local failure (`TestCurrentOfferQueryUsesTheValidityIndex`) is named as local-only with the plan that explains it
 
 ---
 
