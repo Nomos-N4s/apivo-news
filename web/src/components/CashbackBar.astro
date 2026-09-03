@@ -33,7 +33,7 @@ const links = [
 
 <Masthead homeHref={homeHref}>
   <span class="rule" aria-hidden="true"></span>
-  <nav class="links" aria-label={t.cashback}>
+  <nav class="links section-links" aria-label={t.cashback}>
     {links.map((link) => (
       <a href={link.href} class:list={['link', { on: link.on }]} aria-current={link.on ? 'page' : undefined}>{link.label}</a>
     ))}
@@ -42,13 +42,37 @@ const links = [
 </Masthead>
 
 <style>
+  /*
+   * The mockup's bar, applied to the shared masthead from here so every
+   * cashback page gets the same one: 18px between wordmark, rule and links,
+   * a 22px wordmark, 14px 26px padding. Set once on the masthead through
+   * :global rather than restated in each page - two of the four pages had
+   * tightened it and two had not, which is how the bar came to differ by
+   * two hundred pixels between the catalogue and the wallet.
+   */
+  :global(.masthead:has(.section-links)) {
+    gap: 18px;
+    padding: 14px 26px;
+  }
+  :global(.masthead:has(.section-links) .brand) {
+    font-size: 22px;
+    letter-spacing: -0.03em;
+  }
   .rule { width: 1px; height: 16px; background: var(--color-divider); }
   .links { display: flex; gap: 18px; font-size: 13.5px; }
-  .link { color: var(--color-text); text-decoration: none; padding-bottom: 2px; border-bottom: 2px solid transparent; }
+  .link { color: var(--color-text); text-decoration: none; padding-bottom: 2px; border-bottom: 2px solid transparent; white-space: nowrap; }
   .link.on { color: var(--color-accent); font-weight: 600; border-bottom-color: var(--color-accent); }
   .aside { margin-left: auto; font-size: 12px; color: color-mix(in srgb, var(--color-text) 60%, transparent); }
+  /*
+   * The mockup's phone frames carry no section links at all - each phone
+   * screen has its own back link. Three links beside the wordmark do not fit
+   * 390px without wrapping one of them mid-phrase, so on a phone they become
+   * a row of their own under the wordmark, and the rule and aside go.
+   */
   @media (max-width: 660px) {
+    :global(.masthead:has(.section-links)) { flex-wrap: wrap; row-gap: 10px; padding: 12px 18px; }
     .rule { display: none; }
     .aside { display: none; }
+    .links { flex-basis: 100%; gap: 16px; font-size: 13px; }
   }
 </style>
