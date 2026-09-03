@@ -15,6 +15,7 @@ import {
 import type {
   CatalogueItem,
   Clickout,
+  DifferenceResolution,
   EntryPage,
   EntryState,
   HeldEntry,
@@ -135,6 +136,29 @@ export interface CashbackApi {
   withdrawalsAwaitingApproval(): Promise<OperatorPage<WithdrawalForApproval>>;
   reconciliationRuns(): Promise<OperatorPage<ReconciliationRun>>;
   differences(runId: string): Promise<OperatorPage<ReconciliationDifference>>;
+
+  /*
+   * Operator decisions.
+   *
+   * Every one of them takes a reason except the withdrawal approval, and
+   * that exception is the contract's: approving records `approved_by` from
+   * the token and submits the payout, and the approval IS the record. A
+   * blank reason on any of the others is a 400 from the API — the audit
+   * record is part of the action, not an afterthought — and the forms
+   * enforce it before the call so the member-facing consequence is not a
+   * round trip away.
+   *
+   * None of these takes the acting operator as an argument. The API reads
+   * it from the token subject (C-4), and a parameter here would be a place
+   * for a screen to name somebody else.
+   */
+  attributeTransaction(id: string, accountId: string, reason: string): Promise<void>;
+  dismissTransaction(id: string, reason: string): Promise<void>;
+  releaseHeld(id: string, reason: string): Promise<void>;
+  rejectHeld(id: string, reason: string): Promise<void>;
+  approveWithdrawal(id: string): Promise<void>;
+  rejectWithdrawal(id: string, reason: string): Promise<void>;
+  resolveDifference(id: string, resolution: DifferenceResolution, reason: string): Promise<void>;
 }
 
 /** Contract default; the API caps at 100. */
@@ -209,7 +233,26 @@ function fixtureApi(): CashbackApi {
     withdrawalsAwaitingApproval: () => Promise.resolve(page(WITHDRAWAL_APPROVAL_FIXTURES)),
     reconciliationRuns: () => Promise.resolve(page(RECONCILIATION_RUN_FIXTURES)),
     differences: () => Promise.resolve(page(DIFFERENCE_FIXTURES)),
+    // A preview has no ledger to write to. Refusing is the honest answer:
+    // a fixture client that resolved silently would show an operator a
+    // decision screen that appears to work and records nothing, which is
+    // the worst of the three possible behaviours.
+    attributeTransaction: () => Promise.reject(fixtureRefusal('attribute')),
+    dismissTransaction: () => Promise.reject(fixtureRefusal('dismiss')),
+    releaseHeld: () => Promise.reject(fixtureRefusal('release')),
+    rejectHeld: () => Promise.reject(fixtureRefusal('reject')),
+    approveWithdrawal: () => Promise.reject(fixtureRefusal('approve')),
+    rejectWithdrawal: () => Promise.reject(fixtureRefusal('reject')),
+    resolveDifference: () => Promise.reject(fixtureRefusal('resolve')),
   };
+}
+
+/** The refusal a fixture client answers any decision with. */
+function fixtureRefusal(action: string): CashbackApiError {
+  return new CashbackApiError(
+    `the ${action} action needs the cashback API; this deployment is answering from fixtures and would record nothing`,
+    503,
+  );
 }
 
 function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null): CashbackApi {
@@ -260,7 +303,17 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
         problem,
       );
     }
-    return (await response.json()) as T;
+    // A decision endpoint may answer 204, and several answer a body this
+    // caller does not read. Parsing is therefore allowed to come up empty
+    // rather than turning a successful write into a thrown SyntaxError.
+    if (response.status === 204) {
+      return null;
+    }
+    try {
+      return (await response.json()) as T;
+    } catch {
+      return null;
+    }
   };
 
   const required = async <T>(path: string, init?: RequestInit): Promise<T> =>
@@ -342,6 +395,45 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
       required<OperatorPage<ReconciliationDifference>>(
         `/ops/reconciliation/runs/${encodeURIComponent(runId)}/differences`,
       ),
+    attributeTransaction: async (id, accountId, reason) => {
+      await required(`/ops/unattributed/${encodeURIComponent(id)}/attribute`, {
+        method: 'POST',
+        body: JSON.stringify({ account_id: accountId, reason }),
+      });
+    },
+    dismissTransaction: async (id, reason) => {
+      await required(`/ops/unattributed/${encodeURIComponent(id)}/dismiss`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      });
+    },
+    releaseHeld: async (id, reason) => {
+      await required(`/ops/held/${encodeURIComponent(id)}/release`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      });
+    },
+    rejectHeld: async (id, reason) => {
+      await required(`/ops/held/${encodeURIComponent(id)}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      });
+    },
+    approveWithdrawal: async (id) => {
+      await required(`/ops/withdrawals/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+    },
+    rejectWithdrawal: async (id, reason) => {
+      await required(`/ops/withdrawals/${encodeURIComponent(id)}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      });
+    },
+    resolveDifference: async (id, resolution, reason) => {
+      await required(`/ops/reconciliation/differences/${encodeURIComponent(id)}/resolve`, {
+        method: 'POST',
+        body: JSON.stringify({ resolution, reason }),
+      });
+    },
   };
 }
 

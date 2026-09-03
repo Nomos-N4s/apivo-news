@@ -205,3 +205,55 @@ describe('the HTTP client', () => {
     expect(stub.calls[0]?.url).toBe(`${BASE}/api/v1/cashback/wallet`);
   });
 });
+
+describe('operator decisions', () => {
+  it('sends the reason with every action that takes one', async () => {
+    const stub = stubFetch(() => new Response(null, { status: 204 }));
+    const api = createCashbackApi(BASE, { fetch: stub.fetch, token: 'op' });
+    await api.releaseHeld('h1', 'Ordinary basket, first purchase.');
+    await api.rejectHeld('h2', 'Duplicate of h1.');
+    await api.rejectWithdrawal('w1', 'IBAN name mismatch.');
+    await api.dismissTransaction('u1', 'No click was ever made.');
+    await api.resolveDifference('d1', 'absorbed', 'Ours to bear.');
+    for (const call of stub.calls) {
+      expect(JSON.parse(String(call.init?.body))).toHaveProperty('reason');
+    }
+  });
+
+  it('never sends the acting operator — the API takes it from the token', async () => {
+    const stub = stubFetch(() => new Response(null, { status: 204 }));
+    const api = createCashbackApi(BASE, { fetch: stub.fetch, token: 'op' });
+    await api.approveWithdrawal('w1');
+    await api.attributeTransaction('u1', 'account-1', 'Matched by order number.');
+    for (const call of stub.calls) {
+      const body = call.init?.body === undefined ? '{}' : String(call.init.body);
+      expect(body).not.toMatch(/approved_by|decided_by|operator_id/);
+    }
+  });
+
+  it('survives a 204 with no body rather than failing a successful write', async () => {
+    const stub = stubFetch(() => new Response(null, { status: 204 }));
+    await expect(
+      createCashbackApi(BASE, { fetch: stub.fetch }).releaseHeld('h1', 'ok'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('refuses every decision from the fixture client rather than pretending', async () => {
+    const api = createCashbackApi(undefined);
+    await expect(api.approveWithdrawal('w1')).rejects.toMatchObject({ status: 503 });
+    await expect(api.releaseHeld('h1', 'ok')).rejects.toThrow(/record nothing/);
+    await expect(api.resolveDifference('d1', 'explained', 'ok')).rejects.toThrow(/fixtures/);
+  });
+
+  it('carries the resolution verdict, which is not derivable from the reason', async () => {
+    const stub = stubFetch(() => new Response(null, { status: 204 }));
+    await createCashbackApi(BASE, { fetch: stub.fetch }).resolveDifference(
+      'd1',
+      'explained',
+      'A later statement paid it.',
+    );
+    expect(JSON.parse(String(stub.calls[0]?.init?.body))).toMatchObject({
+      resolution: 'explained',
+    });
+  });
+});
