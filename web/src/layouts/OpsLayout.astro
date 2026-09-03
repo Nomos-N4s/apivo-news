@@ -1,0 +1,101 @@
+---
+import '../styles/modernist.css';
+import OpsChrome from '../components/OpsChrome.astro';
+import FixtureNotice from '../components/FixtureNotice.astro';
+import type { ReadingLanguage } from '../lib/reader/axes';
+import type { EditorSession } from '../lib/editorial/session';
+import type { OPS_PATHS } from '../lib/cashback/paths';
+import { cashbackStrings } from '../i18n/cashback';
+
+// The shell every operator queue shares.
+//
+// It has no footer and no masthead: the member-facing chrome carries a
+// licence note and legal links that are owed to a reader, and an internal
+// queue is not a reader. What it does carry is the identity line, because
+// every decision taken through these screens is recorded under a name.
+interface Props {
+  lang: ReadingLanguage;
+  session: EditorSession;
+  current: keyof typeof OPS_PATHS;
+  title: string;
+  fixtures: boolean;
+  /** Set when the deployment answered, but this account may not act. */
+  blocked?: boolean | undefined;
+  notice?: string | null | undefined;
+  refusal?: string | null | undefined;
+}
+
+const { lang, session, current, title, fixtures, blocked, notice, refusal } = Astro.props;
+const t = cashbackStrings(lang);
+---
+
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="robots" content="noindex, nofollow" />
+  </head>
+  <body>
+    <div class="frame">
+      <OpsChrome lang={lang} session={session} current={current} />
+      <main class="queue-body">
+        <h1>{title}</h1>
+        {fixtures && <FixtureNotice title={t.operations} body={t.fixtureNotice} />}
+        {blocked === true && <p class="band" role="alert">{t.notAnOperator}</p>}
+        {notice !== null && notice !== undefined && <p class="ok" role="status">{notice}</p>}
+        {refusal !== null && refusal !== undefined && <p class="band" role="alert">{refusal}</p>}
+        <slot />
+        <p class="permanent">{t.decisionIsPermanent}</p>
+      </main>
+    </div>
+  </body>
+</html>
+
+<style>
+  .frame {
+    min-height: 100dvh;
+    margin-inline: clamp(0px, 2vw, 40px);
+    border-inline: 2px solid var(--color-divider);
+    display: flex;
+    flex-direction: column;
+  }
+  .queue-body {
+    flex: 1;
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-7);
+  }
+  h1 {
+    margin: 0 0 var(--space-5);
+    font-size: 26px;
+  }
+  .band,
+  .ok {
+    padding: var(--space-4) var(--space-5);
+    margin: 0 0 var(--space-5);
+    font-size: 14px;
+    text-wrap: pretty;
+    border: 2px solid var(--color-accent-700);
+    background: var(--color-surface);
+  }
+  .ok {
+    border-color: var(--color-divider);
+  }
+  .permanent {
+    margin-top: var(--space-7);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--color-divider);
+    font-size: 12px;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+  @media (max-width: 640px) {
+    .frame {
+      margin-inline: 0;
+      border-inline: 0;
+    }
+    .queue-body {
+      padding: var(--space-5) var(--space-4) var(--space-6);
+    }
+  }
+</style>

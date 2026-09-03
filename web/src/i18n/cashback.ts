@@ -135,6 +135,16 @@ export interface CashbackStrings {
   readonly resolutionExplained: string;
   readonly resolutionAbsorbed: string;
   readonly openDifferenceIsTheChase: string;
+  readonly signedInAs: string;
+  readonly roleOperator: string;
+  readonly notAnOperator: string;
+  readonly notSignedIn: string;
+  readonly decisionRecorded: string;
+  readonly accountLabel: string;
+  readonly differences: string;
+  readonly period: string;
+  readonly openDifferences: string;
+  readonly noRuns: string;
 }
 
 const el: CashbackStrings = {
@@ -274,6 +284,17 @@ const el: CashbackStrings = {
   resolutionAbsorbed: 'Απορροφήθηκε',
   openDifferenceIsTheChase:
     'Μια ανοιχτή διαφορά είναι η ίδια η διεκδίκηση και κρατά κλειστή την επιβεβαίωση. Δεν κλείνει επειδή περιμένουμε πληρωμή.',
+  signedInAs: 'Συνδεδεμένος ως',
+  roleOperator: 'ρόλος: χειριστής',
+  notAnOperator:
+    'Αυτές οι σελίδες απαιτούν ρόλο χειριστή. Ο λογαριασμός σου δεν τον έχει, οπότε δεν εμφανίζεται τίποτα.',
+  notSignedIn: 'Δεν έχεις συνδεθεί',
+  decisionRecorded: 'Η απόφαση καταγράφηκε.',
+  accountLabel: 'Λογαριασμός μέλους',
+  differences: 'Διαφορές',
+  period: 'Περίοδος',
+  openDifferences: 'Ανοιχτές',
+  noRuns: 'Καμία εισαγωγή κατάστασης ακόμη.',
 };
 
 const de: CashbackStrings = {
@@ -411,6 +432,17 @@ const de: CashbackStrings = {
   resolutionAbsorbed: 'Getragen',
   openDifferenceIsTheChase:
     'Eine offene Differenz ist die Nachforderung selbst und hält die Bestätigung zu. Sie wird nicht geschlossen, weil wir auf Geld warten.',
+  signedInAs: 'Angemeldet als',
+  roleOperator: 'Rolle: Betrieb',
+  notAnOperator:
+    'Diese Seiten setzen die Rolle Betrieb voraus. Dein Konto hat sie nicht, deshalb wird nichts angezeigt.',
+  notSignedIn: 'Nicht angemeldet',
+  decisionRecorded: 'Die Entscheidung wurde festgehalten.',
+  accountLabel: 'Mitgliedskonto',
+  differences: 'Differenzen',
+  period: 'Zeitraum',
+  openDifferences: 'Offen',
+  noRuns: 'Noch kein Kontoauszug importiert.',
 };
 
 const CATALOGUES: Readonly<Record<ReadingLanguage, CashbackStrings>> = { el, de };

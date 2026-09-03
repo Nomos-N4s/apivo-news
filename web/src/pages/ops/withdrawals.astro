@@ -1,0 +1,216 @@
+---
+import { API_BASE_URL, APP_ENV } from 'astro:env/server';
+import OpsLayout from '../../layouts/OpsLayout.astro';
+import {
+  CashbackApiError,
+  CashbackConfigurationError,
+  createCashbackApi,
+  type CashbackApi,
+} from '../../lib/cashback/api';
+import { formatMoney } from '../../lib/cashback/money';
+import { opsAccess } from '../../lib/cashback/ops-guard';
+import { opsLanguage } from '../../lib/cashback/ops-language';
+import type { WithdrawalForApproval } from '../../lib/cashback/types';
+import { isSameOrigin } from '../../lib/csrf';
+import { editorSession } from '../../lib/editorial/session';
+import { formatItemDate } from '../../lib/reader/format';
+import { cashbackStrings } from '../../i18n/cashback';
+
+// The withdrawal approval queue — mockup 4f's "held withdrawals" panel,
+// which is in fact every withdrawal (T097 #244).
+//
+// The mockup lists two rows and calls them held: one above a thousand
+// euros, one with a changed destination. Neither is a category the system
+// has. C-4 puts every withdrawal here, so the queue is the payout gate
+// rather than an exception list, and approving is what records approved_by
+// and submits the payout with the request-derived idempotency key.
+//
+// Approve takes no reason and reject requires one. That asymmetry is the
+// contract's and it is right: an approval's record is the operator's name
+// against the payout, and a refusal has to say something the member can
+// read, because they are the one who does not get their money.
+const lang = opsLanguage(Astro.url);
+const t = cashbackStrings(lang);
+const session = editorSession(Astro.request);
+
+let api: CashbackApi | null = null;
+let items: readonly WithdrawalForApproval[] = [];
+let apiUnavailable = false;
+let notice: string | null = null;
+let refusal: string | null = null;
+
+try {
+  api = createCashbackApi(API_BASE_URL, { appEnv: APP_ENV, token: session.token });
+  const access = opsAccess(session, api.source);
+
+  if (Astro.request.method === 'POST') {
+    if (!isSameOrigin(Astro.request, Astro.url.origin)) {
+      return new Response('cross-origin request refused', { status: 403 });
+    }
+    if (!access.mayAct) {
+      return new Response('operator role required', { status: 403 });
+    }
+    const form = await Astro.request.formData();
+    const id = String(form.get('id') ?? '');
+    const action = String(form.get('action') ?? '');
+    const reason = String(form.get('reason') ?? '').trim();
+    try {
+      if (action === 'approve') {
+        await api.approveWithdrawal(id);
+        notice = t.decisionRecorded;
+      } else if (action === 'reject') {
+        // Checked here as well as at the API, so the member-facing
+        // consequence of a blank reason is not a round trip away.
+        if (reason === '') {
+          refusal = t.reasonRequired;
+        } else {
+          await api.rejectWithdrawal(id, reason);
+          notice = t.decisionRecorded;
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof CashbackApiError)) {
+        throw error;
+      }
+      refusal = error.problem?.title ?? error.message;
+    }
+  }
+
+  if (access.mayRead) {
+    items = (await api.withdrawalsAwaitingApproval()).items;
+  }
+} catch (error) {
+  if (error instanceof CashbackConfigurationError) {
+    console.error(`cashback ops: ${error.message}`);
+  }
+  apiUnavailable = true;
+  Astro.response.status = 503;
+  Astro.response.headers.set('Retry-After', '60');
+}
+
+const access = opsAccess(session, api?.source ?? 'api');
+if (access.blocked && !apiUnavailable) {
+  Astro.response.status = 403;
+}
+---
+
+<OpsLayout
+  lang={lang}
+  session={session}
+  current="withdrawals"
+  title={t.queueWithdrawals}
+  fixtures={api?.source === 'fixture'}
+  blocked={access.blocked}
+  notice={notice}
+  refusal={refusal}
+>
+  <p class="hint">{t.oldestFirst}</p>
+  {items.length === 0 && !access.blocked && <p class="empty">{t.emptyQueue}</p>}
+
+  {
+    items.map((item) => (
+      <article class="row">
+        <div class="head">
+          <span class="figure">{formatMoney(lang, item.amount)}</span>
+          <span class="tag tag-outline">
+            {t.reserved} {formatMoney(lang, item.reserved_amount)}
+          </span>
+        </div>
+        <dl>
+          <dt>{t.accountLabel}</dt>
+          <dd class="ref">{item.account_id}</dd>
+          <dt>{t.destinationLabel}</dt>
+          <dd class="ref">{item.destination.details}</dd>
+          <dt>{t.requestedAt}</dt>
+          <dd>{formatItemDate(lang, new Date(item.requested_at))}</dd>
+        </dl>
+        <form method="post" class="decide">
+          <input type="hidden" name="id" value={item.id} />
+          <div class="field">
+            <label for={`reason-${item.id}`}>{t.reasonLabel}</label>
+            <input class="input" id={`reason-${item.id}`} name="reason" autocomplete="off" />
+          </div>
+          <div class="actions">
+            <button class="btn btn-primary" name="action" value="approve" disabled={!access.mayAct}>
+              {t.approve}
+            </button>
+            <button
+              class="btn btn-secondary"
+              name="action"
+              value="reject"
+              disabled={!access.mayAct}
+            >
+              {t.reject}
+            </button>
+          </div>
+          <p class="required">{t.reasonRequired}</p>
+        </form>
+      </article>
+    ))
+  }
+</OpsLayout>
+
+<style>
+  .hint,
+  .empty {
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    margin: 0 0 var(--space-4);
+  }
+  .row {
+    border-top: 1px solid var(--color-divider);
+    padding: var(--space-5) 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+    gap: var(--space-5);
+    align-items: start;
+  }
+  .head {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-4);
+  }
+  .figure {
+    font: var(--font-heading-weight) 22px/1 var(--font-heading);
+  }
+  dl {
+    display: grid;
+    grid-template-columns: minmax(130px, auto) 1fr;
+    gap: var(--space-2) var(--space-5);
+    margin: 0;
+    font-size: 13px;
+  }
+  dt {
+    color: var(--ink-muted);
+  }
+  dd {
+    margin: 0;
+  }
+  .ref {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .decide {
+    background: var(--color-surface);
+    padding: var(--space-4);
+    border: 1px solid var(--color-divider);
+  }
+  .actions {
+    display: flex;
+    gap: var(--space-3);
+    margin-top: var(--space-4);
+  }
+  .required {
+    margin: var(--space-3) 0 0;
+    font-size: 11.5px;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+  @media (max-width: 820px) {
+    .row {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

@@ -1,0 +1,117 @@
+---
+import type { ReadingLanguage } from '../lib/reader/axes';
+import { READING_LANGUAGES } from '../lib/reader/axes';
+import { OPS_PATHS } from '../lib/cashback/paths';
+import { cashbackStrings } from '../i18n/cashback';
+import type { EditorSession } from '../lib/editorial/session';
+
+// The operator shell — mockup 4f's left rail and identity line.
+//
+// The identity line is not decoration. Every decision behind these queues is
+// recorded under the name of whoever is signed in, and the API takes that
+// name from the token rather than from anything a screen sends. Printing it
+// here is the operator's chance to notice they are about to sign a decision
+// as somebody else.
+interface Props {
+  lang: ReadingLanguage;
+  session: EditorSession;
+  current: keyof typeof OPS_PATHS;
+}
+
+const { lang, session, current } = Astro.props;
+const t = cashbackStrings(lang);
+
+const queues = [
+  { key: 'unattributed', href: OPS_PATHS.unattributed, label: t.queueUnattributed },
+  { key: 'held', href: OPS_PATHS.held, label: t.queueHeld },
+  { key: 'withdrawals', href: OPS_PATHS.withdrawals, label: t.queueWithdrawals },
+  { key: 'reconciliation', href: OPS_PATHS.reconciliation, label: t.queueReconciliation },
+] as const;
+---
+
+<header class="ops-head">
+  <span class="tag tag-neutral">{t.operations} · {t.cashback}</span>
+  <span class="who">
+    {
+      session.authenticated ? (
+        <>
+          {t.signedInAs} <strong>{session.displayName}</strong> · {t.roleOperator}
+        </>
+      ) : (
+        // Just the fact. Why the queues are or are not readable is the
+        // page's to say, and saying it twice - differently - in a preview
+        // that IS rendering them would contradict what is on the screen.
+        t.notSignedIn
+      )
+    }
+  </span>
+  <span class="langs">
+    {
+      READING_LANGUAGES.map((code) => (
+        <a href={`?lang=${code}`} class:list={['lang', { on: code === lang }]}>
+          {code}
+        </a>
+      ))
+    }
+  </span>
+</header>
+
+<nav class="ops-nav" aria-label={t.operations}>
+  {
+    queues.map((queue) => (
+      <a
+        href={queue.href}
+        class:list={['queue', { on: queue.key === current }]}
+        aria-current={queue.key === current ? 'page' : undefined}
+      >
+        {queue.label}
+      </a>
+    ))
+  }
+</nav>
+
+<style>
+  .ops-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-3) calc(var(--space-6) + var(--space-1));
+    border-bottom: 1px solid var(--color-divider);
+    font-size: 12.5px;
+  }
+  .who {
+    margin-left: auto;
+    color: var(--ink-muted);
+  }
+  .langs {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .lang {
+    font: 600 11px/1 var(--font-heading);
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    text-decoration: none;
+  }
+  .lang.on {
+    color: var(--color-accent);
+  }
+  .ops-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-5);
+    padding: var(--space-3) calc(var(--space-6) + var(--space-1));
+    border-bottom: 2px solid var(--color-divider);
+  }
+  .queue {
+    font: 600 13.5px/1.2 var(--font-heading);
+    color: var(--color-text);
+    text-decoration: none;
+    padding-bottom: 3px;
+    border-bottom: 2px solid transparent;
+  }
+  .queue.on {
+    color: var(--color-accent);
+    border-bottom-color: var(--color-accent);
+  }
+</style>
