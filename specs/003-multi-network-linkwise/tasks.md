@@ -73,6 +73,7 @@ the failures that do not announce themselves. See
 - [ ] T221 [US1] `internal/cashback/catalogue/schedule.go`: `ImportJobName` becomes a per-account derivation, exactly as `networks.ForwardJobName` and `TrailingJobName` already are (`sweeps.go:57-76`)
 - [ ] T222 [US1] Update the capacity arithmetic and its comment in `cmd/apivo/main.go:440-446`: three jobs per network, floor 14 → 20 → 26, asserted by `locker.CheckCapacity` against the jobs actually registered (FR-095)
 - [ ] T223 [US1] `cmd/apivo/networks_wiring_test.go`: two configured networks register **six** distinct sweep jobs plus two distinct catalogue imports, under distinct lock names, and the capacity check refuses a pool too small for them
+- [ ] T224 [US5] `internal/cashback/networks/fixture2/`: a second fixture adapter, network id `fixture2`, so a two-network deployment runs locally with **no credentials**. The fixture's own id is a package constant on purpose — *"a deployment that could rename it would have rows attributed to a network nobody can find the code for"* (`fixture/fixture.go:21-22`) — so a second local network is a second package, which is exactly what SC-024 claims is cheap. This task is that claim, executed: one directory, one registry entry, nothing else
 
 **Checkpoint**: a two-network deployment starts, connects both, and registers distinct jobs under distinct locks.
 
@@ -80,17 +81,17 @@ the failures that do not announce themselves. See
 
 ## Phase B: Operator surface and proof
 
-- [ ] T224 [P] [US2] The unattributed reason discriminates four causes — `no_reference`, `unknown_reference`, `foreign_network`, `route_cannot_attribute` — in the store and in the API (FR-098, [contracts/http-api.md](contracts/http-api.md) §1)
-- [ ] T225 [P] [US4] `GET …/ops/unattributed` and `GET …/ops/held` take `?network=`, name the network on every row, and answer **400** for a network that is not connected
-- [ ] T226 [P] [US4] A network column in `GET …/ops/exports/ledger` and `…/exports/reconciliation`, JSON and CSV alike — added, never replacing an existing column
-- [ ] T227 [US4] `GET /api/v1/cashback/ops/networks`: connected networks, each account's cursors, last poll and outcome, `driver_shipped`, and `credential_present` as a **boolean** — never the credential, never a prefix, never its length (ADR-0003)
-- [ ] T228 [US3] `POST /api/v1/cashback/ops/merchants/{id}/route`: move the published route with the operator from the auth gate and a non-blank reason; **409** when the database refuses the target as unpublishable, **404** when there is no such route
-- [ ] T229 [US4] Extend the OpenAPI document with the new endpoints and re-run the route-coverage and C-6 money guards (`cmd/apivo/openapi_routes_test.go`, `openapi_money_test.go`)
-- [ ] T230 [US5] `internal/cashback/networks/conformance_test.go`: the suite becomes a table over the **shipped registry**, so an adapter compiled into the binary is an adapter the suite runs ([contracts/ports.md](contracts/ports.md) §4)
-- [ ] T231 [US5] Conformance scenario for rule 3's clarification: two adapters run concurrently, and a `429` against one does not delay the other (FR-106)
-- [ ] T232 [US5] Conformance scenario for rule 10: an adapter yields a route it knows cannot carry a click reference, with the fact set rather than the route omitted
-- [ ] T233 [US1] Integration test against real Postgres and the real scheduler: a two-network deployment polls both, imports both catalogues, and serves click-outs for both (SC-020)
-- [ ] T234 [US5] Re-run `internal/arch/network_isolation_test.go` **unmodified** with a second adapter package present — SC-008 with two packages, and the proof that a third costs one directory (SC-024)
+- [ ] T225 [P] [US2] The unattributed reason discriminates four causes — `no_reference`, `unknown_reference`, `foreign_network`, `route_cannot_attribute` — in the store and in the API (FR-098, [contracts/http-api.md](contracts/http-api.md) §1)
+- [ ] T226 [P] [US4] `GET …/ops/unattributed` and `GET …/ops/held` take `?network=`, name the network on every row, and answer **400** for a network that is not connected
+- [ ] T227 [P] [US4] A network column in `GET …/ops/exports/ledger` and `…/exports/reconciliation`, JSON and CSV alike — added, never replacing an existing column
+- [ ] T228 [US4] `GET /api/v1/cashback/ops/networks`: connected networks, each account's cursors, last poll and outcome, `driver_shipped`, and `credential_present` as a **boolean** — never the credential, never a prefix, never its length (ADR-0003)
+- [ ] T229 [US3] `POST /api/v1/cashback/ops/merchants/{id}/route`: move the published route with the operator from the auth gate and a non-blank reason; **409** when the database refuses the target as unpublishable, **404** when there is no such route
+- [ ] T230 [US4] Extend the OpenAPI document with the new endpoints and re-run the route-coverage and C-6 money guards (`cmd/apivo/openapi_routes_test.go`, `openapi_money_test.go`)
+- [ ] T231 [US5] `internal/cashback/networks/conformance_test.go`: the suite becomes a table over the **shipped registry**, so an adapter compiled into the binary is an adapter the suite runs ([contracts/ports.md](contracts/ports.md) §4)
+- [ ] T232 [US5] Conformance scenario for rule 3's clarification: two adapters run concurrently, and a `429` against one does not delay the other (FR-106)
+- [ ] T233 [US5] Conformance scenario for rule 10: an adapter yields a route it knows cannot carry a click reference, with the fact set rather than the route omitted
+- [ ] T234 [US1] Integration test against real Postgres and the real scheduler: a two-network deployment polls both, imports both catalogues, and serves click-outs for both (SC-020)
+- [ ] T235 [US5] Re-run `internal/arch/network_isolation_test.go` **unmodified** with a second adapter package present — SC-008 with two packages, and the proof that a third costs one directory (SC-024)
 
 **Checkpoint**: two networks are visible, filterable and operable; the suite holds every adapter that ships.
 
@@ -98,16 +99,16 @@ the failures that do not announce themselves. See
 
 ## Phase C: Awin, completed — **gated on a recording**
 
-**Gate**: no task here starts before T235 lands. FR-105 admits no exception,
+**Gate**: no task here starts before T236 lands. FR-105 admits no exception,
 and this gate is the reason `*awin.Client` is honestly incomplete today
 rather than dishonestly finished ([research.md](research.md) §1).
 
-- [ ] T235 [US1] Record and **redact** real Awin transaction responses from a live publisher account into `internal/cashback/networks/awin/testdata/`, to the standard `002/research.md` §9.2 set: at least one of each status the account has produced, one empty window, one paginated window, and one error
-- [ ] T236 [US1] `awin.Client.Limits()` — the documented query window and rate, from the recording and the network's own published limits
-- [ ] T237 [US1] `awin.Client.FetchTransactions` — resumable iteration per rule 4, verbatim payload per rule 1, `AbandonedIteration` per rule 8, every field mapped from the recording
-- [ ] T238 [US1] Awin status mapping, **total** per rule 2: an unrecognised word is `ErrUnmappableStatus`, never a silent default
-- [ ] T239 [US1] Register `awin` in the driver registry; the conformance suite runs it green against its recordings
-- [ ] T240 [US1] Awin `can_attribute` (rule 10): Awin's `click_ref_param` is a network-wide fact, so the adapter declares routes attributable network-wide and says so once
+- [ ] T236 [US1] Record and **redact** real Awin transaction responses from a live publisher account into `internal/cashback/networks/awin/testdata/`, to the standard `002/research.md` §9.2 set: at least one of each status the account has produced, one empty window, one paginated window, and one error
+- [ ] T237 [US1] `awin.Client.Limits()` — the documented query window and rate, from the recording and the network's own published limits
+- [ ] T238 [US1] `awin.Client.FetchTransactions` — resumable iteration per rule 4, verbatim payload per rule 1, `AbandonedIteration` per rule 8, every field mapped from the recording
+- [ ] T239 [US1] Awin status mapping, **total** per rule 2: an unrecognised word is `ErrUnmappableStatus`, never a silent default
+- [ ] T240 [US1] Register `awin` in the driver registry; the conformance suite runs it green against its recordings
+- [ ] T241 [US1] Awin `can_attribute` (rule 10): Awin's `click_ref_param` is a network-wide fact, so the adapter declares routes attributable network-wide and says so once
 
 **Checkpoint**: the first *live* network adapter exists, and the seam has been used by something real.
 
@@ -121,14 +122,14 @@ is there a sandbox) is founder-only and unanswered.
 invented**. If Q11's answer is "no account yet", this phase does not start
 and Phases 0–C are still the whole of the value.
 
-- [ ] T241 [US1] Record and redact real Linkwise responses into `internal/cashback/networks/linkwise/testdata/`, same standard as T235. **This task is the gate**: it either produces recordings or it reports that it cannot, and nothing below starts on the second outcome
-- [ ] T242 [US1] `internal/cashback/networks/linkwise/`: package skeleton — `ID`, `Account`, `Limits` from the recording, its own rate limiter and retry budget (FR-106)
-- [ ] T243 [US1] Linkwise catalogue: `FetchCatalogue` over the publisher feed. The one capability public sources describe concretely — XML or CSV, publisher-configurable ([research.md](research.md) §5.1)
-- [ ] T244 [US1] Linkwise `can_attribute` **per programme** (rule 10), because SubID support is documented as per-programme. Where the adapter cannot determine it, it declares the network unattributable rather than defaulting to attributable
-- [ ] T245 [US1] `linkwise.BuildDeeplink`: the click reference in Linkwise's own parameter, wrapping `ErrDeeplinkNotFormed` on any refusal (rule 5). Assert `IssuedClickRef` survives the round trip — ≥22 URL-safe characters, byte for byte
-- [ ] T246 [US1] `linkwise.FetchTransactions`, every field from T241's recording. **If sale and commission arrive in different currencies, stop**: that is Q13, and `Reported.Validate` refuses it at the port by design
-- [ ] T247 [US1] Register `linkwise` in the driver registry; the conformance suite runs it green
-- [ ] T248 [US3] Seed a retailer live on both networks in `cmd/apivo/seed_cashback.go` and prove US3 end to end: one published route, the other demoted, and the takeover when the published one dies
+- [ ] T242 [US1] Record and redact real Linkwise responses into `internal/cashback/networks/linkwise/testdata/`, same standard as T236. **This task is the gate**: it either produces recordings or it reports that it cannot, and nothing below starts on the second outcome
+- [ ] T243 [US1] `internal/cashback/networks/linkwise/`: package skeleton — `ID`, `Account`, `Limits` from the recording, its own rate limiter and retry budget (FR-106)
+- [ ] T244 [US1] Linkwise catalogue: `FetchCatalogue` over the publisher feed. The one capability public sources describe concretely — XML or CSV, publisher-configurable ([research.md](research.md) §5.1)
+- [ ] T245 [US1] Linkwise `can_attribute` **per programme** (rule 10), because SubID support is documented as per-programme. Where the adapter cannot determine it, it declares the network unattributable rather than defaulting to attributable
+- [ ] T246 [US1] `linkwise.BuildDeeplink`: the click reference in Linkwise's own parameter, wrapping `ErrDeeplinkNotFormed` on any refusal (rule 5). Assert `IssuedClickRef` survives the round trip — ≥22 URL-safe characters, byte for byte
+- [ ] T247 [US1] `linkwise.FetchTransactions`, every field from T242's recording. **If sale and commission arrive in different currencies, stop**: that is Q13, and `Reported.Validate` refuses it at the port by design
+- [ ] T248 [US1] Register `linkwise` in the driver registry; the conformance suite runs it green
+- [ ] T249 [US3] Seed a retailer live on both networks in `cmd/apivo/seed_cashback.go` and prove US3 end to end: one published route, the other demoted, and the takeover when the published one dies
 
 **Checkpoint**: two real networks, both conformant, one published route per retailer.
 
@@ -136,25 +137,26 @@ and Phases 0–C are still the whole of the value.
 
 ## Phase E: Documentation and corrections
 
-- [ ] T249 [P] `docs/ENVIRONMENTS.md` and `.env.example`: `NETWORKS`, the per-driver blocks, the retired flat keys and the `pool_max_conns` floor per network count
-- [ ] T250 [P] `specs/003-multi-network-linkwise/quickstart.md` verified end to end against a clean checkout — two networks, both fixtures, no credentials
-- [ ] T251 [P] A runbook section on connecting a network: seed the row, name it in `NETWORKS`, set its block, raise the pool, watch `GET …/ops/networks`
-- [ ] T252 [P] Correct the six documents [research.md](research.md) §6 lists as contradicted — including `002/contracts/ports.md`'s claim that the suite asserts rule 7, its description of a live contract test that does not exist, and the port doc comment saying the SC-008 isolation rule "is not written yet" when `internal/arch/network_isolation_test.go` exists
+- [ ] T250 [P] `docs/ENVIRONMENTS.md` and `.env.example`: `NETWORKS`, the per-driver blocks, the retired flat keys and the `pool_max_conns` floor per network count
+- [ ] T251 [P] `specs/003-multi-network-linkwise/quickstart.md` verified end to end against a clean checkout — two networks, both fixtures, no credentials
+- [ ] T252 [P] A runbook section on connecting a network: seed the row, name it in `NETWORKS`, set its block, raise the pool, watch `GET …/ops/networks`
+- [ ] T253 [P] Correct the six documents [research.md](research.md) §6 lists as contradicted — including `002/contracts/ports.md`'s claim that the suite asserts rule 7, its description of a live contract test that does not exist, and the port doc comment saying the SC-008 isolation rule "is not written yet" when `internal/arch/network_isolation_test.go` exists
 
 ---
 
 ## Dependencies
 
 ```text
-Phase 0 ──> Phase A ──> Phase B ──> Phase C (gated on T235)
-                                └─> Phase D (gated on Q11 and T241)
+Phase 0 ──> Phase A ──> Phase B ──> Phase C (gated on T236)
+                                └─> Phase D (gated on Q11 and T242)
 Phase E follows whatever has landed.
 ```
 
 - **T200–T210** depend on nothing and unblock everything. T203 (0035) must precede T205 (the query that uses `click.network_id`).
-- **T211–T214** (the registry) must precede T215–T220 (configuration reading it) and T230 (the suite reading it).
-- **T230** must precede T239 and T247, or an adapter ships unmeasured.
-- **T235** gates all of Phase C. **T241** gates all of Phase D.
+- **T211–T214** (the registry) must precede T215–T220 (configuration reading it) and T231 (the suite reading it).
+- **T231** must precede T240 and T248, or an adapter ships unmeasured.
+- **T224** (the second fixture) must precede **T234** (two networks polling) and **T235** (the isolation test with a second adapter package present) — without it neither can be run without credentials.
+- **T236** gates all of Phase C. **T242** gates all of Phase D.
 - Nothing in Phases C or D blocks anything in 0, A, B or E.
 
 ## Parallel opportunities
@@ -162,8 +164,8 @@ Phase E follows whatever has landed.
 `[P]` tasks touch disjoint files. The largest genuinely parallel groups:
 
 - **T207 + T210** with **T200–T206** — arbitration and attribution are different tables
-- **T224, T225, T226** — three handlers, three files
-- **T249, T250, T251, T252** — documentation, all independent
+- **T225, T226, T227** — three handlers, three files
+- **T250, T251, T252, T253** — documentation, all independent
 
 ## What is deliberately not here
 
