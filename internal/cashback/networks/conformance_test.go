@@ -459,6 +459,78 @@ func TestConformanceEveryReportKeepsTheNetworksOwnWord(t *testing.T) {
 	})
 }
 
+// TestConformanceEveryYieldedValueHasPassedItsOwnValidate is contract rule 7,
+// and it is the rule the port cannot enforce for itself.
+//
+// [Reported] and [ReportedMerchant] are deliberately writable-invalid: an
+// adapter decodes a payload field by field, so there is no constructor to put
+// the check in, and nothing on the YIELDING path can call Validate for the
+// adapter - the port declares an interface, and the values crossing it are
+// built on the far side of it. (The package does call it again on the way to
+// the database, at evidence.go, digest.go and supersede.go: the last gate
+// before permanence is worth paying for twice. Neither of those runs while a
+// sequence is being drained, which is where rule 7 lives.) Rule 7 makes
+// calling it the adapter's obligation - and an obligation nothing asserts is
+// a comment.
+//
+// What it buys is WHERE a bad mapping is caught, and the two failure modes it
+// catches are not caught equally without it.
+//
+// A click reference that is present and blank IS refused by the schema
+// (network_transaction_click_ref_not_blank), at an INSERT halfway through a
+// window - after the rows before it were written, with a cursor that must not
+// advance and a window that must be read again. Loud, late, expensive.
+//
+// A report whose sale and commission carry different currencies is not
+// refused at all. cashback.network_transaction has ONE currency column
+// (0012), checked only for its shape, and the writer stores the sale's
+// (evidence.go: Currency: string(report.SaleAmount.Currency)) - so the
+// commission's currency is dropped and the row is stored restated, exactly as
+// [Reported.Validate]'s own doc warns it would be. The member's share is then
+// computed from a figure the network never reported, and nothing anywhere
+// says so.
+//
+// That second one is why this scenario exists. With rule 7 asserted, the
+// adapter that made the value is the thing that fails, at the moment it made
+// it, and neither failure reaches a row.
+//
+// Both sequences are drained, because both types carry the obligation and an
+// adapter that honours it for transactions and forgets it for the catalogue
+// has kept half a rule.
+func TestConformanceEveryYieldedValueHasPassedItsOwnValidate(t *testing.T) {
+	t.Parallel()
+
+	eachAdapter(t, func(t *testing.T, a conformAdapter) {
+		adapter := a.open(t)
+
+		reports, err := conformTransactions(t, a, adapter)
+		if err != nil {
+			t.Fatalf("reading a window this adapter says it has data for: %v", err)
+		}
+		if len(reports) == 0 {
+			t.Fatal("the window this adapter offered holds no transactions, so nothing here is proved")
+		}
+		for _, report := range reports {
+			if err := report.Validate(); err != nil {
+				t.Errorf("transaction %s was yielded without passing Reported.Validate: %v", report.ExternalID, err)
+			}
+		}
+
+		merchants, err := conformCatalogue(t, adapter)
+		if err != nil {
+			t.Fatalf("reading the catalogue: %v", err)
+		}
+		if len(merchants) == 0 {
+			t.Fatal("the catalogue is empty, so nothing here is proved")
+		}
+		for _, merchant := range merchants {
+			if err := merchant.Validate(); err != nil {
+				t.Errorf("retailer %s was yielded without passing ReportedMerchant.Validate: %v", merchant.ExternalID, err)
+			}
+		}
+	})
+}
+
 // TestConformanceAWindowWiderThanTheLimitIsRefused is contract rule 3
 // (FR-031), and the refusal matters more than the limit does.
 //
