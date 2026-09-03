@@ -285,12 +285,12 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T126 Handle `identity.account.deleted` by closing participation and flagging in-flight withdrawals, never deleting financial rows, in `internal/cashback/wallet/account_lifecycle.go`
 - [ ] T127 [P] Implement the fixture-brand render test across every member-facing surface (SC-007) in `web/src/lib/brand/rebrand.test.ts`
 - [ ] T128 [P] Drive the brand-literal lint to zero exceptions across `internal/`, `web/` and `internal/platform/db/migrations/` — **`internal/`, `cmd/`, `api/` and the migrations are at zero.** Every remaining budget entry is under `web/`, and belongs to the frontend workstream
-- [ ] T129 [P] Wire quickstart scenarios V1–V10 as automated tests in `internal/cashback/scenarios/`
+- [x] T129 [P] Wire quickstart scenarios V1–V10 as automated tests in `internal/cashback/scenarios/` — V1–V6 as `TestScenario` subtests named as `make cashback-scenario NAME=…` names them. V7 is `make cashback-verify-ledger`, V8 is `make cashback-brand-check`, and V9/V10 are the architecture tests, all of which already exist and are not re-run here
 - [x] T130 [P] Add the seed command backing `make cashback-seed` in `cmd/apivo/seed_cashback.go` — it refuses every adapter but the fixture, writes the catalogue by running the real import rather than beside it, and prints a live offer id to click through with. Rate bands are the only rows it writes directly, because nothing else in the repository can write one at all
 - [ ] T131 Bring Go statement coverage for `internal/cashback/...` and `internal/platform/{money,brand,events,scheduler}` to ≥90% and TypeScript to ≥80%
 - [x] T132 [P] Add the cashback runbook (poller stalls, zero-sum alarm, stuck payout, network outage) to `docs/RUNBOOK.md` — six failure modes, ordered by how much time each leaves you, every query run against a real schema before it was written down
 - [ ] T133 [P] Document the cashback deployment topology and the Blnk/Redis operational contract in `docs/ENVIRONMENTS.md`
-- [ ] T134 Run the full quickstart validation and record which checks ran locally versus in CI, in the PR description
+- [x] T134 Run the full quickstart validation and record which checks ran locally versus in CI, in the PR description — recorded on the T129 pull request: V1–V10 all pass, the repository-wide coverage gate holds, and the one local failure (`TestCurrentOfferQueryUsesTheValidityIndex`) is named as local-only with the plan that explains it
 
 ---
 
