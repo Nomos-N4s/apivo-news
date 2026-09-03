@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  currencyDigits,
   decimalString,
   formatMoney,
   formatRateBps,
   formatSignedMoney,
   isMoney,
+  parseAmountToMinor,
   sum,
   zero,
 } from './money';
@@ -136,5 +138,52 @@ describe('sum', () => {
 describe('zero', () => {
   it('keeps the currency an empty wallet is denominated in', () => {
     expect(zero('EUR')).toEqual({ minor: 0, currency: 'EUR' });
+  });
+});
+
+describe('parseAmountToMinor', () => {
+  it.each([
+    ['19,99', 2, 1999],
+    ['19.99', 2, 1999],
+    ['20', 2, 2000],
+    ['1.234,56', 2, 123456],
+    ['1,234.56', 2, 123456],
+    ['0,05', 2, 5],
+    ['€ 240,60', 2, 24060],
+    ['240,60 €', 2, 24060],
+    ['1 500', 0, 1500],
+  ])('reads %s at %i digits as %i minor units', (input, digits, expected) => {
+    expect(parseAmountToMinor(input, digits)).toBe(expected);
+  });
+
+  it('reads a lone separator with the wrong number of decimals as grouping', () => {
+    // "1.234" is a thousand two hundred and thirty-four euros, not 1.23.
+    expect(parseAmountToMinor('1.234', 2)).toBe(123400);
+    expect(parseAmountToMinor('1,234,567', 2)).toBe(123456700);
+  });
+
+  it.each(['', '   ', 'abc', '-5,00', '1,2,3.4.5', '..', ','])(
+    'refuses %o rather than reading it as zero',
+    (input) => {
+      expect(parseAmountToMinor(input, 2)).toBeNull();
+    },
+  );
+
+  it('refuses an amount too large to hold exactly', () => {
+    expect(parseAmountToMinor('999999999999999999999', 2)).toBeNull();
+  });
+
+  it('round-trips against the formatter', () => {
+    for (const minor of [1, 5, 99, 100, 1999, 24060, 100000]) {
+      const rendered = decimalString(minor, 2);
+      expect(parseAmountToMinor(rendered, 2)).toBe(minor);
+    }
+  });
+});
+
+describe('currencyDigits', () => {
+  it('knows the euro has two and the yen none', () => {
+    expect(currencyDigits('de', 'EUR')).toBe(2);
+    expect(currencyDigits('de', 'JPY')).toBe(0);
   });
 });

@@ -146,3 +146,80 @@ export function formatRateBps(lang: ReadingLanguage, bps: number): string {
     maximumFractionDigits: 2,
   }).format(asNumericLiteral(decimalString(bps, 4)));
 }
+
+/**
+ * Reads what a member typed into an amount field, as minor units.
+ *
+ * This is the only direction money travels the other way, and it is the one
+ * place a decimal exists on this side at all: the field is where a person
+ * writes one. It never becomes a `number` here either — the digits are
+ * counted and assembled, so `19,99` is 1999 rather than 1998.9999999999998.
+ *
+ * Separators are read the way a person writes them rather than the way one
+ * locale specifies them, because the field is one text box and a member
+ * typing on a German keyboard about a Greek page will use whichever comes
+ * to hand:
+ *
+ *   - both `.` and `,` present — the LAST one is the decimal separator and
+ *     the other is grouping (`1.234,56` and `1,234.56` are both 123456);
+ *   - one separator, followed by exactly the currency's number of decimals
+ *     and appearing once — the decimal separator (`19,99`);
+ *   - anything else — grouping (`1.234` is 123400, `1,234,567` is
+ *     123456700).
+ *
+ * Returns null for anything it cannot read as one amount, and null is a
+ * refusal the form states rather than a zero it submits. A field that
+ * quietly reads an unparseable amount as nothing is how somebody asks for
+ * their whole balance and receives no money.
+ */
+export function parseAmountToMinor(input: string, digits: number): number | null {
+  const trimmed = input.replace(/[\s\u00a0\u202f]/g, '').replace(/[^\d.,-]/g, '');
+  if (trimmed === '' || trimmed.startsWith('-')) {
+    // A negative withdrawal is not a deposit; it is a typo.
+    return null;
+  }
+  if (!/^\d[\d.,]*$/.test(trimmed)) {
+    return null;
+  }
+
+  const lastDot = trimmed.lastIndexOf('.');
+  const lastComma = trimmed.lastIndexOf(',');
+  const decimalAt = Math.max(lastDot, lastComma);
+
+  let whole = trimmed;
+  let fraction = '';
+  if (decimalAt !== -1) {
+    const tail = trimmed.slice(decimalAt + 1);
+    const bothPresent = lastDot !== -1 && lastComma !== -1;
+    const occurrences = trimmed.split(trimmed[decimalAt] as string).length - 1;
+    const isDecimal = bothPresent || (occurrences === 1 && tail.length === digits);
+    if (isDecimal) {
+      whole = trimmed.slice(0, decimalAt);
+      fraction = tail;
+    }
+  }
+
+  // Whatever separators remain in the whole part are grouping, and grouping
+  // that is not in threes is not grouping — it is a typo, and reading
+  // "1,2,3.4" as 123.40 would take a member's money on a guess.
+  const groups = whole.split(/[.,]/);
+  const grouped =
+    groups.length === 1 ||
+    (groups[0] !== undefined &&
+      groups[0].length >= 1 &&
+      groups[0].length <= 3 &&
+      groups.slice(1).every((group) => group.length === 3));
+  const wholeDigits = whole.replace(/[.,]/g, '');
+  if (wholeDigits === '' || !grouped || /[.,]/.test(fraction)) {
+    return null;
+  }
+  const fractionDigits = fraction;
+  const padded = (fractionDigits + '0'.repeat(digits)).slice(0, digits);
+  const minor = Number(`${wholeDigits}${padded}`);
+  return Number.isSafeInteger(minor) ? minor : null;
+}
+
+/** The decimal places a currency is written with, for the parser to target. */
+export function currencyDigits(lang: ReadingLanguage, currency: string): number {
+  return fractionDigits(lang, currency);
+}

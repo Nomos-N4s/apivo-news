@@ -98,6 +98,10 @@ export interface CashbackStrings {
   readonly decisionReason: string;
   readonly payoutReference: string;
   readonly noWithdrawals: string;
+  readonly yourWithdrawals: string;
+  readonly requestedAt: string;
+  readonly amountUnreadable: string;
+  readonly destinationRequired: string;
 
   /* Participation */
   readonly notParticipating: string;
@@ -227,6 +231,11 @@ const el: CashbackStrings = {
   decisionReason: 'Αιτιολογία',
   payoutReference: 'Αριθμός πληρωμής',
   noWithdrawals: 'Καμία ανάληψη ακόμη.',
+  yourWithdrawals: 'Οι αναλήψεις σου',
+  requestedAt: 'Ζητήθηκε',
+  amountUnreadable:
+    'Δεν καταλάβαμε το ποσό. Γράψε το με ψηφία, π.χ. 20,00 — δεν στείλαμε τίποτα.',
+  destinationRequired: 'Διάλεξε έναν επαληθευμένο προορισμό.',
 
   notParticipating: 'Δεν συμμετέχεις ακόμη στην επιστροφή χρημάτων.',
   optIn: 'Συμμετοχή',
@@ -359,6 +368,11 @@ const de: CashbackStrings = {
   decisionReason: 'Begründung',
   payoutReference: 'Zahlungsreferenz',
   noWithdrawals: 'Noch keine Auszahlungen.',
+  yourWithdrawals: 'Deine Auszahlungen',
+  requestedAt: 'Beauftragt',
+  amountUnreadable:
+    'Der Betrag war nicht lesbar. Schreib ihn in Ziffern, z. B. 20,00 — abgeschickt wurde nichts.',
+  destinationRequired: 'Wähl ein verifiziertes Ziel aus.',
 
   notParticipating: 'Du nimmst noch nicht am Cashback teil.',
   optIn: 'Teilnehmen',
