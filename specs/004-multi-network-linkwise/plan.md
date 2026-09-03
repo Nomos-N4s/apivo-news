@@ -155,7 +155,8 @@ internal/cashback/
 internal/platform/db/migrations/
 ├── 0033_click_backs_one_credit.{up,down}.sql
 ├── 0034_preferred_route_must_be_publishable.{up,down}.sql
-└── 0035_click_carries_its_network.{up,down}.sql
+├── 0035_click_carries_its_network.{up,down}.sql
+└── 0036_entry_currency_is_the_members.{up,down}.sql
 ```
 
 ## Design decisions
