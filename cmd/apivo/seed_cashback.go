@@ -345,11 +345,16 @@ type seedCounts struct{ written, skipped int }
 // keep the gap visible by being the only caller, rather than papering over
 // it with a query the domain would then appear to own.
 //
-// Three bands on the first active route, not one, because a band is a thing
-// with a lifetime: one that closed last month, one live now, and one that
-// opens next month. A click-out reads the live one and snapshots it onto
-// the click (FR-013), and having neighbours either side is what makes that
-// snapshot mean something to look at.
+// Three bands on EVERY active route, not one each, because a band is a
+// thing with a lifetime: one that closed last month, one live now, and one
+// that opens next month. A click-out reads the live one and snapshots it
+// onto the click (FR-013), and having neighbours either side is what makes
+// that snapshot mean something to look at.
+//
+// Every active route rather than the first, so that a recording which grows
+// a second live retailer prices that one too. Each route gets its own three;
+// a route is where a band lives, so "one live band" is a fact about a route
+// and never about the network.
 func seedRateBands(ctx context.Context, pool *pgxpool.Pool, routes []seededRoute) (seedCounts, error) {
 	var counts seedCounts
 	now := time.Now().UTC()

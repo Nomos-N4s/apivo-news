@@ -133,6 +133,14 @@ func TestSeedRefusesWhatItCannotSeed(t *testing.T) {
 // inside a rolled-back transaction, and the merchants it imports would
 // otherwise collide with the catalogue every other suite in this package
 // seeds.
+//
+// Unlike connect-network's, it is REMADE on every run. This command writes
+// rows and then asserts their shape, so a database left standing from last
+// time means the second run finds three rate bands already there, takes the
+// "already had one" branch, and passes on rows no code in this process
+// wrote - the write path silently stops being tested. Coverage is what
+// surfaced it: timePtr, reachable only while bands are being written, sat
+// at 0.0%.
 const seedCommandDatabase = "apivo_seed_cashback_cmd"
 
 var (
@@ -150,7 +158,7 @@ func seedTestDB(t *testing.T) (string, *pgxpool.Pool) {
 		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise seed cashback")
 	}
 
-	seedDBOnce.Do(func() { seedDBURL, seedDBErr = ensureScratchDatabase(base, seedCommandDatabase) })
+	seedDBOnce.Do(func() { seedDBURL, seedDBErr = remakeScratchDatabase(base, seedCommandDatabase) })
 	if seedDBErr != nil {
 		t.Fatalf("preparing the scratch database: %v", seedDBErr)
 	}
@@ -221,19 +229,42 @@ func TestSeedWritesWhatAClickOutNeeds(t *testing.T) {
 		t.Errorf("wrote %d rate band(s), want 3: one closed, one live, one not open yet", bands)
 	}
 
-	// And exactly one of them is live, which is what the printed offer id
-	// promises the reader they can click through.
-	var live int
-	if err := pool.QueryRow(ctx,
-		`select count(*) from cashback.offer o
-		   join cashback.merchant_network mn on mn.id = o.merchant_network_id
-		  where mn.network_id = 'fixture'
-		    and o.valid_from <= now()
-		    and coalesce(o.valid_to, 'infinity'::timestamptz) > now()`).Scan(&live); err != nil {
-		t.Fatalf("counting live bands: %v", err)
+	// And exactly one band per publishable route is live, which is what the
+	// printed offer id promises the reader they can click through.
+	//
+	// Asserted PER ROUTE rather than over the network, because a band lives
+	// on a route: the day the recording grows a second live retailer the
+	// network-wide count becomes two and says nothing, while "one live band
+	// on each route" stays the property a click-out depends on (FR-013).
+	rows, err := pool.Query(ctx,
+		`select mn.external_merchant_id, count(*) filter (
+		            where o.valid_from <= now()
+		              and coalesce(o.valid_to, 'infinity'::timestamptz) > now())
+		   from cashback.merchant_network mn
+		   left join cashback.offer o on o.merchant_network_id = mn.id
+		  where mn.network_id = 'fixture' and mn.status = 'active'
+		  group by mn.external_merchant_id`)
+	if err != nil {
+		t.Fatalf("counting live bands per route: %v", err)
 	}
-	if live != 1 {
-		t.Errorf("%d band(s) are live, want exactly 1: a click-out reads one band and snapshots it (FR-013)", live)
+	defer rows.Close()
+	priced := 0
+	for rows.Next() {
+		var route string
+		var live int
+		if err := rows.Scan(&route, &live); err != nil {
+			t.Fatalf("scanning live bands: %v", err)
+		}
+		priced++
+		if live != 1 {
+			t.Errorf("route %s has %d live band(s), want exactly 1: a click-out reads one band and snapshots it (FR-013)", route, live)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("counting live bands per route: %v", err)
+	}
+	if priced != publishable {
+		t.Errorf("%d publishable route(s) were priced, want all %d", priced, publishable)
 	}
 	if !strings.Contains(out, "live offer      ") {
 		t.Errorf("the command printed no live offer id, so a reader has nothing to click through with:\n%s", out)

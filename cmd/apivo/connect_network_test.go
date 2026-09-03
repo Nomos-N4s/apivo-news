@@ -123,6 +123,29 @@ func ensureScratchDatabase(base, name string) (string, error) {
 	return scratchURL, nil
 }
 
+// remakeScratchDatabase is ensureScratchDatabase for a command whose rows
+// must not survive a run: it drops the database first, then makes it again.
+//
+// connect-network does NOT want this - its own database is named, reused,
+// and each case tidies up after itself - but a command that writes rows it
+// then asserts the SHAPE of does. Left standing, the second run finds the
+// first run's rows already there, takes every "already there" branch, and
+// asserts on rows no code in that process wrote. The drop happens inside
+// the caller's sync.Once, before any test has a connection open.
+func remakeScratchDatabase(base, name string) (string, error) {
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, base)
+	if err != nil {
+		return "", err
+	}
+	if _, err := admin.Exec(ctx, `drop database if exists "`+name+`" with (force)`); err != nil {
+		admin.Close()
+		return "", fmt.Errorf("dropping %s: %w", name, err)
+	}
+	admin.Close()
+	return ensureScratchDatabase(base, name)
+}
+
 // forgetAccount removes what a case wrote. The rows are committed - that is
 // the point of the command - so each case tidies up after itself even inside
 // its own database, or a re-run would find its first connect already done.
