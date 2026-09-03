@@ -285,7 +285,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T126 Handle `identity.account.deleted` by closing participation and flagging in-flight withdrawals, never deleting financial rows, in `internal/cashback/wallet/account_lifecycle.go`
 - [ ] T127 [P] Implement the fixture-brand render test across every member-facing surface (SC-007) in `web/src/lib/brand/rebrand.test.ts`
 - [ ] T128 [P] Drive the brand-literal lint to zero exceptions across `internal/`, `web/` and `internal/platform/db/migrations/`
-- [ ] T129 [P] Wire quickstart scenarios V1–V10 as automated tests in `internal/cashback/scenarios/`
+- [x] T129 [P] Wire quickstart scenarios V1–V10 as automated tests in `internal/cashback/scenarios/` — V1–V6 as `TestScenario` subtests named as `make cashback-scenario NAME=…` names them. V7 is `make cashback-verify-ledger`, V8 is `make cashback-brand-check`, and V9/V10 are the architecture tests, all of which already exist and are not re-run here
 - [ ] T130 [P] Add the seed command backing `make cashback-seed` in `cmd/apivo/seed_cashback.go`
 - [ ] T131 Bring Go statement coverage for `internal/cashback/...` and `internal/platform/{money,brand,events,scheduler}` to ≥90% and TypeScript to ≥80%
 - [ ] T132 [P] Add the cashback runbook (poller stalls, zero-sum alarm, stuck payout, network outage) to `docs/RUNBOOK.md`

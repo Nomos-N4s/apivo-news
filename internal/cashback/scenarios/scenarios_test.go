@@ -35,6 +35,7 @@ func TestScenario(t *testing.T) {
 	t.Run("reversal", reversal)
 	t.Run("unattributed-and-held", unattributedAndHeld)
 	t.Run("reconciliation", reconciliation)
+	t.Run("withdrawal-exactly-once", withdrawalExactlyOnce)
 }
 
 // earnConfirm is V1 (US1, US3 · SC-001, SC-002, SC-006).
