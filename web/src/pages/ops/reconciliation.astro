@@ -1,0 +1,314 @@
+---
+import { API_BASE_URL, APP_ENV } from 'astro:env/server';
+import OpsLayout from '../../layouts/OpsLayout.astro';
+import {
+  CashbackApiError,
+  CashbackConfigurationError,
+  createCashbackApi,
+  type CashbackApi,
+} from '../../lib/cashback/api';
+import { formatMoney } from '../../lib/cashback/money';
+import { opsAccess } from '../../lib/cashback/ops-guard';
+import { opsLanguage } from '../../lib/cashback/ops-language';
+import type { ReconciliationDifference, ReconciliationRun } from '../../lib/cashback/types';
+import { isSameOrigin } from '../../lib/csrf';
+import { editorSession } from '../../lib/editorial/session';
+import { formatItemDate } from '../../lib/reader/format';
+import { cashbackStrings } from '../../i18n/cashback';
+
+// Reconciliation: what the network's statement says against what our
+// records say (T115 #262).
+//
+// Two verdicts, and the screen offers only those two, because the contract
+// has only those two and the omission is deliberate. "The network owes us
+// and we are chasing it" is not a resolution: an open difference IS the
+// chase, and it holds the confirmation gate shut until the money arrives or
+// the network restates the report. Resolving early would confirm a member's
+// balance out of money that was never received, which is the single thing
+// US6 exists to prevent. The sentence saying so is on the page, next to the
+// buttons, rather than in a comment only we read.
+//
+// `delta` is paid less owed, so a shorted report is negative and an
+// overpayment positive. It is rendered with its sign rather than as an
+// absolute with a word beside it: an operator scanning a column needs the
+// direction in the figure.
+const lang = opsLanguage(Astro.url);
+const t = cashbackStrings(lang);
+const session = editorSession(Astro.request);
+
+let api: CashbackApi | null = null;
+let runs: readonly ReconciliationRun[] = [];
+let differences: readonly ReconciliationDifference[] = [];
+let selected: ReconciliationRun | null = null;
+let apiUnavailable = false;
+let notice: string | null = null;
+let refusal: string | null = null;
+
+try {
+  api = createCashbackApi(API_BASE_URL, { appEnv: APP_ENV, token: session.token });
+  const access = opsAccess(session, api.source);
+
+  if (Astro.request.method === 'POST') {
+    if (!isSameOrigin(Astro.request, Astro.url.origin)) {
+      return new Response('cross-origin request refused', { status: 403 });
+    }
+    if (!access.mayAct) {
+      return new Response('operator role required', { status: 403 });
+    }
+    const form = await Astro.request.formData();
+    const id = String(form.get('id') ?? '');
+    const resolution = String(form.get('resolution') ?? '');
+    const reason = String(form.get('reason') ?? '').trim();
+    if (reason === '') {
+      refusal = t.reasonRequired;
+    } else if (resolution !== 'explained' && resolution !== 'absorbed') {
+      refusal = t.openDifferenceIsTheChase;
+    } else {
+      try {
+        await api.resolveDifference(id, resolution, reason);
+        notice = t.decisionRecorded;
+      } catch (error) {
+        if (!(error instanceof CashbackApiError)) {
+          throw error;
+        }
+        refusal = error.problem?.title ?? error.message;
+      }
+    }
+  }
+
+  if (access.mayRead) {
+    runs = (await api.reconciliationRuns()).items;
+    const asked = Astro.url.searchParams.get('run');
+    selected = runs.find((run) => run.id === asked) ?? runs[0] ?? null;
+    if (selected !== null) {
+      differences = (await api.differences(selected.id)).items;
+    }
+  }
+} catch (error) {
+  if (error instanceof CashbackConfigurationError) {
+    console.error(`cashback ops: ${error.message}`);
+  }
+  apiUnavailable = true;
+  Astro.response.status = 503;
+  Astro.response.headers.set('Retry-After', '60');
+}
+
+const access = opsAccess(session, api?.source ?? 'api');
+if (access.blocked && !apiUnavailable) {
+  Astro.response.status = 403;
+}
+---
+
+<OpsLayout
+  lang={lang}
+  session={session}
+  current="reconciliation"
+  title={t.queueReconciliation}
+  fixtures={api?.source === 'fixture'}
+  blocked={access.blocked}
+  notice={notice}
+  refusal={refusal}
+>
+  {runs.length === 0 && !access.blocked && <p class="hint">{t.noRuns}</p>}
+
+  {
+    runs.length > 0 && (
+      <nav class="runs" aria-label={t.queueReconciliation}>
+        {runs.map((run) => (
+          <a
+            href={`?run=${encodeURIComponent(run.id)}&lang=${lang}`}
+            class:list={['run', { on: run.id === selected?.id }]}
+          >
+            <span class="period">
+              {formatItemDate(lang, new Date(run.period.start))} –{' '}
+              {formatItemDate(lang, new Date(run.period.end))}
+            </span>
+            <span class="counts">
+              {t.differences} {run.difference_count} · {t.openDifferences} {run.open_count}
+            </span>
+          </a>
+        ))}
+      </nav>
+    )
+  }
+
+  <p class="chase">{t.openDifferenceIsTheChase}</p>
+
+  {
+    differences.map((difference) => (
+      <article class="row">
+        <div class="head">
+          <span class="kind">{t.differenceKinds[difference.kind] ?? difference.kind}</span>
+          <span class="delta">{formatMoney(lang, difference.delta)}</span>
+          {difference.superseded && <span class="tag tag-outline">{t.superseded}</span>}
+        </div>
+        <dl>
+          <dt>{t.payoutReference}</dt>
+          <dd class="ref">{difference.transaction_id}</dd>
+          <dt>{t.expected}</dt>
+          <dd>{difference.expected === null ? '—' : formatMoney(lang, difference.expected)}</dd>
+          <dt>{t.actual}</dt>
+          <dd>{difference.actual === null ? '—' : formatMoney(lang, difference.actual)}</dd>
+        </dl>
+        {
+          difference.resolution !== null ? (
+            <div class="resolved">
+              <p class="verdict">
+                {difference.resolution.resolution === 'explained'
+                  ? t.resolutionExplained
+                  : t.resolutionAbsorbed}
+                {' · '}
+                {difference.resolution.resolved_by}
+              </p>
+              <p class="reason">{difference.resolution.reason}</p>
+            </div>
+          ) : (
+            <form method="post" class="decide">
+              <input type="hidden" name="id" value={difference.id} />
+              <div class="field">
+                <label for={`reason-${difference.id}`}>{t.reasonLabel}</label>
+                <input
+                  class="input"
+                  id={`reason-${difference.id}`}
+                  name="reason"
+                  required
+                  autocomplete="off"
+                />
+              </div>
+              <div class="actions">
+                <button
+                  class="btn btn-primary"
+                  name="resolution"
+                  value="explained"
+                  disabled={!access.mayAct}
+                >
+                  {t.resolutionExplained}
+                </button>
+                <button
+                  class="btn btn-secondary"
+                  name="resolution"
+                  value="absorbed"
+                  disabled={!access.mayAct}
+                >
+                  {t.resolutionAbsorbed}
+                </button>
+              </div>
+              <p class="required">{t.reasonRequired}</p>
+            </form>
+          )
+        }
+      </article>
+    ))
+  }
+</OpsLayout>
+
+<style>
+  .hint,
+  .chase {
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    margin: 0 0 var(--space-5);
+    text-wrap: pretty;
+  }
+  .chase {
+    border-left: 2px solid var(--color-accent);
+    padding-left: var(--space-4);
+    font-size: 13px;
+  }
+  .runs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin-bottom: var(--space-5);
+  }
+  .run {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border: 1px solid var(--color-divider);
+    padding: var(--space-3) var(--space-4);
+    text-decoration: none;
+    color: var(--color-text);
+  }
+  .run.on {
+    border-color: var(--color-accent);
+    background: var(--color-surface);
+  }
+  .period {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .counts {
+    font-size: 11.5px;
+    color: var(--ink-muted);
+  }
+  .row {
+    border-top: 1px solid var(--color-divider);
+    padding: var(--space-5) 0;
+  }
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-4);
+  }
+  .kind {
+    font: 600 13px/1.2 var(--font-heading);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .delta {
+    font: var(--font-heading-weight) 20px/1 var(--font-heading);
+  }
+  dl {
+    display: grid;
+    grid-template-columns: minmax(130px, auto) 1fr;
+    gap: var(--space-2) var(--space-5);
+    margin: 0 0 var(--space-4);
+    font-size: 13px;
+  }
+  dt {
+    color: var(--ink-muted);
+  }
+  dd {
+    margin: 0;
+  }
+  .ref {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .resolved {
+    border-left: 2px solid var(--color-divider);
+    padding-left: var(--space-4);
+  }
+  .verdict {
+    margin: 0 0 var(--space-2);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .reason {
+    margin: 0;
+    font-size: 13px;
+    text-wrap: pretty;
+  }
+  .decide {
+    background: var(--color-surface);
+    border: 1px solid var(--color-divider);
+    padding: var(--space-4);
+    max-width: 560px;
+    display: grid;
+    gap: var(--space-3);
+  }
+  .actions {
+    display: flex;
+    gap: var(--space-3);
+  }
+  .required {
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+</style>
