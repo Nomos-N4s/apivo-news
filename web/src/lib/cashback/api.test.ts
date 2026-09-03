@@ -265,7 +265,12 @@ describe('a pull request preview', () => {
     expect(api.source).toBe('fixture');
   });
 
-  it.each(['v1.4.0', '1.4.0', 'preview', 'pr-', 'pr-x', 'PR-493', ' pr-493', 'pr-493 ', '', undefined])(
+  // 'dev' leads this list because it is the literal default the named
+  // environments ship: docker-compose.yml sets
+  // PUBLIC_APP_VERSION: ${APIVO_VERSION:-dev}, so an unstamped QA box carries
+  // exactly this string. A regression that made it match would put invented
+  // balances on QA, which is the failure this whole guard exists to prevent.
+  it.each(['dev', 'v1.4.0', '1.4.0', 'preview', 'pr-', 'pr-x', 'PR-493', ' pr-493', 'pr-493 ', '', undefined])(
     'is not claimed by %o - only pr-<digits> is a preview',
     (value) => {
       expect(isPreviewVersion(value)).toBe(false);
@@ -276,6 +281,24 @@ describe('a pull request preview', () => {
 
   it('still refuses a deployment with no base URL and no preview stamp', () => {
     expect(() => createCashbackApi(undefined, { appEnv: 'prod' })).toThrow(CashbackConfigurationError);
+  });
+
+  it('fails closed on a QA box whose API_BASE_URL went missing', () => {
+    // The dangerous shape: a deployed environment, correctly unstamped, that
+    // has lost the one setting pointing at its API. It must refuse rather
+    // than fall back - a silent fixture wallet on QA is somebody reading a
+    // balance nobody owes them.
+    expect(() =>
+      createCashbackApi(undefined, { appEnv: 'prod', appVersion: 'dev' }),
+    ).toThrow(/invented/);
+  });
+
+  it('serves QA from its API, never from fixtures', () => {
+    const api = createCashbackApi('http://apivo-qa-api:8080', {
+      appEnv: 'prod',
+      appVersion: 'dev',
+    });
+    expect(api.source).toBe('api');
   });
 
   it('moves no money: every operator decision is refused on a preview', async () => {
