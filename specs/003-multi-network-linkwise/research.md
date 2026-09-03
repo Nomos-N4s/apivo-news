@@ -324,6 +324,30 @@ a currency the deployment cannot pay must be refused at connection time —
 loudly, once, at the point somebody configures it — rather than discovered
 by a member who cannot withdraw.
 
+### 4.7 `Limits()` reads a column that reaches no code
+
+The port's own doc comment is explicit (`network.go:349-352`):
+
+> *"The values come from the network's row rather than from literals in the
+> adapter, and they are read once, when the composition root builds the
+> adapter. So a network that revises its documented limit is a configuration
+> change and a restart rather than a release."*
+
+Nothing does this. The fixture returns `defaultLimits()`
+(`fixture/fixture.go:195,215`), Awin returns its compiled-in
+`DocumentedRateLimitPerMinute = 20` (`awin/client.go:41`), and the one read
+of the row is `_, err := q.GetNetwork(ctx, id.String())`
+(`connect.go:202`) — an existence check that **discards the row**.
+
+With one network this is a documentation defect. With two it is an operator
+trap: `cashback.network` carries `max_query_window_days` and
+`rate_limit_per_minute` **per network**, which is exactly the shape two
+networks need, and editing either changes nothing. An operator who lowers a
+rate limit because a network is complaining will watch us keep hammering it.
+
+Either the values come from the row, or the sentence comes out. They cannot
+both stand.
+
 ---
 
 ## 5. Linkwise
@@ -447,3 +471,4 @@ Each should be corrected rather than worked around:
 | `networks/network.go:169-220` | nine numbered contract rules | `ports.md` numbers ten; the tenth is unnumbered prose at `:162-167` |
 | `002/tasks.md` | Phases 1-6 largely unticked | most are implemented; the file is stale |
 | `networks/network.go:198-199` | SC-008's isolation rule "is not written yet" | `internal/arch/network_isolation_test.go` exists (T109) |
+| `networks/network.go:349-352` | `Limits()` comes from the network's row | it comes from compiled-in constants; `connect.go:202` discards the row it reads |

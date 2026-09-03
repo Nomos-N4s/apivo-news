@@ -365,6 +365,13 @@ them quietly:
   recorded — the importer's own comment already notes that two programmes
   with one name may be two businesses.
 
+- **FR-113**: `Limits()` MUST come from the network's own row, per network,
+  as the port already claims — or the claim MUST be removed. Today
+  `cashback.network` carries `max_query_window_days` and
+  `rate_limit_per_minute` per network and neither reaches any code, so an
+  operator lowering a limit because a network is complaining changes
+  nothing (research.md §4.7).
+
 **Currency (money safety)**
 
 - **FR-108**: A publisher account MUST declare the currency its network
