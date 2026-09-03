@@ -288,7 +288,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T129 [P] Wire quickstart scenarios V1–V10 as automated tests in `internal/cashback/scenarios/`
 - [ ] T130 [P] Add the seed command backing `make cashback-seed` in `cmd/apivo/seed_cashback.go`
 - [ ] T131 Bring Go statement coverage for `internal/cashback/...` and `internal/platform/{money,brand,events,scheduler}` to ≥90% and TypeScript to ≥80%
-- [ ] T132 [P] Add the cashback runbook (poller stalls, zero-sum alarm, stuck payout, network outage) to `docs/RUNBOOK.md`
+- [x] T132 [P] Add the cashback runbook (poller stalls, zero-sum alarm, stuck payout, network outage) to `docs/RUNBOOK.md` — six failure modes, ordered by how much time each leaves you, every query run against a real schema before it was written down
 - [ ] T133 [P] Document the cashback deployment topology and the Blnk/Redis operational contract in `docs/ENVIRONMENTS.md`
 - [ ] T134 Run the full quickstart validation and record which checks ran locally versus in CI, in the PR description
 
