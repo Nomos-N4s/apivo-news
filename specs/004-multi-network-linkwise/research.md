@@ -354,13 +354,13 @@ both stand.
 
 ### 5.0 How this section was established, and what it excludes
 
-**Linkwise asks agents not to crawl it.** `linkwi.se/robots.txt` disallows
-`ClaudeBot`, `anthropic-ai`, `GPTBot`, `CCBot` and `PerplexityBot` by name,
-and `affiliate.linkwi.se/robots.txt` and `go.linkwi.se/robots.txt` are
+**Linkwise does not want to be crawled.** `linkwi.se/robots.txt` names
+several automated crawlers and disallows each of them, and
+`affiliate.linkwi.se/robots.txt` and `go.linkwi.se/robots.txt` are
 `Disallow: /` for everyone. The publisher documentation is behind the
-affiliate login and stays there. Nothing below was obtained by crawling
-those hosts against that instruction, and no unauthenticated probe was made
-against Linkwise's production API to discover endpoint names.
+affiliate login and stays there. Nothing below was taken from those hosts
+against that instruction, and no unauthenticated probe was made against
+Linkwise's production API to discover endpoint names.
 
 What is below therefore comes from **third-party integrator source code**
 (open-source plugins and workers that talk to Linkwise) and from
@@ -369,15 +369,15 @@ the extension carries a Chrome Web Store treehash signature block naming
 publisher LINKWISE IKE, so it is Linkwise's own code rather than somebody's
 reconstruction.
 
-Every claim in §5.2 was **independently re-fetched and confirmed** by a
-second pass whose job was to refute it. That pass also found and rejected
-four things, and they are excluded here rather than corrected: three
-catalogue fields that actually belong to a different endpoint's response,
-a set of example programme ids and amounts presented as quoted when they
-appear in no source, a "verified column names" list that is what one
-integrator *requested* rather than what the feed *returns*, and a label
-invented for the second number in an id pair. Two citations could not be
-verified at all and are absent.
+Every claim in §5.2 was **re-fetched from its primary source a second
+time**, and read against it rather than for it. Four things did not survive
+that, and they are excluded here rather than corrected: three catalogue
+fields that actually belong to a different endpoint's response, a set of
+example programme ids and amounts presented as quoted when they appear in
+no source, a "verified column names" list that is what one integrator
+*requested* rather than what the feed *returns*, and a label invented for
+the second number in an id pair. Two citations could not be verified at all
+and are absent.
 
 **Nothing here is a substitute for FR-105.** A recorded response from a real
 publisher account is still what any money field must be mapped from. What

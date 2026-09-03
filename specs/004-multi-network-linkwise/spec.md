@@ -1,9 +1,9 @@
 # Feature Specification: Many Affiliate Networks — Linkwise Beside Awin
 
-**Feature Branch**: `xcoder/003-multi-network`
+**Feature Branch**: `xcoder/004-multi-network`
 **Spec Directory**: `specs/004-multi-network-linkwise/`
 **Created**: 2026-09-03
-**Status**: Draft — awaiting founder answers to Q10–Q13
+**Status**: Draft — awaiting founder answers to Q10–Q14
 **Input**: Founder, 2026-09-03: *"we have a new mvp feature request, we must
 work also with Linkwise and not Awin only!"*
 
@@ -108,7 +108,7 @@ seam with a second, and hold both to the same evidentiary standard"** — not
 
 ### Deferred to the founder
 
-Q10–Q13 below. The plan must not silently resolve them; the recorded safe
+Q10–Q14 below. The plan must not silently resolve them; the recorded safe
 defaults apply until answered.
 
 ---

@@ -37,8 +37,8 @@ network id is the likeliest way to be told there is none.
 
 ### The unattributed reason becomes discriminating (FR-098)
 
-Today an unmatched report is unattributed. With two networks there are three
-distinct causes and three distinct operator actions:
+Today an unmatched report is unattributed. With two networks there are four
+distinct causes and four distinct operator actions:
 
 | Reason | What happened | What an operator does |
 |---|---|---|

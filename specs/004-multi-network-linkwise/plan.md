@@ -1,6 +1,6 @@
 # Implementation Plan: Many Affiliate Networks — Linkwise Beside Awin
 
-**Branch**: `xcoder/003-multi-network` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)
+**Branch**: `xcoder/004-multi-network` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `/specs/004-multi-network-linkwise/spec.md`
 
@@ -98,7 +98,7 @@ evidence changes are listed; every other row is unchanged and still passes.*
 
 | Principle | Status | Evidence in this plan |
 |---|---|---|
-| I. Sole authorship, signed commits | PASS | Unchanged. Branch is `xcoder/003-multi-network`; `make ref-lint` and `scripts/lint-commit-authors.sh` run before every push |
+| I. Sole authorship, signed commits | PASS | Unchanged. Branch is `xcoder/004-multi-network`; `make ref-lint` and `scripts/lint-commit-authors.sh` run before every push |
 | III. I-2 provenance at retrieval | PASS (strengthened) | Every adapter records retrieval time, **its own** publisher account and the query window — with two adapters, the account is what tells two provenance rows apart |
 | VI. I-5 traceability | PASS (strengthened) | The `cashback.provenance` view already joins through `merchant_network`, so it names the network per row without change |
 | VIII. DB-enforced invariants | PASS (extended) | Two new database rules, each with a SQLSTATE-asserting test: **one click backs at most one credit** (0033), and **a published route must be usable** (0034). Both are today's application-level assumptions made structural |
@@ -117,10 +117,10 @@ stops being satisfied by a test double.
 
 ```text
 specs/004-multi-network-linkwise/
-├── spec.md              # feature specification (+ founder questions Q10–Q13)
+├── spec.md              # feature specification (+ founder questions Q10–Q14)
 ├── plan.md              # this file
 ├── research.md          # current-state audit, money findings, Linkwise
-├── data-model.md        # schema deltas 0033–0035 only
+├── data-model.md        # schema deltas 0033–0036 only
 ├── quickstart.md        # bringing a second network up locally
 ├── contracts/
 │   ├── ports.md         # what the port contract gains, and rule 7's repair
@@ -413,7 +413,7 @@ transactions, against a recording.
 
 ## Next Steps
 
-1. Founder: **Q10–Q13**. Only **Q11** blocks anything (Phase D). Q13 blocks
+1. Founder: **Q10–Q14**. Only **Q11** blocks anything (Phase D). Q13 blocks
    Phase C/D adapter work only if a recording shows split currencies.
 2. Phases 0 → A → B in order; they are the whole of the unblocked work and
    are what makes a third network cost one package (SC-024).

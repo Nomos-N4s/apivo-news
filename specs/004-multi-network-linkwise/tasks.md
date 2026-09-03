@@ -26,8 +26,8 @@ conformance suite. The 90% Go coverage gate is unchanged.
 
 ## Commit discipline
 
-Per `CLAUDE.md`: **one PR per task or per tight pair**, and every
-intermediate commit builds and passes its own tests. A migration and the
+Per the repository's working practices: **one PR per task or per tight
+pair**, and every intermediate commit builds and passes its own tests. A migration and the
 test that proves the database refuses belong in the same commit; a
 migration and the read-path change that uses it do not.
 
