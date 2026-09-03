@@ -96,13 +96,28 @@ export function decimalString(minor: number, digits: number): string {
   return `${sign}${whole}.${fraction}`;
 }
 
+/**
+ * The decimal, narrowed to the type `Intl.NumberFormat#format` declares.
+ *
+ * TypeScript types that parameter as `Intl.StringNumericLiteral` — the
+ * template-literal type `${number}` — which no computed string can satisfy
+ * however well formed it is. The assertion is confined to this one function
+ * so the two call sites stay honest, and what it asserts is exactly what
+ * `decimalString` produces: an optional minus, digits, and at most one
+ * point. `money.test.ts` holds that over its whole range, and the runtime
+ * has always accepted the string; only the type has not.
+ */
+function asNumericLiteral(decimal: string): Intl.StringNumericLiteral {
+  return decimal as Intl.StringNumericLiteral;
+}
+
 /** An amount for display — el "1,45 €", de "1,45 €". */
 export function formatMoney(lang: ReadingLanguage, amount: Money): string {
   const digits = fractionDigits(lang, amount.currency);
   return new Intl.NumberFormat(lang, {
     style: 'currency',
     currency: amount.currency,
-  }).format(decimalString(amount.minor, digits));
+  }).format(asNumericLiteral(decimalString(amount.minor, digits)));
 }
 
 /**
@@ -129,5 +144,5 @@ export function formatRateBps(lang: ReadingLanguage, bps: number): string {
   return new Intl.NumberFormat(lang, {
     style: 'percent',
     maximumFractionDigits: 2,
-  }).format(decimalString(bps, 4));
+  }).format(asNumericLiteral(decimalString(bps, 4)));
 }
