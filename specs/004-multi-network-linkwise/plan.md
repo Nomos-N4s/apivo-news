@@ -405,7 +405,7 @@ transactions, against a recording.
 
 | Addition | Why it is necessary | Simpler alternative rejected |
 |---|---|---|
-| Three migrations for one feature | Each carries a different rule, and Principle VIII wants rules in the database. Bundling them would make a partial revert impossible | One migration — a revert of the arbitration rule would drag the attribution rule with it |
+| Four migrations for one feature | Each carries a different rule, and Principle VIII wants rules in the database. Bundling them would make a partial revert impossible | One migration — a revert of the arbitration rule would drag the attribution rule with it |
 | `click.network_id` denormalised | The attribution predicate is on the hot path and wants to be a constraint | Keep the three-table join — makes FR-096 a performance argument rather than a rule |
 | A registry in the composition root | Two switches already disagree, and the architecture test forbids the domain naming an adapter | A shared domain registry — fails `network_isolation_test.go`, correctly |
 | Phase C completing Awin | A seam proved only by a fixture is not proved | Ship Linkwise alone — then one live adapter still does not exist |
