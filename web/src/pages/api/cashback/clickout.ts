@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { API_BASE_URL, APP_ENV } from 'astro:env/server';
+import { API_BASE_URL, APP_ENV, CASHBACK_PREVIEW_FIXTURES } from 'astro:env/server';
 
 import { CashbackApiError, createCashbackApi } from '../../../lib/cashback/api';
 import { isSameOrigin } from '../../../lib/csrf';
@@ -35,7 +35,11 @@ export const POST: APIRoute = async ({ request, redirect, url }) => {
   }
 
   const session = editorSession(request);
-  const api = createCashbackApi(API_BASE_URL, { appEnv: APP_ENV, token: session.token });
+  const api = createCashbackApi(API_BASE_URL, {
+    appEnv: APP_ENV,
+    token: session.token,
+    previewFixtures: CASHBACK_PREVIEW_FIXTURES,
+  });
 
   try {
     const { redirect_url } = await api.clickout(offerId);

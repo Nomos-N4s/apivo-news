@@ -1,5 +1,5 @@
 ---
-import { API_BASE_URL, APP_ENV } from 'astro:env/server';
+import { API_BASE_URL, APP_ENV, CASHBACK_PREVIEW_FIXTURES } from 'astro:env/server';
 import CashbackNav from '../../../../components/CashbackNav.astro';
 import FixtureNotice from '../../../../components/FixtureNotice.astro';
 import Masthead from '../../../../components/Masthead.astro';
@@ -47,7 +47,11 @@ let merchant: MerchantDetail | null = null;
 let apiUnavailable = false;
 
 try {
-  api = createCashbackApi(API_BASE_URL, { appEnv: APP_ENV, token: session.token });
+  api = createCashbackApi(API_BASE_URL, {
+    appEnv: APP_ENV,
+    token: session.token,
+    previewFixtures: CASHBACK_PREVIEW_FIXTURES,
+  });
   merchant = await api.merchant(slug, lang);
 } catch (error) {
   if (error instanceof CashbackConfigurationError) {

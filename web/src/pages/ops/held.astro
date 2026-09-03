@@ -1,5 +1,5 @@
 ---
-import { API_BASE_URL, APP_ENV } from 'astro:env/server';
+import { API_BASE_URL, APP_ENV, CASHBACK_PREVIEW_FIXTURES } from 'astro:env/server';
 import OpsLayout from '../../layouts/OpsLayout.astro';
 import {
   CashbackApiError,
@@ -39,7 +39,11 @@ let notice: string | null = null;
 let refusal: string | null = null;
 
 try {
-  api = createCashbackApi(API_BASE_URL, { appEnv: APP_ENV, token: session.token });
+  api = createCashbackApi(API_BASE_URL, {
+    appEnv: APP_ENV,
+    token: session.token,
+    previewFixtures: CASHBACK_PREVIEW_FIXTURES,
+  });
   const access = opsAccess(session, api.source);
 
   if (Astro.request.method === 'POST') {

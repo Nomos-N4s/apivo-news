@@ -445,6 +445,11 @@ export interface CashbackApiOptions {
   readonly fetch?: typeof fetch;
   /** `APP_ENV`. In `prod` an absent base URL is a refusal, never a fallback. */
   readonly appEnv?: string | undefined;
+  /**
+   * `CASHBACK_PREVIEW_FIXTURES`. Exactly `"1"` makes the cashback surfaces
+   * answer from fixtures even under `APP_ENV=prod`. See `createCashbackApi`.
+   */
+  readonly previewFixtures?: string | undefined;
 }
 
 /**
@@ -471,6 +476,33 @@ export function createCashbackApi(
   options: CashbackApiOptions = {},
 ): CashbackApi {
   const appEnv = parseAppEnv(options.appEnv);
+  // The per-pull-request preview is the one deployed environment that exists
+  // to show a change to a reviewer, and it runs APP_ENV=prod deliberately, so
+  // that what a reviewer sees is what a member would get. That fidelity is
+  // also what makes the cashback surfaces invisible on it: previews do not
+  // include docker-compose.cashback.yml, so CASHBACK_ENABLED is off, every
+  // call is a 404, and the screens render an unavailable band. A preview that
+  // cannot show the change defeats the reason previews exist.
+  //
+  // So exactly one escape hatch, and it is narrow on purpose:
+  //
+  //   - an OPERATOR sets it, in the preview compose file and nowhere else. It
+  //     is not a query parameter, a cookie or a header, so no visitor can turn
+  //     it on and no link can carry it.
+  //   - it is read as the exact string "1". Anything else, "true" included, is
+  //     off; a variable that leaked into another environment half-set does
+  //     nothing.
+  //   - it moves NO money and reaches no operator decision: the fixture client
+  //     refuses every decision call with a 503 naming itself.
+  //   - every surface renders the fixture band above the content, which says
+  //     in the reading language that the figures are invented.
+  //
+  // It is scoped to cashback. The reader client keeps its own refusal
+  // untouched, because an invented publisher under an invented approver is a
+  // different claim from an invented balance on a page that says so.
+  if (options.previewFixtures === '1') {
+    return fixtureApi();
+  }
   if (appEnv === null) {
     throw new CashbackConfigurationError(
       `APP_ENV is ${JSON.stringify(options.appEnv)}, which is neither "${APP_ENV_DEV}" nor "${APP_ENV_PROD}". A value this application cannot read is not development: it would serve a deployed member a wallet of invented balances. Set APP_ENV to "${APP_ENV_PROD}" on a deployment, or leave it unset.`,
