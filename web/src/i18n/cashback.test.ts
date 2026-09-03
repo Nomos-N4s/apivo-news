@@ -47,26 +47,12 @@ describe('the cashback catalogue', () => {
     }
   });
 
-  it('names no brand, domain or support address (Rebrandability)', () => {
-    // The brand-literal lint covers the repository; this covers the one file
-    // most likely to acquire one, because copy is where a product name gets
-    // written without anybody deciding to hardcode it.
-    const forbidden = /apivo|epiloyes|\.(com|de|gr|eu)\b|@|https?:/i;
-    const walk = (value: unknown, path: string): void => {
-      if (typeof value === 'string') {
-        expect(value, `${path} carries a brand literal`).not.toMatch(forbidden);
-        return;
-      }
-      if (typeof value === 'object' && value !== null) {
-        for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-          walk(nested, `${path}.${key}`);
-        }
-      }
-    };
-    for (const lang of READING_LANGUAGES) {
-      walk(cashbackStrings(lang), lang);
-    }
-  });
+  // Brand literals are NOT asserted here. scripts/lint-brand-literals.sh
+  // greps the tracked tree for the current brand's names, domains and
+  // support addresses, and web/src/i18n/ is inside its scope — so this file
+  // is already covered by the gate that owns the rule. Restating it here
+  // would mean writing the forbidden names into a file that has no carve-out
+  // to write them in, which is what the lint caught when it was tried.
 
   it('names no currency — the wallet is denominated by the API, not by the copy', () => {
     const walk = (value: unknown): void => {
