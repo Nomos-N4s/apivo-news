@@ -25,6 +25,7 @@ import (
 func TestScenario(t *testing.T) {
 	t.Run("earn-confirm", earnConfirm)
 	t.Run("evidence-immutable", evidenceImmutable)
+	t.Run("reversal", reversal)
 }
 
 // earnConfirm is V1 (US1, US3 · SC-001, SC-002, SC-006).
@@ -226,5 +227,96 @@ func evidenceImmutable(t *testing.T) {
 		if _, err := w.tx.Exec(w.ctx, `rollback to savepoint immutable`); err != nil {
 			t.Fatalf("rollback to savepoint: %v", err)
 		}
+	}
+}
+
+// reversal is V3 (US1 scenario 4 · SC-010).
+//
+// The network takes a commission back. The promise is that nothing about the
+// original credit changes: a reversing entry is written beside it, the money
+// comes out of the stage account it actually reached, and both entries stay
+// in the member's wallet. "We never rewrite history" is only worth saying if
+// the original row is byte-identical afterwards, so that is what is compared.
+func reversal(t *testing.T) {
+	w := begin(t).seed(t)
+	click := w.clickOut(t)
+
+	report := w.reports(t, click.Ref.Ref(), networks.StatusPending)
+	share := w.shareOf(t, click, reportedCommission)
+	machine, confirmations := w.machines(t)
+	opened, err := machine.Open(w.ctx, w.tx, earnings.Credit{
+		Member: w.member, Brand: scenarioBrand, Report: report.id, Click: click.ID,
+		State: earnings.StatePending, Amount: share, Reason: "the network reported the purchase",
+	})
+	if err != nil {
+		t.Fatalf("Open(): %v", err)
+	}
+	w.importsAStatement(t)
+	confirmed, err := confirmations.Confirm(w.ctx, w.tx, opened, networks.StatusConfirmed, report.id)
+	if err != nil {
+		t.Fatalf("Confirm(): %v", err)
+	}
+	if got := w.balance(t, wallet.StageConfirmed); got != memberShareMinor {
+		t.Fatalf("confirmed balance is %d before the clawback, want %d", got, memberShareMinor)
+	}
+
+	// The original, as it stands before anything is undone. Read whole, so
+	// the comparison afterwards is of every column rather than of the ones
+	// somebody remembered to name.
+	before := w.entryRow(t, confirmed.ID)
+
+	// C-3: the network taking it back is a NEW report superseding the one
+	// that said it was approved, never an edit to it.
+	clawback := w.supersedes(t, report, "reversed", networks.StatusReversed)
+
+	reversals, err := earnings.NewReversals(machine)
+	if err != nil {
+		t.Fatalf("NewReversals(): %v", err)
+	}
+	reversing, err := reversals.Reverse(w.ctx, w.tx, earnings.Reversal{
+		Original: confirmed,
+		Report:   clawback.id,
+		Reason:   "the network reversed the commission",
+	})
+	if err != nil {
+		t.Fatalf("Reverse(): %v", err)
+	}
+
+	// A reversing entry, and it says so rather than masquerading as a credit
+	// in some other state (SC-010).
+	if reversing.State != earnings.StateReversed {
+		t.Errorf("the reversing entry is %s, want reversed", reversing.State)
+	}
+	if reversing.ID == confirmed.ID {
+		t.Fatal("the reversal reused the original entry's row; a reversal inserts, it never edits")
+	}
+
+	// The original is untouched, column for column.
+	if after := w.entryRow(t, confirmed.ID); after != before {
+		t.Errorf("the original entry changed under the reversal:\n before %+v\n  after %+v", before, after)
+	}
+
+	// The money came out of the account it went into. Getting this wrong
+	// leaves the confirmed balance standing while some other bucket goes
+	// negative, which the zero-sum check would not catch on its own.
+	if got := w.balance(t, wallet.StageConfirmed); got != 0 {
+		t.Errorf("confirmed balance is %d after the clawback, want 0", got)
+	}
+	if got := w.balance(t, wallet.StagePending); got != 0 {
+		t.Errorf("pending balance is %d after the clawback, want 0; the money must leave the stage it reached", got)
+	}
+	w.wantZeroSum(t)
+	w.wantNoOrphanCredits(t)
+
+	// And both are in the wallet: the credit that happened, and the reversal
+	// that undid it. A member who saw the money must be able to see why it
+	// went.
+	var entries int
+	if err := w.tx.QueryRow(w.ctx, `
+		select count(*) from cashback.entry where account_id = $1`, w.member).Scan(&entries); err != nil {
+		t.Fatalf("counting the member's entries: %v", err)
+	}
+	if entries != 2 {
+		t.Errorf("the member holds %d entr(ies), want 2: the credit and its reversal, both readable", entries)
 	}
 }

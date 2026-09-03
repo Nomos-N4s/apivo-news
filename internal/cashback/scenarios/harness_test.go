@@ -430,3 +430,55 @@ func (w *world) wantNoOrphanCredits(t *testing.T) {
 		t.Errorf("%d credit(s) trace to no stored transaction, to no click, or to another member's click (SC-002)", orphans)
 	}
 }
+
+// entryFacts is an entry's columns as a comparable value, so "the original
+// is untouched" can be asserted over all of them at once rather than over
+// the ones somebody thought to name.
+// Values, never pointers: a comparison of pointers compares addresses, and
+// two reads of one unchanged row would then differ every time.
+type entryFacts struct {
+	state       string
+	amountMinor int64
+	currency    string
+	holdRule    string
+	reversalOf  string
+	report      string
+	click       string
+	createdAt   time.Time
+}
+
+// entryRow reads one entry whole.
+func (w *world) entryRow(t *testing.T, id uuid.UUID) entryFacts {
+	t.Helper()
+	var e entryFacts
+	if err := w.tx.QueryRow(w.ctx, `
+		select state, amount_minor, currency, coalesce(hold_rule, ''),
+		       coalesce(reversal_of_id::text, ''), network_transaction_id::text,
+		       coalesce(click_id::text, ''), created_at
+		  from cashback.entry where id = $1`, id).Scan(
+		&e.state, &e.amountMinor, &e.currency, &e.holdRule,
+		&e.reversalOf, &e.report, &e.click, &e.createdAt); err != nil {
+		t.Fatalf("reading entry %s: %v", id, err)
+	}
+	return e
+}
+
+// supersedes writes the new report a status change arrives as (C-3): a row
+// of its own naming the one it replaces, never an edit.
+func (w *world) supersedes(t *testing.T, original reported, raw string, status networks.Status) reported {
+	t.Helper()
+	var id uuid.UUID
+	if err := w.tx.QueryRow(w.ctx, `
+		insert into cashback.network_transaction (
+			network_id, network_account_id, external_id, click_ref,
+			status_raw, status, sale_amount_minor, commission_minor, currency,
+			transacted_at, retrieved_at, query_window_start, query_window_end, raw_payload, supersedes_id)
+		select network_id, network_account_id, external_id, click_ref,
+		       $2, $3, sale_amount_minor, commission_minor, currency,
+		       transacted_at, now(), query_window_start, query_window_end, raw_payload, id
+		  from cashback.network_transaction where id = $1
+		returning id`, original.id, raw, string(status)).Scan(&id); err != nil {
+		t.Fatalf("superseding the report: %v", err)
+	}
+	return reported{id: id, external: original.external}
+}
