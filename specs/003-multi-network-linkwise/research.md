@@ -328,83 +328,109 @@ by a member who cannot withdraw.
 
 ## 5. Linkwise
 
-### 5.1 What is established
+### 5.0 How this section was established, and what it excludes
 
-Linkwise (`linkwi.se`) is an affiliate network founded in **2008**, based in
-Athens, describing itself as the first and largest in **Greece** and as
-operating across **SE Europe**. It reports roughly **500 advertisers** and
-**15,000 publishers**, across fashion, retail, travel, services, banking and
-insurance. It has run its **own custom-built platform since 2012** — so it
-is not a white-label of a network we already understand, and nothing about
-Awin's shapes transfers to it by assumption.
+**Linkwise asks agents not to crawl it.** `linkwi.se/robots.txt` disallows
+`ClaudeBot`, `anthropic-ai`, `GPTBot`, `CCBot` and `PerplexityBot` by name,
+and `affiliate.linkwi.se/robots.txt` and `go.linkwi.se/robots.txt` are
+`Disallow: /` for everyone. The publisher documentation is behind the
+affiliate login and stays there. Nothing below was obtained by crawling
+those hosts against that instruction, and no unauthenticated probe was made
+against Linkwise's production API to discover endpoint names.
 
-Two capabilities are described publicly in terms concrete enough to plan
-around:
+What is below therefore comes from **third-party integrator source code**
+(open-source plugins and workers that talk to Linkwise) and from
+**Linkwise's own published JavaScript and its official Chrome extension** —
+the extension carries a Chrome Web Store treehash signature block naming
+publisher LINKWISE IKE, so it is Linkwise's own code rather than somebody's
+reconstruction.
 
-- **Product feeds.** Advertisers publish XML feeds with standardised tags,
-  and a publisher can additionally *build its own* feed, in **XML or CSV**,
-  choosing which fields it carries and which categories and programmes it
-  covers. That is a catalogue path, and a publisher-configurable one.
-- **SubID tracking**, described as available *"when a network/program
-  supports it"* — that is, **per programme, not guaranteed network-wide**.
+Every claim in §5.2 was **independently re-fetched and confirmed** by a
+second pass whose job was to refute it. That pass also found and rejected
+four things, and they are excluded here rather than corrected: three
+catalogue fields that actually belong to a different endpoint's response,
+a set of example programme ids and amounts presented as quoted when they
+appear in no source, a "verified column names" list that is what one
+integrator *requested* rather than what the feed *returns*, and a label
+invented for the second number in an id pair. Two citations could not be
+verified at all and are absent.
 
-### 5.2 What is not established, and could not be from here
+**Nothing here is a substitute for FR-105.** A recorded response from a real
+publisher account is still what any money field must be mapped from. What
+this section changes is the size of the unknown, not its nature.
 
-**Linkwise publishes no public API documentation.** Two search sweeps and
-three attempted fetches produced no endpoint, no hostname, no authentication
-scheme and no field name. Every trail ends at the same instruction: sign in
-to the publisher dashboard, or ask an account manager. A third-party
-click-tracking vendor advertises a Linkwise connector as *"API and/or
-Postback"* — evidence that **some** machine interface exists, but its own
-page is unreachable from this environment and the wording establishes
-neither which, nor what it returns.
+### 5.1 The network
 
-So all of the following are **unknown**, and none may be invented:
+Linkwise is an affiliate network founded in **2008**, based in Athens,
+describing itself as the first and largest in **Greece** and as operating
+across SE Europe — roughly 500 advertisers and 15,000 publishers, across
+fashion, retail, travel, services, banking and insurance, on its **own
+platform since 2012**. It is not a white-label of anything we understand,
+and nothing about Awin's shapes transfers to it by assumption.
+
+### 5.2 What a publisher API looks like, from outside
+
+| Surface | What is established | Where from |
+|---|---|---|
+| **Catalogue** | A REST endpoint `rest_programs.html`, authenticated with **HTTP Basic credentials in the URL**, alongside a separate publisher identifier the integrations call `CD`. The only fields with real evidence are `id`, `logo`, `name`, `short_description` | an open-source WordPress plugin's own source, byte-exact |
+| **Deeplinks** | `https://go.linkwi.se/delivery/rest_deeplink.php`, returning results **positionally** — `response[i].deeplink` and `response[i].program` — with a 404/403 dispatch and three distinct "no link" outcomes | Linkwise's own Chrome extension |
+| **Per-programme capability** | The `program` object on that response carries `allow_deeplinking` and `access_type` | the same extension |
+| **Click URL** | `/z/{program}-{creative}/{CD}/?lnkurl=<destination>` | a real click-URL corpus |
+| **SubIDs** | **Exactly five slots**, enforced in Linkwise's own live click script: `subid = function(b,a){b=parseInt(b); if((b>0)&&(b<6)){...}}`. `lnkurl`, `referer` and `rtg` are emitted directly | `go.linkwi.se/delivery/js/crl.js` |
+| **Linkwise's own click id** | A 36-character UUID with a **forced version-3 nibble**, matched as `^[0-9A-F]{8}-[0-9A-F]{4}-3[0-9A-F]{3}-[0-9A-F]{4}-[0-9A-F]{12}$`, held in cookie `lkws_<cam_id>` and mirrored across storages | `lwc.js` |
+| **Conversion tag** | Current tag builds `aci.html?cam_id=&trans_id=&sale_amount=&adv_subid=&status=` and XHRs to `acx.php`; `load_action` takes **six** arguments; `currency()` and `set_iso_decimal()` append `&currency=` and `&decimal=iso` | live `lwc.js` |
+| **Product feeds** | Versioned paths of the form `1.2/<CD>/programs-joined` and `programs-all`, returning an **unpaginated JSON array**; requested columns are **not** the same as returned columns — one integrator verifies exactly one optional field and raises on any other | three independent integrators |
+| **Some reporting exists** | A commercial connector offers Linkwise with dimension "Campaign Name" and metrics "Clicks, Commission, Impressions" | that connector's own documentation |
+| **Payments** | Notified around the 5th, paid the 15th, requiring the publisher to **accept** in between, and only once validated commissions exceed **EUR 20** | Linkwise's payment FAQ |
+
+### 5.3 What is still unknown, and may not be invented
+
+**No transactions, statistics or payments endpoint was found by either
+pass.** Neither the sibling names of `rest_programs.html` nor its
+parameters. So the money surface — the only surface `FetchTransactions`
+needs — remains exactly as unknown as it was, and this is the list that
+matters:
 
 | Unknown | Why it matters |
 |---|---|
-| Transactions endpoint, auth, pagination, cursor semantics | `FetchTransactions` cannot be written |
+| The transactions endpoint, its auth, its paging and its cursor semantics | `FetchTransactions` cannot be written |
 | Field names and types for sale amount and commission | C-6; `Reported.Validate` |
 | Whether sale and commission share a currency | §4.3 — a migration, not an adapter tweak, if they do not |
-| Status vocabulary and its mapping to `pending/confirmed/rejected` | the crediting lifecycle |
-| Whether the click reference survives to the transaction, and under what parameter name | C-2; the whole attribution path |
-| Documented rate limits | `Limits()`, and the fleet-wide poller |
+| **Which currency a report arrives in** | §4.6 — a currency this deployment cannot pay out is a trapped balance |
+| The status vocabulary and its mapping | the crediting lifecycle; rule 2 forbids a default |
+| Whether a subid slot or the `lkws_` UUID is the join key in reporting | C-2, and the whole attribution path |
+| **The maximum length of a subid slot** | `IssuedClickRef` is ≥22 URL-safe characters; a slot shorter than that loses attribution on every click |
+| Documented rate limits and query windows | `Limits()` |
 | Whether a sandbox exists | whether anything can be recorded before an account is live |
 
-### 5.3 The constraint this puts on the plan
+### 5.4 The three things this changes in the plan
 
-This is **the same position Awin was in**, and 002 answered it the right
-way: `002/research.md` §9.2 refused to map a money field from documentation,
-and the result is an Awin adapter that does catalogue and deeplinks and
-deliberately does not do transactions. That refusal is why `*awin.Client`
-does not satisfy the port (§1) — the gap is a *recorded* decision, not an
-oversight.
+**One.** `allow_deeplinking` is a **per-programme flag Linkwise publishes
+itself**. That is the evidence for contract rule 10 and for
+`merchant_network.can_attribute`: a route the network says may not be
+deeplinked cannot carry our reference, so it cannot be the published route.
+This replaces an earlier, weaker reading of a third-party summary that
+described SubID support as available "when a network/program supports it" —
+the conclusion is the same and the evidence is now Linkwise's own.
 
-The plan therefore may not contain a task that says "implement the Linkwise
-transactions call". It contains, instead:
+**Two.** Five subid slots is a **budget**, not a field. Whatever else a
+deployment wants to carry through a click — a campaign, a placement, a test
+arm — competes with `IssuedClickRef` for one of five, and the reference is
+the one that cannot be given up.
 
-1. Work that is **knowable now** — everything in §§2–4: the registry, the
-   per-network job names, the attribution constraint, the arbitration of a
-   retailer on two networks. None of it needs a Linkwise endpoint, and all
-   of it is what makes the second network cheap when its shapes arrive.
-2. A **recording step** gated on Q11, which produces redacted responses
-   under the adapter's own `testdata/`.
-3. Adapter work that begins **only** once (2) has produced a recording,
-   held to FR-105.
+**Three.** Linkwise mints its own click identifier and mirrors it across
+cookie, `localStorage` and server-side cache. It is a plausible join key in
+reporting, and possibly a better one than a subid. Which it is, is a
+question a recording answers and nothing else does.
 
-**The one thing already decidable about Linkwise** is that SubID support is
-per-programme. If a programme carries no SubID, a click through it cannot
-carry an `IssuedClickRef`, and every transaction from it arrives
-unattributed **by construction** rather than by failure. That is not a bug
-to fix in the adapter; it is a fact the operator queue must be able to state
-(FR-098), and a reason a programme might not be worth publishing at all.
+### 5.5 Currency
 
-### 5.4 Currency
-
-Greece and Cyprus are euro. Linkwise's stated SE-European reach includes
-markets that are **not** — so "Linkwise is EUR" is an assumption about the
-programmes we would join, not a fact about the network. It is recorded here
-as an assumption, and FR-105's recording is what would settle it.
+Greece and Cyprus are euro, and the EUR 20 payment threshold is stated in
+euro — so euro is the *likely* reporting currency. It is not established,
+Linkwise's stated SE-European reach includes markets that are not euro, and
+§4.6 is what makes the difference between "likely" and "established" worth
+this sentence: a report in the wrong currency does not fail, it strands a
+member's money.
 
 ---
 

@@ -248,8 +248,8 @@ unmodified.
 - Two networks with **different catalogue languages** —
   `NETWORK_SOURCE_LANGUAGE` is one global scalar today.
 - A retailer is reachable **only through a route that cannot carry a click
-  reference** — Linkwise describes SubID support as per-programme
-  (research.md §5.1). Nothing fails: the member clicks, buys, and the
+  reference** — Linkwise publishes `allow_deeplinking` per programme
+  (research.md §5.2). Nothing fails: the member clicks, buys, and the
   network pays the publisher. Only the member is never credited, and every
   diagnostic looks healthy. The retailer must not be published, and must be
   visible to an operator as reachable-but-unattributable rather than absent.
