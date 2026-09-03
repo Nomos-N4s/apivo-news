@@ -140,7 +140,7 @@ and Phases 0–C are still the whole of the value.
 - [ ] T250 [P] `docs/ENVIRONMENTS.md` and `.env.example`: `NETWORKS`, the per-driver blocks, the retired flat keys and the `pool_max_conns` floor per network count
 - [ ] T251 [P] `specs/003-multi-network-linkwise/quickstart.md` verified end to end against a clean checkout — two networks, both fixtures, no credentials
 - [ ] T252 [P] A runbook section on connecting a network: seed the row, name it in `NETWORKS`, set its block, raise the pool, watch `GET …/ops/networks`
-- [ ] T253 [P] Correct the six documents [research.md](research.md) §6 lists as contradicted — including `002/contracts/ports.md`'s claim that the suite asserts rule 7, its description of a live contract test that does not exist, and the port doc comment saying the SC-008 isolation rule "is not written yet" when `internal/arch/network_isolation_test.go` exists
+- [ ] T253 [P] Correct the seven documents [research.md](research.md) §6 lists as contradicted — including `002/contracts/ports.md`'s claim that the suite asserts rule 7, its description of a live contract test that does not exist, and the port doc comment saying the SC-008 isolation rule "is not written yet" when `internal/arch/network_isolation_test.go` exists
 
 ---
 
