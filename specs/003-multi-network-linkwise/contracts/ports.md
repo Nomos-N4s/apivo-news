@@ -38,9 +38,11 @@ adapter is held to, and a suite with a hole in it certifies the hole.
 
 ### Why this is a contract rule and not an adapter detail
 
-The one thing established about Linkwise from public sources is that SubID
-support is described as available *"when a network/program supports it"* —
-**per programme, not network-wide** ([../research.md](../research.md) §5.1).
+Linkwise's own deeplink response carries **`allow_deeplinking`** on each
+programme — a per-programme flag the network publishes about itself
+([../research.md](../research.md) §5.2). Whether a route can carry our click
+reference is therefore the network's answer, per programme, and not
+something we may assume network-wide.
 
 A route that cannot carry a click reference is not a broken route. It works
 perfectly: members click, members buy, the network pays the publisher. What

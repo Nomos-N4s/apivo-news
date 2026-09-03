@@ -393,10 +393,13 @@ cannot prove a seam the first has never used (Q12's default).
 
 The catalogue path first — it is the one capability Linkwise describes
 publicly in concrete terms (XML/CSV feeds, publisher-configurable). Then
-deeplinks, noting that **SubID support is per-programme**: a programme that
-carries no SubID yields transactions that are unattributed *by
-construction*, which the operator queue must state rather than treat as a
-failure. Then transactions, against a recording.
+deeplinks, noting two facts Linkwise publishes about itself: a programme
+carries **`allow_deeplinking`**, and the click tag has **exactly five subid
+slots** (research.md §5.2). A programme that may not be deeplinked yields
+transactions that are unattributed *by construction*, which the operator
+queue must state rather than treat as a failure; and five slots is a budget
+in which `IssuedClickRef` is the one entry that cannot be given up. Then
+transactions, against a recording.
 
 ## Complexity Tracking
 

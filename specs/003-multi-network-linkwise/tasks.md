@@ -125,7 +125,7 @@ and Phases 0–C are still the whole of the value.
 - [ ] T242 [US1] Record and redact real Linkwise responses into `internal/cashback/networks/linkwise/testdata/`, same standard as T236. **This task is the gate**: it either produces recordings or it reports that it cannot, and nothing below starts on the second outcome
 - [ ] T243 [US1] `internal/cashback/networks/linkwise/`: package skeleton — `ID`, `Account`, `Limits` from the recording, its own rate limiter and retry budget (FR-106)
 - [ ] T244 [US1] Linkwise catalogue: `FetchCatalogue` over the publisher feed. The one capability public sources describe concretely — XML or CSV, publisher-configurable ([research.md](research.md) §5.1)
-- [ ] T245 [US1] Linkwise `can_attribute` **per programme** (rule 10), because SubID support is documented as per-programme. Where the adapter cannot determine it, it declares the network unattributable rather than defaulting to attributable
+- [ ] T245 [US1] Linkwise `can_attribute` **per programme** (rule 10), from the `allow_deeplinking` flag Linkwise publishes on each programme. Where the adapter cannot determine it, it declares the network unattributable rather than defaulting to attributable
 - [ ] T246 [US1] `linkwise.BuildDeeplink`: the click reference in Linkwise's own parameter, wrapping `ErrDeeplinkNotFormed` on any refusal (rule 5). Assert `IssuedClickRef` survives the round trip — ≥22 URL-safe characters, byte for byte
 - [ ] T247 [US1] `linkwise.FetchTransactions`, every field from T242's recording. **If sale and commission arrive in different currencies, stop**: that is Q13, and `Reported.Validate` refuses it at the port by design
 - [ ] T248 [US1] Register `linkwise` in the driver registry; the conformance suite runs it green
