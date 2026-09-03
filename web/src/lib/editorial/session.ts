@@ -16,12 +16,30 @@
  * this seam is a lookup.
  */
 
+/**
+ * The roles `account.role` allows, as migrations 0002 and 0019 constrain it.
+ *
+ * An editor is not an operator with fewer permissions and an operator is not
+ * an editor with more; the Go side deliberately carries two separate
+ * `Require…` functions rather than one parameterised by role, and this union
+ * is the same decision on this side.
+ */
+export type AccountRole = 'reader' | 'editor' | 'operator';
+
 /** The signed-in person, as the editorial screens need them. */
 export interface EditorSession {
   readonly displayName: string;
   readonly email: string;
-  /** Mirrors `account.role`; only 'editor' may approve (0002 trigger). */
-  readonly role: 'editor' | 'reader';
+  /**
+   * Mirrors `account.role`. Only 'editor' may approve an article (the 0002
+   * trigger), and only 'operator' may approve a payout or act on a cashback
+   * queue (the 0019 trigger). The union is the database's `check` constraint
+   * verbatim, because a role this side cannot name is one a screen cannot
+   * gate on: an operator whose claim mapped to 'reader' would be shown the
+   * reader's cashback surfaces and refused by the API on every operator call
+   * without the screen ever being able to say why.
+   */
+  readonly role: AccountRole;
   /** The bearer token for the editorial API; null when nobody is signed in. */
   readonly token: string | null;
   /**
@@ -93,8 +111,9 @@ function displayNameOf(user: SupabaseUserClaims, email: string): string {
  * role, never to permit anything — the approval gate is the trigger in
  * migration 0002.
  */
-function roleOf(user: SupabaseUserClaims): 'editor' | 'reader' {
-  return metadataString(user.app_metadata, 'role') === 'editor' ? 'editor' : 'reader';
+function roleOf(user: SupabaseUserClaims): AccountRole {
+  const claimed = metadataString(user.app_metadata, 'role');
+  return claimed === 'editor' || claimed === 'operator' ? claimed : 'reader';
 }
 
 /**
