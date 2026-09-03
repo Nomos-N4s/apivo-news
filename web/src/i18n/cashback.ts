@@ -74,6 +74,8 @@ export interface CashbackStrings {
   readonly shopAndEarn: string;
   readonly seeTerms: string;
   readonly noMerchants: string;
+  readonly clickoutFailed: string;
+  readonly merchantNotFound: string;
 
   /* Withdrawal */
   readonly withdraw: string;
@@ -191,6 +193,9 @@ const el: CashbackStrings = {
   shopAndEarn: 'Άνοιγμα καταστήματος',
   seeTerms: 'Όροι',
   noMerchants: 'Κανένα κατάστημα για αυτούς τους τόπους.',
+  clickoutFailed:
+    'Το κλικ δεν καταγράφηκε, οπότε δεν σε στείλαμε στο κατάστημα. Χωρίς καταγραφή η αγορά δεν αποδίδεται σε σένα — δοκίμασε ξανά σε λίγο.',
+  merchantNotFound: 'Αυτό το κατάστημα δεν είναι διαθέσιμο.',
 
   withdraw: 'Ανάληψη',
   withdrawTitle: 'Ανάληψη στον λογαριασμό σου',
@@ -320,6 +325,9 @@ const de: CashbackStrings = {
   shopAndEarn: 'Zum Shop',
   seeTerms: 'Bedingungen',
   noMerchants: 'Keine Shops für diese Orte.',
+  clickoutFailed:
+    'Der Klick wurde nicht erfasst, deshalb haben wir dich nicht zum Shop geschickt. Ohne Erfassung lässt sich der Einkauf dir nicht zuordnen — versuch es gleich noch einmal.',
+  merchantNotFound: 'Dieser Shop ist nicht verfügbar.',
 
   withdraw: 'Auszahlen',
   withdrawTitle: 'Auf dein Konto auszahlen',
