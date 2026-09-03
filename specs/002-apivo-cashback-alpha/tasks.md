@@ -286,7 +286,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T127 [P] Implement the fixture-brand render test across every member-facing surface (SC-007) in `web/src/lib/brand/rebrand.test.ts`
 - [ ] T128 [P] Drive the brand-literal lint to zero exceptions across `internal/`, `web/` and `internal/platform/db/migrations/`
 - [ ] T129 [P] Wire quickstart scenarios V1–V10 as automated tests in `internal/cashback/scenarios/`
-- [ ] T130 [P] Add the seed command backing `make cashback-seed` in `cmd/apivo/seed_cashback.go`
+- [x] T130 [P] Add the seed command backing `make cashback-seed` in `cmd/apivo/seed_cashback.go` — it refuses every adapter but the fixture, writes the catalogue by running the real import rather than beside it, and prints a live offer id to click through with. Rate bands are the only rows it writes directly, because nothing else in the repository can write one at all
 - [ ] T131 Bring Go statement coverage for `internal/cashback/...` and `internal/platform/{money,brand,events,scheduler}` to ≥90% and TypeScript to ≥80%
 - [ ] T132 [P] Add the cashback runbook (poller stalls, zero-sum alarm, stuck payout, network outage) to `docs/RUNBOOK.md`
 - [ ] T133 [P] Document the cashback deployment topology and the Blnk/Redis operational contract in `docs/ENVIRONMENTS.md`
