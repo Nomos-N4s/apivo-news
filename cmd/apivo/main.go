@@ -1,5 +1,9 @@
-// Command apivo is the epiloYES backend: a single binary containing every
-// module of the modular monolith. It is also the composition root - the one
+// Command apivo is this deployment's backend: a single binary containing
+// every module of the modular monolith.
+//
+// Whose backend it is, is configuration. One binary serves whichever brand
+// BRAND_DIR names (ADR-0004), so naming one here would be a claim the code
+// cannot keep - and the rebrandability rule forbids exactly that. It is also the composition root - the one
 // place where modules are wired together.
 //
 // With no arguments the binary serves HTTP. Two subcommands exist:

@@ -284,7 +284,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 - [ ] T125 [P] Add the OpenAPI schema test asserting every money field is `{minor, currency}` and no decimal appears, in `cmd/apivo/openapi_money_test.go`
 - [ ] T126 Handle `identity.account.deleted` by closing participation and flagging in-flight withdrawals, never deleting financial rows, in `internal/cashback/wallet/account_lifecycle.go`
 - [ ] T127 [P] Implement the fixture-brand render test across every member-facing surface (SC-007) in `web/src/lib/brand/rebrand.test.ts`
-- [ ] T128 [P] Drive the brand-literal lint to zero exceptions across `internal/`, `web/` and `internal/platform/db/migrations/`
+- [ ] T128 [P] Drive the brand-literal lint to zero exceptions across `internal/`, `web/` and `internal/platform/db/migrations/` — **`internal/`, `cmd/`, `api/` and the migrations are at zero.** Every remaining budget entry is under `web/`, and belongs to the frontend workstream
 - [ ] T129 [P] Wire quickstart scenarios V1–V10 as automated tests in `internal/cashback/scenarios/`
 - [ ] T130 [P] Add the seed command backing `make cashback-seed` in `cmd/apivo/seed_cashback.go`
 - [ ] T131 Bring Go statement coverage for `internal/cashback/...` and `internal/platform/{money,brand,events,scheduler}` to ≥90% and TypeScript to ≥80%
