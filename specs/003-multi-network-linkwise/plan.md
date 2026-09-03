@@ -173,12 +173,19 @@ network has nowhere to go (`research.md` §3.2).
 key:
 
 ```text
-CASHBACK_NETWORKS=awin,linkwise
-CASHBACK_NETWORK_AWIN_ACCOUNT=...
-CASHBACK_NETWORK_AWIN_CREDENTIAL_REF=...
-CASHBACK_NETWORK_AWIN_SOURCE_LANGUAGE=de
-CASHBACK_NETWORK_LINKWISE_ACCOUNT=...
+NETWORKS=awin,linkwise
+NETWORK_AWIN_ACCOUNT_ID=...
+NETWORK_AWIN_API_KEY=...
+NETWORK_AWIN_SOURCE_LANGUAGE=de
+NETWORK_LINKWISE_ACCOUNT_ID=...
+NETWORK_LINKWISE_API_KEY=...
+NETWORK_LINKWISE_SOURCE_LANGUAGE=el
 ```
+
+The driver key is also what `network_account.credential_ref` names, which
+is what finally gives that column a job: `credential_ref = 'awin'` resolves
+to the `NETWORK_AWIN_*` block, in configuration, never in the database
+(ADR-0003, FR-093).
 
 **Why the list is explicit rather than inferred from which blocks are
 present**: FR-091 requires that an incomplete network be reported *by name*
@@ -188,17 +195,31 @@ than complain. Naming it first makes a missing key a failure with a name in
 it.
 
 **Why the driver name is a safe key segment**: `validateNetworkDriver`
-already refuses separators (`config/cashback.go:536-546`), so
-`CASHBACK_NETWORK_<DRIVER>_` cannot be made ambiguous by a driver name.
+already refuses separators (`config/cashback.go:536-546`) — lowercase
+letters, digits and underscores, starting with a letter — so
+`NETWORK_<DRIVER>_` cannot be made ambiguous by a driver name.
+
+**Why this is not the thing the current code refused.** `NetworkConfig`'s
+own comment states the rejected design, and it is right to reject it:
+
+> *'…there is one credential set rather than a per-network map: a second
+> network is a second adapter and a **deliberate configuration change**, not
+> something a **wildcard environment lookup** should be able to conjure.'*
+> — `config/cashback.go:251-257`
+
+An explicit `NETWORKS` list is precisely the deliberate change that comment
+asks for, and precisely not the wildcard lookup it refuses. Nothing is
+conjured by a key existing; a network runs because it was named.
 
 **Rejected**: indexed keys (`..._1_DRIVER`) — the index is a second name for
 a thing that already has one, and reordering the list silently rebinds
 credentials. **Rejected**: one JSON blob — it puts a parser between an
 operator and a typo, and hides which key was wrong.
 
-**Old keys**: refused at startup with a message naming the old key and its
-replacement. A silent alias would let a single-network deployment keep
-working while believing it had two.
+**Old keys** (`NETWORK_DRIVER`, `NETWORK_ACCOUNT_ID`, `NETWORK_API_KEY`,
+`NETWORK_API_SECRET`, `NETWORK_SOURCE_LANGUAGE`): refused at startup with a
+message naming the old key and its replacement. A silent alias would let a
+single-network deployment keep working while believing it had two.
 
 ### D-B. One registry, in the composition root
 
