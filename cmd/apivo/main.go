@@ -158,6 +158,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 		// The one subcommand that takes flags, and the one that writes to
 		// the database. Its own arguments are its own to check.
 		return connectNetworkCommand(ctx, args[1:], getenv, stdout)
+	case args[0] == seedName:
+		// Local development only, and it refuses anything but the fixture
+		// adapter itself - see seedInputs for why that is a refusal rather
+		// than a warning. Its own arguments are its own to check.
+		return seedCommand(ctx, args[1:], getenv, stdout)
 	case args[0] != "healthcheck" && args[0] != "version":
 		return fmt.Errorf("unknown command %q", args[0])
 	case len(args) > 1:

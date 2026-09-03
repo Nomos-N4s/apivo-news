@@ -70,7 +70,7 @@ func connectTestDB(t *testing.T) (string, *pgxpool.Pool) {
 		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise connect-network")
 	}
 
-	connectDBOnce.Do(func() { connectDBURL, connectDBErr = ensureConnectDatabase(base) })
+	connectDBOnce.Do(func() { connectDBURL, connectDBErr = ensureScratchDatabase(base, connectCommandDatabase) })
 	if connectDBErr != nil {
 		t.Fatalf("preparing the scratch database: %v", connectDBErr)
 	}
@@ -83,10 +83,15 @@ func connectTestDB(t *testing.T) (string, *pgxpool.Pool) {
 	return connectDBURL, pool
 }
 
-// ensureConnectDatabase creates the scratch database beside the one
+// ensureScratchDatabase creates a scratch database beside the one
 // DATABASE_URL names and migrates it. Creating one that is already there is
 // not an error worth failing on, which is what makes a second run cheap.
-func ensureConnectDatabase(base string) (string, error) {
+//
+// Named rather than fixed, because every command in this package that
+// COMMITS needs one of these and they must not share: two commands writing
+// committed rows into one database is the collision each of them has its own
+// database to avoid.
+func ensureScratchDatabase(base, name string) (string, error) {
 	parsed, err := url.Parse(base)
 	if err != nil {
 		return "", err
@@ -104,14 +109,14 @@ func ensureConnectDatabase(base string) (string, error) {
 	// usable - but it is carried into that failure, because "database does
 	// not exist" and "the role may not create one" are different problems
 	// and only one of them is fixed by re-running.
-	_, createErr := admin.Exec(ctx, `create database "`+connectCommandDatabase+`"`)
+	_, createErr := admin.Exec(ctx, `create database "`+name+`"`)
 
 	scratch := *parsed
-	scratch.Path = "/" + connectCommandDatabase
+	scratch.Path = "/" + name
 	scratchURL := scratch.String()
 	if err := platformdb.Migrate(scratchURL); err != nil {
 		if createErr != nil {
-			return "", fmt.Errorf("migrating %s: %w (creating it said: %w)", connectCommandDatabase, err, createErr)
+			return "", fmt.Errorf("migrating %s: %w (creating it said: %w)", name, err, createErr)
 		}
 		return "", err
 	}
