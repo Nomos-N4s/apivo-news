@@ -247,6 +247,12 @@ unmodified.
   or overruns the slow one.
 - Two networks with **different catalogue languages** —
   `NETWORK_SOURCE_LANGUAGE` is one global scalar today.
+- A retailer is reachable **only through a route that cannot carry a click
+  reference** — Linkwise describes SubID support as per-programme
+  (research.md §5.1). Nothing fails: the member clicks, buys, and the
+  network pays the publisher. Only the member is never credited, and every
+  diagnostic looks healthy. The retailer must not be published, and must be
+  visible to an operator as reachable-but-unattributable rather than absent.
 
 ---
 
@@ -328,6 +334,11 @@ them quietly:
   standard `002/research.md` §9.2 set for Awin.
 - **FR-106**: An adapter MUST hold its own rate limiter and its own retry
   budget; neither may be shared between networks.
+- **FR-107**: A route that cannot carry a click reference MUST NOT be the
+  published route for its retailer, MUST still be recorded and visible to an
+  operator, and MUST NOT be assumed attributable by default — an adapter
+  that cannot tell declares the whole network unattributable rather than
+  guessing per route.
 
 ### Key Entities
 
@@ -360,6 +371,9 @@ No new entity. Three existing ones gain meaning:
   the proof (SC-008, now with three packages).
 - **SC-025**: No money field in any adapter is mapped from a source other
   than a recorded response committed under that adapter's `testdata/`.
+- **SC-026**: A retailer whose only routes cannot carry a click reference
+  publishes nothing and appears in an operator listing saying why — proved
+  by a schema test asserting the database refuses to prefer such a route.
 
 ---
 

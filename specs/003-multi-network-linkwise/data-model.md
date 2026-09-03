@@ -81,7 +81,7 @@ assert the **database** refuses with SQLSTATE `23505` naming
 
 ---
 
-## 0034 — A published route must be alive
+## 0034 — A published route must be alive *and* attributable
 
 ### The defect
 
@@ -106,16 +106,33 @@ retailer at all.
 ### The change
 
 ```sql
+-- Contract rule 10 (contracts/ports.md): a route states whether it can
+-- carry a click reference. Default true because every route that exists
+-- today can - Awin's click_ref_param is network-wide - and false is the
+-- value an importer must set deliberately.
 alter table cashback.merchant_network
-    add constraint merchant_network_preferred_is_alive
-    check (not preferred or status = 'active');
+    add column can_attribute boolean not null default true;
 
-comment on constraint merchant_network_preferred_is_alive
+alter table cashback.merchant_network
+    add constraint merchant_network_preferred_is_publishable
+    check (not preferred or (status = 'active' and can_attribute));
+
+comment on column cashback.merchant_network.can_attribute is
+    'Whether a click through this route carries our click reference back to us. False is not broken: the member clicks, buys, and the network pays the publisher - it just cannot say whose purchase it was. A route that cannot be attributed can never be the published one, because publishing a rate we cannot honour is worse than publishing nothing.';
+comment on constraint merchant_network_preferred_is_publishable
     on cashback.merchant_network is
-    'A route that is paused or has left the network cannot be the one the catalogue publishes. Demotion is then forced to be an explicit act with a successor, rather than a dead row quietly outranking a live one.';
+    'The published route must be usable: active, and able to carry a click reference. Demotion is then forced to be an explicit act with a successor, rather than a dead or unattributable row quietly outranking a live one.';
 ```
 
-The index is unchanged; the constraint is what it was missing.
+The index is unchanged; the constraint and the column are what it was
+missing.
+
+**Why `can_attribute` defaults to true**: every route that exists today can
+be attributed — Awin's `click_ref_param` is a network-wide fact, carried on
+`cashback.network` itself. So `true` is the truth for the whole existing
+table and needs no backfill, and `false` is a value an importer sets
+deliberately, from a fact its adapter learned. A default of `false` would
+unpublish the entire catalogue on migration.
 
 ### What is deliberately *not* a constraint
 
@@ -126,6 +143,7 @@ otherwise would be worse than stating it:
 |---|---|---|
 | A retailer with an active route MUST have a preferred one | Cross-row assertion over a set — a check sees one row | The demotion path, plus an operator query "published nothing, routes available" (FR-100) |
 | A preferred route's **network** must be active | Cross-table: `network.active` is another table | The same demotion path, driven by the network being deactivated |
+| A retailer whose routes are **all** unattributable must be visibly so | Cross-row again — one row cannot see its siblings | The operator listing behind SC-026 |
 
 Both are covered by tests against real Postgres asserting the *behaviour*,
 and by an operator listing that makes a violation visible rather than
@@ -135,9 +153,11 @@ about rows already there, which is precisely the state this defect creates.
 ### Test
 
 Real Postgres. Attempt to prefer a `left_network` route; assert refusal by
-SQLSTATE `23514` naming `merchant_network_preferred_is_alive`. Then: mark
-the preferred route `left_network` and assert a surviving active route holds
-the slot afterwards.
+SQLSTATE `23514` naming `merchant_network_preferred_is_publishable`. Repeat
+with an `active` route whose `can_attribute` is false — that is SC-026, and
+it is the case the constraint exists for. Then: mark the preferred route
+`left_network` and assert a surviving active route holds the slot
+afterwards.
 
 ---
 
