@@ -528,3 +528,217 @@ protect:
 And before **any** of it is publicly reachable, the editorial rate limit has
 to exist in Go. See
 [ENVIRONMENTS.md](ENVIRONMENTS.md#required-before-anything-is-publicly-reachable).
+
+---
+
+# When cashback goes wrong
+
+Everything above brings hosts up. This part is for a host that is already
+up and is doing something wrong with money.
+
+Read the shape of it first, because it decides how much time you have:
+
+| Symptom | How bad | Time you have |
+|---|---|---|
+| The zero-sum check is failing | **Incident.** The ledger and the wallets disagree | None. Stop writes if you cannot explain it in ten minutes |
+| The catalogue emptied | **Incident.** Members see no retailers, and the routes say they left | Minutes. It is usually recoverable, and only before the next import runs |
+| A payout is stuck | Serious. One member's money is in flight | Hours |
+| The poller has stalled | Serious, and silent. Commissions are not arriving | Hours, but the backlog grows |
+| The unattributed queue is growing | Ordinary, unless it is growing *fast* | Days |
+
+Two rules that hold in every section below:
+
+- **Never edit a money row by hand.** Not an entry, not a payout, not a
+  ledger transfer. Every one of the invariants C-1 to C-7 is enforced by the
+  database, and a hand-edit that gets past one of them got past it because
+  you disabled the thing that was protecting you. Reversals **insert**; they
+  never update.
+- **A refusal is information.** This system is built to refuse rather than
+  to guess, so an error naming a constraint is telling you which rule you
+  are about to break. Read it before you work around it.
+
+## The zero-sum check is failing (C-1)
+
+```sh
+make cashback-verify-ledger
+```
+
+C-1 is the one invariant that lives outside our own schema (ADR-0002), which
+is exactly why it is checked continuously rather than trusted. A failure
+means the wallet projection and the ledger disagree, and one of them is
+telling members a number that is not true.
+
+**Do not** adjust the ledger to match the wallet, or the wallet to match the
+ledger. You do not yet know which is right.
+
+Find the entry transition with no posting behind it. `entry_transition`
+requires a `ledger_transfer_ref` on every row precisely so that this
+question has an answer:
+
+```sql
+select et.id, et.entry_id, et.from_state, et.to_state, et.ledger_transfer_ref, et.occurred_at
+  from cashback.entry_transition et
+  left join cashback.ledger_link ll on ll.transition_id = et.id
+ where ll.transition_id is null
+ order by et.occurred_at desc
+ limit 20;
+```
+
+A transition with no link is a state we recorded and a posting we did not
+make — the outbox stopped, or the ledger refused. Fix the cause, then
+**replay**: the transfer reference is idempotent, so re-posting it is safe
+and re-posting it twice is refused.
+
+If the check fails and *every* transition has its link, the disagreement is
+inside the ledger. That is an ADR-0002 exit-route conversation, not a
+runbook step. Escalate.
+
+## The catalogue emptied
+
+Members see no retailers; `merchant_network.status` is `left_network` across
+the board.
+
+This is the failure contract rule 8 exists to prevent: **an import reads
+absence as departure.** A retailer missing from the catalogue answer is
+reconciled to `left_network`, its offers stop being published, and members
+see an emptied catalogue. So a truncated answer — a network that returned
+two pages of five and then hung up — looks exactly like every retailer
+leaving at once.
+
+An adapter must yield an error when it stops early, and `MarkRoutesNotSeen`
+must only run after an iteration that ended with no error at all. If the
+catalogue emptied, one of those two failed.
+
+```sql
+-- What changed, and when. All at one timestamp is the tell.
+select status, count(*), min(retrieved_at), max(retrieved_at)
+  from cashback.merchant_network
+ group by status;
+```
+
+If every departure carries one `retrieved_at`, it was one bad import, not
+the network. **Do not run the import again to fix it** — a second truncated
+answer confirms the departures. Stop the import job first, then restore
+`status` from the routes' own history and re-import only once you know why
+the first answer was short.
+
+## A payout is stuck
+
+A request moves `awaiting_approval` → `approved` → `paid`, and the `payout`
+beside it moves `submitted` → `settled`. Stuck almost always means the rail
+did not confirm, not that we did not send.
+
+```sql
+select r.id, r.state as request_state, r.amount_minor, r.currency, r.requested_at,
+       p.state as payout_state, p.approved_by, p.rail, p.rail_reference, p.submitted_at
+  from cashback.withdrawal_request r
+  left join cashback.payout p on p.request_id = r.id
+ where r.state not in ('paid', 'rejected')
+   and r.requested_at < now() - interval '24 hours'
+ order by r.requested_at;
+```
+
+- `payout.approved_by` **is** the approval (C-4) — the row is the approval,
+  and there is no separate flag to check. A request still at
+  `awaiting_approval` with no payout beside it is not stuck; it is one
+  nobody has approved, and the queue is where it belongs.
+- A request at `approved` with a `submitted` payout and no `settled_at` is
+  the real stuck case: we sent, the rail has not answered.
+- **Never re-run a payout to unstick it.** Exactly-once is enforced by the
+  database, so a second attempt is refused — and that refusal is the correct
+  outcome, not an obstacle. Read it: it tells you the first one landed.
+- If the rail genuinely lost it, the fix is a **reversal and a new
+  withdrawal**, never an edit to the old row.
+
+## The poller has stalled
+
+The quiet one. Nothing errors; commissions simply stop arriving, and the
+first person to notice is a member whose purchase never appeared.
+
+A cursor that has not moved is the signal:
+
+```sql
+select na.external_publisher_id, n.id as network, n.active,
+       na.cursor_at, na.trailing_cursor_at
+  from cashback.network_account na
+  join cashback.network n on n.id = na.network_id
+ order by na.cursor_at;
+```
+
+`cursor_at` advances **only after a window is fully persisted** (FR-031), so
+a cursor that has not moved means no window completed — not that nothing was
+reported. Look for: the job not running at all (scheduler capacity, or a
+lock held by a process that died), a credential the network now refuses, or
+one window that fails every time and blocks the ones behind it.
+
+**Never move a cursor forward by hand.** The span between where it was and
+where you put it is never re-read, and every transaction in it stays pending
+for ever. Migration `0023` refuses to move a backfill start for the same
+reason.
+
+`ErrNetworkRefused` is terminal and means a credential — retrying is an
+infinite loop with a frozen cursor. `ErrNetworkUnavailable` and
+`ErrNetworkRateLimited` are retryable and will clear on their own.
+
+**One trap worth knowing.** `cashback.network` carries
+`max_query_window_days` and `rate_limit_per_minute`, and **editing them
+changes nothing today** — the adapters use compiled-in constants, and the
+one read of the row discards it. If a network is complaining that we are
+hammering it, lowering that column will not help; the limit is a release.
+This is recorded as a defect in `specs/003-multi-network-linkwise/research.md`
+§4.7.
+
+## The unattributed queue is growing
+
+A report we cannot tie to a click. Ordinary in small numbers — members clear
+cookies, references expire — and a signal when it is a *proportion* rather
+than a count.
+
+```sql
+select count(*) filter (where detected_at > now() - interval '24 hours') as today,
+       count(*) filter (where resolved_at is null) as open,
+       count(*) as total
+  from cashback.unattributed_transaction;
+```
+
+Growing fast, on a network that was previously fine, usually means the click
+reference stopped surviving the round trip: an offer's `deeplink_template`
+was edited, or the network's `click_ref_param` is wrong. Both are
+configuration, and both lose money silently on **every** click while they
+last — the member clicks, buys, and nothing comes back.
+
+Check one live offer end to end before you assume the network is at fault:
+
+```sql
+select o.id, o.deeplink_template, n.click_ref_param
+  from cashback.offer o
+  join cashback.merchant_network mn on mn.id = o.merchant_network_id
+  join cashback.network n on n.id = mn.network_id
+ where o.valid_from <= now()
+   and coalesce(o.valid_to, 'infinity'::timestamptz) > now();
+```
+
+Attributing by hand from the queue is a legitimate operator action and the
+queue exists for it. Attributing *in bulk* to clear a backlog is not: each
+one is a decision about whose purchase it was, and C-2 means the entry rests
+on that decision for ever.
+
+## A network is unreachable
+
+Members can still click — the catalogue is ours, and a click-out only needs
+the offer row and the adapter's deeplink builder. What stops is ingestion.
+
+That is the designed behaviour and it is safe: cursors do not advance, so
+nothing is skipped, and the windows are re-read when the network returns.
+The backlog is bounded by the network's own maximum window, so a long outage
+means several windows rather than one enormous one.
+
+What to check, in order: is it us (credential, clock, egress) or them; is
+the failure terminal (`ErrNetworkRefused` — a credential, and retries will
+never clear it) or retryable; and is the outage longer than the backfill
+horizon, in which case the span at the far end needs a deliberate re-read
+rather than a cursor edit.
+
+**Do not disable the network row to stop the noise.** `network.active` is
+what lets members click through; switching it off takes the catalogue down
+as well as the poller, and the poller was already failing safely.
