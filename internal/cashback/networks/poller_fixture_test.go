@@ -42,11 +42,25 @@ var (
 // network id is the adapter's own constant rather than a generated one: the
 // port refuses an adapter polling an account held at another network, so
 // this row has to be the network the adapter says it speaks for.
+//
+// Which means the row may already be there, committed, and that is now an
+// ordinary state rather than a broken database: `make cashback-seed`
+// connects this same network into a developer's database, under this same
+// constant, for exactly the reason above. So the insert reconciles rather
+// than assuming it is first - the same stance the payout fixtures take on
+// their own shared network row - and sets the columns this suite needs,
+// because a row somebody else wrote is not a row this suite may assume the
+// shape of.
 func fixturePollAccount(ctx context.Context, t *testing.T, tx pgx.Tx) networks.PublisherAccount {
 	t.Helper()
 	if _, err := tx.Exec(ctx, `
 		insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active)
-		values ($1, 'Fixture Network', 'clickref', 31, 360, true)`, string(fixture.ID)); err != nil {
+		values ($1, 'Fixture Network', 'clickref', 31, 360, true)
+		on conflict (id) do update
+		   set click_ref_param = excluded.click_ref_param,
+		       max_query_window_days = excluded.max_query_window_days,
+		       rate_limit_per_minute = excluded.rate_limit_per_minute,
+		       active = excluded.active`, string(fixture.ID)); err != nil {
 		t.Fatalf("seeding the network: %v", err)
 	}
 	var accountID pgtype.UUID
