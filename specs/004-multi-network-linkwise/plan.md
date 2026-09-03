@@ -2,7 +2,7 @@
 
 **Branch**: `xcoder/003-multi-network` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `/specs/003-multi-network-linkwise/spec.md`
+**Input**: Feature specification from `/specs/004-multi-network-linkwise/spec.md`
 
 > **PARTIAL GATE.** Founder question **Q1** is amended by the request
 > itself — the networks are Awin *and* Linkwise — and that amendment is
@@ -116,7 +116,7 @@ stops being satisfied by a test double.
 ### Documentation (this feature)
 
 ```text
-specs/003-multi-network-linkwise/
+specs/004-multi-network-linkwise/
 ├── spec.md              # feature specification (+ founder questions Q10–Q13)
 ├── plan.md              # this file
 ├── research.md          # current-state audit, money findings, Linkwise

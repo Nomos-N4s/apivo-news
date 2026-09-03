@@ -1,13 +1,21 @@
 # Feature Specification: Many Affiliate Networks — Linkwise Beside Awin
 
 **Feature Branch**: `xcoder/003-multi-network`
-**Spec Directory**: `specs/003-multi-network-linkwise/`
+**Spec Directory**: `specs/004-multi-network-linkwise/`
 **Created**: 2026-09-03
 **Status**: Draft — awaiting founder answers to Q10–Q13
 **Input**: Founder, 2026-09-03: *"we have a new mvp feature request, we must
 work also with Linkwise and not Awin only!"*
 
 ---
+
+> **On the number.** This is **004**, not 003. Issues
+> [#465](https://github.com/Nomos-N4s/apivo-news/issues/465)–[#492](https://github.com/Nomos-N4s/apivo-news/issues/492)
+> already name `specs/003-cashback-claims/` in twenty-eight places, though
+> that directory exists on no branch. Renaming twenty-eight issue bodies to
+> free a number costs more than taking the next one, and a duplicate feature
+> number is cheap to avoid now and impossible to correct once either is
+> merged.
 
 ## Governance Impact (resolved and unresolved)
 

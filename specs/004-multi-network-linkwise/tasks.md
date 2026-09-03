@@ -5,7 +5,7 @@ description: "Task list for many affiliate networks — Linkwise beside Awin"
 
 # Tasks: Many Affiliate Networks — Linkwise Beside Awin
 
-**Input**: Design documents from `/specs/003-multi-network-linkwise/`
+**Input**: Design documents from `/specs/004-multi-network-linkwise/`
 
 **Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [research.md](research.md), [data-model.md](data-model.md), [contracts/](contracts/), constitution v1.2.0
 
@@ -148,7 +148,7 @@ and Phases 0–C are still the whole of the value.
 ## Phase E: Documentation and corrections
 
 - [ ] T250 [P] `docs/ENVIRONMENTS.md` and `.env.example`: `NETWORKS`, the per-driver blocks, the retired flat keys and the `pool_max_conns` floor per network count
-- [ ] T251 [P] `specs/003-multi-network-linkwise/quickstart.md` verified end to end against a clean checkout — two networks, both fixtures, no credentials
+- [ ] T251 [P] `specs/004-multi-network-linkwise/quickstart.md` verified end to end against a clean checkout — two networks, both fixtures, no credentials
 - [ ] T252 [P] A runbook section on connecting a network: seed the row, name it in `NETWORKS`, set its block, raise the pool, watch `GET …/ops/networks`
 - [ ] T253 [P] Correct the seven documents [research.md](research.md) §6 lists as contradicted — including `002/contracts/ports.md`'s claim that the suite asserts rule 7, its description of a live contract test that does not exist, and the port doc comment saying the SC-008 isolation rule "is not written yet" when `internal/arch/network_isolation_test.go` exists
 

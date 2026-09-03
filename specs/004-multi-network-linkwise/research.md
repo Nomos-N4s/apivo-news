@@ -1,6 +1,6 @@
 # Research: Many Affiliate Networks, and Linkwise as the Second
 
-**Feature**: 003-multi-network-linkwise
+**Feature**: 004-multi-network-linkwise
 **Created**: 2026-09-03
 **Status**: Draft
 

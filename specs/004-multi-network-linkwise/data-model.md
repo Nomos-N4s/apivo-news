@@ -16,8 +16,8 @@ its own comment says so:
 > different reliability, so everything per-network lives here…'*
 > — `0011_cashback_catalogue.up.sql:161`
 
-**No new table. No new entity. No column dropped.** Three migrations,
-`0033`–`0035`, each carrying one rule that was an application-level
+**No new table. No new entity. No column dropped.** Four migrations,
+`0033`–`0036`, each carrying one rule that was an application-level
 assumption and becomes a database-level fact (Principle VIII). `0032` is the
 current head.
 
