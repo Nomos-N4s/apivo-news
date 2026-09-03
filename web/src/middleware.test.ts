@@ -11,6 +11,8 @@ import {
   CRAWLER_SIGNATURES,
   ROBOTS_TXT_BODY,
   X_ROBOTS_TAG_VALUE,
+  isAuthenticatedPath,
+  isCashbackPath,
   isEditorialPath,
   matchesCrawlerSignature,
   onRequest,
@@ -420,5 +422,75 @@ describe('usage rollup logging', () => {
       log.mockRestore();
       vi.useRealTimers();
     }
+  });
+});
+
+describe('isCashbackPath', () => {
+  it.each([
+    '/el/munich/cashback',
+    '/el/munich/cashback/wallet',
+    '/de/munich+greece/cashback/withdraw',
+    '/el/munich/cashback/agora',
+    '/ops',
+    '/ops/held',
+    '/ops/reconciliation',
+    '/api/cashback/clickout',
+  ])('recognises %s as needing an identity', (path) => {
+    expect(isCashbackPath(path)).toBe(true);
+    expect(isAuthenticatedPath(path)).toBe(true);
+  });
+
+  it.each([
+    '/',
+    '/el/munich',
+    '/el/munich/a/123',
+    '/el/register',
+    '/opsimism',
+    '/el/munich/cashbackery',
+    '/api/tour/reader',
+  ])('leaves %s alone, so a reader page pays for no round trip', (path) => {
+    expect(isCashbackPath(path)).toBe(false);
+  });
+
+  it('still covers the editorial screens', () => {
+    expect(isAuthenticatedPath('/el/editor/sources')).toBe(true);
+    expect(isCashbackPath('/el/editor/sources')).toBe(false);
+  });
+});
+
+describe('cashback responses are never shared between people', () => {
+  it('marks a wallet uncacheable, as it does an editorial page', async () => {
+    const { response } = await run({ path: '/el/munich/cashback/wallet' });
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+  });
+
+  it('marks an operator queue uncacheable', async () => {
+    const { response } = await run({ path: '/ops/held' });
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+  });
+
+  it('leaves a reader page cacheable', async () => {
+    const { response } = await run({ path: '/el/munich' });
+    expect(response.headers.get('cache-control')).toBeNull();
+  });
+});
+
+describe('cashback routes are never indexed (T123)', () => {
+  it.each([
+    '/el/munich/cashback',
+    '/el/munich/cashback/wallet',
+    '/el/munich/cashback/withdraw',
+    '/ops/withdrawals',
+    '/ops/reconciliation',
+  ])('stamps noindex, nofollow on %s', async (path) => {
+    const { response } = await run({ path });
+    expect(response.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+  });
+
+  it('is covered by the disallow-all robots.txt, so there is no sitemap to exclude from', () => {
+    // The site publishes no sitemap at all and disallows every path for
+    // every agent, so "exclude the cashback routes from sitemaps" has
+    // nothing narrower to do than what is already true of every route.
+    expect(ROBOTS_TXT_BODY).toBe('User-agent: *\nDisallow: /\n');
   });
 });

@@ -104,6 +104,35 @@ describe('the cashback catalogue', () => {
   });
 });
 
+describe('every interpolating string', () => {
+  it('is exercised in both languages, so a broken template fails here', () => {
+    for (const lang of READING_LANGUAGES) {
+      const t = cashbackStrings(lang);
+      const built = [
+        t.entryCount(1, 2),
+        t.entryCount(2, 2),
+        t.shownInLanguage('Deutsch'),
+        t.belowThreshold('10,00 \u20ac'),
+        t.shortfall('2,00 \u20ac'),
+        t.requestRecorded('WD-1'),
+        t.reservedForRequest('18,40 \u20ac'),
+      ];
+      for (const line of built) {
+        expect(line.trim()).not.toBe('');
+        expect(line).not.toContain('undefined');
+        expect(line).not.toMatch(/\$\{/);
+      }
+    }
+  });
+
+  it('places the value it was given inside the sentence', () => {
+    const t = cashbackStrings('de');
+    expect(t.shownInLanguage('Griechisch')).toContain('Griechisch');
+    expect(t.requestRecorded('WD-2026-08-24-0142')).toContain('WD-2026-08-24-0142');
+    expect(t.shortfall('2,00 \u20ac')).toContain('2,00 \u20ac');
+  });
+});
+
 describe('languageName', () => {
   it('renders a language endonym in the reading language', () => {
     expect(languageName('el', 'de')).toBe('Γερμανικά');
