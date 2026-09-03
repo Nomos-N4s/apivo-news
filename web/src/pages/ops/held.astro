@@ -92,6 +92,22 @@ const access = opsAccess(session, api?.source ?? 'api');
 if (access.blocked && !apiUnavailable) {
   Astro.response.status = 403;
 }
+
+// Selection — mockup 4f shows one row open beside the queue. `?id=` names
+// it; otherwise the oldest row, which is the first the queue lists.
+const asked = Astro.url.searchParams.get('id');
+const selected: HeldEntry | null = items.find((item) => item.id === asked) ?? items[0] ?? null;
+
+const rowHref = (id: string): string => {
+  const params = new URLSearchParams();
+  params.set('id', id);
+  params.set('lang', lang);
+  return `?${params.toString()}`;
+};
+
+const now = Date.now();
+const ageOf = (iso: string): string =>
+  t.daysOld(Math.max(0, Math.floor((now - new Date(iso).getTime()) / 86_400_000)));
 ---
 
 <OpsLayout
@@ -103,139 +119,225 @@ if (access.blocked && !apiUnavailable) {
   blocked={access.blocked}
   notice={notice}
   refusal={refusal}
+  api={api}
+  mayRead={access.mayRead}
 >
-  <p class="hint">{t.oldestFirst}</p>
-  {items.length === 0 && !access.blocked && <p class="hint">{t.emptyQueue}</p>}
+  <Fragment slot="queue">
+    {items.length === 0 && !access.blocked && <p class="queue-note">{t.emptyQueue}</p>}
+    {
+      items.map((item) => (
+        <a
+          href={rowHref(item.id)}
+          class:list={['qrow', { on: item.id === selected?.id }]}
+          aria-current={item.id === selected?.id ? 'true' : undefined}
+        >
+          <div class="qrow-top">
+            <span class="card-kicker">{item.hold_rule}</span>
+            <span class="qrow-age">{ageOf(item.held_since)}</span>
+          </div>
+          <div class="qrow-title">
+            {item.external_id} · {formatMoney(lang, item.amount)}
+          </div>
+          <div class="qrow-sub">
+            {t.sale} {formatMoney(lang, item.sale)} · {item.hold_reason}
+          </div>
+        </a>
+      ))
+    }
+  </Fragment>
 
-  {
-    items.map((item) => (
-      <article class="row">
-        <div class="head">
-          <span class="figure">{formatMoney(lang, item.amount)}</span>
-          <span class="tag tag-outline">
-            {t.heldSince} {formatItemDate(lang, new Date(item.held_since))}
-          </span>
-        </div>
-        <div class="halves">
-          <section>
-            <h2>{t.holdRule}</h2>
-            <p class="rule">{item.hold_rule}</p>
-            <p class="reason">{item.hold_reason}</p>
-            <dl>
-              <dt>{t.accountLabel}</dt>
-              <dd class="ref">{item.account_id}</dd>
-            </dl>
-          </section>
-          <section>
-            <h2>{t.networkReported}</h2>
-            <dl>
-              <dt>{t.sale}</dt>
-              <dd>{formatMoney(lang, item.sale)}</dd>
-              <dt>{t.expected}</dt>
-              <dd>{formatMoney(lang, item.commission)}</dd>
-              <dt>{t.entryStates.pending}</dt>
-              <dd>{item.report_status}</dd>
-              <dt>{t.payoutReference}</dt>
-              <dd class="ref">{item.external_id}</dd>
-            </dl>
-          </section>
-        </div>
-        <form method="post" class="decide">
-          <input type="hidden" name="id" value={item.id} />
-          <div class="field">
-            <label for={`reason-${item.id}`}>{t.reasonLabel}</label>
-            <input class="input" id={`reason-${item.id}`} name="reason" required autocomplete="off" />
+  <Fragment slot="detail">
+    {
+      selected === null ? (
+        !access.blocked && <p class="queue-note">{t.selectRow}</p>
+      ) : (
+        <>
+          <div class="d-head">
+            <div class="d-meta">
+              <span class="card-kicker">{selected.hold_rule}</span>
+              <span class="d-rule" aria-hidden="true" />
+              <span class="d-ref">
+                {t.reference} <span class="mono">{selected.id}</span> · {ageOf(selected.held_since)}
+              </span>
+            </div>
+            <h3>
+              {selected.external_id} · {formatMoney(lang, selected.amount)}
+            </h3>
           </div>
-          <div class="actions">
-            <button class="btn btn-primary" name="action" value="release" disabled={!access.mayAct}>
-              {t.release}
-            </button>
-            <button class="btn btn-secondary" name="action" value="reject" disabled={!access.mayAct}>
-              {t.reject}
-            </button>
+          <div class="d-body">
+            <div class="d-left">
+              <h6>{t.theRecord}</h6>
+              <dl class="record">
+                <dt>{t.member}</dt>
+                <dd class="strong mono">{selected.account_id}</dd>
+                <dt>{t.purchase}</dt>
+                <dd>{formatItemDate(lang, new Date(selected.transacted_at))}</dd>
+                <dt>{t.heldSince}</dt>
+                <dd>{formatItemDate(lang, new Date(selected.held_since))}</dd>
+                <dt>{t.sale}</dt>
+                <dd>{formatMoney(lang, selected.sale)}</dd>
+                <dt>{t.expected}</dt>
+                <dd class="strong">{formatMoney(lang, selected.commission)}</dd>
+                <dt>{t.reference}</dt>
+                <dd class="mono">{selected.external_id}</dd>
+              </dl>
+              <h6 class="evidence-head">{t.evidence}</h6>
+              <pre class="evidence">{`network_id: ${selected.network_id}\nexternal_id: ${selected.external_id}\nnetwork_transaction_id: ${selected.network_transaction_id}\nclick_id: ${selected.click_id ?? '—'}\nreport_status: ${selected.report_status}\nhold_rule: ${selected.hold_rule}`}</pre>
+            </div>
+            <div class="d-right">
+              <div class="d-say">
+                <h6>{t.whatRecordsSay}</h6>
+                <span class="tag tag-neutral">{t.entryStates.held}</span>
+              </div>
+              <p class="assess">
+                {t.holdRule}: {selected.hold_reason}
+              </p>
+              <div class="records">
+                <div class="rec">
+                  <span>{t.trackingLog}</span>
+                  <span>{selected.click_id === null ? t.noClick : t.clickRecorded}</span>
+                </div>
+                <div class="rec">
+                  <span>{t.partnerFeed}</span>
+                  <span class="mono">{selected.report_status}</span>
+                </div>
+                <div class="rec">
+                  <span>{t.rateTable}</span>
+                  <span>{t.none}</span>
+                </div>
+              </div>
+              <form method="post" class="act">
+                <input type="hidden" name="id" value={selected.id} />
+                <div class="field">
+                  <label for="reason">{t.reasonLabel}</label>
+                  <input class="input" id="reason" name="reason" required autocomplete="off" />
+                </div>
+                <div class="btns">
+                  <button
+                    class="btn btn-primary"
+                    name="action"
+                    value="release"
+                    disabled={!access.mayAct}
+                  >
+                    {t.release}
+                  </button>
+                  <button
+                    class="btn btn-secondary"
+                    name="action"
+                    value="reject"
+                    disabled={!access.mayAct}
+                  >
+                    {t.reject}
+                  </button>
+                </div>
+                <p class="perm">{t.decisionIsPermanent}</p>
+              </form>
+            </div>
           </div>
-          <p class="required">{t.reasonRequired}</p>
-        </form>
-      </article>
-    ))
-  }
+        </>
+      )
+    }
+  </Fragment>
 </OpsLayout>
 
 <style>
-  .hint {
-    font-size: 12.5px;
-    color: var(--ink-muted);
-    margin: 0 0 var(--space-4);
-  }
-  .row {
-    border-top: 1px solid var(--color-divider);
-    padding: 20px 0;
-  }
-  .head {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-4);
-    margin-bottom: var(--space-4);
-  }
-  .figure {
-    font: var(--font-heading-weight) 22px/1 var(--font-heading);
-  }
-  .halves {
+  .record {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: var(--space-6);
-    margin-bottom: 20px;
-  }
-  h2 {
-    font: 600 11px/1.3 var(--font-heading);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--ink-muted);
-    margin: 0 0 var(--space-3);
-  }
-  .rule {
-    margin: 0 0 var(--space-2);
-    font-family: ui-monospace, Menlo, monospace;
+    grid-template-columns: 110px 1fr;
+    row-gap: 9px;
+    column-gap: 12px;
     font-size: 12.5px;
+    margin: 0 0 16px;
   }
-  .reason {
-    margin: 0 0 var(--space-3);
-    font-size: 13.5px;
-    text-wrap: pretty;
+  .record dt {
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
   }
-  dl {
-    display: grid;
-    grid-template-columns: minmax(120px, auto) 1fr;
-    gap: var(--space-2) 20px;
+  .record dd {
     margin: 0;
-    font-size: 13px;
+    overflow-wrap: anywhere;
   }
-  dt {
-    color: var(--ink-muted);
+  .strong {
+    font-weight: 600;
   }
-  dd {
-    margin: 0;
-  }
-  .ref {
+  .mono {
     font-family: ui-monospace, Menlo, monospace;
     font-size: 12px;
     overflow-wrap: anywhere;
   }
-  .decide {
+  .d-left h6 {
+    margin: 0 0 12px;
+  }
+  .d-left .evidence-head {
+    margin: 0 0 10px;
+  }
+  .evidence {
     background: var(--color-surface);
-    border: 1px solid var(--color-divider);
-    padding: var(--space-4);
-    max-width: 560px;
+    border-left: 2px solid var(--color-accent);
+    padding: 12px 14px;
+    font: 11.5px/1.7 ui-monospace, Menlo, monospace;
+    margin: 0 0 16px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
-  .actions {
+  .d-say {
     display: flex;
-    gap: var(--space-3);
-    margin-top: var(--space-4);
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
   }
-  .required {
-    margin: var(--space-3) 0 0;
+  .d-say h6 {
+    margin: 0;
+  }
+  .d-say .tag {
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .assess {
+    margin: 0 0 16px;
+    font-size: 13.5px;
+    text-wrap: pretty;
+  }
+  .records {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--color-divider);
+    font-size: 12.5px;
+    margin-bottom: 18px;
+  }
+  .rec {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--color-divider);
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .rec > span:first-child {
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .rec > span:last-child {
+    text-align: right;
+  }
+  .act {
+    margin-top: auto;
+  }
+  .act .field {
+    margin-bottom: 12px;
+  }
+  .btns {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .btns .btn {
+    font-size: 13px;
+  }
+  .perm {
+    margin: 0;
     font-size: 11.5px;
-    color: var(--ink-muted);
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
     text-wrap: pretty;
   }
 </style>

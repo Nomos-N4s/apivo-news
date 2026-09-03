@@ -96,6 +96,23 @@ const access = opsAccess(session, api?.source ?? 'api');
 if (access.blocked && !apiUnavailable) {
   Astro.response.status = 403;
 }
+
+// Selection — mockup 4f shows one row open beside the queue. `?id=` names
+// it; otherwise the oldest row, which is the first the queue lists.
+const asked = Astro.url.searchParams.get('id');
+const selected: WithdrawalForApproval | null =
+  items.find((item) => item.id === asked) ?? items[0] ?? null;
+
+const rowHref = (id: string): string => {
+  const params = new URLSearchParams();
+  params.set('id', id);
+  params.set('lang', lang);
+  return `?${params.toString()}`;
+};
+
+const now = Date.now();
+const ageOf = (iso: string): string =>
+  t.daysOld(Math.max(0, Math.floor((now - new Date(iso).getTime()) / 86_400_000)));
 ---
 
 <OpsLayout
@@ -107,114 +124,228 @@ if (access.blocked && !apiUnavailable) {
   blocked={access.blocked}
   notice={notice}
   refusal={refusal}
+  api={api}
+  mayRead={access.mayRead}
 >
-  <p class="hint">{t.oldestFirst}</p>
-  {items.length === 0 && !access.blocked && <p class="empty">{t.emptyQueue}</p>}
+  <Fragment slot="queue">
+    {items.length === 0 && !access.blocked && <p class="queue-note">{t.emptyQueue}</p>}
+    {
+      items.map((item) => (
+        <a
+          href={rowHref(item.id)}
+          class:list={['qrow', { on: item.id === selected?.id }]}
+          aria-current={item.id === selected?.id ? 'true' : undefined}
+        >
+          <div class="qrow-top">
+            <span class="card-kicker">{t.queueWithdrawals}</span>
+            <span class="qrow-age">{ageOf(item.requested_at)}</span>
+          </div>
+          <div class="qrow-title">
+            {formatMoney(lang, item.amount)} · {item.account_id}
+          </div>
+          <div class="qrow-sub">
+            {t.reserved} {formatMoney(lang, item.reserved_amount)} · {item.destination.details}
+          </div>
+        </a>
+      ))
+    }
+  </Fragment>
 
-  {
-    items.map((item) => (
-      <article class="row">
-        <div class="head">
-          <span class="figure">{formatMoney(lang, item.amount)}</span>
-          <span class="tag tag-outline">
-            {t.reserved} {formatMoney(lang, item.reserved_amount)}
-          </span>
-        </div>
-        <dl>
-          <dt>{t.accountLabel}</dt>
-          <dd class="ref">{item.account_id}</dd>
-          <dt>{t.destinationLabel}</dt>
-          <dd class="ref">{item.destination.details}</dd>
-          <dt>{t.requestedAt}</dt>
-          <dd>{formatItemDate(lang, new Date(item.requested_at))}</dd>
-        </dl>
-        <form method="post" class="decide">
-          <input type="hidden" name="id" value={item.id} />
-          <div class="field">
-            <label for={`reason-${item.id}`}>{t.reasonLabel}</label>
-            <input class="input" id={`reason-${item.id}`} name="reason" autocomplete="off" />
+  <Fragment slot="detail">
+    {
+      selected === null ? (
+        !access.blocked && <p class="queue-note">{t.selectRow}</p>
+      ) : (
+        <>
+          <div class="d-head">
+            <div class="d-meta">
+              <span class="card-kicker">{t.queueWithdrawals}</span>
+              <span class="d-rule" aria-hidden="true" />
+              <span class="d-ref">
+                {t.reference} <span class="mono">{selected.id}</span> · {ageOf(selected.requested_at)}
+              </span>
+            </div>
+            <h3>
+              {formatMoney(lang, selected.amount)} · {selected.account_id}
+            </h3>
           </div>
-          <div class="actions">
-            <button class="btn btn-primary" name="action" value="approve" disabled={!access.mayAct}>
-              {t.approve}
-            </button>
-            <button
-              class="btn btn-secondary"
-              name="action"
-              value="reject"
-              disabled={!access.mayAct}
-            >
-              {t.reject}
-            </button>
+          <div class="d-body">
+            <div class="d-left">
+              <h6>{t.theRecord}</h6>
+              <dl class="record">
+                <dt>{t.member}</dt>
+                <dd class="strong mono">{selected.account_id}</dd>
+                <dt>{t.requested}</dt>
+                <dd>{formatItemDate(lang, new Date(selected.requested_at))}</dd>
+                <dt>{t.amountLabel}</dt>
+                <dd>{formatMoney(lang, selected.amount)}</dd>
+                <dt>{t.reserved}</dt>
+                <dd class="strong">{formatMoney(lang, selected.reserved_amount)}</dd>
+                <dt>{t.destination}</dt>
+                <dd class="mono">{selected.destination.details}</dd>
+              </dl>
+              <h6 class="evidence-head">{t.evidence}</h6>
+              <pre class="evidence">{`request_id: ${selected.id}\ndestination_id: ${selected.destination.id}\nkind: ${selected.destination.kind}\nverified_at: ${selected.destination.verified_at ?? '—'}\nrequested_at: ${selected.requested_at}`}</pre>
+            </div>
+            <div class="d-right">
+              <div class="d-say">
+                <h6>{t.whatRecordsSay}</h6>
+                <span
+                  class:list={[
+                    'tag',
+                    selected.destination.verified_at !== null ? 'tag-accent' : 'tag-neutral',
+                  ]}
+                >
+                  {t.withdrawalStates.awaiting_approval}
+                </span>
+              </div>
+              <p class="assess">{t.wholeEntriesRule}</p>
+              <div class="records">
+                <div class="rec">
+                  <span>{t.trackingLog}</span>
+                  <span>{t.none}</span>
+                </div>
+                <div class="rec">
+                  <span>{t.partnerFeed}</span>
+                  <span>{t.none}</span>
+                </div>
+                <div class="rec">
+                  <span>{t.rateTable}</span>
+                  <span>{t.none}</span>
+                </div>
+              </div>
+              <form method="post" class="act">
+                <input type="hidden" name="id" value={selected.id} />
+                <div class="field">
+                  <label for="reason">{t.reasonLabel}</label>
+                  <input class="input" id="reason" name="reason" autocomplete="off" />
+                </div>
+                <div class="btns">
+                  <button
+                    class="btn btn-primary"
+                    name="action"
+                    value="approve"
+                    disabled={!access.mayAct}
+                  >
+                    {t.approve}
+                  </button>
+                  <button
+                    class="btn btn-secondary"
+                    name="action"
+                    value="reject"
+                    disabled={!access.mayAct}
+                  >
+                    {t.reject}
+                  </button>
+                </div>
+                <p class="perm">{t.decisionIsPermanent}</p>
+              </form>
+            </div>
           </div>
-          <p class="required">{t.reasonRequired}</p>
-        </form>
-      </article>
-    ))
-  }
+        </>
+      )
+    }
+  </Fragment>
 </OpsLayout>
 
 <style>
-  .hint,
-  .empty {
+  .record {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    row-gap: 9px;
+    column-gap: 12px;
     font-size: 12.5px;
-    color: var(--ink-muted);
-    margin: 0 0 var(--space-4);
+    margin: 0 0 16px;
   }
-  .row {
-    border-top: 1px solid var(--color-divider);
-    padding: 20px 0;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
-    gap: 20px;
-    align-items: start;
+  .record dt {
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
   }
-  .head {
-    grid-column: 1 / -1;
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-4);
-  }
-  .figure {
-    font: var(--font-heading-weight) 22px/1 var(--font-heading);
-  }
-  dl {
-    display: grid;
-    grid-template-columns: minmax(130px, auto) 1fr;
-    gap: var(--space-2) 20px;
+  .record dd {
     margin: 0;
-    font-size: 13px;
+    overflow-wrap: anywhere;
   }
-  dt {
-    color: var(--ink-muted);
+  .strong {
+    font-weight: 600;
   }
-  dd {
-    margin: 0;
-  }
-  .ref {
+  .mono {
     font-family: ui-monospace, Menlo, monospace;
     font-size: 12px;
     overflow-wrap: anywhere;
   }
-  .decide {
+  .d-left h6 {
+    margin: 0 0 12px;
+  }
+  .d-left .evidence-head {
+    margin: 0 0 10px;
+  }
+  .evidence {
     background: var(--color-surface);
-    padding: var(--space-4);
-    border: 1px solid var(--color-divider);
+    border-left: 2px solid var(--color-accent);
+    padding: 12px 14px;
+    font: 11.5px/1.7 ui-monospace, Menlo, monospace;
+    margin: 0 0 16px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
-  .actions {
+  .d-say {
     display: flex;
-    gap: var(--space-3);
-    margin-top: var(--space-4);
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
   }
-  .required {
-    margin: var(--space-3) 0 0;
-    font-size: 11.5px;
-    color: var(--ink-muted);
+  .d-say h6 {
+    margin: 0;
+  }
+  .d-say .tag {
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .assess {
+    margin: 0 0 16px;
+    font-size: 13.5px;
     text-wrap: pretty;
   }
-  @media (max-width: 820px) {
-    .row {
-      grid-template-columns: 1fr;
-    }
+  .records {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--color-divider);
+    font-size: 12.5px;
+    margin-bottom: 18px;
+  }
+  .rec {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--color-divider);
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .rec > span:first-child {
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .rec > span:last-child {
+    text-align: right;
+  }
+  .act {
+    margin-top: auto;
+  }
+  .act .field {
+    margin-bottom: 12px;
+  }
+  .btns {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .btns .btn {
+    font-size: 13px;
+  }
+  .perm {
+    margin: 0;
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    text-wrap: pretty;
   }
 </style>

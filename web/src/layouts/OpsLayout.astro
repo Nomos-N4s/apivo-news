@@ -1,32 +1,110 @@
 ---
 import '../styles/modernist.css';
-import OpsChrome from '../components/OpsChrome.astro';
+import OpsChrome, { type OpsQueueCounts, type OpsQueueKey } from '../components/OpsChrome.astro';
 import FixtureNotice from '../components/FixtureNotice.astro';
 import type { ReadingLanguage } from '../lib/reader/axes';
 import type { EditorSession } from '../lib/editorial/session';
-import type { OPS_PATHS } from '../lib/cashback/paths';
+import type { CashbackApi } from '../lib/cashback/api';
+import { formatMoney } from '../lib/cashback/money';
+import { OPS_PATHS } from '../lib/cashback/paths';
+import type { HeldEntry, WithdrawalForApproval } from '../lib/cashback/types';
 import { cashbackStrings } from '../i18n/cashback';
 
-// The shell every operator queue shares.
+// The shell every operator queue shares — mockup 4f.
 //
-// It has no footer and no masthead: the member-facing chrome carries a
-// licence note and legal links that are owed to a reader, and an internal
-// queue is not a reader. What it does carry is the identity line, because
-// every decision taken through these screens is recorded under a name.
+// It has no footer and no member navigation: the member-facing chrome
+// carries a licence note and legal links that are owed to a reader, and an
+// internal queue is not a reader. What it does carry is the identity line,
+// because every decision taken through these screens is recorded under a
+// name, and the rail with a count beside each queue.
+//
+// The main area is the mockup's two columns: the queue on the left (420px,
+// one card per row, oldest first) and the selected row's detail pane on the
+// right. Pages fill the two named slots; the composition — the rules, the
+// widths, the row card — lives here so that the four queues cannot drift
+// apart.
 interface Props {
   lang: ReadingLanguage;
   session: EditorSession;
-  current: keyof typeof OPS_PATHS;
+  current: OpsQueueKey;
   title: string;
   fixtures: boolean;
   /** Set when the deployment answered, but this account may not act. */
   blocked?: boolean | undefined;
   notice?: string | null | undefined;
   refusal?: string | null | undefined;
+  /** The page's client, so the rail can count every queue. Null when none could be built. */
+  api?: CashbackApi | null | undefined;
+  /** Whether this request may read the queues at all; without it nothing is counted. */
+  mayRead?: boolean | undefined;
 }
 
-const { lang, session, current, title, fixtures, blocked, notice, refusal } = Astro.props;
+const { lang, session, current, title, fixtures, blocked, notice, refusal, api, mayRead } =
+  Astro.props;
 const t = cashbackStrings(lang);
+
+// One count per queue, read the same way the pages read the queue itself.
+// A queue that cannot be read shows no number rather than a zero: "0" is a
+// claim that the queue is empty, and a failed request has not made it.
+let counts: OpsQueueCounts = {
+  unattributed: undefined,
+  held: undefined,
+  withdrawals: undefined,
+  reconciliation: undefined,
+};
+// The rows behind two of those counts are kept for the panel under the
+// queue: mockup 4f fills the rest of the column with the withdrawals waiting
+// on a signature, and the withdrawals queue itself shows the held credits
+// there instead, so the column never repeats the rows beside it.
+let awaiting: readonly WithdrawalForApproval[] | null = null;
+let heldRows: readonly HeldEntry[] | null = null;
+if (api !== null && api !== undefined && mayRead === true) {
+  const settled = await Promise.allSettled([
+    api.unattributed(),
+    api.held(),
+    api.withdrawalsAwaitingApproval(),
+    api.reconciliationRuns(),
+  ]);
+  const count = (index: number): number | undefined => {
+    const result = settled[index];
+    return result !== undefined && result.status === 'fulfilled'
+      ? result.value.items.length
+      : undefined;
+  };
+  counts = {
+    unattributed: count(0),
+    held: count(1),
+    withdrawals: count(2),
+    reconciliation: count(3),
+  };
+  const [, heldResult, awaitingResult] = settled;
+  if (heldResult !== undefined && heldResult.status === 'fulfilled') {
+    heldRows = heldResult.value.items;
+  }
+  if (awaitingResult !== undefined && awaitingResult.status === 'fulfilled') {
+    awaiting = awaitingResult.value.items;
+  }
+}
+
+// A page may draw its own panel (reconciliation lists the statement
+// imports); otherwise the shell draws the cross-queue one.
+const ownPanel = Astro.slots.has('panel');
+const panelIsHeld = current === 'withdrawals';
+const panelRows: readonly WithdrawalForApproval[] | readonly HeldEntry[] | null = panelIsHeld
+  ? heldRows
+  : awaiting;
+const panelHref = (queue: OpsQueueKey, id: string): string => {
+  const params = new URLSearchParams();
+  params.set('id', id);
+  params.set('lang', lang);
+  return `${OPS_PATHS[queue]}?${params.toString()}`;
+};
+
+const hasBands =
+  fixtures ||
+  blocked === true ||
+  (notice !== null && notice !== undefined) ||
+  (refusal !== null && refusal !== undefined);
 ---
 
 <!doctype html>
@@ -39,16 +117,100 @@ const t = cashbackStrings(lang);
   </head>
   <body>
     <div class="frame">
-      <OpsChrome lang={lang} session={session} current={current} />
-      <main class="queue-body">
-        <h1>{title}</h1>
-        {fixtures && <FixtureNotice title={t.operations} body={t.fixtureNotice} />}
-        {blocked === true && <p class="band" role="alert">{t.notAnOperator}</p>}
-        {notice !== null && notice !== undefined && <p class="ok" role="status">{notice}</p>}
-        {refusal !== null && refusal !== undefined && <p class="band" role="alert">{refusal}</p>}
-        <slot />
-        <p class="permanent">{t.decisionIsPermanent}</p>
-      </main>
+      <OpsChrome lang={lang} session={session} current={current} counts={counts}>
+        <main class="queue-main">
+          <h1 class="sr-only">{title}</h1>
+          {
+            hasBands && (
+              <div class="bands">
+                {fixtures && <FixtureNotice title={t.operations} body={t.fixtureNotice} />}
+                {blocked === true && (
+                  <p class="band" role="alert">
+                    {t.notAnOperator}
+                  </p>
+                )}
+                {notice !== null && notice !== undefined && (
+                  <p class="ok" role="status">
+                    {notice}
+                  </p>
+                )}
+                {refusal !== null && refusal !== undefined && (
+                  <p class="band" role="alert">
+                    {refusal}
+                  </p>
+                )}
+              </div>
+            )
+          }
+          <div class="split">
+            <section class="queue" aria-label={t.openQueue}>
+              <div class="queue-head">
+                <h6>{t.openQueue}</h6>
+                <span class="sort">{t.oldestFirst}</span>
+              </div>
+              <slot name="queue" />
+              {
+                ownPanel ? (
+                  <slot name="panel" />
+                ) : (
+                  panelRows !== null && (
+                    <>
+                      <div class="panel">
+                        <h6>{panelIsHeld ? t.queueHeld : t.queueWithdrawals}</h6>
+                        {panelRows.length === 0 ? (
+                          <div class="panel-sub">{t.emptyQueue}</div>
+                        ) : (
+                          <div class="panel-list">
+                            {panelIsHeld
+                              ? (panelRows as readonly HeldEntry[]).map((row) => (
+                                  <div class="panel-row">
+                                    <div class="panel-text">
+                                      <div class="panel-title">
+                                        {formatMoney(lang, row.amount)} · {row.account_id}
+                                      </div>
+                                      <div class="panel-sub">
+                                        {row.hold_rule} · {t.sale} {formatMoney(lang, row.sale)}
+                                      </div>
+                                    </div>
+                                    <a class="btn btn-secondary panel-btn" href={panelHref('held', row.id)}>
+                                      {t.review}
+                                    </a>
+                                  </div>
+                                ))
+                              : (panelRows as readonly WithdrawalForApproval[]).map((row) => (
+                                  <div class="panel-row">
+                                    <div class="panel-text">
+                                      <div class="panel-title">
+                                        {formatMoney(lang, row.amount)} · {row.account_id}
+                                      </div>
+                                      <div class="panel-sub">
+                                        {t.reserved} {formatMoney(lang, row.reserved_amount)} ·{' '}
+                                        {row.destination.details}
+                                      </div>
+                                    </div>
+                                    <a
+                                      class="btn btn-secondary panel-btn"
+                                      href={panelHref('withdrawals', row.id)}
+                                    >
+                                      {t.review}
+                                    </a>
+                                  </div>
+                                ))}
+                          </div>
+                        )}
+                      </div>
+                      <p class="queue-note">{panelIsHeld ? t.pendingExplained : t.wholeEntriesRule}</p>
+                    </>
+                  )
+                )
+              }
+            </section>
+            <section class="detail" aria-label={t.theRecord}>
+              <slot name="detail" />
+            </section>
+          </div>
+        </main>
+      </OpsChrome>
     </div>
   </body>
 </html>
@@ -61,13 +223,22 @@ const t = cashbackStrings(lang);
     display: flex;
     flex-direction: column;
   }
-  .queue-body {
+  .queue-main {
     flex: 1;
-    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) 28px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
   }
-  h1 {
-    margin: 0 0 20px;
-    font-size: 26px;
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .bands {
+    padding: 18px 18px 0;
   }
   .band,
   .ok {
@@ -81,21 +252,191 @@ const t = cashbackStrings(lang);
   .ok {
     border-color: var(--color-divider);
   }
-  .permanent {
-    margin-top: 28px;
-    padding-top: var(--space-4);
-    border-top: 1px solid var(--color-divider);
+
+  /* Mockup 4f's main area: the queue column and the detail pane. */
+  .split {
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    flex: 1;
+  }
+  .queue {
+    border-right: 1px solid var(--color-divider);
+    min-width: 0;
+  }
+  .queue-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .queue-head h6 {
+    margin: 0;
+  }
+  .sort {
+    margin-left: auto;
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .detail {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  /* One card per row, and the detail pane's head — the pages render these
+     with the shell's class names so every queue reads the same. */
+  .split :global(.qrow) {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: 0;
+    border-bottom: 1px solid var(--color-divider);
+    border-left: 3px solid transparent;
+    padding: 14px 18px;
+    color: var(--color-text);
+    text-decoration: none;
+    background: transparent;
+  }
+  .split :global(.qrow.on) {
+    border-left-color: var(--color-accent);
+    background: var(--color-surface);
+  }
+  .split :global(.qrow-top) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .split :global(.qrow-top .card-kicker) {
+    font-size: 10px;
+  }
+  .split :global(.qrow-age) {
+    font-size: 10.5px;
+    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  }
+  .split :global(.qrow-title) {
+    font: var(--font-heading-weight) 15px/1.25 var(--font-heading);
+    margin-bottom: 5px;
+    overflow-wrap: anywhere;
+  }
+  .split :global(.qrow-sub) {
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+    overflow-wrap: anywhere;
+  }
+  /* The surface block under the rows, and the muted note that closes the
+     column — mockup 4f's second panel. */
+  .panel {
+    padding: 14px 18px;
+    border-bottom: 2px solid var(--color-divider);
+    background: var(--color-surface);
+  }
+  .panel h6 {
+    margin: 0 0 10px;
+  }
+  .panel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .panel-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .panel-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .panel-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .panel-sub {
+    font-size: 11px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    overflow-wrap: anywhere;
+  }
+  .panel-btn {
+    font-size: 11.5px;
+    padding: 6px 10px;
+    white-space: nowrap;
+  }
+  .split :global(.queue-note) {
+    margin: 0;
+    padding: 14px 18px;
     font-size: 12px;
-    color: var(--ink-muted);
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
     text-wrap: pretty;
   }
-  @media (max-width: 640px) {
+  .split :global(.d-head) {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .split :global(.d-meta) {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .split :global(.d-meta .card-kicker) {
+    font-size: 10.5px;
+  }
+  .split :global(.d-rule) {
+    width: 1px;
+    height: 11px;
+    background: var(--color-divider);
+  }
+  .split :global(.d-ref) {
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .split :global(.d-head h3) {
+    margin: 0;
+    font-size: 23px;
+    text-wrap: pretty;
+    overflow-wrap: anywhere;
+  }
+  .split :global(.d-body) {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    flex: 1;
+  }
+  .split :global(.d-left) {
+    padding: 20px 24px;
+    border-right: 1px solid var(--color-divider);
+    min-width: 0;
+  }
+  .split :global(.d-right) {
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  @media (max-width: 660px) {
     .frame {
       margin-inline: 0;
       border-inline: 0;
     }
-    .queue-body {
-      padding: 20px var(--space-4) var(--space-6);
+    .bands {
+      padding: 16px 16px 0;
+    }
+    .split {
+      grid-template-columns: 1fr;
+    }
+    .queue {
+      border-right: 0;
+      border-bottom: 2px solid var(--color-divider);
+    }
+    .split :global(.d-body) {
+      grid-template-columns: 1fr;
+    }
+    .split :global(.d-left) {
+      border-right: 0;
+      border-bottom: 1px solid var(--color-divider);
     }
   }
 </style>
