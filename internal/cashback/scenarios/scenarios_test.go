@@ -12,20 +12,29 @@ package scenarios_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/clickout"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings"
+	earningsstore "github.com/Nomos-N4s/apivo-news/internal/cashback/earnings/store"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
+	networksstore "github.com/Nomos-N4s/apivo-news/internal/cashback/networks/store"
+	opspkg "github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
 
 func TestScenario(t *testing.T) {
 	t.Run("earn-confirm", earnConfirm)
 	t.Run("evidence-immutable", evidenceImmutable)
 	t.Run("reversal", reversal)
+	t.Run("unattributed-and-held", unattributedAndHeld)
+	t.Run("reconciliation", reconciliation)
 }
 
 // earnConfirm is V1 (US1, US3 · SC-001, SC-002, SC-006).
@@ -61,7 +70,7 @@ func earnConfirm(t *testing.T) {
 	// is reported.
 	w.republish(t)
 
-	report := w.reports(t, click.Ref.Ref(), networks.StatusPending)
+	report := w.reports(t, click.Ref.Ref())
 	attributed := w.match(t, report, click.Ref.Ref())
 	if !attributed.Matched || attributed.Click.ID != click.ID {
 		t.Fatalf("the report matched %v (matched=%v), want the click %s",
@@ -70,7 +79,7 @@ func earnConfirm(t *testing.T) {
 
 	// The share comes from the snapshot the matched click carries, not from
 	// the catalogue as it now stands.
-	share := w.shareOf(t, attributed.Click, reportedCommission)
+	share := w.shareOf(t, attributed.Click)
 	if share.Minor != memberShareMinor {
 		t.Fatalf("the member's share is %d, want %d (the click-time band); %d would be the band published afterwards",
 			share.Minor, memberShareMinor, laterShareMinor)
@@ -241,8 +250,8 @@ func reversal(t *testing.T) {
 	w := begin(t).seed(t)
 	click := w.clickOut(t)
 
-	report := w.reports(t, click.Ref.Ref(), networks.StatusPending)
-	share := w.shareOf(t, click, reportedCommission)
+	report := w.reports(t, click.Ref.Ref())
+	share := w.shareOf(t, click)
 	machine, confirmations := w.machines(t)
 	opened, err := machine.Open(w.ctx, w.tx, earnings.Credit{
 		Member: w.member, Brand: scenarioBrand, Report: report.id, Click: click.ID,
@@ -319,4 +328,253 @@ func reversal(t *testing.T) {
 	if entries != 2 {
 		t.Errorf("the member holds %d entr(ies), want 2: the credit and its reversal, both readable", entries)
 	}
+}
+
+// unattributedAndHeld is V5 (US1 scenario 5, US7 · FR-034, FR-060).
+//
+// Two ways a purchase does not simply become money, and one operator action
+// on each. A reference nobody minted credits nobody and is queued for a
+// human; a credit a rule distrusts is held, naming the rule, and released or
+// rejected only with a reason.
+func unattributedAndHeld(t *testing.T) {
+	w := begin(t).seed(t)
+
+	// A reference the network echoed that names no click of ours. Not
+	// "missing" - present, and wrong, which is the case a bare null check
+	// would let through.
+	stranger := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" + suffix(t)
+	orphan := w.reports(t, stranger)
+	attributed := w.match(t, orphan, stranger)
+	if attributed.Matched {
+		t.Fatal("a reference naming no click was attributed to one")
+	}
+	if attributed.Queued == uuid.Nil {
+		t.Fatal("nothing was queued, so the report is money in no queue at all")
+	}
+
+	// It is readable as work, through the production read rather than a
+	// query written for this test.
+	queue, err := networks.NewUnattributedQueue(networksstore.New(w.tx))
+	if err != nil {
+		t.Fatalf("NewUnattributedQueue(): %v", err)
+	}
+	open, err := queue.OpenByID(w.ctx, attributed.Queued)
+	if err != nil {
+		t.Fatalf("OpenByID(): %v", err)
+	}
+	if open.Report != orphan.id {
+		t.Errorf("the queued row cites report %s, want %s", open.Report, orphan.id)
+	}
+
+	// And it credited nobody.
+	if w.entriesFor(t, w.member) != 0 {
+		t.Error("a report matching no click opened an entry; FR-034 says it goes to a human, not to a balance")
+	}
+	if got := w.balance(t, wallet.StagePending); got != 0 {
+		t.Errorf("pending balance is %d after an unattributable report, want 0", got)
+	}
+
+	// Now the held half: a genuine purchase, above a cap the deployment set.
+	click := w.clickOut(t)
+	report := w.reports(t, click.Ref.Ref())
+	matched := w.match(t, report, click.Ref.Ref())
+	if !matched.Matched {
+		t.Fatalf("the second report did not match its own click")
+	}
+
+	saleCap, err := money.New(reportedSaleMinor-1, scenarioCurrency)
+	if err != nil {
+		t.Fatalf("money.New(): %v", err)
+	}
+	holds, err := earnings.NewHolds(earnings.HoldRules{SaleCap: saleCap}, earningsstore.New(w.tx))
+	if err != nil {
+		t.Fatalf("NewHolds(): %v", err)
+	}
+	sale, err := money.New(reportedSaleMinor, scenarioCurrency)
+	if err != nil {
+		t.Fatalf("money.New(): %v", err)
+	}
+	hold, err := holds.Evaluate(w.ctx, earnings.Candidate{
+		Member: w.member, Click: matched.Click, Sale: sale, At: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("Evaluate(): %v", err)
+	}
+	if !hold.Held() {
+		t.Fatalf("a sale of %d was not held under a cap of %d", reportedSaleMinor, reportedSaleMinor-1)
+	}
+
+	machine, _ := w.machines(t)
+	opened, err := machine.Open(w.ctx, w.tx, hold.Open(earnings.Credit{
+		Member: w.member, Brand: scenarioBrand, Report: report.id, Click: click.ID,
+		State: earnings.StatePending, Amount: w.shareOf(t, click),
+		Reason: "the network reported the purchase",
+	}))
+	if err != nil {
+		t.Fatalf("Open(): %v", err)
+	}
+	if opened.State != earnings.StateHeld {
+		t.Fatalf("the entry is %s, want held", opened.State)
+	}
+	// The rule is named on the row. An operator who cannot see WHY it was
+	// held has to guess, and a guess about somebody else's money is the
+	// thing this queue exists to prevent.
+	if got := w.entryRow(t, opened.ID).holdRule; got == "" {
+		t.Error("the held entry names no rule")
+	}
+
+	reviews, err := earnings.NewReviews(w.tx, w.ledger, houseReceivable)
+	if err != nil {
+		t.Fatalf("NewReviews(): %v", err)
+	}
+
+	// A review with no reason is refused before anything is read (FR-061).
+	if _, err := reviews.Release(w.ctx, earnings.Review{
+		Entry: opened.ID, Operator: w.operator, Reason: "   ",
+	}); !errors.Is(err, earnings.ErrInvalidReview) {
+		t.Errorf("Release() with a blank reason = %v, want one wrapping %v", err, earnings.ErrInvalidReview)
+	}
+
+	released, err := reviews.Release(w.ctx, earnings.Review{
+		Entry: opened.ID, Operator: w.operator, Reason: "checked against the retailer's order",
+	})
+	if err != nil {
+		t.Fatalf("Release(): %v", err)
+	}
+	if released.Entry.State == earnings.StateHeld {
+		t.Error("the entry is still held after being released")
+	}
+	// Releasing clears the rule: US7's queue is "every entry whose hold_rule
+	// is set", and that has to be the same set as "every held entry".
+	if got := w.entryRow(t, opened.ID).holdRule; got != "" {
+		t.Errorf("the released entry still names hold rule %q", got)
+	}
+
+	// And the decision is on the stream, with its reason and its operator,
+	// so an auditor reading events sees what the operator saw.
+	w.wantDecisionAnnounced(t, opened.ID, earnings.TypeHoldReleased, "released_by", "checked against the retailer's order")
+
+	// The other operator action on the same queue: rejecting. A second held
+	// credit, because the first one has been released and a released credit
+	// is not a held one.
+	rejected := w.holdAnother(t, holds, machine)
+	if _, err := reviews.Reject(w.ctx, earnings.Review{
+		Entry: rejected, Operator: w.operator, Reason: "\t\n ",
+	}); !errors.Is(err, earnings.ErrInvalidReview) {
+		t.Errorf("Reject() with a blank reason = %v, want one wrapping %v", err, earnings.ErrInvalidReview)
+	}
+	if _, err := reviews.Reject(w.ctx, earnings.Review{
+		Entry: rejected, Operator: w.operator, Reason: "the retailer has no such order",
+	}); err != nil {
+		t.Fatalf("Reject(): %v", err)
+	}
+	w.wantDecisionAnnounced(t, rejected, earnings.TypeHoldRejected, "rejected_by", "the retailer has no such order")
+
+	// A rejection undoes the credit rather than editing it, so the member is
+	// left holding nothing from either purchase.
+	if got := w.balance(t, wallet.StagePending); got != memberShareMinor {
+		t.Errorf("pending balance is %d, want %d: the released credit stands and the rejected one does not",
+			got, memberShareMinor)
+	}
+	w.wantZeroSum(t)
+	w.wantNoOrphanCredits(t)
+}
+
+// reconciliation is V6 (US6).
+//
+// The network's word and the network's money are different facts, and this
+// is where they are compared. An approved purchase the statement never paid,
+// and one it paid short: both must be listed with their deltas, neither may
+// quietly change a member's confirmed balance, and resolving either must
+// record who decided and why.
+func reconciliation(t *testing.T) {
+	w := begin(t).seed(t)
+
+	// The statement first, naming the transaction ids the purchases will
+	// carry: one paid 100 minor units short, and one it never mentions.
+	// A run covers a period, and one period admits one run, so the statement
+	// cannot be written after the purchases it is about.
+	shortedID, missingID := "SCEN-SHORT-"+suffix(t), "SCEN-MISSING-"+suffix(t)
+	run := w.importsStatement(t, fmt.Sprintf(
+		`{"lines":[{"transaction_id":%q,"paid":{"minor":%d,"currency":"EUR"}}]}`,
+		shortedID, reportedCommission-100))
+
+	shorted := w.confirmedPurchase(t, shortedID)
+	missing := w.confirmedPurchase(t, missingID)
+	before := w.balance(t, wallet.StageConfirmed)
+
+	ops, err := opspkg.NewPGStore(w.tx)
+	if err != nil {
+		t.Fatalf("NewPGStore(): %v", err)
+	}
+	detected, err := ops.DetectDifferences(w.ctx, run)
+	if err != nil {
+		t.Fatalf("DetectDifferences(): %v", err)
+	}
+
+	// Both, and each named for what it is: an operator chasing a short
+	// payment and one chasing a missing one do different things.
+	kinds := map[opspkg.DifferenceKind]opspkg.Difference{}
+	for _, d := range detected.Found {
+		kinds[d.Kind] = d
+	}
+	short, sawShort := kinds[opspkg.AmountMismatch]
+	if !sawShort {
+		t.Fatalf("a line paying %d against a report owed %d raised no amount mismatch; found %+v",
+			reportedCommission-100, reportedCommission, detected.Found)
+	}
+	if short.TransactionID != shorted.external {
+		t.Errorf("the mismatch is about %q, want %q", short.TransactionID, shorted.external)
+	}
+	delta, err := short.Delta()
+	if err != nil {
+		t.Fatalf("Delta(): %v", err)
+	}
+	if delta.Minor != -100 {
+		t.Errorf("the shorted line's delta is %d, want -100: negative is money missing", delta.Minor)
+	}
+	unpaid, sawUnpaid := kinds[opspkg.ReportedNotPaid]
+	if !sawUnpaid {
+		t.Fatalf("a confirmed report the statement never mentions raised no difference; found %+v", detected.Found)
+	}
+	if unpaid.TransactionID != missing.external {
+		t.Errorf("the unpaid difference is about %q, want %q", unpaid.TransactionID, missing.external)
+	}
+
+	// Neither touched the member's money. Detection derives and records; it
+	// does not decide, and a balance that moved because a statement was
+	// short would be money taken back without anybody saying so.
+	if after := w.balance(t, wallet.StageConfirmed); after != before {
+		t.Errorf("the confirmed balance moved from %d to %d during detection; reconciliation reports, it does not adjust",
+			before, after)
+	}
+
+	// The queue reads back through the production listing.
+	listed, err := ops.ListDifferences(w.ctx, run, opspkg.DifferenceAfter{}, 10)
+	if err != nil {
+		t.Fatalf("ListDifferences(): %v", err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("the run lists %d difference(s), want 2", len(listed))
+	}
+
+	// Resolving records the named human and their reason (FR-061). A blank
+	// one is refused before anything is written.
+	if _, err := ops.ResolveDifference(w.ctx, opspkg.Resolution{
+		ID: listed[0].ID, Verdict: opspkg.VerdictExplained, Reason: " ",
+		Operator: opspkg.Operator{ID: w.operator},
+	}); err == nil {
+		t.Error("a resolution with a blank reason was accepted; FR-061 says a decision records why")
+	}
+	resolved, err := ops.ResolveDifference(w.ctx, opspkg.Resolution{
+		ID: listed[0].ID, Verdict: opspkg.VerdictExplained,
+		Reason: "the network confirmed the shortfall by email", Operator: opspkg.Operator{ID: w.operator},
+	})
+	if err != nil {
+		t.Fatalf("ResolveDifference(): %v", err)
+	}
+	if resolved.ResolvedBy != w.operator {
+		t.Errorf("the difference records %s as resolver, want the operator %s", resolved.ResolvedBy, w.operator)
+	}
+	w.wantZeroSum(t)
 }

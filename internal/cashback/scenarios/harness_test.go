@@ -230,11 +230,12 @@ type reported struct {
 	external string
 }
 
-// reports stores what the network said, citing a reference. An empty ref is
-// a report the network sent with none, which is the unattributed path.
-func (w *world) reports(t *testing.T, ref string, status networks.Status) reported {
+// reports stores a PENDING report citing a reference: what the network says
+// first, and the state every purchase passes through. reportsAs is for the
+// gates that need another status, another id or another amount.
+func (w *world) reports(t *testing.T, ref string) reported {
 	t.Helper()
-	return w.reportsAs(t, "SCEN-"+suffix(t), ref, status, reportedCommission)
+	return w.reportsAs(t, "SCEN-"+suffix(t), ref, networks.StatusPending, reportedCommission)
 }
 
 // reportsAs is reports with the network's own id and the commission stated,
@@ -299,10 +300,12 @@ func (w *world) machines(t *testing.T) (*earnings.Entries, *earnings.Confirmatio
 	return machine, confirmations
 }
 
-// shareOf is the member's cut of a commission under a click's own snapshot.
-func (w *world) shareOf(t *testing.T, click clickout.Click, commission int64) money.Amount {
+// shareOf is the member's cut of the reported commission under a click's
+// own snapshot - which is the whole of FR-013: the band at the click, never
+// the band as it now stands.
+func (w *world) shareOf(t *testing.T, click clickout.Click) money.Amount {
 	t.Helper()
-	amount, err := money.New(commission, scenarioCurrency)
+	amount, err := money.New(reportedCommission, scenarioCurrency)
 	if err != nil {
 		t.Fatalf("money.New(): %v", err)
 	}
@@ -363,14 +366,21 @@ func (w *world) wantZeroSum(t *testing.T) {
 // with the operator who imported it: reconciliation is an accounting act
 // with a person behind it (US6), and FR-043 will not confirm a credit
 // without one.
-func (w *world) importsAStatement(t *testing.T) uuid.UUID {
+func (w *world) importsAStatement(t *testing.T) {
+	t.Helper()
+	w.importsStatement(t, `{"lines":[]}`)
+}
+
+// importsStatement is importsAStatement with the network's own lines in it,
+// for the gate that compares a statement against what was reported.
+func (w *world) importsStatement(t *testing.T, raw string) uuid.UUID {
 	t.Helper()
 	var run uuid.UUID
 	if err := w.tx.QueryRow(w.ctx, `
 		insert into cashback.reconciliation_run
 		    (network_account_id, statement_period_start, statement_period_end, imported_by, raw_statement)
-		values ($1, now() - interval '30 days', now() + interval '1 day', $2, '{"statement":"scenario"}'::jsonb)
-		returning id`, w.publisher, w.operator).Scan(&run); err != nil {
+		values ($1, now() - interval '30 days', now() + interval '1 day', $2, $3::jsonb)
+		returning id`, w.publisher, w.operator, raw).Scan(&run); err != nil {
 		t.Fatalf("importing the statement: %v", err)
 	}
 	return run
@@ -481,4 +491,90 @@ func (w *world) supersedes(t *testing.T, original reported, raw string, status n
 		t.Fatalf("superseding the report: %v", err)
 	}
 	return reported{id: id, external: original.external}
+}
+
+// entriesFor counts a member's entries, for the gates that assert nothing
+// was credited at all.
+func (w *world) entriesFor(t *testing.T, member uuid.UUID) int {
+	t.Helper()
+	var n int
+	if err := w.tx.QueryRow(w.ctx, `select count(*) from cashback.entry where account_id = $1`, member).Scan(&n); err != nil {
+		t.Fatalf("counting entries: %v", err)
+	}
+	return n
+}
+
+// wantDecisionAnnounced asserts one operator decision reached the stream
+// carrying both halves FR-061 asks for: who decided, and why.
+func (w *world) wantDecisionAnnounced(t *testing.T, entry uuid.UUID, eventType, actorField, reason string) {
+	t.Helper()
+	announced := w.eventsAbout(t, entry)[eventType]
+	if len(announced) != 1 {
+		t.Fatalf("announced %s %d time(s) about entry %s, want once", eventType, len(announced), entry)
+	}
+	if got, _ := announced[0]["reason"].(string); got != reason {
+		t.Errorf("%s announced reason %q, want %q", eventType, got, reason)
+	}
+	if got, _ := announced[0][actorField].(string); got != w.operator.String() {
+		t.Errorf("%s announced %s = %q, want the operator %s", eventType, actorField, got, w.operator)
+	}
+}
+
+// holdAnother opens a second held credit on a fresh click and report, for
+// the gates that need one decision per credit.
+func (w *world) holdAnother(t *testing.T, holds *earnings.Holds, machine *earnings.Entries) uuid.UUID {
+	t.Helper()
+	click := w.clickOut(t)
+	report := w.reports(t, click.Ref.Ref())
+	matched := w.match(t, report, click.Ref.Ref())
+	sale, err := money.New(reportedSaleMinor, scenarioCurrency)
+	if err != nil {
+		t.Fatalf("money.New(): %v", err)
+	}
+	hold, err := holds.Evaluate(w.ctx, earnings.Candidate{
+		Member: w.member, Click: matched.Click, Sale: sale, At: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("Evaluate(): %v", err)
+	}
+	if !hold.Held() {
+		t.Fatal("the second candidate was not held under the same cap as the first")
+	}
+	opened, err := machine.Open(w.ctx, w.tx, hold.Open(earnings.Credit{
+		Member: w.member, Brand: scenarioBrand, Report: report.id, Click: click.ID,
+		State: earnings.StatePending, Amount: w.shareOf(t, click),
+		Reason: "the network reported the purchase",
+	}))
+	if err != nil {
+		t.Fatalf("Open(): %v", err)
+	}
+	return opened.ID
+}
+
+// confirmedPurchase is one whole earn, from click to confirmed credit, for
+// the gates that need money already standing before they begin.
+//
+// The caller names the network's own id for the transaction rather than
+// having one generated, because a statement is written about transaction
+// ids and one run covers a whole period: a statement cannot be imported
+// after the purchases it names without either naming ids that do not exist
+// yet or importing a second run for the same period, which
+// reconciliation_run_statement_once refuses - correctly.
+func (w *world) confirmedPurchase(t *testing.T, external string) reported {
+	t.Helper()
+	click := w.clickOut(t)
+	report := w.reportsAs(t, external, click.Ref.Ref(), networks.StatusConfirmed, reportedCommission)
+	machine, confirmations := w.machines(t)
+	opened, err := machine.Open(w.ctx, w.tx, earnings.Credit{
+		Member: w.member, Brand: scenarioBrand, Report: report.id, Click: click.ID,
+		State: earnings.StatePending, Amount: w.shareOf(t, click),
+		Reason: "the network reported the purchase",
+	})
+	if err != nil {
+		t.Fatalf("Open(): %v", err)
+	}
+	if _, err := confirmations.Confirm(w.ctx, w.tx, opened, networks.StatusConfirmed, report.id); err != nil {
+		t.Fatalf("Confirm(): %v", err)
+	}
+	return report
 }
