@@ -43,6 +43,7 @@ export default getViteConfig({
         // minor units, so it is measured like the invariant it carries.
         'src/lib/cashback/money.ts',
         'src/lib/cashback/api.ts',
+        'src/i18n/cashback.ts',
         'src/lib/csrf.ts',
         'src/lib/secure-request.ts',
         'src/lib/editorial/api.ts',
