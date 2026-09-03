@@ -1,0 +1,237 @@
+---
+import { API_BASE_URL, APP_ENV } from 'astro:env/server';
+import OpsLayout from '../../layouts/OpsLayout.astro';
+import {
+  CashbackApiError,
+  CashbackConfigurationError,
+  createCashbackApi,
+  type CashbackApi,
+} from '../../lib/cashback/api';
+import { formatMoney } from '../../lib/cashback/money';
+import { opsAccess } from '../../lib/cashback/ops-guard';
+import { opsLanguage } from '../../lib/cashback/ops-language';
+import type { HeldEntry } from '../../lib/cashback/types';
+import { isSameOrigin } from '../../lib/csrf';
+import { editorSession } from '../../lib/editorial/session';
+import { formatItemDate } from '../../lib/reader/format';
+import { cashbackStrings } from '../../i18n/cashback';
+
+// The held-entries queue (T120 #267).
+//
+// Every row is a credit a hold rule kept out of a member's pending balance,
+// and the screen shows both halves an operator needs: the rule that held it
+// and what the rule said, beside what the network actually reported. That
+// pairing is the whole point — a hold is our judgement about the network's
+// fact, and deciding without seeing the fact is guessing.
+//
+// Release does not confirm. An operator can assert that a credit is
+// ordinary; they cannot assert that the network paid. So a released credit
+// rejoins the ordinary lifecycle and still waits on the network's word,
+// which is what the copy says rather than implying the money is now safe.
+const lang = opsLanguage(Astro.url);
+const t = cashbackStrings(lang);
+const session = editorSession(Astro.request);
+
+let api: CashbackApi | null = null;
+let items: readonly HeldEntry[] = [];
+let apiUnavailable = false;
+let notice: string | null = null;
+let refusal: string | null = null;
+
+try {
+  api = createCashbackApi(API_BASE_URL, { appEnv: APP_ENV, token: session.token });
+  const access = opsAccess(session, api.source);
+
+  if (Astro.request.method === 'POST') {
+    if (!isSameOrigin(Astro.request, Astro.url.origin)) {
+      return new Response('cross-origin request refused', { status: 403 });
+    }
+    if (!access.mayAct) {
+      return new Response('operator role required', { status: 403 });
+    }
+    const form = await Astro.request.formData();
+    const id = String(form.get('id') ?? '');
+    const action = String(form.get('action') ?? '');
+    const reason = String(form.get('reason') ?? '').trim();
+    if (reason === '') {
+      refusal = t.reasonRequired;
+    } else {
+      try {
+        if (action === 'release') {
+          await api.releaseHeld(id, reason);
+        } else {
+          await api.rejectHeld(id, reason);
+        }
+        notice = t.decisionRecorded;
+      } catch (error) {
+        if (!(error instanceof CashbackApiError)) {
+          throw error;
+        }
+        refusal = error.problem?.title ?? error.message;
+      }
+    }
+  }
+
+  if (access.mayRead) {
+    items = (await api.held()).items;
+  }
+} catch (error) {
+  if (error instanceof CashbackConfigurationError) {
+    console.error(`cashback ops: ${error.message}`);
+  }
+  apiUnavailable = true;
+  Astro.response.status = 503;
+  Astro.response.headers.set('Retry-After', '60');
+}
+
+const access = opsAccess(session, api?.source ?? 'api');
+if (access.blocked && !apiUnavailable) {
+  Astro.response.status = 403;
+}
+---
+
+<OpsLayout
+  lang={lang}
+  session={session}
+  current="held"
+  title={t.queueHeld}
+  fixtures={api?.source === 'fixture'}
+  blocked={access.blocked}
+  notice={notice}
+  refusal={refusal}
+>
+  <p class="hint">{t.oldestFirst}</p>
+  {items.length === 0 && !access.blocked && <p class="hint">{t.emptyQueue}</p>}
+
+  {
+    items.map((item) => (
+      <article class="row">
+        <div class="head">
+          <span class="figure">{formatMoney(lang, item.amount)}</span>
+          <span class="tag tag-outline">
+            {t.heldSince} {formatItemDate(lang, new Date(item.held_since))}
+          </span>
+        </div>
+        <div class="halves">
+          <section>
+            <h2>{t.holdRule}</h2>
+            <p class="rule">{item.hold_rule}</p>
+            <p class="reason">{item.hold_reason}</p>
+            <dl>
+              <dt>{t.accountLabel}</dt>
+              <dd class="ref">{item.account_id}</dd>
+            </dl>
+          </section>
+          <section>
+            <h2>{t.networkReported}</h2>
+            <dl>
+              <dt>{t.sale}</dt>
+              <dd>{formatMoney(lang, item.sale)}</dd>
+              <dt>{t.expected}</dt>
+              <dd>{formatMoney(lang, item.commission)}</dd>
+              <dt>{t.entryStates.pending}</dt>
+              <dd>{item.report_status}</dd>
+              <dt>{t.payoutReference}</dt>
+              <dd class="ref">{item.external_id}</dd>
+            </dl>
+          </section>
+        </div>
+        <form method="post" class="decide">
+          <input type="hidden" name="id" value={item.id} />
+          <div class="field">
+            <label for={`reason-${item.id}`}>{t.reasonLabel}</label>
+            <input class="input" id={`reason-${item.id}`} name="reason" required autocomplete="off" />
+          </div>
+          <div class="actions">
+            <button class="btn btn-primary" name="action" value="release" disabled={!access.mayAct}>
+              {t.release}
+            </button>
+            <button class="btn btn-secondary" name="action" value="reject" disabled={!access.mayAct}>
+              {t.reject}
+            </button>
+          </div>
+          <p class="required">{t.reasonRequired}</p>
+        </form>
+      </article>
+    ))
+  }
+</OpsLayout>
+
+<style>
+  .hint {
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    margin: 0 0 var(--space-4);
+  }
+  .row {
+    border-top: 1px solid var(--color-divider);
+    padding: var(--space-5) 0;
+  }
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+  }
+  .figure {
+    font: var(--font-heading-weight) 22px/1 var(--font-heading);
+  }
+  .halves {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: var(--space-6);
+    margin-bottom: var(--space-5);
+  }
+  h2 {
+    font: 600 11px/1.3 var(--font-heading);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    margin: 0 0 var(--space-3);
+  }
+  .rule {
+    margin: 0 0 var(--space-2);
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12.5px;
+  }
+  .reason {
+    margin: 0 0 var(--space-3);
+    font-size: 13.5px;
+    text-wrap: pretty;
+  }
+  dl {
+    display: grid;
+    grid-template-columns: minmax(120px, auto) 1fr;
+    gap: var(--space-2) var(--space-5);
+    margin: 0;
+    font-size: 13px;
+  }
+  dt {
+    color: var(--ink-muted);
+  }
+  dd {
+    margin: 0;
+  }
+  .ref {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .decide {
+    background: var(--color-surface);
+    border: 1px solid var(--color-divider);
+    padding: var(--space-4);
+    max-width: 560px;
+  }
+  .actions {
+    display: flex;
+    gap: var(--space-3);
+    margin-top: var(--space-4);
+  }
+  .required {
+    margin: var(--space-3) 0 0;
+    font-size: 11.5px;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+</style>
