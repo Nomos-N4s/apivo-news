@@ -236,6 +236,12 @@ unmodified.
 - A network reports a **sale and commission in different currencies**.
   `Reported.Validate` refuses it at the port. Whether that is Linkwise's
   behaviour is Q13.
+- A network reports **in a currency this deployment does not pay out**. The
+  report is internally consistent, so the port has nothing to say about it —
+  and today the entry is credited, confirmed, shown in the wallet and can
+  never be withdrawn, because `Confirmed` filters by the payout currency and
+  the withdrawal refuses any other (research.md §4.6). Nothing fails; the
+  money is simply unreachable.
 - A network's **subid is shorter than 22 characters** or restricts the
   character set. Apivo's minted reference would not survive the round trip
   and attribution silently fails. This is the hardest external constraint on
@@ -340,6 +346,25 @@ them quietly:
   that cannot tell declares the whole network unattributable rather than
   guessing per route.
 
+**Currency (money safety)**
+
+- **FR-108**: A publisher account MUST declare the currency its network
+  reports in, and connecting one whose currency this deployment cannot pay
+  out MUST be **refused at connection time**, by name — not discovered by a
+  member who cannot withdraw.
+- **FR-109**: A reported transaction in a currency this deployment cannot
+  pay out MUST NOT open an entry. It is queued for an operator, naming the
+  currency, exactly as an unattributable report is. The constitution puts
+  multi-currency wallets out of scope, so this is a refusal to design and
+  not a missing feature.
+- **FR-110**: A click-out MUST refuse a member who has not opted into
+  cashback. Today nothing checks it, so a signed-in member who never
+  accepted terms can click out and be credited — and FR-002's opt-in is not
+  one if a credit can precede it. This is in scope because FR-109's
+  enforcement rests on the member's own recorded currency, which only an
+  opt-in creates: without the gate, the refusal would land on a member who
+  had already bought something.
+
 ### Key Entities
 
 No new entity. Three existing ones gain meaning:
@@ -374,6 +399,10 @@ No new entity. Three existing ones gain meaning:
 - **SC-026**: A retailer whose only routes cannot carry a click reference
   publishes nothing and appears in an operator listing saying why — proved
   by a schema test asserting the database refuses to prefer such a route.
+- **SC-027**: No member ever holds a balance they cannot withdraw. A report
+  in a currency the deployment does not pay out opens **no** entry and
+  appears in an operator queue naming the currency — proved end to end
+  against a real Postgres, and refused earlier still at connection time.
 
 ---
 
@@ -398,12 +427,21 @@ resolve them.
   both. *Default*: both, with Awin's unfinished transactions work
   (T139–T144) in scope for this feature, since a second network cannot prove
   a seam the first has never used.
-- **Q13 — Currency posture.** If a network reports sale and commission in
-  different currencies, or in a currency the member's wallet does not hold —
-  refuse the report, or carry a second currency column? *Default*: refuse at
-  the port, as `Reported.Validate` does today, and treat a mixed-currency
-  network as a founder decision before its adapter is written. Note the
-  constitution puts **multi-currency wallets out of scope**.
+- **Q13 — Currency posture.** Two questions, and the second is the one with
+  a member's money in it.
+  *(a)* If a network reports sale and commission in **different
+  currencies** — refuse the report, or carry a second currency column?
+  *Default*: refuse at the port, as `Reported.Validate` does today.
+  *(b)* If a network reports in a currency this deployment **cannot pay
+  out** — refuse the network, refuse the report, or hold the balance?
+  *Default*: **refuse, twice.** At connection time, so a misconfiguration is
+  caught by the person making it; and at crediting, so a report that arrives
+  anyway is queued rather than credited. Holding the balance is what happens
+  today and it is the worst of the three: the member sees money they can
+  never withdraw, and nothing anywhere says so (research.md §4.6).
+  Both defaults follow from the constitution putting **multi-currency
+  wallets out of scope** — this is a refusal to design, not a missing
+  feature, and reversing either default means designing them.
 
 ---
 
