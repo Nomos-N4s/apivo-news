@@ -1,6 +1,5 @@
 ---
 import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
-import CashbackNav from '../../../../components/CashbackNav.astro';
 import FixtureNotice from '../../../../components/FixtureNotice.astro';
 import Masthead from '../../../../components/Masthead.astro';
 import RateBadge from '../../../../components/RateBadge.astro';
@@ -20,16 +19,25 @@ import { cashbackStrings, languageName } from '../../../../i18n/cashback';
 // One retailer — mockup 4c, whose own caption is the design argument and is
 // right: the terms are the interface (T107 #254).
 //
-// So the page is the bands, and each band carries what it carries: the
-// share the member earns, the conditions that qualify a basket, the
-// exclusions that void one, and the date the band lapses. Nothing is
-// summarised into a headline rate, because the thing that decides whether a
-// purchase pays is the small print and hiding it behind "up to 7%" is how a
-// cashback product earns its reputation.
+// The composition is the mockup's, block by block: the top bar in its
+// merchant variant (wordmark, rule, the way back to the catalogue), then a
+// two-column page — the retailer on the left, the tracked click on the
+// right. The left column is the header (photo slot beside kicker, name,
+// summary, tags), the dated rate table, and the two explainers; the rail is
+// the click-out, the member's history at this retailer, and where the
+// money comes from.
 //
-// `typical_confirmation_days` renders as "we do not know" rather than as a
-// number. The contract emits null and says why: nothing in the schema
-// records it, and a plausible constant reads to a member as a promise about
+// What the mockup draws and the contract does not carry is left out rather
+// than invented: "partner since / ships to" on the bar (no data), the
+// merchant photograph (no image on the payload — a neutral slot keeps the
+// composition), the per-category rows (no categories, #414 — the table is
+// the rate BANDS the API publishes, each with its conditions, exclusions
+// and the date it lapses), the history figures (no per-merchant history
+// endpoint — the block states that plainly), and the "report a missing
+// order" link (no claims flow).
+//
+// `typical_confirmation_days` is null by contract and nothing here turns it
+// into a number: a plausible constant reads to a member as a promise about
 // when they will be paid.
 const axes = parseAxes(Astro.params['lang'], Astro.params['place']);
 const slug = Astro.params['slug'];
@@ -73,6 +81,15 @@ const fixtures = api?.source === 'fixture';
 const homeHref = frontPagePath(lang, slugs);
 const clickoutFailed = Astro.url.searchParams.has('clickout');
 const backHere = merchantPath(lang, slugs, slug);
+
+// The kicker is the two facts true of every partner on this shelf: online,
+// reached by a tracked link (#445 — nothing is card-linked or in-store).
+const kicker = `${t.online} · ${t.trackedLink}`;
+// The click-out is one form, on the first band: a click is tracked against
+// an offer, and the band a member reads first is the one the button opens.
+const firstRate = merchant?.rates[0];
+const trackingSteps = [t.tracking1, t.tracking2, t.tracking3] as const;
+const voids = [t.void1, t.void2, t.void3] as const;
 ---
 
 <ReaderLayout
@@ -81,8 +98,12 @@ const backHere = merchantPath(lang, slugs, slug);
   description={t.cashback}
   homeHref={homeHref}
 >
-  <Masthead homeHref={homeHref} />
-  <CashbackNav lang={lang} slugs={slugs} current="catalogue" />
+  <div class="bar">
+    <Masthead homeHref={homeHref}>
+      <span class="rule" aria-hidden="true"></span>
+      <a class="back" href={cataloguePath(lang, slugs)}>← {t.catalogue}</a>
+    </Masthead>
+  </div>
 
   <main class="merchant">
     {fixtures && <FixtureNotice title={t.cashback} body={t.fixtureNotice} />}
@@ -91,139 +112,379 @@ const backHere = merchantPath(lang, slugs, slug);
 
     {
       merchant !== null && (
-        <>
-          <p class="crumb"><a href={cataloguePath(lang, slugs)}>{t.catalogue}</a></p>
+        <div class="page">
+          <div class="body">
+            <header class="head">
+              <div class="photo-cell">
+                <div class="photo grayscale" role="img" aria-label={merchant.name} />
+              </div>
+              <div class="head-text">
+                <span class="card-kicker">{kicker}</span>
+                <h1 class="name">{merchant.name}</h1>
+                {merchant.summary !== null && <p class="summary">{merchant.summary}</p>}
+                <div class="tags">
+                  <span class="tag tag-neutral">{languageName(lang, merchant.name_language)}</span>
+                  <span class="tag tag-neutral">{t.trackedLink}</span>
+                </div>
+              </div>
+            </header>
 
-          <header class="head">
-            <h1>{merchant.name}</h1>
-            {merchant.name_is_fallback && (
-              <p class="fallback">
-                {t.shownInLanguage(languageName(lang, merchant.name_language))}
-              </p>
-            )}
-            {merchant.summary !== null && <p class="summary">{merchant.summary}</p>}
-          </header>
-
-          <section class="rates" aria-labelledby="rates-heading">
-            <h2 id="rates-heading">{t.rates}</h2>
-            {merchant.rates.length === 0 && <p class="none">{t.noRatesToday}</p>}
-            {
-              merchant.rates.map((rate) => (
-                <article class="band-row">
-                  <div class="band-head">
-                    <RateBadge lang={lang} rate={rate} />
-                    {rate.valid_to !== null && (
-                      <span class="tag tag-outline">
-                        {t.validUntil} {formatItemDate(lang, new Date(rate.valid_to))}
-                      </span>
-                    )}
+            <section class="rates" aria-labelledby="rates-heading">
+              <h6 id="rates-heading" class="accent">{t.ratesDated}</h6>
+              {merchant.rates.length === 0 && <p class="none">{t.noRatesToday}</p>}
+              {
+                merchant.rates.length > 0 && (
+                  <div class="scroll">
+                    <table class="table">
+                      <thead>
+                        <tr>
+                          <th scope="col">{t.rateColumn}</th>
+                          <th scope="col">{t.validUntil}</th>
+                          <th scope="col">{t.conditions}</th>
+                          <th scope="col">{t.exclusions}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {merchant.rates.map((rate) => (
+                          <tr>
+                            <td class="rate-cell">
+                              <RateBadge lang={lang} rate={rate} />
+                            </td>
+                            <td class="valid">
+                              {rate.valid_to === null
+                                ? t.none
+                                : formatItemDate(lang, new Date(rate.valid_to))}
+                            </td>
+                            <td class="small">{rate.conditions ?? t.none}</td>
+                            <td class="small">{rate.exclusions ?? t.none}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                  <dl>
-                    <dt>{t.conditions}</dt>
-                    <dd>{rate.conditions ?? '—'}</dd>
-                    <dt>{t.exclusions}</dt>
-                    <dd>{rate.exclusions ?? '—'}</dd>
-                  </dl>
-                  <form method="post" action="/api/cashback/clickout">
-                    <input type="hidden" name="offer_id" value={rate.offer_id} />
-                    <input type="hidden" name="back" value={backHere} />
-                    <button class="btn btn-primary" type="submit">{t.shopAndEarn}</button>
-                  </form>
-                </article>
-              ))
-            }
-          </section>
+                )
+              }
+            </section>
 
-          <p class="note">{t.confirmationTimeUnknown}</p>
-          <p class="note">{t.rateAtClick}</p>
-        </>
+            <div class="explainers">
+              <section class="explainer tracking" aria-labelledby="tracking-heading">
+                <h6 id="tracking-heading">{t.howTrackingWorks}</h6>
+                <ol class="rows">
+                  {trackingSteps.map((step, index) => (
+                    <li class="row">
+                      <span class="num" aria-hidden="true">{index + 1}</span>
+                      <span class="row-text">{step}</span>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+              <section class="explainer voids" aria-labelledby="voids-heading">
+                <h6 id="voids-heading">{t.whatVoids}</h6>
+                <ul class="rows">
+                  {voids.map((item) => (
+                    <li class="row">
+                      <span class="row-text">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p class="stated">{t.statedBefore}</p>
+              </section>
+            </div>
+          </div>
+
+          <aside class="rail" aria-label={t.shopAndEarn}>
+            <div class="clickout">
+              {
+                firstRate !== undefined ? (
+                  <form method="post" action="/api/cashback/clickout">
+                    <input type="hidden" name="offer_id" value={firstRate.offer_id} />
+                    <input type="hidden" name="back" value={backHere} />
+                    <button class="btn btn-primary btn-block shop" type="submit">
+                      {t.shopAtTracking(merchant.name)}
+                    </button>
+                    <div class="opens">{t.opensTracked}</div>
+                  </form>
+                ) : (
+                  <p class="no-rates">{t.noRatesToday}</p>
+                )
+              }
+            </div>
+
+            <section class="history" aria-labelledby="history-heading">
+              <h6 id="history-heading">{t.yourHistoryHere}</h6>
+              <div class="history-list">
+                <div class="history-row">
+                  <span>{t.noHistoryHere}</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="money" aria-labelledby="money-heading">
+              <h6 id="money-heading" class="accent">{t.whereMoney}</h6>
+              <p>{t.whereMoneyP(merchant.name)}</p>
+            </section>
+          </aside>
+        </div>
       )
     }
   </main>
 </ReaderLayout>
 
 <style>
+  /* — the top bar, in its merchant variant — */
+  .bar :global(.brand) {
+    margin-right: 0;
+    font-size: 20px;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .bar :global(.masthead) {
+    gap: 14px;
+    padding: 14px 26px;
+    border-bottom-width: 2px;
+  }
+  .rule {
+    width: 1px;
+    height: 16px;
+    background: var(--color-divider);
+  }
+  .back {
+    font-size: 13px;
+    text-decoration: none;
+    color: var(--color-text);
+  }
+
   .merchant {
     flex: 1;
-    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) 28px;
-    max-width: 78ch;
+    display: flex;
+    flex-direction: column;
   }
   .band {
     border: 2px solid var(--color-accent-700);
     background: var(--color-surface);
     padding: 20px;
-    margin: 0 0 var(--space-6);
+    margin: 0 0 20px;
     font-size: 14px;
     text-wrap: pretty;
   }
-  .crumb {
-    margin: 0 0 var(--space-4);
-    font-size: 13px;
+
+  /* — the two columns — */
+  .page {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 420px;
+    align-items: stretch;
   }
-  .head h1 {
-    margin: 0 0 var(--space-3);
+  .body {
+    border-right: 1px solid var(--color-divider);
+    min-width: 0;
   }
-  .fallback {
-    margin: 0 0 var(--space-3);
-    font-size: 13px;
-    font-style: italic;
-    color: var(--ink-muted);
+
+  /* — header: photo slot beside the name — */
+  .head {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .photo-cell {
+    padding: 24px 0 24px 26px;
+  }
+  .photo {
+    width: 100%;
+    height: 190px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-divider);
+  }
+  .head-text {
+    padding: 24px 26px;
+    min-width: 0;
+  }
+  .head-text .card-kicker {
+    font-size: 10.5px;
+  }
+  .name {
+    font-size: 32px;
+    margin: 10px 0 10px;
   }
   .summary {
-    margin: 0 0 20px;
-    font-size: 15px;
+    font-size: 14px;
+    margin: 0 0 14px;
+    max-width: 52ch;
     text-wrap: pretty;
   }
-  .rates h2 {
-    font-size: 20px;
-    margin: var(--space-6) 0 var(--space-4);
-    padding-bottom: var(--space-2);
-    border-bottom: 2px solid var(--color-divider);
+  .tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
   }
-  .band-row {
+  .tags .tag {
+    font-size: 10.5px;
+  }
+
+  /* — the dated rate table — */
+  .rates {
+    padding: 22px 26px;
     border-bottom: 1px solid var(--color-divider);
-    padding: 20px 0;
+  }
+  h6 {
+    margin: 0 0 12px;
+  }
+  h6.accent {
+    color: var(--color-accent);
+  }
+  .scroll {
+    overflow-x: auto;
+  }
+  .scroll th {
+    white-space: nowrap;
+  }
+  .rate-cell {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .valid {
+    white-space: nowrap;
+  }
+  .small {
+    font-size: 12px;
+  }
+  .none {
+    margin: 0;
+    font-size: 12.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    text-wrap: pretty;
+  }
+
+  /* — the two explainers — */
+  .explainers {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .explainer {
+    padding: 22px 26px;
+    min-width: 0;
+  }
+  .tracking {
+    border-right: 1px solid var(--color-divider);
+  }
+  .rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
-    align-items: flex-start;
+    border-top: 1px solid var(--color-divider);
   }
-  .band-head {
+  .row {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--color-divider);
     display: flex;
-    align-items: center;
-    gap: var(--space-4);
+    gap: 12px;
+    font-size: 13px;
   }
-  .band-row dl {
-    display: grid;
-    grid-template-columns: minmax(110px, auto) 1fr;
-    gap: var(--space-2) 20px;
-    margin: 0;
-    font-size: 13.5px;
+  .num {
+    font: 600 12px var(--font-heading);
+    color: var(--color-accent);
+    width: 16px;
+    flex: none;
   }
-  .band-row dt {
-    color: var(--ink-muted);
+  .row-text {
+    font-size: 13px;
   }
-  .band-row dd {
-    margin: 0;
+  .stated {
+    margin: 12px 0 0;
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
     text-wrap: pretty;
   }
-  .none,
-  .note {
-    margin: var(--space-4) 0 0;
-    font-size: 12.5px;
-    color: var(--ink-muted);
+
+  /* — the rail — */
+  .rail {
+    padding: 22px 24px;
+    background: var(--color-surface);
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-width: 0;
+  }
+  .shop {
+    font-size: 15px;
+    padding: 14px 16px;
+    margin-top: 0;
+  }
+  .no-rates {
+    margin: 0;
+    font-size: 14px;
     text-wrap: pretty;
   }
-  @media (max-width: 560px) {
-    .merchant {
-      padding: 20px var(--space-4) var(--space-6);
-    }
-    .band-row dl {
+  .opens {
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    margin-top: 8px;
+  }
+  .history-list {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--color-divider);
+    background: var(--color-bg);
+    font-size: 13px;
+  }
+  .history-row {
+    padding: 11px 14px;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .history-row + .history-row {
+    border-top: 1px solid var(--color-divider);
+  }
+  .money {
+    border-top: 2px solid var(--color-divider);
+    padding-top: 16px;
+  }
+  .money h6 {
+    margin: 0 0 8px;
+  }
+  .money p {
+    margin: 0;
+    font-size: 12px;
+    text-wrap: pretty;
+  }
+
+  /* — phone: one column, the rail below — */
+  @media (max-width: 660px) {
+    .page {
       grid-template-columns: 1fr;
-      gap: 2px 20px;
     }
-    .band-row dt {
-      margin-top: var(--space-2);
+    .body {
+      border-right: 0;
+    }
+    .head {
+      grid-template-columns: 1fr;
+    }
+    .photo-cell {
+      padding: 20px 20px 0;
+    }
+    .head-text {
+      padding: 20px;
+    }
+    .name {
+      font-size: 28px;
+    }
+    .rates,
+    .explainer {
+      padding: 20px;
+    }
+    .explainers {
+      grid-template-columns: 1fr;
+    }
+    .tracking {
+      border-right: 0;
+      border-bottom: 1px solid var(--color-divider);
+    }
+    .rail {
+      border-top: 2px solid var(--color-divider);
+      padding: 20px;
     }
   }
 </style>
