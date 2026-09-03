@@ -97,6 +97,8 @@ the failures that do not announce themselves. See
 - [ ] T230 [US4] Extend the OpenAPI document with the new endpoints and re-run the route-coverage and C-6 money guards (`cmd/apivo/openapi_routes_test.go`, `openapi_money_test.go`)
 - [ ] T231 [US5] `internal/cashback/networks/conformance_test.go`: the suite becomes a table over the **shipped registry**, so an adapter compiled into the binary is an adapter the suite runs ([contracts/ports.md](contracts/ports.md) §4)
 - [ ] T232 [US5] Conformance scenario for rule 3's clarification: two adapters run concurrently, and a `429` against one does not delay the other (FR-106)
+- [ ] T261 [US4] `Limits()` reads the network's row, per network (FR-113) — or the port's claim that it does comes out. `cashback.network` carries both numbers per network already, and `connect.go:202` discards the row it reads
+- [ ] T262 [US4] `POST …/ops/reconciliation/runs` takes the network and the publisher's own account identifier instead of a raw `network_account_id` UUID, so reconciling the second account does not need a `psql` session to find one
 - [ ] T233 [US5] Conformance scenario for rule 10: an adapter yields a route it knows cannot carry a click reference, with the fact set rather than the route omitted
 - [ ] T234 [US1] Integration test against real Postgres and the real scheduler: a two-network deployment polls both, imports both catalogues, and serves click-outs for both (SC-020)
 - [ ] T235 [US5] Re-run `internal/arch/network_isolation_test.go` **unmodified** with a second adapter package present — SC-008 with two packages, and the proof that a third costs one directory (SC-024)
