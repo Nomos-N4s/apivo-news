@@ -24,6 +24,13 @@ day two networks feed it (FR-102).
 | `GET …/reconciliation/runs/{id}/differences` | Every row names its network. A run is already per statement, and a statement is already per network |
 | `GET …/exports/ledger`, `…/exports/reconciliation` | A network column in both JSON and CSV. Existing consumers see one more column, never a changed one |
 
+`POST …/reconciliation/runs` takes the **network** and the publisher's own
+account identifier rather than a raw `network_account_id` UUID
+(`ops/reconciliation_http.go:59,98`). With one account an operator could
+find that UUID; with two, reconciling either means a `psql` session first,
+and the endpoint is the one place a mis-typed UUID reconciles the wrong
+network's statement.
+
 `?network=` naming a network that is not connected is **400**, not an empty
 list — an empty list is indistinguishable from "no work", and a typo in a
 network id is the likeliest way to be told there is none.
