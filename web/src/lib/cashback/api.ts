@@ -90,16 +90,16 @@ export class CashbackConfigurationError extends Error {
 export interface CatalogueQuery {
   readonly lang: string;
   readonly places: readonly string[];
-  readonly q?: string;
-  readonly limit?: number;
-  readonly cursor?: string;
+  readonly q?: string | undefined;
+  readonly limit?: number | undefined;
+  readonly cursor?: string | undefined;
 }
 
 /** Query for the member's entry list. */
 export interface EntryQuery {
-  readonly state?: EntryState;
-  readonly limit?: number;
-  readonly cursor?: string;
+  readonly state?: EntryState | undefined;
+  readonly limit?: number | undefined;
+  readonly cursor?: string | undefined;
 }
 
 /** The surface the pages consume. */
