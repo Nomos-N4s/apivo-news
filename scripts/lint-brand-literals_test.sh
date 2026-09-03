@@ -150,6 +150,25 @@ commit_all
 expect_clean "a longer word that merely starts like a brand literal is not one"
 
 # ---------------------------------------------------------------------------
+# Citing a specification is not naming a brand
+
+fixture
+write "internal/editorial/handler_test.go" '// Wire shape per specs/001-epiloyes-alpha/contracts/http-api.md.'
+write "web/src/lib/reader/api.ts" ' * See specs/001-epiloyes-alpha/contracts/http-api.md.'
+commit_all
+expect_clean "a path to a specification is the address of a file, not a literal"
+
+fixture
+write "internal/editorial/handler.go" '// Per specs/001-epiloyes-alpha/contracts/http-api.md, epiloYES answers 404.'
+commit_all
+expect_caught "a line that cites a spec AND names the brand is still caught" "product name"
+
+fixture
+write "web/src/components/Masthead.astro" '<a href="/specs/001-epiloyes-alpha/">epiloYES</a>'
+commit_all
+expect_caught "the exemption removes the path and then looks at what is left" "product name"
+
+# ---------------------------------------------------------------------------
 # What is deliberately out of scope
 
 fixture
