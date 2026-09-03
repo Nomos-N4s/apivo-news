@@ -267,7 +267,7 @@ performance argument instead of a rule.
 ### D-E. Arbitration: a published route must be alive (0034)
 
 `merchant_network_one_preferred` already guarantees **at most one** preferred
-route per retailer (`0011:181-184`). Two things it does not guarantee, and
+route per retailer (`0011:181-183`). Two things it does not guarantee, and
 neither matters until a retailer is on two networks:
 
 - a preferred route may be `left_network` or `paused` — a dead route keeps
