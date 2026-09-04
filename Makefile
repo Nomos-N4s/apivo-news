@@ -17,7 +17,7 @@ DATABASE_URL_TEST ?= postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
 # `make test RACE=` and let CI cover the race detection.
 RACE ?= -race
 
-.PHONY: setup db-up db-down test test-unit cover arch-test vet lint openapi-lint sqlc ts-types web-install web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status cashback-up cashback-seed cashback-scenario cashback-verify-ledger cashback-brand-check migration-lint ref-lint
+.PHONY: setup db-up db-down test test-unit cover arch-test vet lint openapi-lint sqlc ts-types web-install web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status cashback-up cashback-seed cashback-scenario cashback-verify-ledger cashback-brand-check migration-lint migration-numbering-lint ref-lint
 
 # ---------------------------------------------------------------------------
 # `missing` — how a cashback target behaves before its dependency has landed.
@@ -280,3 +280,13 @@ migration-lint:
 	@test -f scripts/lint-migrations.sh || \
 		$(call missing,scripts/lint-migrations.sh,task T039 (issue #186) - the migration lint,read the migrations by hand - the arch test covers Go imports but nothing covers schema boundaries)
 	sh scripts/lint-migrations.sh
+
+## migration-numbering-lint: versions are unique, contiguous and paired
+##
+## Separate from migration-lint because that one reads SQL text and accepts
+## arbitrary .sql paths; this one judges a directory as a whole and would
+## refuse migration-lint's own single-file fixtures.
+migration-numbering-lint:
+	@test -f scripts/lint-migration-numbering.sh || \
+		$(call missing,scripts/lint-migration-numbering.sh,issue #507 - the migration numbering lint,check by hand that no two migrations share a version and that every up has a down - golang-migrate only refuses a duplicate when it runs)
+	sh scripts/lint-migration-numbering.sh

@@ -89,6 +89,7 @@ check_guard internal/cashback/scenarios cashback-scenario NAME=earn-confirm
 check_guard internal/cashback/wallet/zerosum.go cashback-verify-ledger
 check_guard scripts/lint-brand-literals.sh cashback-brand-check
 check_guard scripts/lint-migrations.sh migration-lint
+check_guard scripts/lint-migration-numbering.sh migration-numbering-lint
 
 # ---------------------------------------------------------------------------
 # 2. A target whose dependency is PRESENT succeeds.
@@ -141,6 +142,7 @@ check_passthrough() {
 }
 
 check_passthrough scripts/lint-migrations.sh migration-lint
+check_passthrough scripts/lint-migration-numbering.sh migration-numbering-lint
 check_passthrough scripts/lint-brand-literals.sh cashback-brand-check
 
 # ---------------------------------------------------------------------------
@@ -152,7 +154,8 @@ check_passthrough scripts/lint-brand-literals.sh cashback-brand-check
 # ---------------------------------------------------------------------------
 set +e
 dry=$("$MAKE" -n cashback-up cashback-seed cashback-scenario NAME=earn-confirm \
-    cashback-verify-ledger cashback-brand-check migration-lint 2>&1)
+    cashback-verify-ledger cashback-brand-check migration-lint \
+    migration-numbering-lint 2>&1)
 dry_status=$?
 set -e
 
