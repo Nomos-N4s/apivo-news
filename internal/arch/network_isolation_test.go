@@ -29,6 +29,7 @@ package arch
 
 import (
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -47,6 +48,11 @@ const (
 	// networksPort is the package that declares the Network port. Adapters
 	// live directly beneath it, one directory each.
 	networksPort = internalPrefix + "cashback/networks"
+	// portPackage and portInterface spell the assertion an adapter makes
+	// about itself: `var _ networks.Network = ...`. Split in two because
+	// they are matched separately, against the selector's halves.
+	portPackage   = "networks"
+	portInterface = "Network"
 	// platformRoot is the shared bottom layer, which an adapter may use for
 	// the same reason anything else may: money, time and the primitives
 	// that are nobody's domain.
@@ -110,6 +116,64 @@ func holdsHandwrittenGo(fsys fs.FS, dir string) (bool, error) {
 		}
 		if !strings.Contains(string(src), generatedMarker) {
 			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// declaresThePort reports whether a package under the port asserts it
+// implements it, in the idiom every adapter uses:
+//
+//	var _ networks.Network = (*Network)(nil)
+//
+// This is what tells a finished adapter from a package on its way to being
+// one. The directory alone cannot: awin holds hand-written Go and looks like
+// an adapter, but *awin.Client has no FetchTransactions and no Limits, so it
+// does not satisfy networks.Network and no deployment could select it if it
+// were wired. Requiring it to be reachable would be requiring a wiring line
+// that does not compile.
+//
+// Only the reachability rule uses this. The containment rules keep judging
+// every package under the port by its directory, because "do not reach into
+// the domain" binds a half-written adapter exactly as much as a finished one
+// - and binds it while it is being written, which is when it matters.
+func declaresThePort(fsys fs.FS, dir string) (bool, error) {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return false, fmt.Errorf("reading %s: %w", dir, err)
+	}
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		name := path.Join(dir, entry.Name())
+		src, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			return false, fmt.Errorf("reading %s: %w", name, err)
+		}
+		file, err := parser.ParseFile(fset, name, src, parser.SkipObjectResolution)
+		if err != nil {
+			return false, fmt.Errorf("parsing %s: %w", name, err)
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok || value.Type == nil || len(value.Names) != 1 || value.Names[0].Name != "_" {
+					continue
+				}
+				selector, ok := value.Type.(*ast.SelectorExpr)
+				if !ok || selector.Sel.Name != portInterface {
+					continue
+				}
+				if pkg, ok := selector.X.(*ast.Ident); ok && pkg.Name == portPackage {
+					return true, nil
+				}
+			}
 		}
 	}
 	return false, nil
@@ -325,9 +389,19 @@ func TestEveryAdapterIsReachableFromTheCompositionRoot(t *testing.T) {
 		t.Fatalf("scanning cmd/: %v", err)
 	}
 
+	// Only packages that assert they implement the port. A package on its
+	// way to being an adapter cannot be wired - the wiring line would not
+	// compile - so demanding it be reachable would demand the impossible and
+	// the only way to satisfy it would be a fake registration, which is the
+	// seedable-but-not-servable state the registry exists to remove.
+	portFS := os.DirFS(filepath.Join(root, "internal", "cashback", "networks"))
 	var unwired []string
 	for adapter := range adapters {
-		if !wired[adapter] {
+		implements, err := declaresThePort(portFS, path.Base(adapter))
+		if err != nil {
+			t.Fatalf("reading %s: %v", short(adapter), err)
+		}
+		if implements && !wired[adapter] {
 			unwired = append(unwired, short(adapter))
 		}
 	}
@@ -489,4 +563,67 @@ func graphAt(file string, imports []string) fstest.MapFS {
 	}
 	src.WriteString(")\n")
 	return fstest.MapFS{file: &fstest.MapFile{Data: []byte(src.String())}}
+}
+
+// TestAnAdapterIsRecognisedByItsPortAssertion. The reachability rule turns on
+// this one predicate, so it is proved directly rather than only through the
+// rule that uses it. Getting it wrong in either direction is expensive: too
+// strict and a half-written package demands a wiring line that cannot
+// compile; too loose and a finished adapter nothing wires passes its
+// conformance suite while no deployment can select it.
+func TestAnAdapterIsRecognisedByItsPortAssertion(t *testing.T) {
+	t.Parallel()
+
+	const assertion = "package a\n\nimport \"x/networks\"\n\nvar _ networks.Network = (*A)(nil)\n\ntype A struct{}\n"
+
+	for _, tc := range []struct {
+		name string
+		fsys fstest.MapFS
+		want bool
+	}{
+		{
+			name: "the idiom every adapter uses",
+			fsys: fstest.MapFS{"a/port.go": {Data: []byte(assertion)}},
+			want: true,
+		},
+		{
+			name: "hand-written Go without the assertion is not yet an adapter",
+			fsys: fstest.MapFS{"a/client.go": {Data: []byte("package a\n\ntype Client struct{}\n")}},
+			want: false,
+		},
+		{
+			name: "found in whichever file carries it, not only port.go",
+			fsys: fstest.MapFS{
+				"a/client.go": {Data: []byte("package a\n\ntype A struct{}\n")},
+				"a/other.go":  {Data: []byte(assertion)},
+			},
+			want: true,
+		},
+		{
+			name: "a test file does not make a package an adapter",
+			fsys: fstest.MapFS{"a/port_test.go": {Data: []byte(assertion)}},
+			want: false,
+		},
+		{
+			name: "a named variable is a real dependency, not an assertion",
+			fsys: fstest.MapFS{"a/port.go": {Data: []byte("package a\n\nimport \"x/networks\"\n\nvar n networks.Network\n")}},
+			want: false,
+		},
+		{
+			name: "some other interface asserted the same way does not count",
+			fsys: fstest.MapFS{"a/port.go": {Data: []byte("package a\n\nimport \"x/ledger\"\n\nvar _ ledger.Ledger = (*A)(nil)\n\ntype A struct{}\n")}},
+			want: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := declaresThePort(tc.fsys, "a")
+			if err != nil {
+				t.Fatalf("declaresThePort: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("declaresThePort = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }

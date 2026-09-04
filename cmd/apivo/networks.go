@@ -20,7 +20,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
-	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks/fixture"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 )
 
@@ -135,13 +134,13 @@ func newNetworkSweeps(ctx context.Context, log *slog.Logger, adapter networks.Ne
 // said which network this deployment integrates; a binary that does not have
 // that network cannot poll it, cannot be made to by configuration, and
 // starting anyway would leave a deployment that believes it is connected.
+//
+// The set of drivers is [shippedNetworks] rather than a switch here, so that
+// this answer and connect-network's cannot disagree.
 func networkAdapter(driver string, account networks.PublisherAccount) (networks.Network, error) {
-	switch driver {
-	case config.NetworkDriverFixture:
-		return fixture.New(account)
-	default:
-		return nil, fmt.Errorf(
-			"NETWORK_DRIVER %s is not an adapter this binary has; it ships %s, and a network's own adapter is a release rather than a configuration change",
-			strconv.Quote(driver), strconv.Quote(config.NetworkDriverFixture))
+	entry, err := lookupNetwork(driver)
+	if err != nil {
+		return nil, err
 	}
+	return entry.construct(account)
 }

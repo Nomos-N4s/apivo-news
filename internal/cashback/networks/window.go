@@ -148,6 +148,25 @@ type Limits struct {
 	// is what the adapter's limiter is configured from; nothing in this file
 	// consumes it, because no single call can be judged against a rate.
 	RequestsPerMinute int
+	// ReportingLag is how far behind the present this network's answers
+	// are: the age a transaction must reach before the network will report
+	// it at all. Zero means the network answers up to the moment, which is
+	// what every adapter declared before this field existed.
+	//
+	// It exists because the forward sweep asks for a window ending now, and
+	// a network that is behind answers cleanly and emptily for the part it
+	// has not reached. The cursor then advances past ground nobody has
+	// reported, and only the trailing sweep revisits it - roughly a hundred
+	// days later. Nothing is lost, but a member waits a quarter for a credit
+	// that was earned today, which is SC-001 broken in the one way no error
+	// stream shows.
+	//
+	// UNLIKE the two fields above, zero is the ORDINARY value here, not the
+	// dangerous one. Those refuse zero because an unset Limits would make
+	// every window too wide and every request unpermitted; this one is
+	// simply the absence of a lag. Negative is what is refused, because a
+	// network cannot report the future.
+	ReportingLag time.Duration
 }
 
 // Validate reports whether the limits describe a network that can be
@@ -164,6 +183,9 @@ func (l Limits) Validate() error {
 	}
 	if l.RequestsPerMinute <= 0 {
 		return fmt.Errorf("%w: request rate of %d per minute", ErrInvalidLimits, l.RequestsPerMinute)
+	}
+	if l.ReportingLag < 0 {
+		return fmt.Errorf("%w: reporting lag of %s, and a network cannot report the future", ErrInvalidLimits, l.ReportingLag)
 	}
 	return nil
 }

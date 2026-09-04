@@ -15,6 +15,7 @@ package db_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -39,6 +40,17 @@ func TestCashbackCatalogueRejectsIllegalWrites(t *testing.T) {
 				_, err := tx.Exec(ctx,
 					`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute)
 					 values ($1, '   ', 'clickref', 31, 300)`, "blank_"+f.suffix)
+				return err
+			},
+			wantCode: codeCheckViolation,
+		},
+		{
+			name: "network reporting a negative lag, which would claim it reports the future",
+			rule: "network",
+			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
+				_, err := tx.Exec(ctx,
+					`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, reporting_lag_minutes)
+					 values ($1, 'Backwards', 'clickref', 31, 300, -1)`, "backwards_"+f.suffix)
 				return err
 			},
 			wantCode: codeCheckViolation,
@@ -440,6 +452,21 @@ func TestCashbackCatalogueAcceptsTheLegalPath(t *testing.T) {
 	tx := beginTx(t)
 	ctx := context.Background()
 	f := seedCashback(t, tx)
+
+	// Zero is the ORDINARY value on reporting_lag_minutes, unlike the two
+	// bounds beside it which are constrained above zero. A network with no
+	// reporting lag answers up to the moment, which is what every row meant
+	// before the column existed. Asserted here so that tightening the check
+	// to `> 0` - the obvious mistake, made by matching the pattern of its
+	// neighbours - fails rather than silently shortening every window.
+	for _, lag := range []int{0, 90} {
+		if _, err := tx.Exec(ctx,
+			`insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, reporting_lag_minutes)
+			 values ($1, 'Lagging', 'clickref', 31, 300, $2)`,
+			fmt.Sprintf("lag%d_%s", lag, f.suffix), lag); err != nil {
+			t.Fatalf("a reporting lag of %d minutes was refused, and it is a legal declaration: %v", lag, err)
+		}
+	}
 
 	// A second rate band on the same route: rates vary by category, and
 	// every published band must be representable (US5 scenario 3).

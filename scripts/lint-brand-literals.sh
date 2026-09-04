@@ -136,6 +136,38 @@ scan "brand domain or address" "$HOST_PATTERN" '*'
 scan "colour" "$COLOUR_PATTERN" '*'
 scan "colour" "$SHORT_COLOUR_PATTERN" '*.css'
 
+# A CITATION of a spec directory is a reference to a document, not a brand
+# literal, and it is the same exemption specs/ itself already has: a
+# specification records what was true when it was written, and its directory
+# is named after the feature - so `specs/001-epiloyes-alpha/contracts/` is
+# the address of a file that exists. Renaming it to satisfy this lint would
+# break every reference to it and rewrite history to say something that was
+# never true.
+#
+# Only the product-name rule is filtered, and only where the name appears
+# solely inside such a path. A spec directory cannot contain a domain or a
+# colour, so the other rules are untouched; and a line that cites a spec AND
+# names the brand separately still fails, because the test below removes the
+# path first and then looks again at what is left.
+uncited="$work/uncited"
+: > "$uncited"
+while IFS= read -r hit; do
+    case "$hit" in
+        "product name|"*) ;;
+        *) printf '%s\n' "$hit" >> "$uncited"; continue ;;
+    esac
+    # RULE|path:line:content - strip the two positions, keep the text.
+    text=${hit#*|}
+    text=${text#*:}
+    text=${text#*:}
+    if printf '%s\n' "$text" \
+        | sed -E 's#specs/[0-9]{3}-[A-Za-z0-9._-]+##g' \
+        | grep -qiE "$NAME_PATTERN"; then
+        printf '%s\n' "$hit" >> "$uncited"
+    fi
+done < "$hits"
+mv "$uncited" "$hits"
+
 # budgets — the hits this lint already knows about, per file.
 #
 # Every entry is a real literal that predates the brand configuration.
@@ -165,26 +197,17 @@ web/src/components/SiteFooter.test.ts 3
 # translated sentence — FR-071's "interpolated token, never part of a
 # translated string" is exactly what these have not done yet.
 web/src/lib/reader/strings.ts 5
-web/src/lib/editorial/strings.ts 2
 web/src/lib/reader/fixtures.ts 4
 web/src/lib/editorial/fixtures.ts 2
 
 # Comments and error text naming the product rather than the brand.
-web/src/lib/reader/api.ts 1
-web/src/lib/editorial/api.ts 1
 web/src/lib/usage.ts 1
-cmd/apivo/main.go 1
-
-# The published API document's title.
-api/openapi.json 2
 
 # Test data on the brand's own domain: a rebrand should move these mailboxes
 # and origins with it, so they are literals like any other.
 web/src/lib/csrf.test.ts 3
 web/src/lib/editorial/session.test.ts 5
 web/src/middleware.test.ts 1
-internal/editorial/handler_test.go 1
-internal/editorial/provenance_test.go 1
 
 # The design system, vendored with its palette written out. Every colour
 # here is a brand value that a brand configuration should supply; this is

@@ -34,9 +34,13 @@ func TestNextForwardWindow(t *testing.T) {
 		cursor    time.Time
 		cursorSet bool
 		now       time.Time
-		wantOK    bool
-		wantFrom  time.Time
-		wantTo    time.Time
+		// lag is the network's reporting lag. Zero in every case that
+		// predates it, which is what keeps those cases meaning what they
+		// meant: a network that answers up to the moment.
+		lag      time.Duration
+		wantOK   bool
+		wantFrom time.Time
+		wantTo   time.Time
 	}{
 		"a first poll starts where the operator said to": {
 			now:      pollTestStart.Add(pollTestMax * 2),
@@ -82,12 +86,64 @@ func TestNextForwardWindow(t *testing.T) {
 			now:    pollTestStart,
 			wantOK: false,
 		},
+
+		// A network that reports late. Ending the window at now would ask
+		// it about ground it has not covered; it would answer cleanly and
+		// emptily, and the cursor would move past transactions nobody has
+		// reported. Only the trailing sweep would return, ~100 days later.
+		"a lagging network is not asked about ground it has not reported": {
+			cursor: pollTestNow.Add(-6 * time.Hour), cursorSet: true,
+			now:      pollTestNow,
+			lag:      2 * time.Hour,
+			wantOK:   true,
+			wantFrom: pollTestNow.Add(-6 * time.Hour),
+			wantTo:   pollTestNow.Add(-2 * time.Hour),
+		},
+		"the width limit still binds ahead of the lag": {
+			cursor: pollTestStart, cursorSet: true,
+			now:      pollTestStart.Add(365 * 24 * time.Hour),
+			lag:      2 * time.Hour,
+			wantOK:   true,
+			wantFrom: pollTestStart,
+			wantTo:   pollTestStart.Add(pollTestMax),
+		},
+		"a cursor inside the lag reads nothing rather than a backwards window": {
+			cursor: pollTestNow.Add(-time.Hour), cursorSet: true,
+			now:    pollTestNow,
+			lag:    6 * time.Hour,
+			wantOK: false,
+		},
+		"a cursor exactly at the horizon reads nothing": {
+			cursor: pollTestNow.Add(-6 * time.Hour), cursorSet: true,
+			now:    pollTestNow,
+			lag:    6 * time.Hour,
+			wantOK: false,
+		},
+		// The whole point of the default: an adapter that declares no lag
+		// gets the behaviour it had before the field existed.
+		"a zero lag is exactly the old behaviour": {
+			cursor: pollTestNow.Add(-time.Hour), cursorSet: true,
+			now:      pollTestNow,
+			lag:      0,
+			wantOK:   true,
+			wantFrom: pollTestNow.Add(-time.Hour),
+			wantTo:   pollTestNow,
+		},
+		// backfill_from inside the lag is the state ErrBackfillStartInFuture
+		// exists to catch, arriving through a different door: nothing is
+		// readable yet, and the operator is owed a reason rather than
+		// silence. Reported by the ops surface, not by this arithmetic.
+		"a first poll whose start is inside the lag reads nothing": {
+			now:    pollTestStart.Add(time.Hour),
+			lag:    6 * time.Hour,
+			wantOK: false,
+		},
 	}
 
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, ok := nextForwardWindow(c.cursor, c.cursorSet, pollTestStart, c.now, pollTestMax)
+			got, ok := nextForwardWindow(c.cursor, c.cursorSet, pollTestStart, c.now, pollTestMax, c.lag)
 			if ok != c.wantOK {
 				t.Fatalf("ok = %v, want %v (window %s)", ok, c.wantOK, got)
 			}
@@ -196,7 +252,7 @@ func TestWindowArithmeticHoldsItsInvariants(t *testing.T) {
 		for _, set := range []bool{false, true} {
 			cursor := pollTestStart.Add(cursorAt)
 
-			if w, ok := nextForwardWindow(cursor, set, pollTestStart, pollTestNow, pollTestMax); ok {
+			if w, ok := nextForwardWindow(cursor, set, pollTestStart, pollTestNow, pollTestMax, 0); ok {
 				forward++
 				if err := limits.ValidateWindow(w); err != nil {
 					t.Errorf("forward window %s (cursor %s, set %v) is one the port refuses: %v", w, cursor, set, err)

@@ -17,7 +17,7 @@ DATABASE_URL_TEST ?= postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
 # `make test RACE=` and let CI cover the race detection.
 RACE ?= -race
 
-.PHONY: setup db-up db-down test test-unit cover arch-test vet lint openapi-lint sqlc ts-types web-install web-dev web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status cashback-up cashback-seed cashback-scenario cashback-verify-ledger cashback-brand-check migration-lint ref-lint
+.PHONY: setup db-up db-down test test-unit cover arch-test vet lint openapi-lint sqlc ts-types web-install web-dev web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status cashback-up cashback-seed cashback-scenario cashback-verify-ledger cashback-brand-check migration-lint migration-numbering-lint ref-lint
 
 # ---------------------------------------------------------------------------
 # `missing` — how a cashback target behaves before its dependency has landed.
@@ -223,13 +223,28 @@ cashback-up:
 		$(call missing,a blnk service in docker-compose.yml,task T002 (issue #149) - blnk and redis in the local compose stack,run the api with LEDGER_DRIVER=memory NETWORK_DRIVER=fixture and skip the ledger entirely)
 	$(COMPOSE) up -d --wait postgres redis blnk
 
-## cashback-seed: seed one fixture network, two merchants, three rate bands
+## cashback-seed: seed the fixture network, its catalogue and three rate bands
 # Pass ACCOUNT=<supabase-auth-user-id> to opt an account in as well. The
 # account.id must equal the Supabase Auth user id, exactly as for news.
+#
+# NETWORK_DRIVER is forced rather than defaulted: the command refuses every
+# other adapter (see seedInputs), so offering the choice here would only be
+# offering a way to be told no.
+#
+# BRAND_DIR points at the test brand because it is the only brand this
+# repository contains - there is none it could ship that would not be a lie
+# about a real company - and merchant_network.brand_id has no default.
+# Override any of these to seed against your own.
+SEED_ACCOUNT_ID ?= fixture-publisher
+SEED_LANGUAGE ?= en
+SEED_BRAND_DIR ?= internal/platform/brand/testdata/fixture
 cashback-seed:
-	@test -f cmd/apivo/seed_cashback.go || \
-		$(call missing,cmd/apivo/seed_cashback.go,task T130 (issue #277) - the seed command behind this target,create a network and a merchant through the operator API by hand)
-	DATABASE_URL="$(DATABASE_URL_TEST)" $(GO) run ./cmd/apivo seed cashback $(ACCOUNT)
+	DATABASE_URL="$(DATABASE_URL_TEST)" \
+	NETWORK_DRIVER=fixture \
+	NETWORK_ACCOUNT_ID="$(SEED_ACCOUNT_ID)" \
+	NETWORK_SOURCE_LANGUAGE="$(SEED_LANGUAGE)" \
+	BRAND_DIR="$(SEED_BRAND_DIR)" \
+	$(GO) run ./cmd/apivo seed cashback $(ACCOUNT)
 
 ## cashback-scenario: run one quickstart validation scenario end to end
 # NAME is one of the quickstart's V1-V6 scenarios: earn-confirm,
@@ -284,3 +299,13 @@ migration-lint:
 	@test -f scripts/lint-migrations.sh || \
 		$(call missing,scripts/lint-migrations.sh,task T039 (issue #186) - the migration lint,read the migrations by hand - the arch test covers Go imports but nothing covers schema boundaries)
 	sh scripts/lint-migrations.sh
+
+## migration-numbering-lint: versions are unique, contiguous and paired
+##
+## Separate from migration-lint because that one reads SQL text and accepts
+## arbitrary .sql paths; this one judges a directory as a whole and would
+## refuse migration-lint's own single-file fixtures.
+migration-numbering-lint:
+	@test -f scripts/lint-migration-numbering.sh || \
+		$(call missing,scripts/lint-migration-numbering.sh,issue #507 - the migration numbering lint,check by hand that no two migrations share a version and that every up has a down - golang-migrate only refuses a duplicate when it runs)
+	sh scripts/lint-migration-numbering.sh

@@ -19,6 +19,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks/awin"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 	platformdb "github.com/Nomos-N4s/apivo-news/internal/platform/db"
 )
 
@@ -70,7 +72,7 @@ func connectTestDB(t *testing.T) (string, *pgxpool.Pool) {
 		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise connect-network")
 	}
 
-	connectDBOnce.Do(func() { connectDBURL, connectDBErr = ensureConnectDatabase(base) })
+	connectDBOnce.Do(func() { connectDBURL, connectDBErr = ensureScratchDatabase(base, connectCommandDatabase) })
 	if connectDBErr != nil {
 		t.Fatalf("preparing the scratch database: %v", connectDBErr)
 	}
@@ -83,10 +85,15 @@ func connectTestDB(t *testing.T) (string, *pgxpool.Pool) {
 	return connectDBURL, pool
 }
 
-// ensureConnectDatabase creates the scratch database beside the one
+// ensureScratchDatabase creates a scratch database beside the one
 // DATABASE_URL names and migrates it. Creating one that is already there is
 // not an error worth failing on, which is what makes a second run cheap.
-func ensureConnectDatabase(base string) (string, error) {
+//
+// Named rather than fixed, because every command in this package that
+// COMMITS needs one of these and they must not share: two commands writing
+// committed rows into one database is the collision each of them has its own
+// database to avoid.
+func ensureScratchDatabase(base, name string) (string, error) {
 	parsed, err := url.Parse(base)
 	if err != nil {
 		return "", err
@@ -104,18 +111,41 @@ func ensureConnectDatabase(base string) (string, error) {
 	// usable - but it is carried into that failure, because "database does
 	// not exist" and "the role may not create one" are different problems
 	// and only one of them is fixed by re-running.
-	_, createErr := admin.Exec(ctx, `create database "`+connectCommandDatabase+`"`)
+	_, createErr := admin.Exec(ctx, `create database "`+name+`"`)
 
 	scratch := *parsed
-	scratch.Path = "/" + connectCommandDatabase
+	scratch.Path = "/" + name
 	scratchURL := scratch.String()
 	if err := platformdb.Migrate(scratchURL); err != nil {
 		if createErr != nil {
-			return "", fmt.Errorf("migrating %s: %w (creating it said: %w)", connectCommandDatabase, err, createErr)
+			return "", fmt.Errorf("migrating %s: %w (creating it said: %w)", name, err, createErr)
 		}
 		return "", err
 	}
 	return scratchURL, nil
+}
+
+// remakeScratchDatabase is ensureScratchDatabase for a command whose rows
+// must not survive a run: it drops the database first, then makes it again.
+//
+// connect-network does NOT want this - its own database is named, reused,
+// and each case tidies up after itself - but a command that writes rows it
+// then asserts the SHAPE of does. Left standing, the second run finds the
+// first run's rows already there, takes every "already there" branch, and
+// asserts on rows no code in that process wrote. The drop happens inside
+// the caller's sync.Once, before any test has a connection open.
+func remakeScratchDatabase(base, name string) (string, error) {
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, base)
+	if err != nil {
+		return "", err
+	}
+	if _, err := admin.Exec(ctx, `drop database if exists "`+name+`" with (force)`); err != nil {
+		admin.Close()
+		return "", fmt.Errorf("dropping %s: %w", name, err)
+	}
+	admin.Close()
+	return ensureScratchDatabase(base, name)
 }
 
 // forgetAccount removes what a case wrote. The rows are committed - that is
@@ -290,13 +320,25 @@ func TestConnectNetworkRefusesWhatItCannotConnect(t *testing.T) {
 
 // TestConnectNetworkKnowsTheAwinDeclaration: the driver an operator will
 // actually use has to resolve, and to Awin's own published numbers.
+// TestConnectNetworkKnowsTheAwinDeclaration. Awin's declaration is still
+// exactly what it was, and is still worth holding to the numbers Awin
+// publishes - but it is read from the package rather than through
+// documentedNetwork, because connect-network can no longer seed it.
+//
+// It used to. documentedNetwork knew awin while networkAdapter did not, so
+// `connect-network --driver awin` wrote a cashback.network row and the server
+// then refused to start against it. The registry ends that by construction:
+// one entry answers both questions, and *awin.Client cannot be an entry
+// because it has no FetchTransactions and no Limits.
+//
+// Importing awin here does not wire it. The reachability rule in
+// internal/arch/network_isolation_test.go skips _test.go files, deliberately:
+// a test is not a deployment, and an adapter reachable only from a test is
+// one no operator can select.
 func TestConnectNetworkKnowsTheAwinDeclaration(t *testing.T) {
 	t.Parallel()
 
-	documented, err := documentedNetwork("awin")
-	if err != nil {
-		t.Fatalf("documentedNetwork(awin): %v", err)
-	}
+	documented := awin.Documented()
 	if documented.ID != "awin" {
 		t.Errorf("the declaration names %q, want %q", documented.ID, "awin")
 	}
@@ -305,5 +347,17 @@ func TestConnectNetworkKnowsTheAwinDeclaration(t *testing.T) {
 	}
 	if documented.MaxQueryWindowDays != 31 {
 		t.Errorf("MaxQueryWindowDays = %d, want the 31 Awin documents", documented.MaxQueryWindowDays)
+	}
+}
+
+// TestConnectNetworkRefusesAwinUntilItImplementsThePort is the other half, and
+// the one that is new. The declaration existing is not the same as the driver
+// being connectable, and conflating the two is what produced a deployment
+// seeded for a network it could not poll.
+func TestConnectNetworkRefusesAwinUntilItImplementsThePort(t *testing.T) {
+	t.Parallel()
+
+	if _, err := documentedNetwork(config.NetworkDriverAwin); err == nil {
+		t.Error("connect-network would seed an awin row, and the server cannot build an awin adapter to poll it")
 	}
 }

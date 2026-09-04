@@ -178,6 +178,28 @@ func TestLimitsValidateWindow(t *testing.T) {
 			window:  networks.QueryWindow{},
 			wantErr: networks.ErrInvalidLimits,
 		},
+		// ReportingLag is the one bound whose zero is ORDINARY. The two
+		// above refuse zero because an unset Limits would make every window
+		// too wide and every request unpermitted; a network with no lag
+		// simply answers up to the moment, which is what every adapter
+		// declared before the field existed.
+		{
+			name:   "no reporting lag is a network that answers up to the moment",
+			limits: networks.Limits{MaxWindow: 31 * 24 * time.Hour, RequestsPerMinute: 360, ReportingLag: 0},
+			window: portTestWindow(),
+		},
+		{
+			name:   "a reporting lag is not itself a refusal",
+			limits: networks.Limits{MaxWindow: 31 * 24 * time.Hour, RequestsPerMinute: 360, ReportingLag: 6 * time.Hour},
+			window: portTestWindow(),
+		},
+		{
+			name:    "a negative reporting lag, which would claim the network reports the future",
+			limits:  networks.Limits{MaxWindow: 31 * 24 * time.Hour, RequestsPerMinute: 360, ReportingLag: -time.Hour},
+			window:  portTestWindow(),
+			wantErr: networks.ErrInvalidLimits,
+			wantIn:  []string{"reporting lag"},
+		},
 		{
 			name:    "an unbounded window cannot be clamped",
 			limits:  portTestLimits,

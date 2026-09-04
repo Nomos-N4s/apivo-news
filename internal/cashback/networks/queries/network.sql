@@ -32,7 +32,8 @@
 -- and pauses one, and cashback.offer's read joins on n.active, so this is
 -- the switch that decides whether any member can click through at all.
 insert into cashback.network (
-    id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active
+    id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute,
+    reporting_lag_minutes, active
 )
 values (
     sqlc.arg(id),
@@ -40,6 +41,7 @@ values (
     sqlc.arg(click_ref_param),
     sqlc.arg(max_query_window_days),
     sqlc.arg(rate_limit_per_minute),
+    sqlc.arg(reporting_lag_minutes),
     sqlc.arg(active)
 )
 on conflict (id) do update
@@ -50,6 +52,7 @@ returning
     click_ref_param,
     max_query_window_days,
     rate_limit_per_minute,
+    reporting_lag_minutes,
     active;
 
 -- name: ConnectNetworkAccount :one

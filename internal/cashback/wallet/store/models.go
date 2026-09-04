@@ -202,6 +202,8 @@ type CashbackNetwork struct {
 	// The request rate this network documents, in calls per minute - the unit networks publish (Awin: 20 a minute). Per minute rather than per second because a slow network's real limit is a fraction of a request a second, which a positive integer column cannot hold: the adapter divides by sixty to build its limiter.
 	RateLimitPerMinute int32
 	Active             bool
+	// How far behind the present this network reports, in minutes. The forward sweep ends its window at now minus this, so the cursor never passes ground the network has not covered. Zero means the network answers up to the moment, which is the ordinary case; negative is refused because a network cannot report the future.
+	ReportingLagMinutes int32
 }
 
 // A publisher account at a network. Two durable cursors: cursor_at advances only after a window is fully persisted (FR-031), trailing_cursor_at re-reads the ~100-day validation window to catch status changes (ADR-0003).

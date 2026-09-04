@@ -246,7 +246,7 @@ func (p *Poller) poll(ctx context.Context, adapter Network, trailing bool) (Poll
 			cursors.BackfillFrom.Time.UTC().Format(time.RFC3339), at.Format(time.RFC3339))
 	}
 
-	window, found := p.window(cursors, at, adapter.Limits().MaxWindow, trailing)
+	window, found := p.window(cursors, at, adapter.Limits(), trailing)
 	if !found {
 		return Poll{}, nil
 	}
@@ -269,16 +269,19 @@ func (p *Poller) poll(ctx context.Context, adapter Network, trailing bool) (Poll
 // window picks the period this poll reads, from the cursors it found and the
 // clock it read. The arithmetic itself is pure and lives in poll.go; this is
 // only the choice of which of the two sweeps is walking.
-func (p *Poller) window(cursors store.GetNetworkAccountCursorsRow, at time.Time, maxWindow time.Duration, trailing bool) (QueryWindow, bool) {
+func (p *Poller) window(cursors store.GetNetworkAccountCursorsRow, at time.Time, limits Limits, trailing bool) (QueryWindow, bool) {
 	if trailing {
+		// The trailing sweep re-reads ground the forward cursor already
+		// passed, and the forward cursor never passes the reporting
+		// horizon, so the lag is behind it either way.
 		return nextTrailingWindow(
 			cursors.TrailingCursorAt.Time, cursors.TrailingCursorAt.Valid,
 			cursors.BackfillFrom.Time, cursors.CursorAt.Time, cursors.CursorAt.Valid,
-			p.trailingLag, maxWindow)
+			p.trailingLag, limits.MaxWindow)
 	}
 	return nextForwardWindow(
 		cursors.CursorAt.Time, cursors.CursorAt.Valid,
-		cursors.BackfillFrom.Time, at, maxWindow)
+		cursors.BackfillFrom.Time, at, limits.MaxWindow, limits.ReportingLag)
 }
 
 // persist reads the window and records every report in it, in the caller's
