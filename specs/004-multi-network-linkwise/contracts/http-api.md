@@ -45,7 +45,7 @@ distinct causes and four distinct operator actions:
 | `no_reference` | The network reported no click reference at all | Attribute by hand, or dismiss |
 | `unknown_reference` | A reference that matches no click we ever issued | Suspect the network, or an expired click |
 | `foreign_network` | A reference that matches a click issued through **another** network | **Nothing** — this is the correct outcome of two networks reporting one purchase (FR-096). Dismiss it and expect the sibling report to have been credited |
-| `route_cannot_attribute` | The route carries no click reference by design (rule 10) | Stop publishing the route, or accept it as unattributable |
+| `route_cannot_attribute` | The route carries no click reference by design (rule 11) | Stop publishing the route, or accept it as unattributable |
 
 `foreign_network` is the one that matters most and is easiest to get wrong.
 Without it, the correct behaviour of a two-network deployment looks exactly

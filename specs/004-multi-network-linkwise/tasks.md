@@ -40,20 +40,28 @@ because every later phase makes a second network more likely, and these are
 the failures that do not announce themselves. See
 [research.md](research.md) §4.
 
-- [ ] T200 [US2] Migration `0033_click_backs_one_credit.{up,down}.sql` in `internal/platform/db/migrations/`: drop `entry_click_id_idx`, recreate it **unique** over `(click_id) where click_id is not null and reversal_of_id is null`, with the index comment stating why reversals are excluded
+**Migration numbers below are written `<n+1>`…`<n+4>`, not `0033`…`0036`.**
+`<n>` is whatever `internal/platform/db/migrations/` ends at on `main` the
+day the pull request opens; this feature reserves the range 0033–0038 and
+fixes none of it here. `golang-migrate` records the highest version it
+applies, so a migration landing out of order strands the ones below it
+unrun — and these phases land out of numeric order on purpose. See
+[plan.md](plan.md) § "Migration numbers are assigned when the PR opens".
+
+- [ ] T200 [US2] Migration `<n+1>_click_backs_one_credit.{up,down}.sql` in `internal/platform/db/migrations/`: drop `entry_click_id_idx`, recreate it **unique** over `(click_id) where click_id is not null and reversal_of_id is null`, with the index comment stating why reversals are excluded
 - [ ] T201 [US2] Test in `internal/cashback/earnings/` against real Postgres: two non-reversal credits citing one click through different `network_transaction_id` — assert SQLSTATE `23505` naming `entry_click_id_idx`; and assert a reversal citing the credit's own click is still permitted
 - [ ] T202 [US2] Teach the crediting path to recognise that refusal **by name**, the way `earnings/open.go:200-201` already recognises `entry_one_per_report`, so a duplicate is an unattributed row rather than a 500
-- [ ] T203 [US2] Migration `0035_click_carries_its_network.{up,down}.sql`: `offer_id_merchant_network_unique`, `merchant_network_id_network_unique`, the two new `cashback.click` columns, the backfill, `set not null`, both composite foreign keys, and `click_network_id_idx`
+- [ ] T203 [US2] Migration `<n+3>_click_carries_its_network.{up,down}.sql`: `offer_id_merchant_network_unique`, `merchant_network_id_network_unique`, the two new `cashback.click` columns, the backfill, `set not null`, both composite foreign keys, and `click_network_id_idx`
 - [ ] T204 [US2] Test against real Postgres: a click whose `network_id` names a network its route does not belong to is refused with SQLSTATE `23503` naming `click_network_matches_route`; and the backfill leaves no null on a seeded database
 - [ ] T205 [US2] `internal/cashback/clickout/queries/click.sql`: `GetClickByRef` takes the reporting network and returns a row only when `click.network_id` matches; write `network_id` at click-out. Regenerate `internal/cashback/clickout/store` with sqlc
 - [ ] T206 [US2] Attribution: a reference matching a click on **another** network yields no match and queues the report as unattributed with reason `foreign_network` — with a test that the *sibling* report on the issuing network still credits normally
-- [ ] T207 [P] [US3] Migration `0034_preferred_route_must_be_publishable.{up,down}.sql`: `merchant_network.can_attribute boolean not null default true`, and `merchant_network_preferred_is_publishable` check, both with comments
+- [ ] T207 [P] [US3] Migration `<n+2>_preferred_route_must_be_publishable.{up,down}.sql`: `merchant_network.can_attribute boolean not null default true`, and `merchant_network_preferred_is_publishable` check, both with comments
 - [ ] T208 [US3] Test against real Postgres: preferring a `left_network` route and preferring an `active` route whose `can_attribute` is false are each refused with SQLSTATE `23514` naming the constraint (SC-022, SC-026)
 - [ ] T209 [US3] The demotion path in `internal/cashback/catalogue/`: when a route becomes `paused`/`left_network`, or its network becomes inactive, its preference is withdrawn and a surviving publishable route takes over — recorded, with who and why
 - [ ] T210 [P] [US3] Operator query: retailers that have publishable routes and publish nothing. This is the cross-row rule [data-model.md](data-model.md) deliberately does not make a constraint, and it must be visible rather than silent
 
 - [ ] T254 [US2] **The click-out refuses a member who has not opted in** (FR-110), in `internal/cashback/clickout/`. Nothing checks it today, so a signed-in member who never accepted terms can click out and be credited. This lands **before** T255, or that constraint would refuse a member who had already bought something
-- [ ] T255 [US2] Migration `0036_entry_currency_is_the_members.{up,down}.sql`: `participation_account_currency_unique`, and `entry_currency_is_the_members` as a composite foreign key from `(account_id, currency)`. Plus `network_account.reports_currency`, nullable, with its format check
+- [ ] T255 [US2] Migration `<n+4>_entry_currency_is_the_members.{up,down}.sql`: `participation_account_currency_unique`, and `entry_currency_is_the_members` as a composite foreign key from `(account_id, currency)`. Plus `network_account.reports_currency`, nullable, with its format check
 - [ ] T256 [US2] Test against real Postgres: an entry whose currency differs from the member's participation currency is refused with SQLSTATE `23503` naming the constraint; and a participating member's `default_currency` cannot be restated while an entry references the old one (SC-027)
 - [ ] T257 [US2] The crediting path recognises that refusal by name and queues the report for an operator with the currency in it (FR-109), rather than failing the whole window
 - [ ] T258 [US1] `connect-network` and the seed refuse a publisher account whose **declared** `reports_currency` is not the deployment's payout currency, naming both (FR-108). A null is reported, never refused — nobody has established it yet, and that is the state to make visible
@@ -99,7 +107,7 @@ the failures that do not announce themselves. See
 - [ ] T232 [US5] Conformance scenario for rule 3's clarification: two adapters run concurrently, and a `429` against one does not delay the other (FR-106)
 - [ ] T261 [US4] `Limits()` reads the network's row, per network (FR-113) — or the port's claim that it does comes out. `cashback.network` carries both numbers per network already, and `connect.go:202` discards the row it reads
 - [ ] T262 [US4] `POST …/ops/reconciliation/runs` takes the network and the publisher's own account identifier instead of a raw `network_account_id` UUID, so reconciling the second account does not need a `psql` session to find one
-- [ ] T233 [US5] Conformance scenario for rule 10: an adapter yields a route it knows cannot carry a click reference, with the fact set rather than the route omitted
+- [ ] T233 [US5] Conformance scenario for rule 11: an adapter yields a route it knows cannot carry a click reference, with the fact set rather than the route omitted
 - [ ] T234 [US1] Integration test against real Postgres and the real scheduler: a two-network deployment polls both, imports both catalogues, and serves click-outs for both (SC-020)
 - [ ] T235 [US5] Re-run `internal/arch/network_isolation_test.go` **unmodified** with a second adapter package present — SC-008 with two packages, and the proof that a third costs one directory (SC-024)
 
@@ -118,7 +126,7 @@ rather than dishonestly finished ([research.md](research.md) §1).
 - [ ] T238 [US1] `awin.Client.FetchTransactions` — resumable iteration per rule 4, verbatim payload per rule 1, `AbandonedIteration` per rule 8, every field mapped from the recording
 - [ ] T239 [US1] Awin status mapping, **total** per rule 2: an unrecognised word is `ErrUnmappableStatus`, never a silent default
 - [ ] T240 [US1] Register `awin` in the driver registry; the conformance suite runs it green against its recordings
-- [ ] T241 [US1] Awin `can_attribute` (rule 10): Awin's `click_ref_param` is a network-wide fact, so the adapter declares routes attributable network-wide and says so once
+- [ ] T241 [US1] Awin `can_attribute` (rule 11): Awin's `click_ref_param` is a network-wide fact, so the adapter declares routes attributable network-wide and says so once
 
 **Checkpoint**: the first *live* network adapter exists, and the seam has been used by something real.
 
@@ -135,7 +143,7 @@ and Phases 0–C are still the whole of the value.
 - [ ] T242 [US1] Record and redact real Linkwise responses into `internal/cashback/networks/linkwise/testdata/`, same standard as T236. **This task is the gate**: it either produces recordings or it reports that it cannot, and nothing below starts on the second outcome
 - [ ] T243 [US1] `internal/cashback/networks/linkwise/`: package skeleton — `ID`, `Account`, `Limits` from the recording, its own rate limiter and retry budget (FR-106)
 - [ ] T244 [US1] Linkwise catalogue: `FetchCatalogue` over the publisher feed. The one capability public sources describe concretely — XML or CSV, publisher-configurable ([research.md](research.md) §5.1)
-- [ ] T245 [US1] Linkwise `can_attribute` **per programme** (rule 10), from the `allow_deeplinking` flag Linkwise publishes on each programme. Where the adapter cannot determine it, it declares the network unattributable rather than defaulting to attributable
+- [ ] T245 [US1] Linkwise `can_attribute` **per programme** (rule 11), from the `allow_deeplinking` flag Linkwise publishes on each programme. Where the adapter cannot determine it, it declares the network unattributable rather than defaulting to attributable
 - [ ] T246 [US1] `linkwise.BuildDeeplink`: the click reference in Linkwise's own parameter, wrapping `ErrDeeplinkNotFormed` on any refusal (rule 5). Assert `IssuedClickRef` survives the round trip — ≥22 URL-safe characters, byte for byte
 - [ ] T247 [US1] `linkwise.FetchTransactions`, every field from T242's recording. **If sale and commission arrive in different currencies, stop**: that is Q13, and `Reported.Validate` refuses it at the port by design
 - [ ] T248 [US1] Register `linkwise` in the driver registry; the conformance suite runs it green

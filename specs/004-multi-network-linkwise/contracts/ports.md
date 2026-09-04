@@ -9,8 +9,9 @@ deployment running two Awin accounts wires two adapters and the poller keys
 them by `PublisherAccount.ID`, *"never by `Network.ID`, which both of them
 share"* (`networks/network.go:161-167`).
 
-So this file records four things: one rule that was claimed and not
-asserted, one rule that is new, one clarification, and the change that makes
+So this file records five things: one rule that was claimed and not
+asserted, one rule that is new, two clarifications — how a non-JSON network
+carries its evidence, and whose limiter is whose — and the change that makes
 the suite mean something.
 
 ---
@@ -34,7 +35,18 @@ adapter is held to, and a suite with a hole in it certifies the hole.
 
 ---
 
-## 2. New — Rule 10: a route says whether it can be attributed
+## 2. New — Rule 11: a route says whether it can be attributed
+
+### Why eleven and not ten
+
+This rule was drafted as rule 10, and ten is taken. Rule 10 is "one adapter
+serves one publisher account"
+([../../002-apivo-cashback-alpha/contracts/ports.md](../../002-apivo-cashback-alpha/contracts/ports.md)),
+and that one is already load-bearing: `ValidateNetwork` asserts it on every
+poll, and the `Network` interface doc comment cites it by number. Two rules
+sharing a number is a defect that only shows up in review, months later, in
+the one place a number is used as a name — which is exactly what happened
+here. Numbered before any code comment could cite the wrong one.
 
 ### Why this is a contract rule and not an adapter detail
 
@@ -55,7 +67,7 @@ and every diagnostic looks healthy, because nothing failed.
 
 ### The rule
 
-> **10. A catalogue entry states whether its route can carry a click
+> **11. A catalogue entry states whether its route can carry a click
 > reference.** An adapter that knows a programme cannot carry one yields the
 > route with that fact set, rather than omitting the route or yielding it as
 > if it could. An adapter with no way to know says so once, for the whole
@@ -74,12 +86,51 @@ Three things follow, and each is deliberate:
 
 This composes with rule 5 rather than replacing it. `BuildDeeplink` still
 returns an error wrapping `ErrDeeplinkNotFormed` rather than a URL with no
-reference in it — rule 10 is what stops a member ever reaching that
+reference in it — rule 11 is what stops a member ever reaching that
 deeplink, and rule 5 is what stops the mistake being survivable if they do.
 
 ---
 
-## 3. Clarification of Rule 3: every adapter's limiter is its own
+## 3. Clarification of Rule 1: how a non-JSON network carries its evidence
+
+Rule 1 requires every value to carry the verbatim response fragment it was
+built from, so that a wrong mapping can be re-derived from what the network
+actually said rather than from what we thought it said.
+
+`Reported.RawPayload` and `ReportedMerchant.RawPayload` are
+`json.RawMessage` (`reported.go:154`, `:267`) into a `jsonb` column
+(`0012_cashback_clicks_evidence.up.sql:121`), and `validateReportedPayload`
+refuses anything that is not valid, non-empty JSON opening `{` or `[`. A
+network that answers in XML — TradeTracker's SOAP being the first — has no
+way to satisfy that as written.
+
+**An XML adapter carries its bytes verbatim in a one-key JSON object naming
+the encoding**, `{"xml": "<transaction>…</transaction>"}`. Nothing else
+changes: no migration, no signature change, and every existing validation
+passes.
+
+The alternative — converting XML to JSON and storing that — is the one
+option rule 1 exists to forbid. The conversion is itself a normalisation,
+and it is lossy in exactly the places that matter when re-deriving a money
+field: attributes versus child elements, a repeated element versus an
+array, namespaces, mixed content. Storing it would mean the evidence and
+the mapping share a failure mode, which is the whole thing rule 1 prevents.
+
+What is given up is querying inside the payload, and nothing depends on it —
+reconciliation reads the normalised columns. What is given up in practice
+is that an operator debugging a mapping reads escaped XML; note that in the
+runbook rather than trading the guarantee for the convenience.
+
+A NUL byte or an unpaired surrogate inside the XML is still refused by
+`reportedPayloadEscapeFault`. That is correct: the adapter reports it as a
+mapping failure rather than sanitising evidence.
+
+The wrapper's shape is stated **here, once**, and asserted in the
+conformance suite, so the second XML adapter cannot invent a second key.
+
+---
+
+## 4. Clarification of Rule 3: every adapter's limiter is its own
 
 Rule 3 already says an adapter *"paces every request it makes to the
 declared rate, which is the half its limiter holds"*. With one adapter that
@@ -98,7 +149,7 @@ other.
 
 ---
 
-## 4. The suite runs over what the binary ships
+## 5. The suite runs over what the binary ships
 
 Today the conformance suite runs against the fixture. That is how it was
 written and it was correct when the fixture was the only implementation.
@@ -129,7 +180,7 @@ absence of credentials as success.
 
 ---
 
-## 5. What does **not** change
+## 6. What does **not** change
 
 | Thing | Why it stays |
 |---|---|

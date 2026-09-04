@@ -153,11 +153,38 @@ internal/cashback/
     └── queries/click.sql    # GetClickByRef gains a network predicate
 
 internal/platform/db/migrations/
-├── 0033_click_backs_one_credit.{up,down}.sql
-├── 0034_preferred_route_must_be_publishable.{up,down}.sql
-├── 0035_click_carries_its_network.{up,down}.sql
-└── 0036_entry_currency_is_the_members.{up,down}.sql
+├── <n+1>_click_backs_one_credit.{up,down}.sql
+├── <n+2>_preferred_route_must_be_publishable.{up,down}.sql
+├── <n+3>_click_carries_its_network.{up,down}.sql
+└── <n+4>_entry_currency_is_the_members.{up,down}.sql
 ```
+
+### Migration numbers are assigned when the PR opens, not here
+
+This feature reserves the range **0033–0038** and names none of them. `<n>`
+is whatever `internal/platform/db/migrations/` actually ends at on `main`
+the day the pull request is opened; head was `0032` when this was written.
+
+The reason is not tidiness. `golang-migrate` applies every migration whose
+version exceeds the recorded current version, in ascending order, and then
+records the highest. A migration that lands as `0037` while the database
+sits at `0032` moves the recorded version to 37 — and `0033` through `0036`
+**never run**, silently, because they are now in the past. This feature
+lands its phases out of numeric order by design (the reporting-lag work
+early, the assessment axis late), so a number fixed at specification time
+is not merely stale, it is a live hazard.
+
+A second claimant already exists: `specs/003-cashback-claims/` (unbuilt, on
+an unmerged branch) names `0033`, `0034` and `0035` for its own tables.
+Those claims and these were made independently, neither spec could see the
+other, and nothing in `scripts/lint-migrations.sh` checks numbering — it
+lints the schema boundary and nothing else. The collision would surface as
+a `golang-migrate` duplicate-version failure on whichever branch merged
+second.
+
+So: take the next free numbers at PR time, and before claiming a number,
+check it against every **unbuilt** spec as well as the files on disk. A
+number claimed only in prose is invisible to every tool we have.
 
 ## Design decisions
 
@@ -295,7 +322,7 @@ neither matters until a retailer is on two networks:
 - a preferred route may be `left_network` or `paused` — a dead route keeps
   publishing over a live one;
 - a preferred route may be one that **cannot carry a click reference** —
-  contract rule 10, and the failure where the member is never credited while
+  contract rule 11, and the failure where the member is never credited while
   every diagnostic reads healthy;
 - there may be **zero** preferred routes — the retailer publishes nothing
   while a perfectly good route sits beside it.
