@@ -17,8 +17,6 @@ import (
 	"time"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
-	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks/awin"
-	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks/fixture"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 	platformdb "github.com/Nomos-N4s/apivo-news/internal/platform/db"
 )
@@ -183,21 +181,15 @@ func madeOrFound(created bool, made, found string) string {
 // documentedNetwork resolves NETWORK_DRIVER to what that network publishes
 // about itself - the facts a cashback.network row is seeded with.
 //
-// It is a switch beside [networkAdapter] rather than a registry for the same
-// reason that one is: a network's adapter is a release, so the set of
-// drivers this binary knows is a compile-time fact and a driver it does not
-// have should fail by name here rather than by absence later.
+// It reads [shippedNetworks], the same map [networkAdapter] reads, because
+// this used to be a second switch and the two disagreed: this one knew awin
+// and that one did not, so a deployment could be seeded for a network the
+// binary then refused to start against. Seedable and servable are now one
+// answer by construction.
 func documentedNetwork(driver string) (networks.Documented, error) {
-	switch driver {
-	case config.NetworkDriverFixture:
-		return fixture.Documented(), nil
-	case config.NetworkDriverAwin:
-		return awin.Documented(), nil
-	case "":
-		return networks.Documented{}, errors.New("NETWORK_DRIVER names no adapter, and it is the network this would connect")
-	default:
-		return networks.Documented{}, fmt.Errorf(
-			"NETWORK_DRIVER %s is not an adapter this binary has; it ships %s and %s",
-			strconv.Quote(driver), strconv.Quote(config.NetworkDriverFixture), strconv.Quote(config.NetworkDriverAwin))
+	entry, err := lookupNetwork(driver)
+	if err != nil {
+		return networks.Documented{}, err
 	}
+	return entry.documented(), nil
 }
