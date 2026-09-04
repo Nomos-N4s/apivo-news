@@ -48,6 +48,23 @@ func TestADeclarationTheNetworkTableWouldRefuseIsRefusedFirst(t *testing.T) {
 			declare: func() networks.Documented { d := aDeclaration(); d.DisplayName = "  "; return d },
 			wantErr: true,
 		},
+		// ReportingLagMinutes inverts the rule of every bound above it.
+		// Those refuse zero because zero is what an unset declaration
+		// carries, and a zero window or rate stops ingestion dead. A
+		// network with no reporting lag is simply current.
+		{
+			name:    "no reporting lag, which is a network that is current",
+			declare: func() networks.Documented { d := aDeclaration(); d.ReportingLagMinutes = 0; return d },
+		},
+		{
+			name:    "a reporting lag, which is a network that publishes late",
+			declare: func() networks.Documented { d := aDeclaration(); d.ReportingLagMinutes = 120; return d },
+		},
+		{
+			name:    "a negative reporting lag, which claims the network reports the future",
+			declare: func() networks.Documented { d := aDeclaration(); d.ReportingLagMinutes = -1; return d },
+			wantErr: true,
+		},
 		{
 			name:    "no click-reference parameter, which loses every click",
 			declare: func() networks.Documented { d := aDeclaration(); d.ClickRefParam = ""; return d },
@@ -98,5 +115,18 @@ func TestTheDeclarationBecomesLimitsInTheRightUnits(t *testing.T) {
 	}
 	if err := limits.Validate(); err != nil {
 		t.Errorf("the limits a published declaration produces describe no queryable network: %v", err)
+	}
+
+	// The lag is the third unit conversion in this method and the one most
+	// likely to be got wrong, because the column is minutes and the field
+	// is a Duration: a missing multiplication reads 90 as 90 nanoseconds
+	// and silently restores the defect the column exists to fix.
+	lagging := aDeclaration()
+	lagging.ReportingLagMinutes = 90
+	if want := 90 * time.Minute; lagging.Limits().ReportingLag != want {
+		t.Errorf("ReportingLag = %s, want %s", lagging.Limits().ReportingLag, want)
+	}
+	if limits.ReportingLag != 0 {
+		t.Errorf("a declaration with no lag produced %s; no lag must stay no lag, or every window shortens", limits.ReportingLag)
 	}
 }
