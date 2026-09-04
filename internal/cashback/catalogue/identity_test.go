@@ -36,8 +36,11 @@ func TestSlugMatchesWhatTheColumnAccepts(t *testing.T) {
 		{name: "leading and trailing noise is trimmed", in: "  !Zalando!  ", want: "zalando"},
 		{name: "digits are kept", in: "Store 24", want: "store-24"},
 		{name: "an ampersand does not join two words", in: "B&Q", want: "b-q"},
-		{name: "a name with no Latin form folds to nothing", in: "Καταστήματα", want: ""},
-		{name: "mixed scripts keep the Latin part", in: "Zara Ελλάδα", want: "zara"},
+		// Both of these read "" and "zara" until T259. Greek now has a
+		// table (transliterate.go); the scripts that still have none are in
+		// TestAScriptWithNoTableStillFoldsToNothing.
+		{name: "Greek transliterates rather than folding to nothing", in: "Καταστήματα", want: "katastimata"},
+		{name: "mixed scripts keep both parts", in: "Zara Ελλάδα", want: "zara-ellada"},
 		{name: "nothing at all", in: "", want: ""},
 		{name: "only punctuation", in: "!!!", want: ""},
 	}
@@ -127,5 +130,73 @@ func TestAFallbackThatCouldNotFormASlugIsRefused(t *testing.T) {
 
 	if _, err := catalogue.FallbackSlug("", ""); !errors.Is(err, catalogue.ErrNoSlug) {
 		t.Fatalf("FallbackSlug(\"\", \"\") = %v, want one wrapping ErrNoSlug", err)
+	}
+}
+
+// TestTheSlugsThatMustNotMove is the fence around T259, and it is the test
+// that is not in the spec.
+//
+// Transliteration was allowed to change exactly one class of name: the ones
+// carrying a character that produced NOTHING before, either the empty slug
+// or a silently broken word. Everything else - plain ASCII, and the Latin
+// accents the fold has always decomposed - had to come out byte-identical,
+// because a slug is a permanent public URL and a merchant already in the
+// table keeps whatever it was given.
+//
+// So the wanted values below are not what this file thinks is right. They
+// are what `origin/main` actually produced, captured by running Slug over
+// this corpus before transliterate.go existed and written down verbatim.
+// Any drift in the fold, the filter, the lower-casing or the truncation
+// breaks this, whatever it does to the cases above.
+func TestTheSlugsThatMustNotMove(t *testing.T) {
+	t.Parallel()
+
+	frozen := map[string]string{
+		"Zara":            "zara",
+		"Public":          "public",
+		"e-shop.gr":       "e-shop-gr",
+		"MediaMarkt":      "mediamarkt",
+		"Douglas":         "douglas",
+		"Zalando":         "zalando",
+		"Otto":            "otto",
+		"Tchibo":          "tchibo",
+		"Hej Sverige":     "hej-sverige",
+		"Coca-Cola  ":     "coca-cola",
+		"  leading space": "leading-space",
+
+		// The accent folding, which T259 was explicitly not allowed to
+		// touch. Its doc comment chose "gartner" over "gaertner" on
+		// purpose; the German characters that DO now change are the ones
+		// NFD cannot decompose, and they are in transliterate_test.go.
+		"Gärtner":         "gartner",
+		"Café Crème":      "cafe-creme",
+		"Élysée":          "elysee",
+		"Nestlé":          "nestle",
+		"Häagen-Dazs":     "haagen-dazs",
+		"L'Oréal":         "l-oreal",
+		"Müller Drogerie": "muller-drogerie",
+		"Görtz":           "gortz",
+		"Jägermeister":    "jagermeister",
+		"Ähre & Korn":     "ahre-korn",
+		"número 42":       "numero-42",
+		"Ångström":        "angstrom",
+
+		// Every Latin-1 accented capital in one string, so a fold that
+		// stopped decomposing one of them fails here rather than on the one
+		// retailer whose name carries it.
+		"ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝ": "aaaaaaceeeeiiiinooooouuuuy",
+
+		// Separator handling, which transliteration inserts itself directly
+		// in front of.
+		"trailing---hyphens---": "trailing-hyphens",
+	}
+
+	for in, want := range frozen {
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			if got := catalogue.Slug(in); got != want {
+				t.Errorf("Slug(%q) = %q, want %q - this slug shipped in a URL and must not move", in, got, want)
+			}
+		})
 	}
 }

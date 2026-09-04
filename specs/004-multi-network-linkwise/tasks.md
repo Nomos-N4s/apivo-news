@@ -65,7 +65,45 @@ unrun — and these phases land out of numeric order on purpose. See
 - [ ] T256 [US2] Test against real Postgres: an entry whose currency differs from the member's participation currency is refused with SQLSTATE `23503` naming the constraint; and a participating member's `default_currency` cannot be restated while an entry references the old one (SC-027)
 - [ ] T257 [US2] The crediting path recognises that refusal by name and queues the report for an operator with the currency in it (FR-109), rather than failing the whole window
 - [ ] T258 [US1] `connect-network` and the seed refuse a publisher account whose **declared** `reports_currency` is not the deployment's payout currency, naming both (FR-108). A null is reported, never refused — nobody has established it yet, and that is the state to make visible
-- [ ] T259 [P] [US3] **A slug can name a retailer in any script the deployment publishes in** (FR-111), in `internal/cashback/catalogue/identity.go`. Every Greek name currently slugs to the empty string; the test is a table of real Greek programme names, none of which may produce `""` or a slug containing a network id (SC-028)
+- [x] T259 [P] [US3] **A slug can name a retailer in any script the deployment publishes in** (FR-111), in `internal/cashback/catalogue/transliterate.go` (a file of its own; `identity.go` gains one call). Greek follows **ELOT 743 / ISO 843**, the passport standard, which lands on the retailers' own Latin spellings — Plaisio, Skroutz, Germanos, Kotsovolos (SC-028)
+
+  **Wider than the task as written, because the task was measured against
+  `main` before it was implemented.** Greek was the known half. The other
+  half is Latin characters NFD does not decompose — `ß ø æ œ ł đ þ ð` — and
+  it is worse, because it produces a plausible wrong slug rather than an
+  empty one, so `FallbackSlug` never fires and nothing looks broken:
+
+  | name | `main` | now |
+  |---|---|---|
+  | `Καταστήματα` | `""` | `katastimata` |
+  | `Weißenhaus` | `wei-enhaus` | `weissenhaus` |
+  | `Straße` | `stra-e` | `strasse` |
+  | `Ærø` | `r` | `aero` |
+
+  `Ærø` → `r` is the one to look at twice: `merchant_slug_unique` is global,
+  so a one-letter slug is a collision waiting for the next name that reduces
+  the same way.
+
+  **Transliteration runs BEFORE the fold**, not after. After would halve the
+  table and would be wrong: Greek writes a diaeresis precisely to say two
+  vowels are *not* a digraph, and the fold strips it, so `Προϋπολογισμός`
+  would read as the `ου` digraph. Mutation-checked.
+
+  **Two ELOT 743 rules are deliberately absent**: `μπ → b` and `ντ → d` apply
+  only word-initially. A slug is permanent, so a rule that is occasionally
+  wrong is worse than one that is plainly literal; `μπ` stays `mp`.
+
+  **Consequence to know about.** This is *not* output-identical for
+  everything that already slugs — `Weißenhaus` moves, and that is the point.
+  It *is* byte-identical for every name built from ASCII plus a decomposable
+  accent, verified by diffing the corpus against output captured from
+  `origin/main`, and frozen by `TestTheSlugsThatMustNotMove`. Slugs are only
+  computed for routes never reported before, so a merchant imported *before*
+  this keeps its old slug and the same merchant arriving later from a second
+  network would get the new one — two merchant rows. Today that is
+  theoretical: nothing but fixture data has been imported. It stops being
+  theoretical at the first real `FetchCatalogue` run, which is why T259 is a
+  gate and not a preference.
 - [ ] T260 [US3] Cross-network unification stops resting on a name coincidence alone (FR-112): an operator declares two routes one retailer and can undo it, recorded, in `internal/cashback/catalogue/`. The importer's own comment already says two programmes with one name may be two businesses
 
 **Checkpoint**: one click cannot back two credits; a dead or unattributable route cannot publish; a foreign-network reference is a named outcome rather than a mystery.
