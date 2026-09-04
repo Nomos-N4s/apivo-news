@@ -415,7 +415,7 @@ func TestRunDoesNotMountCashbackOverAnUnusableNetwork(t *testing.T) {
 		t.Errorf("sweeps were registered over a half-configured deployment; output: %q", logged)
 	}
 	// And the deployment serves regardless. This is the half that keeps a
-	// credential typo from taking apivo.news down.
+	// credential typo from taking the public news site down.
 	if !strings.Contains(logged, "starting") {
 		t.Errorf("a deployment with one unusable network did not serve; output: %q", logged)
 	}
