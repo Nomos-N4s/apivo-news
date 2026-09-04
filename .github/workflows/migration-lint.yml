@@ -58,8 +58,22 @@ jobs:
       - name: No foreign key crosses a product schema boundary
         run: sh scripts/lint-migrations.sh
 
-      # Both scripts are POSIX sh and run in CI and on developer machines
-      # alike; a syntax error in either is otherwise discovered by the
+      # Numbering is a separate lint over the same directory, and its suite
+      # runs before it for the same reason. The three defects it refuses are
+      # all silent: golang-migrate refuses a duplicate version only at migrate
+      # time, skips forever anything numbered below the highest version it has
+      # applied, and has nothing to say about an up migration with no down.
+      - name: Prove the numbering lint refuses a duplicate, a gap and an unpaired migration
+        run: sh scripts/lint-migration-numbering_test.sh
+
+      - name: Migration versions are unique, contiguous and paired
+        run: sh scripts/lint-migration-numbering.sh
+
+      # Every script here is POSIX sh and runs in CI and on developer machines
+      # alike; a syntax error in any of them is otherwise discovered by the
       # migration it failed to check.
       - name: Lint the lint
-        run: shellcheck -s sh scripts/lint-migrations.sh scripts/lint-migrations_test.sh
+        run: |
+          shellcheck -s sh \
+            scripts/lint-migrations.sh scripts/lint-migrations_test.sh \
+            scripts/lint-migration-numbering.sh scripts/lint-migration-numbering_test.sh
