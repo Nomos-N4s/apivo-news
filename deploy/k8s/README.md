@@ -58,7 +58,7 @@ else.
 
 | File | Contents |
 |---|---|
-| `cashback/cashback-configmap.yaml` | `apivo-cashback-config` — the api's cashback env (`CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`, `REDIS_URL`, `NETWORK_DRIVER`, `HOUSE_ACCOUNT_ROUNDING`, `HOUSE_ACCOUNT_CLAWBACK`, `HOUSE_ACCOUNT_NETWORK_RECEIVABLE`, `PAYOUT_THRESHOLD_MINOR`, `PAYOUT_THRESHOLD_CURRENCY`) |
+| `cashback/cashback-configmap.yaml` | `apivo-cashback-config` — the api's cashback env (`CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`, `REDIS_URL`, `NETWORKS`, `HOUSE_ACCOUNT_ROUNDING`, `HOUSE_ACCOUNT_CLAWBACK`, `HOUSE_ACCOUNT_NETWORK_RECEIVABLE`, `PAYOUT_THRESHOLD_MINOR`, `PAYOUT_THRESHOLD_CURRENCY`) |
 | `cashback/blnk-configmap.yaml` | `blnk-config` — non-secret Blnk configuration (`BLNK_REDIS_DNS`, `TZ`) |
 | `cashback/blnk-deployment.yaml` / `cashback/blnk-service.yaml` | The ledger server: one replica, `Recreate`, migrates on boot, ClusterIP |
 | `cashback/blnk-worker-deployment.yaml` | Blnk's queue worker. No Service — nothing calls a worker |
@@ -68,7 +68,7 @@ else.
 
 **It gives you ledger infrastructure, not a working cashback product.** The Go
 binary on `main` reads none of `CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`,
-`REDIS_URL` or `NETWORK_DRIVER`, and mounts no cashback routes at all. Config
+`REDIS_URL` or `NETWORKS`, and mounts no cashback routes at all. Config
 parsing arrives with **T001 (#291)** and route mounting with **T040 (#187)**.
 
 So an operator who applies `deploy/k8s/cashback/` today gets a running Blnk, a
@@ -210,7 +210,7 @@ neither is an oversight:
 | `DATABASE_URL` | local Postgres from `docker-compose.yml` | api `secretKeyRef` → the `apivo-secrets` Secret, created out of band; structure documented in `examples/secret.example.yaml`, which a plain `kubectl apply -f deploy/k8s/` never touches (apply does not recurse into subdirectories) |
 | `HOST` / `PORT` (web) | Astro defaults | Set inline in `web-deployment.yaml` (`0.0.0.0:4321` so the Node adapter binds the pod interface) |
 | `CASHBACK_ENABLED`, `LEDGER_DRIVER`, `BLNK_URL`, `REDIS_URL`, `HOUSE_ACCOUNT_ROUNDING`, `HOUSE_ACCOUNT_CLAWBACK`, `HOUSE_ACCOUNT_NETWORK_RECEIVABLE`, `PAYOUT_THRESHOLD_MINOR`, `PAYOUT_THRESHOLD_CURRENCY` | `.env.example`; on Hetzner they come from `docker-compose.cashback.yml` | `cashback/cashback-configmap.yaml` → the api's **optional** second `envFrom`. Absent unless `cashback/` was applied, which is the whole switch |
-| `NETWORK_DRIVER` | `.env.example`, set to `fixture` | `cashback/cashback-configmap.yaml`, shipped as `fixture`. The fixture adapter needs no credentials — the safe default while founder question Q1 is open (ADR-0003). Named rather than left empty: the api refuses to start with it unset |
+| `NETWORKS` | `.env.example`, set to `fixture` | `cashback/cashback-configmap.yaml`, shipped as `fixture`. A comma-separated list; each entry brings a `NETWORK_<DRIVER>_*` block. The fixture adapter needs no credential — the safe default while founder question Q1 is open (ADR-0003). Its `NETWORK_FIXTURE_ACCOUNT_ID` is set beside it: a network named without an account id cannot poll, and cashback then does not mount at all |
 | `BLNK_DATA_SOURCE_DNS` | Hetzner: `blnk.env`, read by the Docker daemon | Blnk `secretKeyRef` → `apivo-secrets`, **required**. A different Postgres role from `DATABASE_URL`: it owns the `blnk` schema and has no rights in `public` |
 | `BLNK_REDIS_DNS` | Hetzner: set in the compose overlay from the container name | `cashback/blnk-configmap.yaml`, naming the `redis` Service |
 
@@ -276,7 +276,7 @@ sh deploy/k8s/validate.sh
 
 ## Connecting a publisher account
 
-Applying the cashback set and setting `NETWORK_DRIVER` is not enough to ingest
+Applying the cashback set and setting `NETWORKS` is not enough to ingest
 anything. The adapter polls **on behalf of a publisher account**, and that
 account is two rows in the database — `cashback.network`, which carries the
 network's documented limits and the query parameter its click references
@@ -299,7 +299,7 @@ kubectl exec deploy/apivo-api -- apivo connect-network -backfill-from 2026-06-01
 ```
 
 **The network and the account come from the environment, not from flags.**
-They are `NETWORK_DRIVER` and `NETWORK_ACCOUNT_ID` — the same two values the
+They are `NETWORKS` and `NETWORK_<DRIVER>_ACCOUNT_ID` — the same two values the
 running process resolves its adapter from — so it is not possible to connect
 an account this deployment would not then poll.
 
@@ -328,4 +328,7 @@ cursor is touched at any point.
 
 **No credential is written.** `cashback.network_account.credential_ref`
 records the *name* of the environment key the credential is read from —
-`NETWORK_API_KEY` — and never its value (ADR-0003).
+`NETWORK_FIXTURE_API_KEY`, `NETWORK_LINKWISE_API_KEY`, the key belonging to
+that network — and never its value (ADR-0003). Per network since T215: it was
+the literal `NETWORK_API_KEY`, which was true while one network existed and
+became a lie the moment the keys grew a driver in them.
