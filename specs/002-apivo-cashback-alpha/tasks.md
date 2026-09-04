@@ -281,7 +281,7 @@ Go modular monolith + Astro frontend, per [plan.md](plan.md) Project Structure:
 
 - [ ] T123 Stamp `noindex`/`nofollow` on all cashback routes and exclude them from sitemaps in `web/src/middleware.ts`
 - [ ] T124 [P] Document every cashback route in `api/openapi.json` and make the route-coverage test cover them, in `cmd/apivo/openapi_routes_test.go`
-- [ ] T125 [P] Add the OpenAPI schema test asserting every money field is `{minor, currency}` and no decimal appears, in `cmd/apivo/openapi_money_test.go`
+- [x] T125 [P] Add the OpenAPI schema test asserting every money field is `{minor, currency}` and no decimal appears, in `cmd/apivo/openapi_money_test.go` — it walks every schema the document reaches, so a money field added later is caught without the test being touched
 - [ ] T126 Handle `identity.account.deleted` by closing participation and flagging in-flight withdrawals, never deleting financial rows, in `internal/cashback/wallet/account_lifecycle.go`
 - [ ] T127 [P] Implement the fixture-brand render test across every member-facing surface (SC-007) in `web/src/lib/brand/rebrand.test.ts`
 - [ ] T128 [P] Drive the brand-literal lint to zero exceptions across `internal/`, `web/` and `internal/platform/db/migrations/` — **`internal/`, `cmd/`, `api/` and the migrations are at zero.** Every remaining budget entry is under `web/`, and belongs to the frontend workstream
