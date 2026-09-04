@@ -50,9 +50,25 @@ jobs:
   commit-hygiene:
     runs-on: ubuntu-latest
     steps:
+      # The author lint's proof suite below judges this repository's own
+      # recent history, so the checkout has to BE this repository's history.
+      # On a pull_request event actions/checkout takes refs/pull/N/merge by
+      # default - a commit GitHub synthesises for the test merge, authored by
+      # whoever opened the pull request and written to no branch. The lint
+      # reads it, refuses the identity it is built to refuse, and the proof
+      # goes red over a commit belonging to no history it was meant to judge
+      # - taking the gate after it down too, since a failed step skips the
+      # steps that follow it.
+      #
+      # Only that suite's HEAD moves. Every step around it addresses commits
+      # by explicit SHA, and fetch-depth: 0 still brings the whole history
+      # the suite's last case needs. The fallback leaves merge_group and
+      # publish.yml's workflow_call on their own commit, where HEAD is real
+      # history already.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Determine commit range
         id: range
         env:
