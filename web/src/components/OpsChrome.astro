@@ -1,0 +1,212 @@
+---
+import Masthead from './Masthead.astro';
+import type { ReadingLanguage } from '../lib/reader/axes';
+import { READING_LANGUAGES } from '../lib/reader/axes';
+import { OPS_PATHS } from '../lib/cashback/paths';
+import { cashbackStrings } from '../i18n/cashback';
+import type { EditorSession } from '../lib/editorial/session';
+
+// The operator shell — mockup 4f: one top bar and one left rail around
+// every queue, with the queue itself in the slot.
+//
+// The identity line is not decoration. Every decision behind these queues is
+// recorded under the name of whoever is signed in, and the API takes that
+// name from the token rather than from anything a screen sends. Printing it
+// here is the operator's chance to notice they are about to sign a decision
+// as somebody else.
+//
+// The wordmark comes from Masthead, where the product name already lives and
+// is budgeted by the brand-literal lint; this component adds no literal of
+// its own. The mockup's "answer time" stat under the rail is not drawn:
+// nothing in the contract measures it.
+export type OpsQueueKey = keyof typeof OPS_PATHS;
+
+/** How many rows each queue holds, where the count could be read. */
+export type OpsQueueCounts = Readonly<Record<OpsQueueKey, number | undefined>>;
+
+interface Props {
+  lang: ReadingLanguage;
+  session: EditorSession;
+  current: OpsQueueKey;
+  counts: OpsQueueCounts;
+}
+
+const { lang, session, current, counts } = Astro.props;
+const t = cashbackStrings(lang);
+
+const queues: readonly { key: OpsQueueKey; href: string; label: string }[] = [
+  { key: 'unattributed', href: OPS_PATHS.unattributed, label: t.queueUnattributed },
+  { key: 'held', href: OPS_PATHS.held, label: t.queueHeld },
+  { key: 'withdrawals', href: OPS_PATHS.withdrawals, label: t.queueWithdrawals },
+  { key: 'reconciliation', href: OPS_PATHS.reconciliation, label: t.queueReconciliation },
+];
+
+/** The same page in another language, keeping whatever else the URL asked for. */
+function languageHref(code: ReadingLanguage): string {
+  const params = new URLSearchParams(Astro.url.searchParams);
+  params.set('lang', code);
+  return `?${params.toString()}`;
+}
+---
+
+<div class="top">
+  <Masthead homeHref="/">
+    <span class="tag tag-neutral">{t.operations} · {t.cashback}</span>
+    <span class="who">
+      {
+        session.authenticated ? (
+          <>
+            {t.signedInAs} <strong>{session.displayName}</strong> · {t.roleOperator}
+          </>
+        ) : (
+          // Just the fact. Why the queues are or are not readable is the
+          // page's to say, and saying it twice - differently - in a preview
+          // that IS rendering them would contradict what is on the screen.
+          t.notSignedIn
+        )
+      }
+    </span>
+    <span class="langs">
+      {
+        READING_LANGUAGES.map((code) => (
+          <a
+            href={languageHref(code)}
+            class:list={['lang', { on: code === lang }]}
+            aria-current={code === lang ? 'true' : undefined}
+            lang={code}
+          >
+            {code}
+          </a>
+        ))
+      }
+    </span>
+  </Masthead>
+</div>
+
+<div class="body">
+  <nav class="rail" aria-label={t.operations}>
+    {
+      queues.map((queue) => (
+        <a
+          href={`${queue.href}?lang=${lang}`}
+          class:list={['queue', { on: queue.key === current }]}
+          aria-current={queue.key === current ? 'page' : undefined}
+        >
+          {queue.label}
+          {counts[queue.key] !== undefined && (
+            <>
+              {' '}
+              <span class="count">{counts[queue.key]}</span>
+            </>
+          )}
+        </a>
+      ))
+    }
+  </nav>
+  <div class="main">
+    <slot />
+  </div>
+</div>
+
+<style>
+  /* Mockup 4f's top bar: 12px 22px, a 2px rule, the wordmark at 18px. */
+  .top :global(.masthead) {
+    gap: 14px;
+    padding: 12px 22px;
+    border-bottom: 2px solid var(--color-divider);
+  }
+  .top :global(.brand) {
+    font-size: 18px;
+    letter-spacing: -0.02em;
+    margin-right: 0;
+  }
+  .tag {
+    font-size: 10px;
+  }
+  .who {
+    margin-left: auto;
+    font-size: 12px;
+    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+    text-align: right;
+  }
+  .who strong {
+    color: var(--color-text);
+  }
+  .langs {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .lang {
+    font: 600 11px/1 var(--font-heading);
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+    text-decoration: none;
+  }
+  .lang.on {
+    color: var(--color-accent);
+  }
+
+  /* The shell: a 190px rail beside the queue. */
+  .body {
+    display: grid;
+    grid-template-columns: 190px 1fr;
+    flex: 1;
+    min-height: 0;
+  }
+  .rail {
+    border-right: 1px solid var(--color-divider);
+    padding: 16px 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .queue {
+    padding: 9px 18px;
+    font-size: 13.5px;
+    text-decoration: none;
+    color: var(--color-text);
+  }
+  .queue.on {
+    background: var(--color-accent);
+    color: var(--color-bg);
+    font-weight: 600;
+  }
+  .count {
+    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  }
+  .queue.on .count {
+    color: inherit;
+    opacity: 0.8;
+  }
+  .main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  @media (max-width: 660px) {
+    .top :global(.masthead) {
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 12px 16px;
+    }
+    .who {
+      flex-basis: 100%;
+      order: 3;
+      text-align: left;
+    }
+    .body {
+      grid-template-columns: 1fr;
+    }
+    .rail {
+      flex-direction: row;
+      overflow-x: auto;
+      padding: 0;
+      border-right: 0;
+      border-bottom: 2px solid var(--color-divider);
+    }
+    .queue {
+      white-space: nowrap;
+      padding: 10px 14px;
+    }
+  }
+</style>

@@ -6,7 +6,8 @@ import { getViteConfig } from 'astro/config';
 //
 // Coverage scope: the gate measures application source that carries logic —
 // the middleware and the reader lib. Generated code (src/lib/database.types.ts),
-// ambient declarations (src/env.d.ts), fixture data (src/lib/reader/fixtures.ts)
+// ambient declarations (src/env.d.ts), fixture data (src/lib/reader/fixtures.ts,
+// src/lib/cashback/fixtures.ts), type-only modules (src/lib/cashback/types.ts)
 // and logic-free .astro pages are deliberately excluded: they would dilute the
 // signal without measuring anything we author. New source files with logic must
 // be added to `include` alongside their tests.
@@ -37,6 +38,15 @@ export default getViteConfig({
         // The brand loader. brand.types.ts beside it is generated from
         // the Go types and carries no logic to measure.
         'src/lib/brand/index.ts',
+        // Cashback. money.ts is the C-6 boundary on this side of the wire:
+        // every figure a member reads is assembled here out of integer
+        // minor units, so it is measured like the invariant it carries.
+        'src/lib/cashback/money.ts',
+        'src/lib/cashback/api.ts',
+        'src/i18n/cashback.ts',
+        'src/lib/cashback/paths.ts',
+        'src/lib/cashback/ops-guard.ts',
+        'src/lib/cashback/ops-language.ts',
         'src/lib/csrf.ts',
         'src/lib/secure-request.ts',
         'src/lib/editorial/api.ts',

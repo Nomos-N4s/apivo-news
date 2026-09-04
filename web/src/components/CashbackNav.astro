@@ -1,0 +1,60 @@
+---
+import type { ReadingLanguage } from '../lib/reader/axes';
+import { cataloguePath, walletPath } from '../lib/cashback/paths';
+import { cashbackStrings } from '../i18n/cashback';
+
+// The cashback section bar.
+//
+// It carries no wordmark. The design mockup's chrome prints the brand and
+// then five product tabs - News, Cashback, Directory, Routes, Wallet - of
+// which two lead to products that do not exist in this repository (issue
+// #447). A nav with dead links in front of every member on every page is
+// worse than a shorter nav, so this one names what is here.
+//
+// No brand literal either: Rebrandability puts every product name in the
+// brand configuration, and a new surface has no business adding one.
+interface Props {
+  lang: ReadingLanguage;
+  slugs: readonly string[];
+  current: 'catalogue' | 'wallet';
+}
+
+const { lang, slugs, current } = Astro.props;
+const t = cashbackStrings(lang);
+---
+
+<nav class="section-nav" aria-label={t.cashback}>
+  <a
+    href={cataloguePath(lang, slugs)}
+    class:list={['tab', { on: current === 'catalogue' }]}
+    aria-current={current === 'catalogue' ? 'page' : undefined}>{t.catalogue}</a
+  >
+  <a
+    href={walletPath(lang, slugs)}
+    class:list={['tab', { on: current === 'wallet' }]}
+    aria-current={current === 'wallet' ? 'page' : undefined}>{t.wallet}</a
+  >
+</nav>
+
+<style>
+  .section-nav {
+    display: flex;
+    gap: 20px;
+    padding: var(--space-3) calc(var(--space-6) + var(--space-1));
+    border-bottom: 2px solid var(--color-divider);
+  }
+  .tab {
+    font: 600 14px/1.2 var(--font-heading);
+    color: var(--color-text);
+    text-decoration: none;
+    padding-bottom: 3px;
+    border-bottom: 2px solid transparent;
+  }
+  .tab:hover {
+    color: var(--color-accent-700);
+  }
+  .tab.on {
+    color: var(--color-accent);
+    border-bottom-color: var(--color-accent);
+  }
+</style>

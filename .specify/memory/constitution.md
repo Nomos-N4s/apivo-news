@@ -1,6 +1,48 @@
 <!--
 Sync Impact Report
-- Version change: 1.1.1 → 1.2.0 (MINOR: a rule is added - branches are named
+- Version change: 1.2.0 → 1.3.0 (MINOR: Principle IX is materially expanded
+  with three invariants - C-8, C-9, C-10 - and the cashback scope block gains
+  a named surface. No principle is removed or redefined, and nothing already
+  permitted becomes forbidden.)
+- Modified sections:
+  * Principle IX: "Seven invariants" becomes "Ten". C-8 (no claim decision
+    without a named decider), C-9 (claim decisions are append-only) and C-10
+    (a claim never moves money by itself) join C-1..C-7. They are the same
+    three protections the news product already has around a published
+    sentence - a named human, an immutable record, and no path that reaches
+    around the evidence - applied to the one place cashback takes a member's
+    own word as input.
+  * Principle IX, C-10: stated because it is the invariant nobody would think
+    to write. C-2 already makes a credit without network evidence
+    unrepresentable, so a claim that finds no evidence CANNOT resolve into a
+    cashback entry however sympathetic it is. The remedy is goodwill from a
+    named house account, recorded as goodwill. Without C-10 the pressure to
+    make the member whole lands on whichever write path is nearest, and the
+    ledger stops distinguishing commission passed on from money given away.
+  * "Cashback alpha" scope: claim handling is added to the in-scope list -
+    a member-recorded claim for a purchase that did not credit, and an
+    operator surface that answers it with a named, permanent decision. It was
+    absent rather than refused, and an absent surface is one a PR review must
+    refuse under "scope stays inside the declared product scope".
+  * "Cashback alpha" cut order: the never-cut list gains the C-8..C-10 suite.
+  * Governance: cashback open questions extended with Q10 (goodwill budget),
+    Q11 (evidence retention), Q12 (the five-day promise), Q13 (who may
+    decide). All four carry recorded safe defaults in
+    specs/003-cashback-claims/spec.md and none is resolved here.
+- Rationale: the member-facing product already promises an answer to a missing
+  credit - the wallet's own entry list says so - and the promise was being
+  kept, where it was kept at all, outside anything this document governs. A
+  surface that decides whether money is owed belongs under the same rules as
+  the surface that pays it.
+- Follow-up: founder answers to Q10-Q13. Implementation of
+  specs/003-cashback-claims/ does not begin until this amendment is ratified.
+
+Previous amendment (1.1.1 → 1.2.0, MINOR: a rule is added - branches are named
+  `xcoder/<slug>` - and Principle I is extended to cover ref names. No
+  principle is removed or redefined, and nothing already permitted becomes
+  forbidden except the naming of a ref after an assistant or a vendor, which
+  the quoted authorship rule already forbade in the commit message a ref name
+  ends up inside.) (MINOR: a rule is added - branches are named
   `xcoder/<slug>` - and Principle I is extended to cover ref names. No
   principle is removed or redefined, and nothing already permitted becomes
   forbidden except the naming of a ref after an assistant or a vendor, which
@@ -232,7 +274,7 @@ See Principle IX, C-1.
 Cashback owes real money to real people out of money a third party says it
 will pay. The same discipline that defends the news product against
 licensing exposure defends the cashback product against money exposure.
-Seven invariants, enforced by the database, each with a test asserting the
+Ten invariants, enforced by the database, each with a test asserting the
 DATABASE rejects the illegal state:
 
 - **C-1 (Double entry)**: A member balance is never stored as a settable
@@ -259,6 +301,23 @@ DATABASE rejects the illegal state:
   chain — payout, approver, ledger postings, cashback entries, network
   transaction evidence, click, and the offer rate at click time — in under
   five minutes.
+
+Three more govern the one place this product takes a member's own word as
+input - a claim that a purchase did not credit:
+
+- **C-8 (No claim decision without a named decider)**: a claim decision row
+  cannot exist without a non-null, non-blank named human decider. The row IS
+  the decision, exactly as `article.approved_by` IS the approval.
+- **C-9 (Claim decisions are append-only)**: a decision rejects UPDATE, DELETE
+  and TRUNCATE. Reversing one is a new decision citing the one it supersedes,
+  never an edit, and the member's record shows both.
+- **C-10 (A claim never moves money by itself)**: a claim that resolves in the
+  member's favour does so through the evidence-backed paths that already
+  exist - attributing a network transaction, or adjusting an entry against its
+  dated rate. Where no evidence exists, C-2 makes a cashback credit
+  unrepresentable and the only remaining remedy is a **goodwill** transfer
+  from a named house account, recorded and reported as goodwill. Cashback
+  passed on and money given away are never the same row.
 
 **C-1 exception, named as required by Principle VIII**: the double-entry
 guarantee is carried by the adopted open-source ledger rather than by a
@@ -361,6 +420,12 @@ operator queues for unattributed transactions, held entries, reconciliation
 differences and withdrawal approvals; reconciliation against network
 statements.
 
+Claim handling is in scope: a member may record a claim that a purchase did
+not credit, and an operator answers it with a named, permanent decision and a
+reason the member reads - whatever the outcome. A claim is a record on the
+same footing as an entry, not a support conversation, and it is bound by
+C-8..C-10.
+
 Member balances are a **claim on a future rebate**, not stored value: no
 member-to-member transfers, no spending inside Apivo, payouts only to a
 destination the member owns and has verified. *(Founder decision,
@@ -371,7 +436,7 @@ notification may shorten latency by triggering a targeted poll; it never
 moves money on its own.
 
 Cut order under time pressure: operator polish → catalogue breadth →
-reconciliation automation. **Never cut**: the C-1..C-7 invariant suite,
+reconciliation automation. **Never cut**: the C-1..C-10 invariant suite,
 evidence immutability, the approval gate on payouts, the exactly-once
 payout tests. Those cannot be added afterwards.
 
@@ -409,7 +474,10 @@ This constitution supersedes all other practices in this repository.
     after payout (Q3, default: absorb the loss), revenue share and rounding
     (Q4), payout rails and threshold (Q5), KYC and sanctions posture (Q6),
     tax treatment and member reporting (Q7), click-log retention (Q8),
-    repository and brand naming (Q9).
+    repository and brand naming (Q9), goodwill budget and cap (Q10),
+    claim evidence retention (Q11), whether the five-day answer is a public
+    commitment or an internal target (Q12), and whether a goodwill payment
+    above some amount needs a second named person (Q13).
   - **Decided**: the regulatory posture on member balances (Q2) — the
     rebate-claim posture recorded under "Cashback alpha", founder decision
     of 2026-08-24, for the alpha/MVP. A change to stored value is a new
@@ -424,4 +492,4 @@ This constitution supersedes all other practices in this repository.
 - Complexity must justify itself against the declared scope; when in
   doubt, the simpler structure that preserves the invariants wins.
 
-**Version**: 1.2.0 | **Ratified**: 2026-08-14 | **Last Amended**: 2026-08-30
+**Version**: 1.3.0 | **Ratified**: 2026-08-14 | **Last Amended**: 2026-09-03
