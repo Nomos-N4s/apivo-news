@@ -365,3 +365,58 @@ func TestRunSaysWhenNoNetworkIsConnected(t *testing.T) {
 		t.Errorf("a deployment with no network configured did not serve; output: %q", logged)
 	}
 }
+
+// TestRunDoesNotMountCashbackOverAnUnusableNetwork is the founder's decision
+// of 2026-09-04, asserted end to end: a network named in NETWORKS whose keys
+// are not set turns CASHBACK off and leaves the rest of the deployment
+// serving.
+//
+// Both halves matter and neither is obvious from the other. Mounting
+// cashback over a network that cannot poll would let members click and buy
+// and never be credited, with nothing failing anywhere. Failing the PROCESS
+// instead - which is what putting these keys in CashbackConfig.Missing would
+// do - would take the public news site down over a typo in one network's
+// credential, and the risk of that grows with every network added.
+func TestRunDoesNotMountCashbackOverAnUnusableNetwork(t *testing.T) {
+	t.Parallel()
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise this test")
+	}
+
+	env := cashbackEnv(isolatedDatabase(t, dbURL))
+	// A second network, named and unconfigured. The first one is complete,
+	// which is the point: ALL of them must be usable, not merely one, or a
+	// deployment that names two and polls one is not the deployment its
+	// operator described.
+	env["NETWORKS"] = config.NetworkDriverFixture + ",reference_network"
+
+	out, stop := runServing(t, env)
+	defer stop()
+
+	logged := out.String()
+	for _, want := range []string{
+		// The cause, by name, with the key an operator would set.
+		"reference_network",
+		"NETWORK_REFERENCE_NETWORK_ACCOUNT_ID",
+		"NETWORK_REFERENCE_NETWORK_API_KEY",
+		// And the consequence, said separately, because "one network is
+		// misconfigured" and "the cashback product is not running" are
+		// different sizes of news.
+		"CASHBACK IS NOT MOUNTED",
+	} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("the startup log does not carry %q; output: %q", want, logged)
+		}
+	}
+	// The usable network is not polled either - it is not "the ones that
+	// work", it is none of them.
+	if strings.Contains(logged, "affiliate network sweeps registered") {
+		t.Errorf("sweeps were registered over a half-configured deployment; output: %q", logged)
+	}
+	// And the deployment serves regardless. This is the half that keeps a
+	// credential typo from taking apivo.news down.
+	if !strings.Contains(logged, "starting") {
+		t.Errorf("a deployment with one unusable network did not serve; output: %q", logged)
+	}
+}

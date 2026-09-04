@@ -221,3 +221,50 @@ func TestTheDeploymentTestWouldNoticeAMissingKey(t *testing.T) {
 		})
 	}
 }
+
+// TestTheDeploymentTestWouldNoticeAnUnmountableNetwork is the same
+// non-vacuity check for the half of the assertion that is NOT a startup
+// refusal.
+//
+// The network keys cannot appear in the list above, because dropping one no
+// longer stops the api - that is the whole of the T215 change. Their
+// non-vacuity has to be proved against Mountable instead, or the manifests
+// could name a network with no account id at all and nothing here would
+// notice.
+func TestTheDeploymentTestWouldNoticeAnUnmountableNetwork(t *testing.T) {
+	t.Parallel()
+
+	for _, d := range deployments() {
+		t.Run(d.name, func(t *testing.T) {
+			t.Parallel()
+			set := d.read(t)
+			supply(set, d.elsewhere)
+
+			cfg, err := config.FromEnv(func(key string) string { return set[key] })
+			if err != nil {
+				t.Fatalf("FromEnv() error: %v", err)
+			}
+			if len(cfg.Cashback.Networks) == 0 {
+				t.Fatalf("%v names no network in %s, so the Mountable assertion above proves nothing",
+					d.paths, config.NetworksKey)
+			}
+
+			// Drop the account id of the first network the manifests name,
+			// by its real per-driver key - which also asserts the manifests
+			// use that key rather than a legacy one.
+			accountID, _, _, _ := cfg.Cashback.Networks[0].Keys()
+			if set[accountID] == "" {
+				t.Fatalf("%v does not set %s, and the assertion above should have caught that", d.paths, accountID)
+			}
+			delete(set, accountID)
+
+			broken, err := config.FromEnv(func(key string) string { return set[key] })
+			if err != nil {
+				t.Fatalf("FromEnv() with %s unset: %v (it must parse, not refuse)", accountID, err)
+			}
+			if broken.Cashback.Mountable() {
+				t.Fatalf("cashback still mounts with %s unset, so the test above proves nothing about it", accountID)
+			}
+		})
+	}
+}
