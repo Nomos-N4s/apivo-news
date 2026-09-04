@@ -62,6 +62,21 @@ type Documented struct {
 	// of a request a second, and the reason this is not stored per second
 	// anywhere.
 	RateLimitPerMinute int
+	// ReportingLagMinutes is how far behind the present this network
+	// reports, in minutes. A network that publishes yesterday's
+	// transactions at 06:00 documents a lag; one that answers up to the
+	// moment documents none.
+	//
+	// Minutes for the reason the rate above is per minute: it is the unit
+	// that can express the truth. A lag is usually hours and occasionally a
+	// day, and days would round a two-hour lag to zero or to a whole day -
+	// both wrong in the direction that costs money.
+	//
+	// ZERO IS THE ORDINARY VALUE, unlike the two fields above it. Those are
+	// refused at zero because zero is what an unset declaration carries and
+	// a zero window or rate stops ingestion dead. No lag simply means the
+	// network is current.
+	ReportingLagMinutes int
 }
 
 // Validate refuses a declaration a cashback.network row would refuse,
@@ -88,6 +103,13 @@ func (d Documented) Validate() error {
 		return fmt.Errorf("%w: network %s documents a rate of %d requests a minute",
 			ErrInvalidDocumentedNetwork, strconv.Quote(d.ID.String()), d.RateLimitPerMinute)
 	}
+	if d.ReportingLagMinutes < 0 {
+		// Not <= 0: no lag is the ordinary declaration. What the column
+		// refuses, and what could not be honoured anyway, is a claim that
+		// the network reports the future.
+		return fmt.Errorf("%w: network %s documents a reporting lag of %d minutes",
+			ErrInvalidDocumentedNetwork, strconv.Quote(d.ID.String()), d.ReportingLagMinutes)
+	}
 	return nil
 }
 
@@ -98,5 +120,6 @@ func (d Documented) Limits() Limits {
 	return Limits{
 		MaxWindow:         time.Duration(d.MaxQueryWindowDays) * hoursPerDay,
 		RequestsPerMinute: d.RateLimitPerMinute,
+		ReportingLag:      time.Duration(d.ReportingLagMinutes) * time.Minute,
 	}
 }

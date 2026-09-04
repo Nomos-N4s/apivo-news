@@ -100,7 +100,8 @@ func (q *Queries) ConnectNetworkAccount(ctx context.Context, arg ConnectNetworkA
 const ensureNetwork = `-- name: EnsureNetwork :one
 
 insert into cashback.network (
-    id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active
+    id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute,
+    reporting_lag_minutes, active
 )
 values (
     $1,
@@ -108,7 +109,8 @@ values (
     $3,
     $4,
     $5,
-    $6
+    $6,
+    $7
 )
 on conflict (id) do update
    set active = excluded.active
@@ -118,16 +120,28 @@ returning
     click_ref_param,
     max_query_window_days,
     rate_limit_per_minute,
+    reporting_lag_minutes,
     active
 `
 
 type EnsureNetworkParams struct {
-	ID                 string
-	DisplayName        string
-	ClickRefParam      string
-	MaxQueryWindowDays int32
-	RateLimitPerMinute int32
-	Active             bool
+	ID                  string
+	DisplayName         string
+	ClickRefParam       string
+	MaxQueryWindowDays  int32
+	RateLimitPerMinute  int32
+	ReportingLagMinutes int32
+	Active              bool
+}
+
+type EnsureNetworkRow struct {
+	ID                  string
+	DisplayName         string
+	ClickRefParam       string
+	MaxQueryWindowDays  int32
+	RateLimitPerMinute  int32
+	ReportingLagMinutes int32
+	Active              bool
 }
 
 // Connecting a publisher account (T145). The two rows a deployment cannot
@@ -161,22 +175,24 @@ type EnsureNetworkParams struct {
 // running the command: with it the same statement both connects a network
 // and pauses one, and cashback.offer's read joins on n.active, so this is
 // the switch that decides whether any member can click through at all.
-func (q *Queries) EnsureNetwork(ctx context.Context, arg EnsureNetworkParams) (CashbackNetwork, error) {
+func (q *Queries) EnsureNetwork(ctx context.Context, arg EnsureNetworkParams) (EnsureNetworkRow, error) {
 	row := q.db.QueryRow(ctx, ensureNetwork,
 		arg.ID,
 		arg.DisplayName,
 		arg.ClickRefParam,
 		arg.MaxQueryWindowDays,
 		arg.RateLimitPerMinute,
+		arg.ReportingLagMinutes,
 		arg.Active,
 	)
-	var i CashbackNetwork
+	var i EnsureNetworkRow
 	err := row.Scan(
 		&i.ID,
 		&i.DisplayName,
 		&i.ClickRefParam,
 		&i.MaxQueryWindowDays,
 		&i.RateLimitPerMinute,
+		&i.ReportingLagMinutes,
 		&i.Active,
 	)
 	return i, err
@@ -194,12 +210,21 @@ from cashback.network
 where id = $1
 `
 
+type GetNetworkRow struct {
+	ID                 string
+	DisplayName        string
+	ClickRefParam      string
+	MaxQueryWindowDays int32
+	RateLimitPerMinute int32
+	Active             bool
+}
+
 // The network row as it stands, so a connect can say whether it created one
 // or found one. Read inside the caller's transaction, which is what makes
 // the answer the one the upsert immediately after it acts on.
-func (q *Queries) GetNetwork(ctx context.Context, id string) (CashbackNetwork, error) {
+func (q *Queries) GetNetwork(ctx context.Context, id string) (GetNetworkRow, error) {
 	row := q.db.QueryRow(ctx, getNetwork, id)
-	var i CashbackNetwork
+	var i GetNetworkRow
 	err := row.Scan(
 		&i.ID,
 		&i.DisplayName,

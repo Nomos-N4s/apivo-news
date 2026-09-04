@@ -163,7 +163,13 @@ func ConnectPublisherAccount(ctx context.Context, db store.DBTX, req ConnectRequ
 		ClickRefParam:      req.Network.ClickRefParam,
 		MaxQueryWindowDays: int32(req.Network.MaxQueryWindowDays), //nolint:gosec // Validate refused anything but a positive count of days.
 		RateLimitPerMinute: int32(req.Network.RateLimitPerMinute), //nolint:gosec // Validate refused anything but a positive rate.
-		Active:             req.Active,
+		// Set explicitly rather than left to the column default. Both say
+		// zero today, and that is exactly why: a default is what the
+		// database does when nobody said, and this row is the operator
+		// saying. When an adapter starts declaring a real lag, this line is
+		// already carrying it.
+		ReportingLagMinutes: int32(req.Network.ReportingLagMinutes), //nolint:gosec // Validate refused a negative lag.
+		Active:              req.Active,
 	}); err != nil {
 		return Connection{}, fmt.Errorf("networks: writing the network row for %s: %w",
 			strconv.Quote(req.Network.ID.String()), err)
