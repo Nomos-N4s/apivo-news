@@ -106,7 +106,7 @@ retailer at all.
 ### The change
 
 ```sql
--- Contract rule 10 (contracts/ports.md): a route states whether it can
+-- Contract rule 11 (contracts/ports.md): a route states whether it can
 -- carry a click reference. Default true because every route that exists
 -- today can - Awin's click_ref_param is network-wide - and false is the
 -- value an importer must set deliberately.

@@ -99,7 +99,7 @@ the failures that do not announce themselves. See
 - [ ] T232 [US5] Conformance scenario for rule 3's clarification: two adapters run concurrently, and a `429` against one does not delay the other (FR-106)
 - [ ] T261 [US4] `Limits()` reads the network's row, per network (FR-113) — or the port's claim that it does comes out. `cashback.network` carries both numbers per network already, and `connect.go:202` discards the row it reads
 - [ ] T262 [US4] `POST …/ops/reconciliation/runs` takes the network and the publisher's own account identifier instead of a raw `network_account_id` UUID, so reconciling the second account does not need a `psql` session to find one
-- [ ] T233 [US5] Conformance scenario for rule 10: an adapter yields a route it knows cannot carry a click reference, with the fact set rather than the route omitted
+- [ ] T233 [US5] Conformance scenario for rule 11: an adapter yields a route it knows cannot carry a click reference, with the fact set rather than the route omitted
 - [ ] T234 [US1] Integration test against real Postgres and the real scheduler: a two-network deployment polls both, imports both catalogues, and serves click-outs for both (SC-020)
 - [ ] T235 [US5] Re-run `internal/arch/network_isolation_test.go` **unmodified** with a second adapter package present — SC-008 with two packages, and the proof that a third costs one directory (SC-024)
 
@@ -118,7 +118,7 @@ rather than dishonestly finished ([research.md](research.md) §1).
 - [ ] T238 [US1] `awin.Client.FetchTransactions` — resumable iteration per rule 4, verbatim payload per rule 1, `AbandonedIteration` per rule 8, every field mapped from the recording
 - [ ] T239 [US1] Awin status mapping, **total** per rule 2: an unrecognised word is `ErrUnmappableStatus`, never a silent default
 - [ ] T240 [US1] Register `awin` in the driver registry; the conformance suite runs it green against its recordings
-- [ ] T241 [US1] Awin `can_attribute` (rule 10): Awin's `click_ref_param` is a network-wide fact, so the adapter declares routes attributable network-wide and says so once
+- [ ] T241 [US1] Awin `can_attribute` (rule 11): Awin's `click_ref_param` is a network-wide fact, so the adapter declares routes attributable network-wide and says so once
 
 **Checkpoint**: the first *live* network adapter exists, and the seam has been used by something real.
 
@@ -135,7 +135,7 @@ and Phases 0–C are still the whole of the value.
 - [ ] T242 [US1] Record and redact real Linkwise responses into `internal/cashback/networks/linkwise/testdata/`, same standard as T236. **This task is the gate**: it either produces recordings or it reports that it cannot, and nothing below starts on the second outcome
 - [ ] T243 [US1] `internal/cashback/networks/linkwise/`: package skeleton — `ID`, `Account`, `Limits` from the recording, its own rate limiter and retry budget (FR-106)
 - [ ] T244 [US1] Linkwise catalogue: `FetchCatalogue` over the publisher feed. The one capability public sources describe concretely — XML or CSV, publisher-configurable ([research.md](research.md) §5.1)
-- [ ] T245 [US1] Linkwise `can_attribute` **per programme** (rule 10), from the `allow_deeplinking` flag Linkwise publishes on each programme. Where the adapter cannot determine it, it declares the network unattributable rather than defaulting to attributable
+- [ ] T245 [US1] Linkwise `can_attribute` **per programme** (rule 11), from the `allow_deeplinking` flag Linkwise publishes on each programme. Where the adapter cannot determine it, it declares the network unattributable rather than defaulting to attributable
 - [ ] T246 [US1] `linkwise.BuildDeeplink`: the click reference in Linkwise's own parameter, wrapping `ErrDeeplinkNotFormed` on any refusal (rule 5). Assert `IssuedClickRef` survives the round trip — ≥22 URL-safe characters, byte for byte
 - [ ] T247 [US1] `linkwise.FetchTransactions`, every field from T242's recording. **If sale and commission arrive in different currencies, stop**: that is Q13, and `Reported.Validate` refuses it at the port by design
 - [ ] T248 [US1] Register `linkwise` in the driver registry; the conformance suite runs it green

@@ -430,7 +430,7 @@ matters:
 ### 5.4 The three things this changes in the plan
 
 **One.** `allow_deeplinking` is a **per-programme flag Linkwise publishes
-itself**. That is the evidence for contract rule 10 and for
+itself**. That is the evidence for contract rule 11 and for
 `merchant_network.can_attribute`: a route the network says may not be
 deeplinked cannot carry our reference, so it cannot be the published route.
 This replaces an earlier, weaker reading of a third-party summary that

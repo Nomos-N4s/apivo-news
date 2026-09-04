@@ -34,7 +34,18 @@ adapter is held to, and a suite with a hole in it certifies the hole.
 
 ---
 
-## 2. New — Rule 10: a route says whether it can be attributed
+## 2. New — Rule 11: a route says whether it can be attributed
+
+### Why eleven and not ten
+
+This rule was drafted as rule 10, and ten is taken. Rule 10 is "one adapter
+serves one publisher account"
+([../../002-apivo-cashback-alpha/contracts/ports.md](../../002-apivo-cashback-alpha/contracts/ports.md)),
+and that one is already load-bearing: `ValidateNetwork` asserts it on every
+poll, and the `Network` interface doc comment cites it by number. Two rules
+sharing a number is a defect that only shows up in review, months later, in
+the one place a number is used as a name — which is exactly what happened
+here. Numbered before any code comment could cite the wrong one.
 
 ### Why this is a contract rule and not an adapter detail
 
@@ -74,7 +85,7 @@ Three things follow, and each is deliberate:
 
 This composes with rule 5 rather than replacing it. `BuildDeeplink` still
 returns an error wrapping `ErrDeeplinkNotFormed` rather than a URL with no
-reference in it — rule 10 is what stops a member ever reaching that
+reference in it — rule 11 is what stops a member ever reaching that
 deeplink, and rule 5 is what stops the mistake being survivable if they do.
 
 ---

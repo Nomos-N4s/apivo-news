@@ -295,7 +295,7 @@ neither matters until a retailer is on two networks:
 - a preferred route may be `left_network` or `paused` — a dead route keeps
   publishing over a live one;
 - a preferred route may be one that **cannot carry a click reference** —
-  contract rule 10, and the failure where the member is never credited while
+  contract rule 11, and the failure where the member is never credited while
   every diagnostic reads healthy;
 - there may be **zero** preferred routes — the retailer publishes nothing
   while a perfectly good route sits beside it.
