@@ -28,13 +28,19 @@ import (
 // product on, and the network and account it would connect.
 func connectEnv(dbURL, driver, accountID string) map[string]string {
 	env := cashbackEnv(dbURL)
-	env["NETWORK_DRIVER"] = driver
-	env["NETWORK_ACCOUNT_ID"] = accountID
+	// The list, and the block named after the one entry in it. cashbackEnv
+	// already configures the fixture, so a different driver replaces both -
+	// leaving its block behind would leave a block NETWORKS does not name,
+	// which nothing reads.
+	env["NETWORKS"] = driver
+	delete(env, "NETWORK_FIXTURE_ACCOUNT_ID")
+	prefix := "NETWORK_" + strings.ToUpper(driver) + "_"
+	env[prefix+"ACCOUNT_ID"] = accountID
 	if driver != "fixture" {
-		// Every adapter but the fixture needs a credential before
-		// config.FromEnv will mount the product at all; the value never
-		// leaves the environment.
-		env["NETWORK_API_KEY"] = "not-a-real-token"
+		// Every adapter but the fixture needs a credential before the
+		// command will connect an account at all; the value never leaves
+		// the environment.
+		env[prefix+"API_KEY"] = "not-a-real-token"
 	}
 	return env
 }
@@ -174,7 +180,7 @@ func TestConnectNetworkWritesTheRowsADeploymentThenReads(t *testing.T) {
 	}
 
 	printed := out.String()
-	for _, want := range []string{accountID, driver, "active", "2026-06-01T00:00:00Z", "NETWORK_API_KEY"} {
+	for _, want := range []string{accountID, driver, "active", "2026-06-01T00:00:00Z", "NETWORK_FIXTURE_API_KEY"} {
 		if !strings.Contains(printed, want) {
 			t.Errorf("the command printed %q, which does not mention %q", printed, want)
 		}
@@ -291,7 +297,10 @@ func TestConnectNetworkRefusesWhatItCannotConnect(t *testing.T) {
 			name: "no account to connect",
 			args: []string{"connect-network", "-backfill-from", "2026-06-01"},
 			env:  connectEnv("postgres://nobody@127.0.0.1:1/none", "fixture", ""),
-			want: "NETWORK_ACCOUNT_ID",
+			// Named for its own network, which is the point of the
+			// per-driver blocks: an operator running two must be told which
+			// account is missing, not that "the" account is.
+			want: "NETWORK_FIXTURE_ACCOUNT_ID is unset",
 		},
 		{
 			name: "a date that is not one",

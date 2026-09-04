@@ -52,7 +52,8 @@ type ingestionOff struct{ reason string }
 func (e *ingestionOff) Error() string { return "network ingestion is off: " + e.reason }
 
 // connectNetwork resolves the one network this deployment integrates: the
-// adapter NETWORK_DRIVER names, and the publisher account row it acts for.
+// adapter its NETWORKS entry names, and the publisher account row it acts
+// for.
 //
 // It is a step of its own because two things need it and neither should look
 // it up separately. The poller acts for the account; the click-out endpoint
@@ -68,13 +69,21 @@ func (e *ingestionOff) Error() string { return "network ingestion is off: " + e.
 func connectNetwork(ctx context.Context, cfg config.NetworkConfig, db pollerDB) (networks.Network, networks.ConnectedAccount, error) {
 	switch {
 	case cfg.Driver == "":
-		return nil, networks.ConnectedAccount{}, &ingestionOff{reason: "NETWORK_DRIVER names no adapter"}
+		return nil, networks.ConnectedAccount{}, &ingestionOff{reason: config.NetworksKey + " names no network"}
 	case cfg.AccountID == "":
 		// Required here even for the fixture adapter, which needs no
 		// credentials: the cursors live on a network_account row, and this
 		// is the only value that says which one. An adapter that needs no
 		// credential still polls on behalf of somebody.
-		return nil, networks.ConnectedAccount{}, &ingestionOff{reason: "NETWORK_ACCOUNT_ID names no publisher account at " + strconv.Quote(cfg.Driver)}
+		//
+		// Unreachable from serve since T215 - CashbackConfig.Mountable
+		// refuses to build the cashback surface at all while any configured
+		// network is missing a key, and the account id is one of those keys.
+		// Kept because this function does not depend on that gate and must
+		// not start trusting it: it is called with one network's config, not
+		// with the decision that admitted it.
+		accountIDKey, _, _, _ := cfg.Keys()
+		return nil, networks.ConnectedAccount{}, &ingestionOff{reason: accountIDKey + " names no publisher account at " + strconv.Quote(cfg.Driver)}
 	}
 
 	connected, err := networks.FindPublisherAccount(ctx, db, networks.NetworkID(cfg.Driver), cfg.AccountID)

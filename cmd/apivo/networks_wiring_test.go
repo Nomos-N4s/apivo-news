@@ -92,10 +92,16 @@ func TestNewNetworkSweepsSaysWhatIsMissing(t *testing.T) {
 		says string
 	}{
 		"no adapter is named": {
-			cfg: networkWiringConfig("", "publisher-1"), says: "NETWORK_DRIVER",
+			cfg: networkWiringConfig("", "publisher-1"), says: config.NetworksKey,
 		},
+		// Unreachable through serve since T215 - CashbackConfig.Mountable
+		// declines to build cashback at all while a configured network has
+		// no account id - and asserted anyway, because this function is
+		// called with one network's config rather than with the decision
+		// that admitted it, and must not start trusting a gate it cannot
+		// see. The key it names is the network's own.
 		"no publisher account is named": {
-			cfg: networkWiringConfig(config.NetworkDriverFixture, ""), says: "NETWORK_ACCOUNT_ID",
+			cfg: networkWiringConfig(config.NetworkDriverFixture, ""), says: "NETWORK_FIXTURE_ACCOUNT_ID",
 		},
 		"the named account is not connected": {
 			cfg: networkWiringConfig(config.NetworkDriverFixture, "publisher-nobody-connected"), says: "is connected",
@@ -295,7 +301,6 @@ func TestRunRegistersTheNetworkSweeps(t *testing.T) {
 	env := cashbackEnv(isoURL)
 	// Three jobs need eight connections, and the default is four.
 	env["DATABASE_URL"] = isoURL + "&pool_max_conns=8"
-	env["NETWORK_ACCOUNT_ID"] = "publisher-1"
 	out, stop := runServing(t, env)
 	defer stop()
 
@@ -329,8 +334,16 @@ func TestRunSaysWhenNoNetworkIsConnected(t *testing.T) {
 		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise this test")
 	}
 
-	// The fixture driver with no account named: the shape every environment
-	// has been in until an operator connects an account.
+	// The fixture network fully configured, against a database with no
+	// cashback.network_account row in it: the shape every environment is in
+	// until an operator runs connect-network.
+	//
+	// It used to be "no account named", and that state no longer reaches
+	// here: an unnamed account makes CashbackConfig.Mountable false, so
+	// cashback is not built and there is nothing to report a missing
+	// connection about (TestRunDoesNotMountCashbackOverAnUnusableNetwork
+	// covers that one). What is left is the case an operator actually
+	// meets - configuration complete, the database not yet written to.
 	out, stop := runServing(t, cashbackEnv(isolatedDatabase(t, dbURL)))
 	defer stop()
 
@@ -338,8 +351,8 @@ func TestRunSaysWhenNoNetworkIsConnected(t *testing.T) {
 	if !strings.Contains(logged, "NO AFFILIATE NETWORK IS CONNECTED") {
 		t.Fatalf("an unwired deployment said nothing about it; output: %q", logged)
 	}
-	if !strings.Contains(logged, "NETWORK_ACCOUNT_ID") {
-		t.Errorf("the line does not name what is missing; output: %q", logged)
+	if !strings.Contains(logged, "publisher-1") {
+		t.Errorf("the line does not name the account it looked for; output: %q", logged)
 	}
 	// Once, not twice. The poller and the click-out endpoint both need the
 	// connection, and two ERROR lines about one missing account read as two
@@ -350,5 +363,60 @@ func TestRunSaysWhenNoNetworkIsConnected(t *testing.T) {
 	// And it serves anyway: ingestion is not the site.
 	if !strings.Contains(logged, "starting") {
 		t.Errorf("a deployment with no network configured did not serve; output: %q", logged)
+	}
+}
+
+// TestRunDoesNotMountCashbackOverAnUnusableNetwork is the founder's decision
+// of 2026-09-04, asserted end to end: a network named in NETWORKS whose keys
+// are not set turns CASHBACK off and leaves the rest of the deployment
+// serving.
+//
+// Both halves matter and neither is obvious from the other. Mounting
+// cashback over a network that cannot poll would let members click and buy
+// and never be credited, with nothing failing anywhere. Failing the PROCESS
+// instead - which is what putting these keys in CashbackConfig.Missing would
+// do - would take the public news site down over a typo in one network's
+// credential, and the risk of that grows with every network added.
+func TestRunDoesNotMountCashbackOverAnUnusableNetwork(t *testing.T) {
+	t.Parallel()
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise this test")
+	}
+
+	env := cashbackEnv(isolatedDatabase(t, dbURL))
+	// A second network, named and unconfigured. The first one is complete,
+	// which is the point: ALL of them must be usable, not merely one, or a
+	// deployment that names two and polls one is not the deployment its
+	// operator described.
+	env["NETWORKS"] = config.NetworkDriverFixture + ",reference_network"
+
+	out, stop := runServing(t, env)
+	defer stop()
+
+	logged := out.String()
+	for _, want := range []string{
+		// The cause, by name, with the key an operator would set.
+		"reference_network",
+		"NETWORK_REFERENCE_NETWORK_ACCOUNT_ID",
+		"NETWORK_REFERENCE_NETWORK_API_KEY",
+		// And the consequence, said separately, because "one network is
+		// misconfigured" and "the cashback product is not running" are
+		// different sizes of news.
+		"CASHBACK IS NOT MOUNTED",
+	} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("the startup log does not carry %q; output: %q", want, logged)
+		}
+	}
+	// The usable network is not polled either - it is not "the ones that
+	// work", it is none of them.
+	if strings.Contains(logged, "affiliate network sweeps registered") {
+		t.Errorf("sweeps were registered over a half-configured deployment; output: %q", logged)
+	}
+	// And the deployment serves regardless. This is the half that keeps a
+	// credential typo from taking the public news site down.
+	if !strings.Contains(logged, "starting") {
+		t.Errorf("a deployment with one unusable network did not serve; output: %q", logged)
 	}
 }

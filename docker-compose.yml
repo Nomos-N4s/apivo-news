@@ -229,8 +229,10 @@ services:
       #
       # The two shapes that work against this file:
       #   CASHBACK_ENABLED=true LEDGER_DRIVER=blnk \
-      #     BLNK_URL=http://blnk:5001 NETWORK_DRIVER=fixture
-      #   CASHBACK_ENABLED=true LEDGER_DRIVER=memory NETWORK_DRIVER=fixture
+      #     BLNK_URL=http://blnk:5001 \
+      #     NETWORKS=fixture NETWORK_FIXTURE_ACCOUNT_ID=fixture-publisher
+      #   CASHBACK_ENABLED=true LEDGER_DRIVER=memory \
+      #     NETWORKS=fixture NETWORK_FIXTURE_ACCOUNT_ID=fixture-publisher
       # The second needs neither of the services above and is what runs
       # while Docker is unavailable — with the binary on the host, where
       # BLNK_URL would instead be http://127.0.0.1:5001.
@@ -243,13 +245,19 @@ services:
       BLNK_URL: ${BLNK_URL:-}
       BLNK_SECRET_KEY: ${BLNK_SECRET_KEY:-}
       REDIS_URL: ${REDIS_URL:-}
-      NETWORK_DRIVER: ${NETWORK_DRIVER:-}
+      # The list, and the block for the one driver this binary ships. A
+      # second network means a second block here, named after it: the api
+      # reads NETWORK_<DRIVER>_*, and compose cannot pass a variable whose
+      # name it does not know. The flat keys these replace are refused by the
+      # api rather than aliased, so they are deliberately not passed through
+      # - a developer with one left over in their shell should be told.
+      NETWORKS: ${NETWORKS:-}
       HOUSE_ACCOUNT_ROUNDING: ${HOUSE_ACCOUNT_ROUNDING:-}
       HOUSE_ACCOUNT_CLAWBACK: ${HOUSE_ACCOUNT_CLAWBACK:-}
-      NETWORK_ACCOUNT_ID: ${NETWORK_ACCOUNT_ID:-}
-      NETWORK_API_KEY: ${NETWORK_API_KEY:-}
-      NETWORK_API_SECRET: ${NETWORK_API_SECRET:-}
-      NETWORK_SOURCE_LANGUAGE: ${NETWORK_SOURCE_LANGUAGE:-}
+      NETWORK_FIXTURE_ACCOUNT_ID: ${NETWORK_FIXTURE_ACCOUNT_ID:-}
+      NETWORK_FIXTURE_API_KEY: ${NETWORK_FIXTURE_API_KEY:-}
+      NETWORK_FIXTURE_API_SECRET: ${NETWORK_FIXTURE_API_SECRET:-}
+      NETWORK_FIXTURE_SOURCE_LANGUAGE: ${NETWORK_FIXTURE_SOURCE_LANGUAGE:-}
       HOLD_SHARED_CONTEXT_ACCOUNTS: ${HOLD_SHARED_CONTEXT_ACCOUNTS:-}
       HOLD_SHARED_CONTEXT_WINDOW: ${HOLD_SHARED_CONTEXT_WINDOW:-}
       HOLD_NEW_ACCOUNT_AGE: ${HOLD_NEW_ACCOUNT_AGE:-}

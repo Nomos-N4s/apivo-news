@@ -111,7 +111,12 @@ func seedCommand(ctx context.Context, args []string, getenv func(string) string,
 // resolved and checked before the database is opened - so a misconfigured
 // run fails in a second and writes nothing.
 type seedRequest struct {
-	network        networks.Documented
+	network networks.Documented
+	// credentialRef is the environment key this account's credential is
+	// read from - a KEY INTO CONFIGURATION and never a credential
+	// (ADR-0003). Carried on the request because it is per network now,
+	// so the row names the key that actually holds this network's secret.
+	credentialRef  string
 	accountID      string
 	brandID        string
 	sourceLanguage string
@@ -138,16 +143,22 @@ type seedRequest struct {
 //     recorded in, and merchant_copy's whole design is that a fallback is
 //     labelled rather than guessed.
 func seedInputs(cfg config.Config) (seedRequest, error) {
-	if cfg.Cashback.Network.Driver != config.NetworkDriverFixture {
+	network, wired := theConfiguredNetwork(cfg.Cashback)
+	if !wired {
+		return seedRequest{}, fmt.Errorf("%s names no network, and one is what this would seed against", config.NetworksKey)
+	}
+	if network.Driver != config.NetworkDriverFixture {
 		return seedRequest{}, fmt.Errorf(
-			"%s %s refuses NETWORK_DRIVER=%s: it writes retailers and rate bands nobody imported, and against a real network the next catalogue import would mark them left_network - after members had clicked a rate that network never agreed to pay. Set NETWORK_DRIVER=%s",
-			seedName, cashbackTopic, strconv.Quote(cfg.Cashback.Network.Driver), strconv.Quote(config.NetworkDriverFixture))
+			"%s %s refuses to seed against %s: it writes retailers and rate bands nobody imported, and against a real network the next catalogue import would mark them left_network - after members had clicked a rate that network never agreed to pay. Set %s=%s",
+			seedName, cashbackTopic, strconv.Quote(network.Driver),
+			config.NetworksKey, strconv.Quote(config.NetworkDriverFixture))
 	}
-	if cfg.Cashback.Network.AccountID == "" {
-		return seedRequest{}, errors.New("NETWORK_ACCOUNT_ID names no publisher account, and it is the account this would seed against")
+	accountIDKey, _, _, sourceLanguageKey := network.Keys()
+	if network.AccountID == "" {
+		return seedRequest{}, fmt.Errorf("%s names no publisher account, and it is the account this would seed against", accountIDKey)
 	}
-	if cfg.Cashback.Network.SourceLanguage == "" {
-		return seedRequest{}, errors.New("NETWORK_SOURCE_LANGUAGE is unset, and it is the language the seeded retailers' names would be recorded in")
+	if network.SourceLanguage == "" {
+		return seedRequest{}, fmt.Errorf("%s is unset, and it is the language the seeded retailers' names would be recorded in", sourceLanguageKey)
 	}
 	if cfg.BrandDir == "" {
 		return seedRequest{}, errors.New("BRAND_DIR is unset, and merchant_network.brand_id has no default: which brand publishes a route is a decision, not a fallback (ADR-0004)")
@@ -166,15 +177,16 @@ func seedInputs(cfg config.Config) (seedRequest, error) {
 		return seedRequest{}, fmt.Errorf("BRAND_DIR=%s: the brand defines no %s document, and a participation records which version a member accepted",
 			cfg.BrandDir, strconv.Quote(brand.DocumentTerms))
 	}
-	documented, err := documentedNetwork(cfg.Cashback.Network.Driver)
+	documented, err := documentedNetwork(network.Driver)
 	if err != nil {
 		return seedRequest{}, err
 	}
 	return seedRequest{
 		network:        documented,
-		accountID:      cfg.Cashback.Network.AccountID,
+		credentialRef:  credentialRef(network),
+		accountID:      network.AccountID,
 		brandID:        defined.ID,
-		sourceLanguage: cfg.Cashback.Network.SourceLanguage,
+		sourceLanguage: network.SourceLanguage,
 		termsVersion:   terms.Version,
 		currency:       defined.Defaults.Currency,
 	}, nil
@@ -243,7 +255,7 @@ func seedConnection(ctx context.Context, pool *pgxpool.Pool, req seedRequest) (n
 	connection, err := networks.ConnectPublisherAccount(ctx, tx, networks.ConnectRequest{
 		Network:             req.network,
 		ExternalPublisherID: req.accountID,
-		CredentialRef:       credentialRefKey,
+		CredentialRef:       req.credentialRef,
 		BackfillFrom:        time.Now().UTC().Add(-seedBackfill),
 		Active:              true,
 	})

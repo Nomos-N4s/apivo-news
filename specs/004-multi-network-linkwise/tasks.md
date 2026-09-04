@@ -80,11 +80,38 @@ unrun — and these phases land out of numeric order on purpose. See
 - [ ] T212 [US1] Delete the `networkAdapter` switch (`cmd/apivo/networks.go:138`) into the registry
 - [ ] T213 [US1] Delete the `documentedNetwork` switch (`cmd/apivo/connect_network.go:190`) into the registry
 - [ ] T214 [US1] Test in `cmd/apivo/`: every registry entry is both **servable and seedable**, and a driver absent from the registry is absent from both. This is the defect FR-092 names — a driver that can be seeded into `cashback.network` and then refuses to start
-- [ ] T215 [US1] `internal/platform/config/cashback.go`: `NETWORKS` as an ordered list plus one `NETWORK_<DRIVER>_*` block per entry, per [contracts/config.md](contracts/config.md). `NetworkConfig` becomes a slice; each element keeps `Secret` for both credential halves
-- [ ] T216 [US1] Config validation: a driver not in the registry, a duplicate entry, and a malformed driver name are each refused at startup with the shipped drivers listed
-- [ ] T217 [US1] Config validation: a network with a missing key is reported at ERROR **by name** — `NETWORK_LINKWISE_API_KEY is unset` — and does not stop the deployment or the other networks (FR-091)
-- [ ] T218 [US1] Config: the five old flat keys are **refused**, not aliased, each with a message naming its replacement
-- [ ] T219 [US1] Test: a block present for a driver absent from `NETWORKS` is ignored and said so once; zero usable networks is not a startup failure
+- [x] T215 [US1] `internal/platform/config/networks.go` (a file of its own, not `cashback.go`): `NETWORKS` as an ordered list plus one `NETWORK_<DRIVER>_*` block per entry, per [contracts/config.md](contracts/config.md). `NetworkConfig` becomes a slice; each element keeps `Secret` for both credential halves. `network_account.credential_ref` becomes per network with it — it was the literal `NETWORK_API_KEY`, true while one network existed and a lie the moment the keys grew a driver in them
+- [x] T216 [US1] Config validation: a duplicate entry and a malformed driver name are each refused at startup. **A driver not in the registry is not refused here**: config checks the SHAPE of a name and defers membership to `cmd/apivo/registry.go`, which is where the adapters are. Refusing it in config would put the list of shipped networks in two places, which is the disagreement the registry (T211) was built to end — and `lookupNetwork` already refuses an unknown driver by name, listing what the binary ships
+- [x] T217 [US1] Config validation: a network with a missing key is reported at ERROR **by name** — `"linkwise" cannot poll: NETWORK_LINKWISE_ACCOUNT_ID, NETWORK_LINKWISE_API_KEY are unset`. **It stops cashback**, which FR-091 as written says it must not — see the divergence note below
+- [x] T218 [US1] Config: the five old flat keys are **refused**, not aliased, each with a message naming its replacement
+- [x] T219 [US1] Test: a block present for a driver absent from `NETWORKS` is ignored; zero networks is not a startup failure and mounts cashback normally
+
+**FR-091 divergence, founder decision of 2026-09-04.** The contract
+([contracts/config.md](contracts/config.md) rows 2-3) and FR-091 say an
+incomplete network must not stop *the deployment or the networks beside it*,
+and that the others keep polling. The code says an incomplete network stops
+**cashback** — all of it, however many other networks are fine — and leaves
+the process serving the news site.
+
+The deciding fact, found while implementing: `requireCashbackComplete`
+returns an error from config parsing, so putting these keys in `Missing()`
+kills the **process**. A typo in `NETWORK_LINKWISE_API_KEY` would have taken
+`apivo.news` down, and that risk grows with every network added. The founder
+was offered "start and poll the ones that work" and rejected it: cashback
+moves members' money, and a network that cannot poll is one whose
+transactions never arrive — members would click, buy, and never be credited,
+with nothing failing anywhere.
+
+So there are three states, not two, and the spec only had two:
+
+| | process | cashback | polling |
+|---|---|---|---|
+| a network key is missing | serves | **not mounted** | none |
+| `NETWORKS` empty | serves | mounted | none, said at ERROR |
+| no `network_account` row | serves | mounted | none, said at ERROR |
+
+Recorded rather than resolved: the founder amends the spec separately, and
+this note exists so the divergence does not go silent. Issue: #513.
 - [ ] T220 [US1] `cmd/apivo/cashback.go`: connect every configured network, resolving each adapter's credential through `network_account.credential_ref` (FR-093), and wire one set of sweeps per publisher account
 - [ ] T221 [US1] `internal/cashback/catalogue/schedule.go`: `ImportJobName` becomes a per-account derivation, exactly as `networks.ForwardJobName` and `TrailingJobName` already are (`sweeps.go:57-76`)
 - [ ] T222 [US1] Update the capacity arithmetic and its comment in `cmd/apivo/main.go:440-446`: three jobs per network, floor 14 → 20 → 26, asserted by `locker.CheckCapacity` against the jobs actually registered (FR-095)

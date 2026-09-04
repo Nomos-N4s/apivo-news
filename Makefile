@@ -201,16 +201,17 @@ ACCOUNT :=
 # Those are expected skips, not failures to chase.
 cashback-up:
 	@grep -q '^  blnk:' docker-compose.yml || \
-		$(call missing,a blnk service in docker-compose.yml,task T002 (issue #149) - blnk and redis in the local compose stack,run the api with LEDGER_DRIVER=memory NETWORK_DRIVER=fixture and skip the ledger entirely)
+		$(call missing,a blnk service in docker-compose.yml,task T002 (issue #149) - blnk and redis in the local compose stack,run the api with LEDGER_DRIVER=memory NETWORKS=fixture and skip the ledger entirely)
 	$(COMPOSE) up -d --wait postgres redis blnk
 
 ## cashback-seed: seed the fixture network, its catalogue and three rate bands
 # Pass ACCOUNT=<supabase-auth-user-id> to opt an account in as well. The
 # account.id must equal the Supabase Auth user id, exactly as for news.
 #
-# NETWORK_DRIVER is forced rather than defaulted: the command refuses every
-# other adapter (see seedInputs), so offering the choice here would only be
-# offering a way to be told no.
+# NETWORKS is forced rather than defaulted: the command refuses every other
+# adapter (see seedInputs), so offering the choice here would only be
+# offering a way to be told no. Its settings go in the block named after it,
+# NETWORK_FIXTURE_*, which is how the api reads them too.
 #
 # BRAND_DIR points at the test brand because it is the only brand this
 # repository contains - there is none it could ship that would not be a lie
@@ -221,9 +222,9 @@ SEED_LANGUAGE ?= en
 SEED_BRAND_DIR ?= internal/platform/brand/testdata/fixture
 cashback-seed:
 	DATABASE_URL="$(DATABASE_URL_TEST)" \
-	NETWORK_DRIVER=fixture \
-	NETWORK_ACCOUNT_ID="$(SEED_ACCOUNT_ID)" \
-	NETWORK_SOURCE_LANGUAGE="$(SEED_LANGUAGE)" \
+	NETWORKS=fixture \
+	NETWORK_FIXTURE_ACCOUNT_ID="$(SEED_ACCOUNT_ID)" \
+	NETWORK_FIXTURE_SOURCE_LANGUAGE="$(SEED_LANGUAGE)" \
 	BRAND_DIR="$(SEED_BRAND_DIR)" \
 	$(GO) run ./cmd/apivo seed cashback $(ACCOUNT)
 

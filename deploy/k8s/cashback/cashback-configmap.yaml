@@ -102,21 +102,37 @@ data:
   # what lets the whole money path run in a cluster before a publisher
   # account exists.
   #
-  # NAMED, not left empty. This shipped empty with a comment saying empty
-  # meant fixture, and the api does not agree: CashbackConfig.Missing lists
-  # NETWORK_DRIVER whenever the product is on, so an empty value here refused
-  # to start the cluster. .env.example has always set it explicitly; this now
-  # matches.
+  # A COMMA-SEPARATED LIST, in the order the networks are wired, and each
+  # entry gets a block of settings named after it: NETWORK_<DRIVER>_ACCOUNT_ID,
+  # _API_KEY, _API_SECRET, _SOURCE_LANGUAGE. The list decides — a block whose
+  # driver is not named here is read by nothing at all, deliberately, because
+  # a network named here can be reported BY NAME when its keys are missing
+  # and a network inferred from a stray block could not be.
   #
-  # Naming a live adapter here without its credentials in the Secret is a
-  # configuration error the api reports at startup, rather than a poller that
-  # silently fetches nothing.
-  NETWORK_DRIVER: "fixture"
+  # The flat NETWORK_DRIVER / NETWORK_ACCOUNT_ID / NETWORK_API_KEY /
+  # NETWORK_API_SECRET / NETWORK_SOURCE_LANGUAGE keys this replaces are
+  # REFUSED rather than aliased: a cluster still carrying them gets pods that
+  # will not start and say which key to move, instead of a cluster that meant
+  # to run two networks quietly running one.
+  #
+  # NAMED, not left empty. Empty is legal and polls nothing, but a cluster
+  # that applied deploy/k8s/cashback/ meant to run the product.
+  #
+  # Naming a network here WITHOUT its account id and credential does not
+  # crash the api — it stops CASHBACK. Every cashback route answers 404, the
+  # startup log names the network and the key, and the news site keeps
+  # serving: a typo in one network's key must not take the public site down.
+  NETWORKS: "fixture"
   # The publisher account the adapter reports for. NOT a credential - the
   # config package logs it in clear, and its two companions
-  # (NETWORK_API_KEY, NETWORK_API_SECRET) are Secrets precisely because this
-  # one is not. Empty with the fixture adapter, which has no account.
-  NETWORK_ACCOUNT_ID: ""
+  # (NETWORK_FIXTURE_API_KEY, NETWORK_FIXTURE_API_SECRET) are Secrets
+  # precisely because this one is not.
+  #
+  # Required even for the fixture adapter, which needs no credential: the two
+  # durable cursors live on a cashback.network_account row and this is the
+  # only value that says which one. An adapter that needs no credential still
+  # polls on behalf of somebody. Leave it empty and cashback does not mount.
+  NETWORK_FIXTURE_ACCOUNT_ID: "fixture-publisher"
 
   # The BCP-47 primary language subtag the network supplies its catalogue
   # copy in ("de", "en", "el"), as an operator states it. Configuration and
@@ -128,7 +144,10 @@ data:
   # This and BRAND_DIR together turn the CATALOGUE IMPORT on. Empty means the
   # api serves normally, says at ERROR that no import is scheduled, and the
   # retailers members can click are never refreshed.
-  NETWORK_SOURCE_LANGUAGE: ""
+  #
+  # Per network, because two networks may supply their copy in two languages
+  # and one tag for both would put a wrong one on half the catalogue.
+  NETWORK_FIXTURE_SOURCE_LANGUAGE: ""
   # HOLD_* are the hard rules that hold a suspicious credit for review (US7).
   # Every rule is off until its keys are set; a count and its window are one
   # rule and are refused apart. Windows are Go durations ("24h", "720h").
