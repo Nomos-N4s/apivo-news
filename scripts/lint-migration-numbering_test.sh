@@ -189,9 +189,26 @@ expect "a missing directory is not a pass" 2
 # The migrations that actually exist.
 ################################################################################
 
+# Counted independently rather than written down. A literal here would be
+# wrong the moment anybody adds a migration - it was, on the very next one -
+# and a test that has to be edited by every unrelated pull request is a test
+# people learn to edit without reading.
+#
+# The independence is the point: the lint counts by parsing filenames into
+# versions, this counts .sql and .up.sql files. A reader that saw nothing
+# still fails, because it would report 0 against a directory holding dozens.
 DIR=$MIGRATIONS
+REAL_FILES=$(find "$MIGRATIONS" -type f -name '*.sql' | wc -l | tr -d ' ')
+REAL_VERSIONS=$(find "$MIGRATIONS" -type f -name '*.up.sql' | wc -l | tr -d ' ')
 expect "the repository's own migrations are clean" 0
-read_count "the repository's own migrations" 64 32
+read_count "the repository's own migrations" "$REAL_FILES" "$REAL_VERSIONS"
+
+# And the floor: a directory that somehow held nothing would make the two
+# counts above agree with a lint that read nothing.
+if [ "$REAL_VERSIONS" -lt 1 ]; then
+    printf 'FAIL: the repository has no migrations, so the case above asserted nothing\n'
+    FAILS=$((FAILS + 1))
+fi
 
 ################################################################################
 
