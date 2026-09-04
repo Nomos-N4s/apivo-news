@@ -92,8 +92,11 @@ type CashbackConfig struct {
 	// not money. The key exists so one place names the dependency and so
 	// the value is validated rather than discovered malformed by a sidecar.
 	RedisURL string
-	// Network is the affiliate network adapter's selection and credentials.
-	Network NetworkConfig
+	// Networks are the affiliate networks this deployment polls, in the
+	// order NETWORKS named them. Empty is legal: a deployment that polls
+	// nothing still serves the wallet, the money loop and click-outs on an
+	// existing catalogue.
+	Networks []NetworkConfig
 	// ClickContextHeader (CLICK_CONTEXT_HEADER) names the header this
 	// deployment's edge sets to carry the real client address, for the
 	// privacy-minimised context digest a click records (FR-022) and for the
@@ -309,20 +312,14 @@ func (c CashbackConfig) Missing() []string {
 	if c.LedgerDriver == "" {
 		missing = append(missing, "LEDGER_DRIVER")
 	}
-	if c.Network.Driver == "" {
-		missing = append(missing, "NETWORK_DRIVER")
-	}
 	if c.UsesBlnk() && c.BlnkURL == "" {
 		missing = append(missing, "BLNK_URL")
 	}
-	if c.Network.NeedsCredentials() {
-		if c.Network.AccountID == "" {
-			missing = append(missing, "NETWORK_ACCOUNT_ID")
-		}
-		if c.Network.APIKey.IsZero() {
-			missing = append(missing, "NETWORK_API_KEY")
-		}
-	}
+	// Nothing about the networks appears here, deliberately. This list
+	// decides whether the product mounts at all, and FR-091 says an
+	// incomplete network must not stop the deployment or the networks
+	// beside it. What a network is missing is reported by name through
+	// [CashbackConfig.UnusableNetworks], at ERROR, and the deployment runs.
 	return missing
 }
 
@@ -343,10 +340,7 @@ func (c CashbackConfig) LogValue() slog.Value {
 		slog.String("house_account_rounding", c.HouseAccounts.Rounding),
 		slog.String("house_account_clawback", c.HouseAccounts.Clawback),
 		slog.String("house_account_network_receivable", c.HouseAccounts.NetworkReceivable),
-		slog.String("network_driver", c.Network.Driver),
-		slog.String("network_account_id", c.Network.AccountID),
-		slog.Bool("network_api_key_set", !c.Network.APIKey.IsZero()),
-		slog.Bool("network_api_secret_set", !c.Network.APISecret.IsZero()),
+		slog.Attr{Key: "networks", Value: networksLogValue(c.Networks)},
 	)
 }
 
@@ -380,22 +374,22 @@ func parseCashback(getenv func(string) string) (CashbackConfig, error) {
 		BlnkSecretKey:      NewSecret(getenv("BLNK_SECRET_KEY")),
 		RedisURL:           strings.TrimSpace(getenv("REDIS_URL")),
 		ClickContextHeader: strings.TrimSpace(getenv("CLICK_CONTEXT_HEADER")),
-		Network: NetworkConfig{
-			Driver:    strings.TrimSpace(getenv("NETWORK_DRIVER")),
-			AccountID: strings.TrimSpace(getenv("NETWORK_ACCOUNT_ID")),
-			APIKey:    NewSecret(getenv("NETWORK_API_KEY")),
-			APISecret: NewSecret(getenv("NETWORK_API_SECRET")),
-			// Lower-cased here so "DE" and "de" name one language: the
-			// column this ends up in is keyed by the tag, and a second
-			// casing would be a second row nothing matches.
-			SourceLanguage: strings.ToLower(strings.TrimSpace(getenv("NETWORK_SOURCE_LANGUAGE"))),
-		},
 		HouseAccounts: HouseAccountsConfig{
 			Rounding:          strings.TrimSpace(getenv("HOUSE_ACCOUNT_ROUNDING")),
 			Clawback:          strings.TrimSpace(getenv("HOUSE_ACCOUNT_CLAWBACK")),
 			NetworkReceivable: strings.TrimSpace(getenv("HOUSE_ACCOUNT_NETWORK_RECEIVABLE")),
 		},
 	}
+
+	// Parsed rather than assigned inline: NETWORKS can be WRONG - a legacy
+	// key, a malformed name, a duplicate - and a struct literal has nowhere
+	// to put that. A network that is merely incomplete is not an error and
+	// comes back in the slice.
+	networks, err := parseNetworks(getenv)
+	if err != nil {
+		return CashbackConfig{}, err
+	}
+	c.Networks = networks
 
 	threshold, err := parsePayoutThreshold(getenv)
 	if err != nil {
@@ -425,9 +419,6 @@ func parseCashback(getenv func(string) string) (CashbackConfig, error) {
 		}
 	}
 
-	if err := validateNetworkDriver(c.Network.Driver); err != nil {
-		return CashbackConfig{}, err
-	}
 	if err := validateEndpoint("BLNK_URL", c.BlnkURL, "http", "https"); err != nil {
 		return CashbackConfig{}, err
 	}
@@ -470,7 +461,7 @@ func requireCashbackComplete(c CashbackConfig, env string) error {
 	if missing := c.Missing(); len(missing) > 0 {
 		return fmt.Errorf(
 			"config: CASHBACK_ENABLED is true but %s %s unset; cashback moves members' money, so it starts fully configured or not at all - set them, or set CASHBACK_ENABLED=false",
-			strings.Join(missing, ", "), plural(len(missing), "is", "are"))
+			strings.Join(missing, ", "), isAre(len(missing)))
 	}
 	if env == EnvProd && c.UsesBlnk() && c.BlnkSecretKey.IsZero() {
 		return fmt.Errorf(
@@ -504,7 +495,7 @@ func requireCashbackComplete(c CashbackConfig, env string) error {
 		if len(unset) > 0 {
 			return fmt.Errorf(
 				"config: %s %s unset and APP_ENV=%s: refusing to start. The house accounts are where the rounding remainder (D6) and absorbed clawback losses (Q3) live and where an earning is paid out of (FR-040), and a production deployment that cannot name them would discover that on its first commission",
-				strings.Join(unset, ", "), plural(len(unset), "is", "are"), EnvProd)
+				strings.Join(unset, ", "), isAre(len(unset)), EnvProd)
 		}
 		// The threshold is its own refusal rather than a fourth name in the
 		// list above, because it is a different mistake with a different
@@ -520,27 +511,41 @@ func requireCashbackComplete(c CashbackConfig, env string) error {
 	return nil
 }
 
-// plural picks the verb for a list of n things, so the error above reads as
-// English in both cases.
-func plural(n int, one, many string) string {
+// isAre picks the verb for a list of n things, so every "X is unset" and "X,
+// Y are unset" above reads as English.
+//
+// Narrower than the plural(n, one, many) it replaces, because every caller
+// there passed "is" and "are": a helper with two parameters that only ever
+// take two values is a generality nobody asked for, and the linter says so.
+func isAre(n int) string {
 	if n == 1 {
-		return one
+		return "is"
 	}
-	return many
+	return "are"
 }
 
 // validateNetworkDriver requires a lowercase identifier: a package name, in
 // the shape internal/cashback/networks/<driver> takes. Rejecting anything
 // else keeps a typo, a path or a stray quote from reaching the adapter
 // registry as a lookup that quietly finds nothing.
+//
+// It checks the SHAPE and not the membership. Whether an adapter exists is
+// the composition root's answer (cmd/apivo/registry.go), because that is
+// where the adapters are; config refusing an unknown name would put the list
+// of shipped networks in two places, which is the disagreement the registry
+// was built to end.
+//
+// The empty driver returns nil rather than an error because the entry that
+// produced it is refused by [parseNetworks] with a better message - one that
+// can quote the whole NETWORKS value and point at the stray comma.
 func validateNetworkDriver(driver string) error {
 	if driver == "" {
 		return nil
 	}
 	if !isLowerIdentifier(driver) {
 		return fmt.Errorf(
-			"config: NETWORK_DRIVER %q is not an adapter name; it must be lowercase letters, digits and underscores, starting with a letter (e.g. %q)",
-			driver, NetworkDriverFixture)
+			"config: %s names %q, which is not an adapter name; it must be lowercase letters, digits and underscores, starting with a letter (e.g. %q)",
+			NetworksKey, driver, NetworkDriverFixture)
 	}
 	return nil
 }

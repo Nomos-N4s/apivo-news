@@ -32,8 +32,8 @@ const seedBrandDir = "../../internal/platform/brand/testdata/fixture"
 // the caller gives it.
 func seedEnv(dbURL string) map[string]string {
 	env := cashbackEnv(dbURL)
-	env["NETWORK_ACCOUNT_ID"] = "seed-test-publisher"
-	env["NETWORK_SOURCE_LANGUAGE"] = "en"
+	env["NETWORK_FIXTURE_ACCOUNT_ID"] = "seed-test-publisher"
+	env["NETWORK_FIXTURE_SOURCE_LANGUAGE"] = "en"
 	env["BRAND_DIR"] = seedBrandDir
 	return env
 }
@@ -80,22 +80,23 @@ func TestSeedRefusesWhatItCannotSeed(t *testing.T) {
 			name: "a real network",
 			args: []string{"seed", "cashback"},
 			amend: func(env map[string]string) {
-				env["NETWORK_DRIVER"] = "awin"
-				env["NETWORK_API_KEY"] = "not-a-real-token"
+				env["NETWORKS"] = "awin"
+				env["NETWORK_AWIN_ACCOUNT_ID"] = "seed-test-publisher"
+				env["NETWORK_AWIN_API_KEY"] = "not-a-real-token"
 			},
-			want: "refuses NETWORK_DRIVER",
+			want: `refuses to seed against "awin"`,
 		},
 		{
 			name:  "no publisher account",
 			args:  []string{"seed", "cashback"},
-			amend: func(env map[string]string) { delete(env, "NETWORK_ACCOUNT_ID") },
-			want:  "NETWORK_ACCOUNT_ID names no publisher account",
+			amend: func(env map[string]string) { delete(env, "NETWORK_FIXTURE_ACCOUNT_ID") },
+			want:  "NETWORK_FIXTURE_ACCOUNT_ID names no publisher account",
 		},
 		{
 			name:  "no source language",
 			args:  []string{"seed", "cashback"},
-			amend: func(env map[string]string) { delete(env, "NETWORK_SOURCE_LANGUAGE") },
-			want:  "NETWORK_SOURCE_LANGUAGE is unset",
+			amend: func(env map[string]string) { delete(env, "NETWORK_FIXTURE_SOURCE_LANGUAGE") },
+			want:  "NETWORK_FIXTURE_SOURCE_LANGUAGE is unset",
 		},
 		{
 			name:  "no brand",

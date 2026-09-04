@@ -373,7 +373,8 @@ jobs:
         env:
           CASHBACK_ENABLED: "true"
           LEDGER_DRIVER: blnk
-          NETWORK_DRIVER: fixture
+          NETWORKS: fixture
+          NETWORK_FIXTURE_ACCOUNT_ID: ci-publisher
           BLNK_URL: http://127.0.0.1:5001
           REDIS_URL: redis://127.0.0.1:6379
       - name: Test with cashback enabled against the real ledger
@@ -387,7 +388,8 @@ jobs:
         env:
           CASHBACK_ENABLED: "true"
           LEDGER_DRIVER: blnk
-          NETWORK_DRIVER: fixture
+          NETWORKS: fixture
+          NETWORK_FIXTURE_ACCOUNT_ID: ci-publisher
           BLNK_URL: http://127.0.0.1:5001
           REDIS_URL: redis://127.0.0.1:6379
       # C-1 is the one invariant ADR-0002 moved out of our schema, and the
@@ -407,7 +409,8 @@ jobs:
         env:
           CASHBACK_ENABLED: "true"
           LEDGER_DRIVER: blnk
-          NETWORK_DRIVER: fixture
+          NETWORKS: fixture
+          NETWORK_FIXTURE_ACCOUNT_ID: ci-publisher
           BLNK_URL: http://127.0.0.1:5001
           REDIS_URL: redis://127.0.0.1:6379
       - name: Ledger logs (for the record)

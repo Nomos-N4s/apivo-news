@@ -398,9 +398,10 @@ services:
   # of the books' layout rather than a per-environment preference: renaming
   # one later strands whatever balance had accrued under the old name.
   #
-  # NETWORK_DRIVER and the affiliate network credentials are the opposite:
-  # they are an operator's choice against a founder question that is still
-  # open (Q1), so they live in api.env and default to the fixture adapter.
+  # NETWORKS and the affiliate network credentials are the opposite: they are
+  # an operator's choice against a founder question that is still open (Q1),
+  # so they live in api.env and default to the fixture adapter. Each network
+  # named there brings its own NETWORK_<DRIVER>_* block, in the same file.
   api:
     environment:
       CASHBACK_ENABLED: "true"

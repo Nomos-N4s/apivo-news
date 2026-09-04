@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -112,4 +114,80 @@ func shippedDrivers() string {
 	default:
 		return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 	}
+}
+
+// theConfiguredNetwork picks the one network this composition root wires.
+//
+// NETWORKS is a list, and config parses all of it - but the root still
+// builds ONE adapter, one poller and one catalogue import. Making those
+// plural is T220-T224; until then this is where the list narrows, in one
+// named place rather than at each of the four call sites that used to read
+// the flat keys.
+//
+// The FIRST entry, not the first USABLE one. It briefly scanned for a usable
+// entry, so that a deployment whose leading network was missing a credential
+// would poll the one behind it. That is no longer what happens:
+// [config.CashbackConfig.Mountable] declines to build the cashback surface
+// at all while any configured network is unusable, so by the time the server
+// asks this question every entry is usable and "the first" and "the first
+// usable" are the same network. Scanning would only hide the day they
+// stopped being.
+//
+// ok is false when NETWORKS is empty. That is not an error: a deployment
+// that polls nothing still serves the wallet, the money loop and click-outs
+// on an existing catalogue.
+//
+// Callers that are NOT behind the Mountable gate - connect-network is the
+// one - must check [config.NetworkConfig.MissingKeys] themselves. Returning
+// an unusable network to them is deliberate: the subcommand can then name
+// every key that is missing, which is more use than being told the list is
+// empty.
+func theConfiguredNetwork(cfg config.CashbackConfig) (config.NetworkConfig, bool) {
+	if len(cfg.Networks) == 0 {
+		return config.NetworkConfig{}, false
+	}
+	return cfg.Networks[0], true
+}
+
+// reportNetworkConfiguration says, once, what this deployment will and will
+// not poll, and what that costs.
+//
+// Called on CASHBACK_ENABLED - the operator's INTENT - rather than on
+// Mountable, because the case worth reporting most is exactly the one where
+// cashback does not mount: an operator who set CASHBACK_ENABLED=true and
+// finds no cashback routes has to read why here rather than deduce it from a
+// 404.
+func reportNetworkConfiguration(ctx context.Context, log *slog.Logger, cfg config.CashbackConfig) {
+	unusable := cfg.UnusableNetworks()
+	for _, network := range unusable {
+		log.ErrorContext(ctx, "a configured network cannot poll", "problem", network.String())
+	}
+	if len(unusable) > 0 {
+		// The consequence, said separately from the cause. FR-091 asks for
+		// the network named; the founder's decision of 2026-09-04 is that
+		// naming it is not enough on its own, because "one network is
+		// misconfigured" and "the cashback product is not running" are
+		// different sizes of news and an operator must not have to infer
+		// the second from the first.
+		log.ErrorContext(ctx,
+			"CASHBACK IS NOT MOUNTED: every cashback route will answer 404 and no member can click out, because a configured network cannot poll. "+
+				"The rest of this deployment - the news site included - is unaffected and keeps serving",
+			"configured", len(cfg.Networks), "unusable", len(unusable), "drivers", unusableDrivers(unusable))
+		return
+	}
+	if extra := len(cfg.Networks) - 1; extra > 0 {
+		log.ErrorContext(ctx,
+			"more than one network is configured and this build wires only the first; the rest are not polled",
+			"wired", cfg.Networks[0].Driver, "not_wired", extra)
+	}
+}
+
+// unusableDrivers names them in the order NETWORKS did, for the one line
+// that reports the consequence rather than each cause.
+func unusableDrivers(unusable []config.UnusableNetwork) string {
+	names := make([]string, 0, len(unusable))
+	for _, network := range unusable {
+		names = append(names, network.Driver)
+	}
+	return strings.Join(names, ", ")
 }

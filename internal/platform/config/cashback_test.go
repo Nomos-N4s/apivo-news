@@ -3,6 +3,7 @@ package config_test
 import (
 	"bytes"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,8 @@ const (
 )
 
 // enabledCashbackEnv fully configures cashback: the product on, a ledger,
-// a network adapter that needs no credentials, the two house accounts
+// one network adapter that needs no credential but does need an account
+// (the cursors live on a network_account row), the two house accounts
 // money is routed through (optional outside production, but a complete
 // environment is the honest baseline for the wants below), and - because
 // the ledger is the sidecar - where it lives.
@@ -30,13 +32,25 @@ func enabledCashbackEnv() map[string]string {
 		"CASHBACK_ENABLED":                 "true",
 		"LEDGER_DRIVER":                    config.LedgerDriverBlnk,
 		"BLNK_URL":                         "http://blnk:5001",
-		"NETWORK_DRIVER":                   config.NetworkDriverFixture,
+		"NETWORKS":                         config.NetworkDriverFixture,
+		"NETWORK_FIXTURE_ACCOUNT_ID":       "publisher-1",
 		"HOUSE_ACCOUNT_ROUNDING":           houseRounding,
 		"HOUSE_ACCOUNT_CLAWBACK":           houseClawback,
 		"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": houseReceivable,
 		"PAYOUT_THRESHOLD_MINOR":           "2000",
 		"PAYOUT_THRESHOLD_CURRENCY":        "EUR",
 	}
+}
+
+// configuredNetworks is the one network enabledCashbackEnv names, as
+// FromEnv returns it. A function rather than a package-level slice because
+// every want gets its own: a shared slice is one t.Parallel case away from
+// being mutated under another.
+func configuredNetworks() []config.NetworkConfig {
+	return []config.NetworkConfig{{
+		Driver:    config.NetworkDriverFixture,
+		AccountID: "publisher-1",
+	}}
 }
 
 // configuredThreshold is what the baseline's two threshold keys parse to.
@@ -78,7 +92,10 @@ func TestCashbackDefaultsOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FromEnv() error: %v", err)
 	}
-	if got.Cashback != (config.CashbackConfig{}) {
+	// reflect.DeepEqual rather than !=, since Networks made the struct
+	// uncomparable. The assertion is the same one: an untouched environment
+	// decides nothing, networks included.
+	if !reflect.DeepEqual(got.Cashback, config.CashbackConfig{}) {
 		t.Fatalf("Cashback = %+v, want the zero value", got.Cashback)
 	}
 	if got.Cashback.Enabled {
@@ -108,18 +125,20 @@ func TestCashbackFromEnv(t *testing.T) {
 				PayoutThreshold: configuredThreshold(),
 				LedgerDriver:    config.LedgerDriverBlnk,
 				BlnkURL:         "http://blnk:5001",
-				Network:         config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Networks:        configuredNetworks(),
 			},
 		},
 		{
 			name: "every key set",
 			env: withEnv(enabledCashbackEnv(), map[string]string{
-				"BLNK_SECRET_KEY":    "blnk-secret",
-				"REDIS_URL":          "redis://redis:6379/0",
-				"NETWORK_DRIVER":     "reference_network",
-				"NETWORK_ACCOUNT_ID": "publisher-42",
-				"NETWORK_API_KEY":    "network-key",
-				"NETWORK_API_SECRET": "network-secret",
+				"BLNK_SECRET_KEY":                           "blnk-secret",
+				"REDIS_URL":                                 "redis://redis:6379/0",
+				"NETWORKS":                                  "reference_network",
+				"NETWORK_FIXTURE_ACCOUNT_ID":                "",
+				"NETWORK_REFERENCE_NETWORK_ACCOUNT_ID":      "publisher-42",
+				"NETWORK_REFERENCE_NETWORK_API_KEY":         "network-key",
+				"NETWORK_REFERENCE_NETWORK_API_SECRET":      "network-secret",
+				"NETWORK_REFERENCE_NETWORK_SOURCE_LANGUAGE": "DE",
 			}),
 			want: config.CashbackConfig{
 				Enabled:         true,
@@ -129,12 +148,16 @@ func TestCashbackFromEnv(t *testing.T) {
 				BlnkURL:         "http://blnk:5001",
 				BlnkSecretKey:   config.NewSecret("blnk-secret"),
 				RedisURL:        "redis://redis:6379/0",
-				Network: config.NetworkConfig{
+				Networks: []config.NetworkConfig{{
 					Driver:    "reference_network",
 					AccountID: "publisher-42",
 					APIKey:    config.NewSecret("network-key"),
 					APISecret: config.NewSecret("network-secret"),
-				},
+					// Lower-cased from the "DE" the env set: the column this
+					// ends up in is keyed by the tag, and a second casing
+					// would be a second row nothing matches.
+					SourceLanguage: "de",
+				}},
 			},
 		},
 		{
@@ -142,7 +165,8 @@ func TestCashbackFromEnv(t *testing.T) {
 			env: withEnv(enabledCashbackEnv(), map[string]string{
 				"LEDGER_DRIVER":                    "  " + config.LedgerDriverMemory + " ",
 				"BLNK_URL":                         "",
-				"NETWORK_DRIVER":                   " " + config.NetworkDriverFixture + "  ",
+				"NETWORKS":                         " " + config.NetworkDriverFixture + "  ",
+				"NETWORK_FIXTURE_ACCOUNT_ID":       "  publisher-1 ",
 				"HOUSE_ACCOUNT_ROUNDING":           "  " + houseRounding + " ",
 				"HOUSE_ACCOUNT_CLAWBACK":           " " + houseClawback + "  ",
 				"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": "\t" + houseReceivable + " ",
@@ -152,7 +176,7 @@ func TestCashbackFromEnv(t *testing.T) {
 				HouseAccounts:   configuredHouseAccounts(),
 				PayoutThreshold: configuredThreshold(),
 				LedgerDriver:    config.LedgerDriverMemory,
-				Network:         config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Networks:        configuredNetworks(),
 			},
 		},
 		{
@@ -166,7 +190,7 @@ func TestCashbackFromEnv(t *testing.T) {
 				HouseAccounts:   configuredHouseAccounts(),
 				PayoutThreshold: configuredThreshold(),
 				LedgerDriver:    config.LedgerDriverMemory,
-				Network:         config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Networks:        configuredNetworks(),
 			},
 		},
 		{
@@ -180,7 +204,7 @@ func TestCashbackFromEnv(t *testing.T) {
 				HouseAccounts:   configuredHouseAccounts(),
 				PayoutThreshold: configuredThreshold(),
 				LedgerDriver:    config.LedgerDriverPostgres,
-				Network:         config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Networks:        configuredNetworks(),
 			},
 		},
 		{
@@ -208,18 +232,18 @@ func TestCashbackFromEnv(t *testing.T) {
 		},
 		{
 			name:    "a network driver with a path separator is refused",
-			env:     withEnv(enabledCashbackEnv(), map[string]string{"NETWORK_DRIVER": "networks/fixture"}),
-			wantErr: "NETWORK_DRIVER",
+			env:     withEnv(enabledCashbackEnv(), map[string]string{"NETWORKS": "networks/fixture"}),
+			wantErr: "NETWORKS",
 		},
 		{
 			name:    "a network driver starting with a digit is refused",
-			env:     withEnv(enabledCashbackEnv(), map[string]string{"NETWORK_DRIVER": "1network"}),
-			wantErr: "NETWORK_DRIVER",
+			env:     withEnv(enabledCashbackEnv(), map[string]string{"NETWORKS": "1network"}),
+			wantErr: "NETWORKS",
 		},
 		{
 			name:    "an uppercase network driver is refused",
-			env:     withEnv(enabledCashbackEnv(), map[string]string{"NETWORK_DRIVER": "Fixture"}),
-			wantErr: "NETWORK_DRIVER",
+			env:     withEnv(enabledCashbackEnv(), map[string]string{"NETWORKS": "Fixture"}),
+			wantErr: "NETWORKS",
 		},
 		{
 			name:    "BLNK_URL with the wrong scheme is refused",
@@ -262,7 +286,7 @@ func TestCashbackFromEnv(t *testing.T) {
 				LedgerDriver:    config.LedgerDriverBlnk,
 				BlnkURL:         "http://blnk:5001",
 				RedisURL:        "rediss://redis.example.test:6380",
-				Network:         config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Networks:        configuredNetworks(),
 			},
 		},
 		{
@@ -281,36 +305,15 @@ func TestCashbackFromEnv(t *testing.T) {
 			wantErr: "LEDGER_DRIVER",
 		},
 		{
-			name:    "enabled without a network driver is refused",
-			env:     withEnv(enabledCashbackEnv(), map[string]string{"NETWORK_DRIVER": ""}),
-			wantErr: "NETWORK_DRIVER",
-		},
-		{
-			name:    "the blnk ledger without an endpoint is refused",
-			env:     withEnv(enabledCashbackEnv(), map[string]string{"BLNK_URL": ""}),
-			wantErr: "BLNK_URL",
-		},
-		{
-			name: "a live network without credentials is refused",
+			// It used to be refused, and the founder's decision of
+			// 2026-09-04 is that it should not be: a deployment that names
+			// no network still serves the wallet, the money loop and
+			// click-outs on the catalogue it already has. What it does not
+			// do is poll, and the composition root says so at ERROR.
+			name: "enabled with no network at all is accepted",
 			env: withEnv(enabledCashbackEnv(), map[string]string{
-				"NETWORK_DRIVER": "reference_network",
-			}),
-			wantErr: "NETWORK_ACCOUNT_ID, NETWORK_API_KEY are unset",
-		},
-		{
-			name: "a live network without its key is refused",
-			env: withEnv(enabledCashbackEnv(), map[string]string{
-				"NETWORK_DRIVER":     "reference_network",
-				"NETWORK_ACCOUNT_ID": "publisher-42",
-			}),
-			wantErr: "NETWORK_API_KEY is unset",
-		},
-		{
-			name: "a live network needs no API secret",
-			env: withEnv(enabledCashbackEnv(), map[string]string{
-				"NETWORK_DRIVER":     "reference_network",
-				"NETWORK_ACCOUNT_ID": "publisher-42",
-				"NETWORK_API_KEY":    "network-key",
+				"NETWORKS":                   "",
+				"NETWORK_FIXTURE_ACCOUNT_ID": "",
 			}),
 			want: config.CashbackConfig{
 				Enabled:         true,
@@ -318,11 +321,54 @@ func TestCashbackFromEnv(t *testing.T) {
 				PayoutThreshold: configuredThreshold(),
 				LedgerDriver:    config.LedgerDriverBlnk,
 				BlnkURL:         "http://blnk:5001",
-				Network: config.NetworkConfig{
+			},
+		},
+		{
+			name:    "the blnk ledger without an endpoint is refused",
+			env:     withEnv(enabledCashbackEnv(), map[string]string{"BLNK_URL": ""}),
+			wantErr: "BLNK_URL",
+		},
+		{
+			// PARSED, not refused, and this is the change T215 makes: an
+			// incomplete network no longer fails config, because failing
+			// config kills the process and would take the news site down
+			// over a typo in one network's key. It comes back in the slice
+			// and is reported by name - see TestUnusableNetworks - and
+			// CashbackConfig.Mountable is what declines to run cashback
+			// over it.
+			name: "a live network with no credentials at all still parses",
+			env: withEnv(enabledCashbackEnv(), map[string]string{
+				"NETWORKS":                   "reference_network",
+				"NETWORK_FIXTURE_ACCOUNT_ID": "",
+			}),
+			want: config.CashbackConfig{
+				Enabled:         true,
+				HouseAccounts:   configuredHouseAccounts(),
+				PayoutThreshold: configuredThreshold(),
+				LedgerDriver:    config.LedgerDriverBlnk,
+				BlnkURL:         "http://blnk:5001",
+				Networks:        []config.NetworkConfig{{Driver: "reference_network"}},
+			},
+		},
+		{
+			name: "a live network needs no API secret",
+			env: withEnv(enabledCashbackEnv(), map[string]string{
+				"NETWORKS":                             "reference_network",
+				"NETWORK_FIXTURE_ACCOUNT_ID":           "",
+				"NETWORK_REFERENCE_NETWORK_ACCOUNT_ID": "publisher-42",
+				"NETWORK_REFERENCE_NETWORK_API_KEY":    "network-key",
+			}),
+			want: config.CashbackConfig{
+				Enabled:         true,
+				HouseAccounts:   configuredHouseAccounts(),
+				PayoutThreshold: configuredThreshold(),
+				LedgerDriver:    config.LedgerDriverBlnk,
+				BlnkURL:         "http://blnk:5001",
+				Networks: []config.NetworkConfig{{
 					Driver:    "reference_network",
 					AccountID: "publisher-42",
 					APIKey:    config.NewSecret("network-key"),
-				},
+				}},
 			},
 		},
 		{
@@ -341,7 +387,7 @@ func TestCashbackFromEnv(t *testing.T) {
 				Enabled:         true,
 				LedgerDriver:    config.LedgerDriverBlnk,
 				BlnkURL:         "http://blnk:5001",
-				Network:         config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Networks:        configuredNetworks(),
 				PayoutThreshold: configuredThreshold(),
 			},
 		},
@@ -406,7 +452,7 @@ func TestCashbackFromEnv(t *testing.T) {
 			if err != nil {
 				t.Fatalf("FromEnv() error: %v", err)
 			}
-			if got.Cashback != tt.want {
+			if !reflect.DeepEqual(got.Cashback, tt.want) {
 				t.Fatalf("Cashback = %+v, want %+v", got.Cashback, tt.want)
 			}
 		})
@@ -509,7 +555,8 @@ func TestCashbackProductionRulesDoNotApplyInDev(t *testing.T) {
 		"DATABASE_URL":                     "postgres://x?sslmode=disable",
 		"CASHBACK_ENABLED":                 "true",
 		"LEDGER_DRIVER":                    config.LedgerDriverMemory,
-		"NETWORK_DRIVER":                   config.NetworkDriverFixture,
+		"NETWORKS":                         config.NetworkDriverFixture,
+		"NETWORK_FIXTURE_ACCOUNT_ID":       "publisher-1",
 		"HOUSE_ACCOUNT_ROUNDING":           houseRounding,
 		"HOUSE_ACCOUNT_CLAWBACK":           houseClawback,
 		"HOUSE_ACCOUNT_NETWORK_RECEIVABLE": houseReceivable,
@@ -595,25 +642,40 @@ func TestCashbackMissing(t *testing.T) {
 		{
 			name: "nothing set",
 			cfg:  config.CashbackConfig{Enabled: true},
-			want: []string{"LEDGER_DRIVER", "NETWORK_DRIVER"},
+			want: []string{"LEDGER_DRIVER"},
 		},
 		{
 			name: "blnk without an endpoint",
 			cfg: config.CashbackConfig{
 				Enabled:      true,
 				LedgerDriver: config.LedgerDriverBlnk,
-				Network:      config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Networks:     configuredNetworks(),
 			},
 			want: []string{"BLNK_URL"},
 		},
 		{
-			name: "a live network with nothing to authenticate with",
+			// The assertion that matters most here, because it is the one
+			// that changed: a network with nothing to authenticate with is
+			// NOT in Missing(). Missing() fails config parsing, which stops
+			// the whole process - the news site with it. A network that
+			// cannot poll stops cashback and nothing else, which is
+			// CashbackConfig.Mountable's job, asserted in TestMountable.
+			name: "a live network with nothing to authenticate with is not missing",
 			cfg: config.CashbackConfig{
 				Enabled:      true,
 				LedgerDriver: config.LedgerDriverMemory,
-				Network:      config.NetworkConfig{Driver: "reference_network"},
+				Networks:     []config.NetworkConfig{{Driver: "reference_network"}},
 			},
-			want: []string{"NETWORK_ACCOUNT_ID", "NETWORK_API_KEY"},
+			want: nil,
+		},
+		{
+			// Nor does naming no network at all make anything missing.
+			name: "no network at all is not missing either",
+			cfg: config.CashbackConfig{
+				Enabled:      true,
+				LedgerDriver: config.LedgerDriverMemory,
+			},
+			want: nil,
 		},
 		{
 			// No house names and still complete: the keys are a
@@ -623,7 +685,7 @@ func TestCashbackMissing(t *testing.T) {
 			cfg: config.CashbackConfig{
 				Enabled:      true,
 				LedgerDriver: config.LedgerDriverMemory,
-				Network:      config.NetworkConfig{Driver: config.NetworkDriverFixture},
+				Networks:     configuredNetworks(),
 			},
 			want: nil,
 		},
@@ -703,11 +765,20 @@ func TestCashbackLogValue(t *testing.T) {
 		BlnkURL:         "http://blnk:5001",
 		BlnkSecretKey:   config.NewSecret("blnk-secret-value"),
 		RedisURL:        "redis://apivo:redis-password-value@redis:6379/0",
-		Network: config.NetworkConfig{
-			Driver:    "reference_network",
-			AccountID: "publisher-42",
-			APIKey:    config.NewSecret("network-key-value"),
-			APISecret: config.NewSecret("network-secret-value"),
+		Networks: []config.NetworkConfig{
+			{
+				Driver:    "reference_network",
+				AccountID: "publisher-42",
+				APIKey:    config.NewSecret("network-key-value"),
+				APISecret: config.NewSecret("network-secret-value"),
+			},
+			// A second network, because the redaction that only holds for
+			// the first entry is the one a single-network case cannot see.
+			{
+				Driver:    "second_network",
+				AccountID: "publisher-99",
+				APIKey:    config.NewSecret("second-key-value"),
+			},
 		},
 	}
 
@@ -720,6 +791,7 @@ func TestCashbackLogValue(t *testing.T) {
 		"redis-password-value",
 		"network-key-value",
 		"network-secret-value",
+		"second-key-value",
 	} {
 		if strings.Contains(out, secret) {
 			t.Fatalf("secret %q reached the log: %s", secret, out)
@@ -730,6 +802,8 @@ func TestCashbackLogValue(t *testing.T) {
 		"http://blnk:5001",
 		"reference_network",
 		"publisher-42",
+		"second_network",
+		"publisher-99",
 		// The house names are pinned as key:value pairs rather than bare
 		// fragments: an operator debugging a house misconfiguration reads
 		// the label, and a line with the two values swapped across the

@@ -92,10 +92,16 @@ func TestNewNetworkSweepsSaysWhatIsMissing(t *testing.T) {
 		says string
 	}{
 		"no adapter is named": {
-			cfg: networkWiringConfig("", "publisher-1"), says: "NETWORK_DRIVER",
+			cfg: networkWiringConfig("", "publisher-1"), says: config.NetworksKey,
 		},
+		// Unreachable through serve since T215 - CashbackConfig.Mountable
+		// declines to build cashback at all while a configured network has
+		// no account id - and asserted anyway, because this function is
+		// called with one network's config rather than with the decision
+		// that admitted it, and must not start trusting a gate it cannot
+		// see. The key it names is the network's own.
 		"no publisher account is named": {
-			cfg: networkWiringConfig(config.NetworkDriverFixture, ""), says: "NETWORK_ACCOUNT_ID",
+			cfg: networkWiringConfig(config.NetworkDriverFixture, ""), says: "NETWORK_FIXTURE_ACCOUNT_ID",
 		},
 		"the named account is not connected": {
 			cfg: networkWiringConfig(config.NetworkDriverFixture, "publisher-nobody-connected"), says: "is connected",
@@ -295,7 +301,6 @@ func TestRunRegistersTheNetworkSweeps(t *testing.T) {
 	env := cashbackEnv(isoURL)
 	// Three jobs need eight connections, and the default is four.
 	env["DATABASE_URL"] = isoURL + "&pool_max_conns=8"
-	env["NETWORK_ACCOUNT_ID"] = "publisher-1"
 	out, stop := runServing(t, env)
 	defer stop()
 
@@ -329,8 +334,16 @@ func TestRunSaysWhenNoNetworkIsConnected(t *testing.T) {
 		t.Skip("DATABASE_URL not set; run `docker compose up -d postgres` and set it to exercise this test")
 	}
 
-	// The fixture driver with no account named: the shape every environment
-	// has been in until an operator connects an account.
+	// The fixture network fully configured, against a database with no
+	// cashback.network_account row in it: the shape every environment is in
+	// until an operator runs connect-network.
+	//
+	// It used to be "no account named", and that state no longer reaches
+	// here: an unnamed account makes CashbackConfig.Mountable false, so
+	// cashback is not built and there is nothing to report a missing
+	// connection about (TestRunDoesNotMountCashbackOverAnUnusableNetwork
+	// covers that one). What is left is the case an operator actually
+	// meets - configuration complete, the database not yet written to.
 	out, stop := runServing(t, cashbackEnv(isolatedDatabase(t, dbURL)))
 	defer stop()
 
@@ -338,8 +351,8 @@ func TestRunSaysWhenNoNetworkIsConnected(t *testing.T) {
 	if !strings.Contains(logged, "NO AFFILIATE NETWORK IS CONNECTED") {
 		t.Fatalf("an unwired deployment said nothing about it; output: %q", logged)
 	}
-	if !strings.Contains(logged, "NETWORK_ACCOUNT_ID") {
-		t.Errorf("the line does not name what is missing; output: %q", logged)
+	if !strings.Contains(logged, "publisher-1") {
+		t.Errorf("the line does not name the account it looked for; output: %q", logged)
 	}
 	// Once, not twice. The poller and the click-out endpoint both need the
 	// connection, and two ERROR lines about one missing account read as two

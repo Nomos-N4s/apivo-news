@@ -59,7 +59,7 @@ spec:
             - configMapRef:
                 name: apivo-config
             # The cashback keys (CASHBACK_ENABLED, LEDGER_DRIVER, BLNK_URL,
-            # REDIS_URL, NETWORK_DRIVER), delivered only on a cluster that has
+            # REDIS_URL, NETWORKS), delivered only on a cluster that has
             # applied deploy/k8s/cashback/. `optional: true` is what makes
             # that directory a genuine opt-in: without it the ConfigMap does
             # not exist, none of those keys reach the binary, and the pod
@@ -116,21 +116,24 @@ spec:
                   name: apivo-secrets
                   key: BLNK_SECRET_KEY
                   optional: true
-            # The affiliate network's credentials. Absent with
-            # NETWORK_DRIVER=fixture, which needs none; required by the api
-            # once a live adapter is selected, and it says which are missing
-            # at startup rather than polling nothing in silence.
-            - name: NETWORK_API_KEY
+            # One affiliate network's credentials, named after its driver -
+            # the api reads NETWORK_<DRIVER>_*, so a second network means a
+            # second pair here. Absent while NETWORKS names only `fixture`,
+            # which needs none; required once a live network is named, and
+            # without them CASHBACK DOES NOT MOUNT - every cashback route
+            # answers 404 and the startup log says which key. The pod itself
+            # still starts and serves the news site.
+            - name: NETWORK_FIXTURE_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: apivo-secrets
-                  key: NETWORK_API_KEY
+                  key: NETWORK_FIXTURE_API_KEY
                   optional: true
-            - name: NETWORK_API_SECRET
+            - name: NETWORK_FIXTURE_API_SECRET
               valueFrom:
                 secretKeyRef:
                   name: apivo-secrets
-                  key: NETWORK_API_SECRET
+                  key: NETWORK_FIXTURE_API_SECRET
                   optional: true
           resources:
             requests:

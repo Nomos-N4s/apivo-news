@@ -45,7 +45,11 @@ func configured(t *testing.T) config.Config {
 		BrandDir: brandDir(t),
 		Cashback: config.CashbackConfig{
 			Enabled: true,
-			Network: config.NetworkConfig{Driver: config.NetworkDriverFixture, SourceLanguage: "en"},
+			Networks: []config.NetworkConfig{{
+				Driver:         config.NetworkDriverFixture,
+				AccountID:      "123456",
+				SourceLanguage: "en",
+			}},
 		},
 	}
 }
@@ -77,7 +81,13 @@ func TestAnUnconfiguredDeploymentIsToldWhichKeyItLacks(t *testing.T) {
 	_ = ctx
 
 	noLanguage := configured(t)
-	noLanguage.Cashback.Network.SourceLanguage = ""
+	// A copy of the slice as well as of the struct: configured() hands back
+	// a fresh one per call, and blanking a field through the shared backing
+	// array would edit the other cases in this table.
+	noLanguage.Cashback.Networks = []config.NetworkConfig{{
+		Driver:    config.NetworkDriverFixture,
+		AccountID: "123456",
+	}}
 	noBrand := configured(t)
 	noBrand.BrandDir = ""
 	neither := config.Config{Cashback: config.CashbackConfig{Enabled: true}}
@@ -86,9 +96,16 @@ func TestAnUnconfiguredDeploymentIsToldWhichKeyItLacks(t *testing.T) {
 		cfg  config.Config
 		want []string
 	}{
-		"no source language": {noLanguage, []string{"NETWORK_SOURCE_LANGUAGE"}},
+		// The key is named for the network it belongs to, which is the whole
+		// point of the per-driver blocks: an operator running two networks
+		// must be told WHICH one has no language, not that "the" language
+		// is unset.
+		"no source language": {noLanguage, []string{"NETWORK_FIXTURE_SOURCE_LANGUAGE"}},
 		"no brand":           {noBrand, []string{"BRAND_DIR"}},
-		"neither":            {neither, []string{"NETWORK_SOURCE_LANGUAGE", "BRAND_DIR"}},
+		// No network at all names NETWORKS instead - there is no driver to
+		// name a key after, and telling an operator to set
+		// NETWORK__SOURCE_LANGUAGE would be worse than useless.
+		"neither": {neither, []string{"NETWORKS", "BRAND_DIR"}},
 	} {
 		imports, missing, err := newCatalogueImport(discardLogger(), one.cfg, anAdapter(t), pool)
 		if err != nil {

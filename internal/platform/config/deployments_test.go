@@ -169,13 +169,27 @@ func TestEveryDeploymentSatisfiesItsOwnProductionRules(t *testing.T) {
 
 			supply(set, d.elsewhere)
 
-			if _, err := config.FromEnv(func(key string) string { return set[key] }); err != nil {
+			cfg, err := config.FromEnv(func(key string) string { return set[key] })
+			if err != nil {
 				t.Fatalf("%v does not configure a startable production api: %v\n\n"+
 					"The api refuses to start without every key its production rules demand. "+
 					"Add the missing key to one of those manifests, or - if a deployment "+
 					"really does supply it from somewhere else - say so in this test's "+
 					"elsewhere map.",
 					d.paths, err)
+			}
+
+			// Startable is no longer the whole bar. Since T215 a network
+			// missing its credential does not stop the process - it stops
+			// CASHBACK, and the process serves the news site without it.
+			// A manifest that enables cashback and then cannot mount it
+			// would have passed the check above in silence, which is
+			// exactly the class of miss this file exists for.
+			if !cfg.Cashback.Mountable() {
+				t.Fatalf("%v starts, but cashback would not mount: %v\n\n"+
+					"NETWORKS names a network whose keys this deployment does not set. "+
+					"Every cashback route would answer 404 while the api itself looked healthy.",
+					d.paths, cfg.Cashback.UnusableNetworks())
 			}
 		})
 	}
@@ -193,7 +207,6 @@ func TestTheDeploymentTestWouldNoticeAMissingKey(t *testing.T) {
 		"HOUSE_ACCOUNT_NETWORK_RECEIVABLE",
 		"PAYOUT_THRESHOLD_MINOR",
 		"PAYOUT_THRESHOLD_CURRENCY",
-		"NETWORK_DRIVER",
 	} {
 		t.Run(dropped, func(t *testing.T) {
 			t.Parallel()
