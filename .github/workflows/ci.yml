@@ -53,6 +53,43 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # The BRANCH, not the merge ref. Without this, a pull_request event
+          # checks out refs/pull/N/merge - a commit GitHub writes itself,
+          # authored by whoever OPENED the pull request - and the suite's last
+          # case reads the checkout's HEAD to prove the lint counts real
+          # history. On a pull request opened by an app identity those two
+          # facts collide: the suite refuses a commit nobody on the branch
+          # wrote, reports the repository's own history as dirty, and its
+          # failure then skips the gate below it (#494).
+          #
+          # Only the suite reads the checkout. Every step that judges commits
+          # takes its range from the event (see `Determine commit range`), and
+          # the ref-name steps read github.head_ref / github.ref, so nothing
+          # else here moves.
+          #
+          # merge_group and workflow_call carry no pull_request object and
+          # fall through to github.sha, which is what checkout would have used
+          # anyway - behaviour off the pull-request path is unchanged.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Prove the checkout is the branch and not a commit GitHub wrote
+        # The regression test for the line above, and the ONLY thing that can
+        # prove it. The bug it fixes reproduces only on a pull request opened
+        # by an app identity; a pull request opened by the founder gets a merge
+        # ref authored by the founder and goes green either way. So a green
+        # job is not evidence here - this step is.
+        #
+        # Without the ref: above this is red on EVERY pull request, because
+        # HEAD is then the merge commit and never the head sha. With it, they
+        # are the same commit.
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::checked out $ACTUAL, but the event names $EXPECTED. The steps below judge commits and must not read a commit GitHub invented for this run. Restore the ref: on the checkout above (#494)."
+            exit 1
+          fi
+          echo "checkout is $ACTUAL, the commit the event names"
       - name: Determine commit range
         id: range
         env:
