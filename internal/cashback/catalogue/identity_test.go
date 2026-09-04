@@ -36,8 +36,11 @@ func TestSlugMatchesWhatTheColumnAccepts(t *testing.T) {
 		{name: "leading and trailing noise is trimmed", in: "  !Zalando!  ", want: "zalando"},
 		{name: "digits are kept", in: "Store 24", want: "store-24"},
 		{name: "an ampersand does not join two words", in: "B&Q", want: "b-q"},
-		{name: "a name with no Latin form folds to nothing", in: "Καταστήματα", want: ""},
-		{name: "mixed scripts keep the Latin part", in: "Zara Ελλάδα", want: "zara"},
+		// Both of these read "" and "zara" until T259. Greek now has a
+		// table (transliterate.go); the scripts that still have none are in
+		// TestAScriptWithNoTableStillFoldsToNothing.
+		{name: "Greek transliterates rather than folding to nothing", in: "Καταστήματα", want: "katastimata"},
+		{name: "mixed scripts keep both parts", in: "Zara Ελλάδα", want: "zara-ellada"},
 		{name: "nothing at all", in: "", want: ""},
 		{name: "only punctuation", in: "!!!", want: ""},
 	}
