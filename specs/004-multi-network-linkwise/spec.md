@@ -494,9 +494,31 @@ resolve them.
 
 ## Assumptions
 
-- Both networks speak HTTP and JSON. The port's retry and rate-limiting
-  vocabulary assumes it; a SOAP or file-drop network would need new port
-  vocabulary and is not assumed here.
+- The port's retry, rate-limiting and failure-classification vocabulary does
+  **not** assume JSON, and a SOAP network needs none of it changed.
+  `backoff.go`, `ratelimiter.go`, `iteration.go` and `status.go` import no
+  HTTP at all, and `retryable.go`'s `RetryableHTTPStatus` and
+  `RetryAfterFromHeader` serve SOAP-over-HTTP directly. What a SOAP adapter
+  adds is internal to itself: a fault classifier, because a `200 OK`
+  carrying `<soap:Fault>` is a failure no HTTP status reveals.
+
+  What a non-JSON network *does* need is a stated carriage for verbatim
+  non-JSON evidence. `Reported.RawPayload` is `json.RawMessage` into a
+  `jsonb` column, and `validateReportedPayload` requires valid JSON opening
+  `{` or `[`. Contract rule 1 exists so a wrong mapping can be re-derived
+  from what the network actually said, so converting XML to JSON would
+  defeat it — the conversion is a second normalisation, and lossy in
+  exactly the ways that matter (attributes versus elements, repeated
+  elements versus arrays, namespaces, mixed content). Rule 1 is therefore
+  clarified rather than widened: verbatim bytes travel in a one-key JSON
+  wrapper naming the encoding. See
+  [contracts/ports.md](contracts/ports.md).
+
+- A **file-drop** network is still not assumed here, and for a different
+  reason than transport: it has no window model. "Today's file" is not a
+  half-open interval, and rule 4 forbids memoising pages, so a
+  window-faithful file adapter re-fetches per window. That is a cost to
+  price, not a blocker — but it is unbuilt.
 - Alpha volumes are unchanged — hundreds of members, tens of merchants.
   Nothing here requires horizontal scale, and two networks doubles a small
   number.
