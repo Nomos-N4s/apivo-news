@@ -86,17 +86,28 @@ func (p Poll) String() string {
 // mis-set clock would otherwise produce a window whose end precedes its
 // start, which the port refuses and the poller would report as a defect in
 // the adapter rather than in the clock.
-func nextForwardWindow(cursor time.Time, cursorSet bool, backfillFrom, now time.Time, maxWindow time.Duration) (QueryWindow, bool) {
+func nextForwardWindow(cursor time.Time, cursorSet bool, backfillFrom, now time.Time, maxWindow, reportingLag time.Duration) (QueryWindow, bool) {
 	from := backfillFrom
 	if cursorSet {
 		from = cursor
 	}
-	if !now.After(from) {
+	// The horizon is as far as this network has reported, which is not
+	// always now. Ending the window at now instead would ask a lagging
+	// network about ground it has not covered; it would answer cleanly and
+	// emptily, and the cursor would advance past transactions nobody has
+	// reported yet. Only the trailing sweep would ever come back for them,
+	// about a hundred days later.
+	//
+	// Stopping short is the same discipline as refusing a too-wide window
+	// rather than clamping it: the cursor may only pass ground that has
+	// actually been read. A lag of zero leaves this exactly as it was.
+	horizon := now.Add(-reportingLag)
+	if !horizon.After(from) {
 		return QueryWindow{}, false
 	}
 	to := from.Add(maxWindow)
-	if to.After(now) {
-		to = now
+	if to.After(horizon) {
+		to = horizon
 	}
 	return QueryWindow{From: from, To: to}, true
 }

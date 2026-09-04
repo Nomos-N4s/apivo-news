@@ -95,6 +95,38 @@ unrun — and these phases land out of numeric order on purpose. See
 
 ---
 
+## Phase G: The reporting horizon
+
+**Purpose**: stop the forward cursor advancing past ground the network has
+not reported. No vendor dependency, so it lands beside Phase A.
+
+The forward sweep asks for a window ending **now**. A network that reports
+late answers that window cleanly and emptily for the part it has not reached,
+and the cursor advances anyway — nothing is lost, because `nextTrailingWindow`
+walks forward and re-reads every period exactly once, but it does so at
+roughly **+100 days** (`DefaultTrailingLag`). A member waits a quarter for a
+credit earned today, and no error stream shows it. It becomes real loss only
+where the network also refuses a window that old.
+
+Rejected: yielding `AbandonedIteration(ErrNetworkUnavailable)` past a horizon.
+It works, but it pays for correctness with the one diagnostic asset the money
+path has — an adapter that reports "unavailable" on most ticks by design makes
+rule 9's classification mean nothing, and the day the network is genuinely
+down is indistinguishable from the steady state. Also rejected: overlapping
+windows, which are safe but re-read a day of ground 96 times a day against a
+rate limit measured in requests per minute.
+
+- [x] T290 [US1] `Limits.ReportingLag` in `internal/cashback/networks/window.go`: how far behind the present a network's answers are. **Zero is the ordinary value here, not the dangerous one** — unlike the two bounds beside it, which refuse zero because an unset `Limits` makes every window too wide. Negative is refused: a network cannot report the future
+- [x] T291 [US1] `nextForwardWindow` ends the window at `now - ReportingLag` rather than at `now`, in `internal/cashback/networks/poll.go`. A lag of zero leaves the arithmetic exactly as it was, which is what every adapter declared before the field existed. Table tests in `poll_internal_test.go`
+- [ ] T292 [US1] `cashback.network.reporting_lag`, `networks.Documented` carrying it, and `connect-network` seeding it — so the value is an operator's row rather than an adapter's constant, the same way `max_query_window_days` and `rate_limit_per_minute` already are
+- [ ] T293 [US1] `GET …/ops/networks` renders the lag and the effective forward horizon beside the cursors, so **"deliberately behind" is visibly different from "stuck"**. Silence gains a new cause with T290, and an account whose `backfill_from` sits inside the lag reads nothing until the clock catches up. Depends on T228
+- [ ] T294 [US1] Startup check: a configured lag where `lag + ForwardInterval` exceeds SC-001's 24h credit budget is reported at ERROR naming both numbers. A lag is a deliberate delay, and one large enough to break the promise should be a decision somebody made rather than a number nobody read
+
+**Checkpoint**: a network that reports late is read only as far as it has
+reported, and the delay is visible rather than inferred.
+
+---
+
 ## Phase B: Operator surface and proof
 
 - [ ] T225 [P] [US2] The unattributed reason discriminates four causes — `no_reference`, `unknown_reference`, `foreign_network`, `route_cannot_attribute` — in the store and in the API (FR-098, [contracts/http-api.md](contracts/http-api.md) §1)
