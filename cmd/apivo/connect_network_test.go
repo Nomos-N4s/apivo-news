@@ -19,6 +19,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks/awin"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 	platformdb "github.com/Nomos-N4s/apivo-news/internal/platform/db"
 )
 
@@ -318,13 +320,25 @@ func TestConnectNetworkRefusesWhatItCannotConnect(t *testing.T) {
 
 // TestConnectNetworkKnowsTheAwinDeclaration: the driver an operator will
 // actually use has to resolve, and to Awin's own published numbers.
+// TestConnectNetworkKnowsTheAwinDeclaration. Awin's declaration is still
+// exactly what it was, and is still worth holding to the numbers Awin
+// publishes - but it is read from the package rather than through
+// documentedNetwork, because connect-network can no longer seed it.
+//
+// It used to. documentedNetwork knew awin while networkAdapter did not, so
+// `connect-network --driver awin` wrote a cashback.network row and the server
+// then refused to start against it. The registry ends that by construction:
+// one entry answers both questions, and *awin.Client cannot be an entry
+// because it has no FetchTransactions and no Limits.
+//
+// Importing awin here does not wire it. The reachability rule in
+// internal/arch/network_isolation_test.go skips _test.go files, deliberately:
+// a test is not a deployment, and an adapter reachable only from a test is
+// one no operator can select.
 func TestConnectNetworkKnowsTheAwinDeclaration(t *testing.T) {
 	t.Parallel()
 
-	documented, err := documentedNetwork("awin")
-	if err != nil {
-		t.Fatalf("documentedNetwork(awin): %v", err)
-	}
+	documented := awin.Documented()
 	if documented.ID != "awin" {
 		t.Errorf("the declaration names %q, want %q", documented.ID, "awin")
 	}
@@ -333,5 +347,17 @@ func TestConnectNetworkKnowsTheAwinDeclaration(t *testing.T) {
 	}
 	if documented.MaxQueryWindowDays != 31 {
 		t.Errorf("MaxQueryWindowDays = %d, want the 31 Awin documents", documented.MaxQueryWindowDays)
+	}
+}
+
+// TestConnectNetworkRefusesAwinUntilItImplementsThePort is the other half, and
+// the one that is new. The declaration existing is not the same as the driver
+// being connectable, and conflating the two is what produced a deployment
+// seeded for a network it could not poll.
+func TestConnectNetworkRefusesAwinUntilItImplementsThePort(t *testing.T) {
+	t.Parallel()
+
+	if _, err := documentedNetwork(config.NetworkDriverAwin); err == nil {
+		t.Error("connect-network would seed an awin row, and the server cannot build an awin adapter to poll it")
 	}
 }
