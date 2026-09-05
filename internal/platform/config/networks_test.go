@@ -322,7 +322,14 @@ func TestUnusableNetworks(t *testing.T) {
 		t.Fatalf("UnusableNetworks() = %v, want the two that cannot poll", unusable)
 	}
 	for _, want := range []string{
-		`"linkwise" cannot poll: NETWORK_LINKWISE_ACCOUNT_ID, NETWORK_LINKWISE_API_KEY are unset`,
+		// Linkwise names its SECRET too, because its credential is HTTP
+		// Basic and a username without a password is a request the network
+		// refuses - reported to an operator as the publisher account having
+		// been rejected rather than as a key nobody set.
+		`"linkwise" cannot poll: NETWORK_LINKWISE_ACCOUNT_ID, NETWORK_LINKWISE_API_KEY, NETWORK_LINKWISE_API_SECRET are unset`,
+		// tradetracker's does not: a driver whose credential is one value
+		// needs one key, and this pair is what keeps NeedsCredentialPair
+		// from quietly becoming "every network".
 		`"tradetracker" cannot poll: NETWORK_TRADETRACKER_API_KEY is unset`,
 	} {
 		var found bool

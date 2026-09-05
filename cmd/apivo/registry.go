@@ -11,6 +11,7 @@ import (
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks/fixture"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks/linkwise"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 )
 
@@ -42,8 +43,17 @@ type registration struct {
 	// the network publishes about how it may be queried.
 	documented func() networks.Documented
 
-	// construct builds the adapter for one publisher account.
-	construct func(networks.PublisherAccount) (networks.Network, error)
+	// construct builds the adapter for one publisher account, from that
+	// network's own configuration block.
+	//
+	// It takes the block rather than the credential fields because a real
+	// network's credential is not one shape: Awin's is a bearer token,
+	// Linkwise's is an HTTP Basic pair, and the fixture's is nothing at all.
+	// Handing each driver its own block lets it read what it needs without
+	// this signature growing a parameter per network - and the block is
+	// where a Secret already lives, so no credential is copied out of one to
+	// get here.
+	construct func(networks.PublisherAccount, config.NetworkConfig) (networks.Network, error)
 }
 
 // shippedNetworks is every driver this binary has.
@@ -58,10 +68,18 @@ type registration struct {
 // compiler. Listing it here would restore the seedable-but-not-servable state
 // above. It returns when it implements the port (T236-T241, deferred by
 // founder decision of 2026-09-04).
+//
+// linkwise IS here, and by the same rule: *linkwise.Client implements every
+// method of the port, which is what the compiler is asked to prove in
+// newLinkwiseAdapter's signature.
 var shippedNetworks = map[string]registration{
 	config.NetworkDriverFixture: {
 		documented: fixture.Documented,
 		construct:  newFixtureAdapter,
+	},
+	config.NetworkDriverLinkwise: {
+		documented: linkwise.Documented,
+		construct:  newLinkwiseAdapter,
 	},
 }
 
@@ -70,8 +88,30 @@ var shippedNetworks = map[string]registration{
 // fixture.New returns *fixture.Network so its own tests can reach the knobs
 // the conformance table needs. The registry holds the interface, because the
 // composition root has no business knowing which one it built.
-func newFixtureAdapter(account networks.PublisherAccount) (networks.Network, error) {
+func newFixtureAdapter(account networks.PublisherAccount, _ config.NetworkConfig) (networks.Network, error) {
 	return fixture.New(account)
+}
+
+// newLinkwiseAdapter builds the Linkwise adapter from its configuration
+// block.
+//
+// The credential is TWO values, read here and passed straight in: Linkwise
+// authenticates with HTTP Basic, so the api key is the username and the api
+// secret is the password. config.NetworkConfig.MissingKeys requires both for
+// this driver, and CashbackConfig.Mountable declines to build the cashback
+// surface while any configured network is missing a key - so by the time this
+// runs, both are set. linkwise.New refuses a half credential anyway, because
+// a constructor that trusted a gate somewhere else is a constructor that
+// breaks when the gate moves.
+//
+// The rate comes from the network row rather than from the adapter's own
+// declaration, so a limit an operator revises is a configuration change and a
+// restart rather than a release. Nothing here reads a currency: the
+// transaction report carries none, and the adapter joins it from the
+// programme list itself.
+func newLinkwiseAdapter(account networks.PublisherAccount, cfg config.NetworkConfig) (networks.Network, error) {
+	return linkwise.New(account,
+		linkwise.WithCredential(cfg.APIKey.Reveal(), cfg.APISecret.Reveal()))
 }
 
 // errNoDriverNamed reports a lookup with no driver to look up. It is

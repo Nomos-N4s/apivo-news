@@ -99,7 +99,7 @@ func connectNetwork(ctx context.Context, cfg config.NetworkConfig, db pollerDB) 
 		return nil, networks.ConnectedAccount{}, err
 	}
 
-	adapter, err := networkAdapter(cfg.Driver, connected.Account)
+	adapter, err := networkAdapter(cfg, connected.Account)
 	if err != nil {
 		return nil, networks.ConnectedAccount{}, err
 	}
@@ -146,10 +146,16 @@ func newNetworkSweeps(ctx context.Context, log *slog.Logger, adapter networks.Ne
 //
 // The set of drivers is [shippedNetworks] rather than a switch here, so that
 // this answer and connect-network's cannot disagree.
-func networkAdapter(driver string, account networks.PublisherAccount) (networks.Network, error) {
-	entry, err := lookupNetwork(driver)
+//
+// It takes the whole configuration block rather than the driver name alone
+// because a real network's adapter needs its credential, and the shape of
+// that credential is the network's business: Linkwise's is an HTTP Basic
+// pair, the fixture's is nothing. The block carries Secrets, so nothing is
+// copied out of one to get here.
+func networkAdapter(cfg config.NetworkConfig, account networks.PublisherAccount) (networks.Network, error) {
+	entry, err := lookupNetwork(cfg.Driver)
 	if err != nil {
 		return nil, err
 	}
-	return entry.construct(account)
+	return entry.construct(account, cfg)
 }

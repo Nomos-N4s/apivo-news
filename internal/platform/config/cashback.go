@@ -37,6 +37,15 @@ const (
 // (ADR-0003).
 const NetworkDriverFixture = "fixture"
 
+// NetworkDriverLinkwise is the Greek affiliate network (004). It
+// authenticates with HTTP BASIC, which is why it is named here at all: a
+// Basic credential is two values, and [NetworkConfig.MissingKeys] has to
+// require both or a deployment with a username and no password passes the
+// FR-091 check and is refused by the network on its first poll - reported to
+// an operator as the publisher account having been rejected rather than as
+// an unset environment variable.
+const NetworkDriverLinkwise = "linkwise"
+
 // NetworkDriverAwin is the adapter for Awin, the affiliate network this
 // deployment integrates (spec Q1, decided 2026-08-31). It needs
 // NETWORK_ACCOUNT_ID and NETWORK_API_KEY; the credential is read from the
