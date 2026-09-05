@@ -52,9 +52,7 @@ func aDeeplinkClient(t *testing.T) *linkwise.Client {
 	if err != nil {
 		t.Fatalf("NewPublisherAccount(): %v", err)
 	}
-	client, err := linkwise.New(account,
-		linkwise.WithCredential(theUsername, thePassword),
-		linkwise.WithReportCurrency(theCurrency))
+	client, err := linkwise.New(account, linkwise.WithCredential(theUsername, thePassword))
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
@@ -310,7 +308,6 @@ func TestBuildingADeeplinkContactsNothing(t *testing.T) {
 	}
 	client, err := linkwise.New(account,
 		linkwise.WithCredential(theUsername, thePassword),
-		linkwise.WithReportCurrency(theCurrency),
 		// A rate of one request a minute: anything that took a token would
 		// either block or fail, and this returns immediately.
 		linkwise.WithRateLimitPerMinute(1))

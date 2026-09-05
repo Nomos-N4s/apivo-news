@@ -3,13 +3,14 @@ package linkwise_test
 // Reading the catalogue (T245, FR-012), against a recording of the real
 // programme list.
 //
-// The six programmes in testdata/programs.json were chosen out of the three
-// hundred and thirty-four this account is joined to, one for each thing that
-// varies and decides something: a non-EUR currency, deeplinking refused,
-// cashback refused, one country against two, and a programme with no
-// categories at all. Every other field is exactly as the network sent it,
-// Greek marketing HTML included, because the payload has to survive the
-// jsonb column that will hold it.
+// The nine programmes in testdata/programs.json were chosen out of the three
+// hundred and thirty-four this account is joined to: six for the things that
+// vary and decide something - a non-EUR currency, deeplinking refused,
+// cashback refused, one country against two, a programme with no categories -
+// and three more because the recorded TRANSACTIONS name them, so the two
+// recordings join for real rather than by construction. Every other field is
+// exactly as the network sent it, Greek marketing HTML included, because the
+// payload has to survive the jsonb column that will hold it.
 
 import (
 	"context"
@@ -57,8 +58,8 @@ func TestEveryRecordedProgrammeBecomesACatalogueEntry(t *testing.T) {
 	if failed != nil {
 		t.Fatalf("the catalogue read ended with %v", failed)
 	}
-	if len(got) != 6 {
-		t.Fatalf("the recording yielded %d entries, want the 6 programmes it carries", len(got))
+	if len(got) != 9 {
+		t.Fatalf("the recording yielded %d entries, want the 9 programmes it carries", len(got))
 	}
 	for _, merchant := range got {
 		if err := merchant.Validate(); err != nil {
@@ -157,7 +158,7 @@ func TestASoleCountryIsCarried(t *testing.T) {
 		switch merchant.Country {
 		case "":
 			none++
-		case "GR":
+		case "GR", "CY":
 			single++
 		default:
 			t.Errorf("merchant %s carries the country %q, which is not one the recording names", merchant.ExternalID, merchant.Country)

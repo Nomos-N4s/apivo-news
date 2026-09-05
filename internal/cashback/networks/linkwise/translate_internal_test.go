@@ -21,19 +21,49 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
 
-// aClient builds a client with no transport: translate never reaches one.
+// aClient builds a client whose currency index is already populated from the
+// recorded programme list, so translate reaches no transport.
+//
+// Seeding it rather than serving it is deliberate: this file is about the
+// translation, and the index's own behaviour - when it refreshes, what a miss
+// does - is exercised against a real server in currencies_test.go.
 func aClient(t *testing.T) *Client {
 	t.Helper()
 	account, err := networks.NewPublisherAccount(
-		[16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}, ID, "CD20")
+		[16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}, ID, "CD00")
 	if err != nil {
 		t.Fatalf("NewPublisherAccount(): %v", err)
 	}
-	client, err := New(account, WithCredential("user", "pass"), WithReportCurrency("EUR"))
+	client, err := New(account, WithCredential("user", "pass"))
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
+	client.currencies.byID = recordedCurrencies(t)
+	client.currencies.fetched = client.clock.Now()
 	return client
+}
+
+// recordedCurrencies reads the programme-to-currency map out of the recording.
+func recordedCurrencies(t *testing.T) map[string]money.Currency {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "programs.json"))
+	if err != nil {
+		t.Fatalf("reading the programme recording: %v", err)
+	}
+	var rows []struct {
+		ID       json.Number `json:"id"`
+		Currency struct {
+			Code string `json:"code"`
+		} `json:"currency"`
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatalf("the programme recording will not parse: %v", err)
+	}
+	byID := make(map[string]money.Currency, len(rows))
+	for _, row := range rows {
+		byID[row.ID.String()] = money.Currency(row.Currency.Code)
+	}
+	return byID
 }
 
 func TestEveryRecordedRowTranslates(t *testing.T) {
@@ -83,7 +113,7 @@ func TestEveryRecordedRowTranslates(t *testing.T) {
 	}
 
 	for i, row := range rows {
-		got, err := client.translate(row)
+		got, err := client.translate(t.Context(), row)
 		if err != nil {
 			t.Fatalf("translating row %d: %v", i+1, err)
 		}
