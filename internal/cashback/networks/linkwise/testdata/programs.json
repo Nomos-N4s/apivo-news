@@ -1985,5 +1985,187 @@
             }
         },
         "countries": "GR"
+    },
+    {
+        "id": 13733,
+        "name": "BOX NOW",
+        "start_date": "2023-03-12T22:00:00+00:00",
+        "end_date": null,
+        "logo": "https://affiliate.linkwi.se/files/592581529640ee1ac2d36b.png",
+        "short_description": "<p>\r\n\tBOX NOW Lockers | Γρήγορη, ευέλικτη και ασφαλής παράδοση έως και την επόμενη ημέρα σε περισσότερα από 1500 σημεία σε όλη την Ελλάδα!</p>\r\n",
+        "description": "<div>\r\n\tΗ BOX NOW αποτελεί τη νέα πρωτοπόρα start up (ίδρυση Απρίλιος 21) , η οποία αποτελεί την εξέλιξη στις εταιρείες παράδοσης δεμάτων, αξιοποιώντας την καινοτόμο ψηφιακή τεχνολογία προσφέρει σύγχρονες και αυτοματοποιημένες προσωποποιημένες υπηρεσίες. Απευθύνεται τόσο στο ευρύ κοινό (Β2C), όσο και στις επιχειρήσεις (Β2Β) που διατηρούν ηλεκτρονικά καταστήματα (eshop) ή κάθε επιχείρηση η οποία χρησιμοποιεί υπηρεσίες αποστολής δεμάτων γενικότερα.</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\tΠαρέχει καινοτόμες υπηρεσίες παράδοσης και παραλαβής, αναπτύσσοντας&nbsp; το μεγαλύτερο δίκτυο Αυτόματων Μηχανημάτων Παραλαβής Δεμάτων στην Ελλάδα. Με βασικό άξονα της φιλοσοφίας αλλά και της καθημερινής της λειτουργίας την βιώσιμη, πράσινη ανάπτυξη τα Αυτόματα Μηχανήματα Παραλαβής Δεμάτων της BOX NOW είναι απολύτως αυτόνομα και λειτουργούν αποκλειστικά με ηλιακή ενέργεια, προσφέροντας έναν νέο, καινοτόμο και φιλικό προς το περιβάλλον τρόπο παράδοσης και παραλαβής παραγγελιών.&nbsp;</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\tΤα BOX NOW lockers τοποθετούνται σε κομβικά σημεία της πόλης (περισσότερα από 1200 σημεία πανελλαδικά), ώστε ο καταναλωτής να έχει ο ίδιος πρόσβαση 24/7 στο Αυτόματο Μηχάνημα Παραλαβής και στο δέμα του, οποιαδήποτε στιγμή επιθυμεί, εύκολα και απλά.&nbsp;</div>\r\n<div>\r\n\tΜε άλλα λόγια προσφέρει ασφάλεια, ανεξαρτησία και ελευθερία στη διακίνηση και παράδοση δεμάτων παντού και πάντα, όπου και όταν θέλω ο καταναλωτής!</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\tΤαυτόχρονα όμως αποτελεί και έναν πολύτιμο σύμμαχο – business partner – σε κάθε επιχείρηση, e-shop, κτλ. οι οποίοι αξιοποιούν το ηλεκτρονικό εμπόριο, προσφέροντάς σύγχρονες προηγμένες υπηρεσίες, εξοικονόμηση και αύξηση της παραγωγικότητας αλλά και ενισχύοντας την εξυπηρέτηση των πελάτων τους.</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\t<p style=\"border: 0px; margin: 0px 0px 1em; padding: 0px; font-style: inherit; font-variant: inherit; font-weight: inherit; font-stretch: inherit; font-size: inherit; line-height: inherit; font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif; font-optical-sizing: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; vertical-align: baseline; color: rgb(45, 46, 47);\">\r\n\t\t<b style=\"border: 0px; margin: 0px; padding: 0px; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-size: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; vertical-align: baseline;\">Προμήθειες:</b><br />\r\n\t\t<span style=\"border: 0px; margin: 0px; padding: 0px; font: inherit; vertical-align: baseline;\">- 23% / πώληση</span></p>\r\n\t<p style=\"border: 0px; margin: 0px 0px 1em; padding: 0px; font-style: inherit; font-variant: inherit; font-weight: inherit; font-stretch: inherit; font-size: inherit; line-height: inherit; font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif; font-optical-sizing: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; vertical-align: baseline; color: rgb(45, 46, 47);\">\r\n\t\tΔιάρκεια Cookie: 30 ημέρες</p>\r\n</div>\r\n",
+        "ended_date": "2025-06-28T10:55:00+00:00",
+        "mobile_ready": true,
+        "deeplinks": {
+            "allow_deeplinking": false,
+            "allow_subdomains": true,
+            "deeplink_domain": "steiledema.boxnow.gr"
+        },
+        "terms": {
+            "other": "",
+            "promotion_methods": {
+                "social_media": {
+                    "allow": true,
+                    "description": "Social media",
+                    "comments": ""
+                },
+                "cashback_sites": {
+                    "allow": true,
+                    "description": "Cashback sites",
+                    "comments": ""
+                },
+                "incentivized_traffic": {
+                    "allow": true,
+                    "description": "Incentivised traffic (excl. cashback)",
+                    "comments": ""
+                },
+                "discount_coupon_sites": {
+                    "allow": true,
+                    "description": "Voucher / Coupon sites",
+                    "comments": ""
+                },
+                "email_newsletter": {
+                    "allow": true,
+                    "description": "Email / Newsletter",
+                    "comments": ""
+                },
+                "content_sites": {
+                    "allow": true,
+                    "description": "Content sites (portals, blogs κλπ)",
+                    "comments": ""
+                },
+                "google_shopping_ads": {
+                    "allow": false,
+                    "description": "Google CSS Partners",
+                    "comments": null
+                }
+            },
+            "ppc": {
+                "traffic_to_advertiser": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to send traffic directly to the advertiser's website?",
+                    "comments": ""
+                },
+                "brand_name_on_url": {
+                    "allow": true,
+                    "description": "Is it allowed to use the advertiser's brand name in the display URL?",
+                    "comments": ""
+                },
+                "brand_name_on_title": {
+                    "allow": true,
+                    "description": "Is it allowed to use the advertiser's brand name in the title or body of a text ad?",
+                    "comments": ""
+                },
+                "brand_on_negative_keywords": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to NOT add the brand name or any misspellings and/or variations to their list of negative keywords?",
+                    "comments": ""
+                },
+                "brand_bidding_variations": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on the advertiser's brand name, or any misspellings and/or variations?",
+                    "comments": ""
+                },
+                "brand_bidding_other_words": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on keywords that include the advertiser's brand name along with other words (e.g. gifts from Days4u)?",
+                    "comments": ""
+                },
+                "facebook_ads": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to buy PPC ads on social media?",
+                    "comments": ""
+                }
+            }
+        },
+        "url": "https://steiledema.boxnow.gr/apostoli-dematos",
+        "geoip_limits": [],
+        "currency": {
+            "id": 978,
+            "code": "EUR",
+            "name": "Euro",
+            "sign": "€"
+        },
+        "registration_date": "2023-03-13T12:24:15+00:00",
+        "datafeed": false,
+        "datafeed_list": null,
+        "conv_rate": "35.84",
+        "epc": "23.98",
+        "app_rate": "100",
+        "app_speed": "1955300",
+        "program_status": "Active",
+        "affiliate_status": "Accepted",
+        "commissions": {
+            "details": [
+                {
+                    "category": {
+                        "id": 1,
+                        "name": "Sales Ελλάδα",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "percent",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "23.00",
+                                    "subaction": "23.00",
+                                    "formatted": {
+                                        "action": "23,00%",
+                                        "subaction": "23,00%"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 2,
+                        "name": "Sales Εξωτερικό",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "percent",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "7.00",
+                                    "subaction": "7.00",
+                                    "formatted": {
+                                        "action": "7,00%",
+                                        "subaction": "7,00%"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ],
+            "summary": {
+                "percent": "7,00% - 23,00%",
+                "flat": "-"
+            },
+            "tiers": {
+                "count_type": "clicks",
+                "amount": 1,
+                "levels": []
+            }
+        },
+        "categories": [
+            {
+                "parent_category": {
+                    "name": "Υπηρεσίες",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Υπηρεσίες Μεταφορών"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "countries": "GR,CY"
     }
 ]

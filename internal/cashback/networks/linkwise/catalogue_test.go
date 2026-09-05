@@ -3,14 +3,15 @@ package linkwise_test
 // Reading the catalogue (T245, FR-012), against a recording of the real
 // programme list.
 //
-// The nine programmes in testdata/programs.json were chosen out of the three
-// hundred and thirty-four this account is joined to: six for the things that
-// vary and decide something - a non-EUR currency, deeplinking refused,
-// cashback refused, one country against two, a programme with no categories -
-// and three more because the recorded TRANSACTIONS name them, so the two
-// recordings join for real rather than by construction. Every other field is
-// exactly as the network sent it, Greek marketing HTML included, because the
-// payload has to survive the jsonb column that will hold it.
+// The ten programmes in testdata/programs.json were chosen out of the three
+// hundred and thirty-four this account is joined to: seven for the things
+// that vary and decide something - a non-EUR currency, deeplinking refused,
+// cashback refused, deeplinking refused while cashback is ALLOWED, one
+// country against two, a programme with no categories - and three more
+// because the recorded TRANSACTIONS name them, so the two recordings join for
+// real rather than by construction. Every other field is exactly as the
+// network sent it, Greek marketing HTML included, because the payload has to
+// survive the jsonb column that will hold it.
 
 import (
 	"context"
@@ -58,8 +59,8 @@ func TestEveryRecordedProgrammeBecomesACatalogueEntry(t *testing.T) {
 	if failed != nil {
 		t.Fatalf("the catalogue read ended with %v", failed)
 	}
-	if len(got) != 9 {
-		t.Fatalf("the recording yielded %d entries, want the 9 programmes it carries", len(got))
+	if len(got) != 10 {
+		t.Fatalf("the recording yielded %d entries, want the 10 programmes it carries", len(got))
 	}
 	for _, merchant := range got {
 		if err := merchant.Validate(); err != nil {
@@ -94,7 +95,10 @@ func TestTheOrdinaryProgrammeIsActive(t *testing.T) {
 		if merchant.Country != "" {
 			t.Errorf("Country = %q; the programme names GR,CY, and choosing one would publish a claim the network never made", merchant.Country)
 		}
-		for _, part := range []string{"program_status=Active", "affiliate_status=Accepted", "cashback_sites=allowed"} {
+		for _, part := range []string{
+			"program_status=Active", "affiliate_status=Accepted",
+			"cashback_sites=allowed", "allow_deeplinking=allowed",
+		} {
 			if !strings.Contains(merchant.StatusRaw, part) {
 				t.Errorf("StatusRaw = %q, want it to carry %q", merchant.StatusRaw, part)
 			}
@@ -142,6 +146,70 @@ func TestAProgrammeThatForbidsCashbackIsPaused(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("programme 13117 is not in the catalogue")
+	}
+}
+
+// TestAProgrammeThatForbidsDeeplinkingIsPaused is contract rule 11, and it is
+// NOT the same fact as the cashback one.
+//
+// Three of the 334 joined programmes - Pricefox Energy, BOX NOW and Paok
+// Tickets - allow cashback sites AND refuse deeplinking, so a table that read
+// only the promotion methods would publish all three. BOX NOW is in the
+// recording for exactly that reason.
+//
+// A route that may not be deeplinked cannot carry a click reference, so a
+// member sent down it reaches the retailer, buys, and is credited nothing -
+// the same silent loss as a wrong sub-id slot, on every click.
+func TestAProgrammeThatForbidsDeeplinkingIsPaused(t *testing.T) {
+	t.Parallel()
+
+	got, failed := theRecordedCatalogue(t)
+	if failed != nil {
+		t.Fatalf("the catalogue read ended with %v", failed)
+	}
+	found := false
+	for _, merchant := range got {
+		if merchant.ExternalID != "13733" {
+			continue
+		}
+		found = true
+		if merchant.Status != networks.MerchantStatusPaused {
+			t.Errorf("Status = %q, want paused: this programme permits cashback sites and refuses deeplinking, so it cannot carry a reference", merchant.Status)
+		}
+		if !strings.Contains(merchant.StatusRaw, "allow_deeplinking=not-allowed") {
+			t.Errorf("StatusRaw = %q, and nothing in it explains why a programme that permits cashback was stored as paused", merchant.StatusRaw)
+		}
+		// The evidence must not blame the wrong field: this programme DOES
+		// allow cashback sites.
+		if !strings.Contains(merchant.StatusRaw, "cashback_sites=allowed") {
+			t.Errorf("StatusRaw = %q, want it to record that cashback itself was permitted", merchant.StatusRaw)
+		}
+	}
+	if !found {
+		t.Fatal("programme 13733 is not in the catalogue")
+	}
+}
+
+// TestAMissingDeeplinkingFlagIsReadAsNotAllowed, for the same asymmetry the
+// cashback flag has: being wrong this way loses a retailer, and being wrong
+// the other way sends members down a route that cannot carry their reference.
+func TestAMissingDeeplinkingFlagIsReadAsNotAllowed(t *testing.T) {
+	t.Parallel()
+
+	client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":1,"name":"X","countries":"GR","program_status":"Active","affiliate_status":"Accepted",` +
+			`"terms":{"promotion_methods":{"cashback_sites":{"allow":true}}},"deeplinks":{}}]`))
+	})
+	seq, err := client.FetchCatalogue(t.Context())
+	if err != nil {
+		t.Fatalf("FetchCatalogue(): %v", err)
+	}
+	got, failed := collectMerchants(t, seq)
+	if failed != nil || len(got) != 1 {
+		t.Fatalf("the read yielded %d entries and ended with %v", len(got), failed)
+	}
+	if got[0].Status != networks.MerchantStatusPaused {
+		t.Errorf("Status = %q, want paused: a programme that says nothing about deeplinking has not said yes", got[0].Status)
 	}
 }
 
@@ -361,11 +429,11 @@ func TestAStateNobodyMappedStopsTheImport(t *testing.T) {
 			// joined=yes should only ever return accepted programmes, so
 			// this says the query no longer means what it meant.
 			name: "an affiliate status that is not accepted",
-			row:  `{"id":1,"name":"X","countries":"GR","program_status":"Active","affiliate_status":"Pending","terms":{"promotion_methods":{"cashback_sites":{"allow":true}}}}`,
+			row:  `{"id":1,"name":"X","countries":"GR","program_status":"Active","affiliate_status":"Pending","terms":{"promotion_methods":{"cashback_sites":{"allow":true}}},"deeplinks":{"allow_deeplinking":true}}`,
 		},
 		{
 			name: "a programme status nobody has seen",
-			row:  `{"id":1,"name":"X","countries":"GR","program_status":"Suspended","affiliate_status":"Accepted","terms":{"promotion_methods":{"cashback_sites":{"allow":true}}}}`,
+			row:  `{"id":1,"name":"X","countries":"GR","program_status":"Suspended","affiliate_status":"Accepted","terms":{"promotion_methods":{"cashback_sites":{"allow":true}}},"deeplinks":{"allow_deeplinking":true}}`,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -396,7 +464,7 @@ func TestAMissingCashbackFlagIsReadAsNotAllowed(t *testing.T) {
 	t.Parallel()
 
 	client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"id":1,"name":"X","countries":"GR","program_status":"Active","affiliate_status":"Accepted","terms":{"promotion_methods":{}}}]`))
+		_, _ = w.Write([]byte(`[{"id":1,"name":"X","countries":"GR","program_status":"Active","affiliate_status":"Accepted","terms":{"promotion_methods":{}},"deeplinks":{"allow_deeplinking":true}}]`))
 	})
 	seq, err := client.FetchCatalogue(t.Context())
 	if err != nil {
@@ -421,7 +489,7 @@ func TestAProgrammeWithNoNameIsRefused(t *testing.T) {
 	t.Parallel()
 
 	client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"id":1,"name":"  ","countries":"GR","program_status":"Active","affiliate_status":"Accepted","terms":{"promotion_methods":{"cashback_sites":{"allow":true}}}}]`))
+		_, _ = w.Write([]byte(`[{"id":1,"name":"  ","countries":"GR","program_status":"Active","affiliate_status":"Accepted","terms":{"promotion_methods":{"cashback_sites":{"allow":true}}},"deeplinks":{"allow_deeplinking":true}}]`))
 	})
 	seq, err := client.FetchCatalogue(t.Context())
 	if err != nil {
