@@ -94,7 +94,7 @@ type conformAdapter struct {
 // conformAdapters is the table. One entry per adapter, and the only place in
 // this file that may name one.
 func conformAdapters() []conformAdapter {
-	return []conformAdapter{conformFixture()}
+	return []conformAdapter{conformFixture(), conformLinkwise()}
 }
 
 // conformFixture is the fixture adapter's entry. Every type assertion in this
