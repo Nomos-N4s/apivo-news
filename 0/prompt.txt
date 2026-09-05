@@ -40,3 +40,7 @@ if you want, you can sync the work that's being done by the backend team, as the
 ---
 
 https://pr-518.ra1ze.com/ is not workig
+
+---
+
+it's working but I see some of the margins to close or narrow to the left side or am I wrong?
