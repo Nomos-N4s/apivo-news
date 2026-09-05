@@ -31,6 +31,10 @@ export default getViteConfig({
         'src/lib/reader/format.ts',
         'src/lib/reader/preference.ts',
         'src/lib/reader/strings.ts',
+        // The copy of the three legal notices (issue #64). Measured for
+        // the same reason reader/strings.ts is: a language it answers in
+        // nothing has ever rendered is copy nobody has read.
+        'src/lib/legal/strings.ts',
         'src/lib/account/consent.ts',
         'src/lib/account/tours.ts',
         'src/lib/app-env.ts',
