@@ -63,8 +63,10 @@ const heading = t.imprintHeading;
 </ReaderLayout>
 
 <style>
+  /* The same inline inset the masthead uses, so the page's text starts on
+     the masthead's left edge rather than on the frame's 2px rule. */
   .page {
-    padding-block: var(--space-4) var(--space-6);
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-8);
   }
 
   .more {
