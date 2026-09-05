@@ -1,0 +1,250 @@
+---
+import type { Brand } from '../lib/brand/brand.types';
+import { BRAND_SOURCE_FIXTURE, type BrandSource } from '../lib/brand/load';
+import type { ReadingLanguage } from '../lib/reader/axes';
+import { legalStrings } from '../lib/legal/strings';
+
+// One of the three notices a German-facing service owes (issue #64):
+// the provider identification under TMG §5, the GDPR privacy notice, and
+// the contact addresses that are part of both.
+//
+// The component renders one pane so that /{lang}/impressum, /{lang}/privacy
+// and /{lang}/contact are real deep-linkable routes — the acceptance
+// criteria of #64 — while /{lang}/legal stacks all three, which is how the
+// desktop board draws them.
+//
+// Every value comes from `brand`. Nothing here is a literal: an Impressum
+// whose entity is written into the template is wrong for every deployment
+// but one, and `scripts/lint-brand-literals.sh` gives a new file no budget
+// at all, so the first one would fail the build.
+interface Props {
+  lang: ReadingLanguage;
+  brand: Brand;
+  source: BrandSource;
+  pane: 'imprint' | 'privacy' | 'contact';
+  /** Heading level, so a stacked page keeps one h1 and three h2s. */
+  headingLevel?: 'h1' | 'h2';
+}
+
+const { lang, brand, source, pane, headingLevel = 'h2' } = Astro.props;
+const t = legalStrings(lang);
+const Heading = headingLevel;
+
+// The privacy document may be absent from a brand that is otherwise
+// valid — `documents` is a map, and only `terms` is load-bearing for the
+// money path. Absent means the version line is not drawn, never that the
+// page prints "undefined" at a reader.
+const privacyDocument = brand.legal.documents['privacy'];
+
+const paneId = pane;
+---
+
+<section class="pane" id={paneId}>
+  <header class="pane-head">
+    <Heading>
+      {pane === 'imprint' && t.imprintHeading}
+      {pane === 'privacy' && t.privacyHeading}
+      {pane === 'contact' && t.contactHeading}
+    </Heading>
+    {pane === 'imprint' && <p class="statute">{t.imprintStatute}</p>}
+    {
+      pane === 'privacy' && privacyDocument !== undefined && (
+        <p class="statute">{t.privacyVersion(privacyDocument.version)}</p>
+      )
+    }
+    {pane === 'contact' && <p class="statute">{t.contactIntro}</p>}
+  </header>
+
+  {
+    pane === 'imprint' && (
+      <>
+        {source === BRAND_SOURCE_FIXTURE && (
+          <aside class="fixture" role="note">
+            <p class="fixture-title">{t.fixtureTitle}</p>
+            <p class="fixture-body">{t.fixtureBody}</p>
+          </aside>
+        )}
+        <dl class="rows">
+          <dt>{t.entityTerm}</dt>
+          <dd>{brand.legal.entity}</dd>
+          <dt>{t.addressTerm}</dt>
+          <dd>{brand.legal.address}</dd>
+          <dt>{t.jurisdictionTerm}</dt>
+          <dd>{brand.legal.jurisdiction}</dd>
+          <dt>{t.contactTerm}</dt>
+          <dd>
+            <a href={`mailto:${brand.support.general}`}>{brand.support.general}</a>
+            <a href={`mailto:${brand.support.legal}`}>{brand.support.legal}</a>
+          </dd>
+        </dl>
+      </>
+    )
+  }
+
+  {
+    pane === 'privacy' && (
+      <>
+        <dl class="rows">
+          <dt>{t.keepTerm}</dt>
+          <dd>{t.keepBody}</dd>
+          <dt>{t.whereTerm}</dt>
+          <dd>{t.whereBody}</dd>
+          <dt>{t.rightsTerm}</dt>
+          <dd>{t.rightsBody}</dd>
+        </dl>
+        <aside class="how" role="note">
+          <p class="fixture-title">{t.rightsHowTitle}</p>
+          <p class="fixture-body">{t.rightsHowBody}</p>
+          <p class="fixture-body">
+            <a href={`mailto:${brand.support.privacy}`}>{brand.support.privacy}</a>
+          </p>
+        </aside>
+      </>
+    )
+  }
+
+  {
+    pane === 'contact' && (
+      <>
+        <dl class="rows">
+          <dt>{t.generalTerm}</dt>
+          <dd>
+            <a href={`mailto:${brand.support.general}`}>{brand.support.general}</a>
+          </dd>
+          <dt>{t.legalTerm}</dt>
+          <dd>
+            <a href={`mailto:${brand.support.legal}`}>{brand.support.legal}</a>
+          </dd>
+          <dt>{t.privacyTerm}</dt>
+          <dd>
+            <a href={`mailto:${brand.support.privacy}`}>{brand.support.privacy}</a>
+          </dd>
+        </dl>
+        <aside class="how" role="note">
+          <p class="fixture-title">{t.correctionTitle}</p>
+          <p class="fixture-body">{t.correctionBody}</p>
+        </aside>
+      </>
+    )
+  }
+</section>
+
+<style>
+  .pane {
+    border-top: 2px solid var(--color-text);
+    padding-top: var(--space-3);
+    margin-bottom: var(--space-6);
+  }
+
+  .pane-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+  }
+
+  .pane-head :global(h1),
+  .pane-head :global(h2) {
+    margin: 0;
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 22px;
+    letter-spacing: -0.01em;
+  }
+
+  .statute {
+    margin: 0;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  .rows {
+    display: grid;
+    grid-template-columns: minmax(9rem, 14rem) 1fr;
+    gap: 0;
+    margin: 0;
+    max-width: 68ch;
+  }
+
+  .rows dt {
+    padding: var(--space-2) var(--space-3) var(--space-2) 0;
+    border-top: 1px solid var(--color-divider);
+    font-size: 13px;
+    color: var(--ink-muted);
+  }
+
+  .rows dd {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin: 0;
+    padding: var(--space-2) 0;
+    border-top: 1px solid var(--color-divider);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  .rows a {
+    color: var(--color-accent-700);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .fixture,
+  .how {
+    max-width: 68ch;
+    margin-bottom: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-surface);
+    border-left: 3px solid var(--border-strong);
+  }
+
+  .how {
+    margin-top: var(--space-3);
+    margin-bottom: 0;
+  }
+
+  .fixture-title {
+    margin: 0 0 var(--space-1);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .fixture-body {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--ink-muted);
+  }
+
+  .fixture-body + .fixture-body {
+    margin-top: var(--space-1);
+  }
+
+  .fixture-body a {
+    color: var(--color-accent-700);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  /* A four-column grid at 390px is a horizontal scroll the reader has to
+     discover. The cohort this ships for is 40+ and arrives on a phone. */
+  @media (max-width: 660px) {
+    .rows {
+      grid-template-columns: 1fr;
+    }
+
+    .rows dt {
+      padding-bottom: 0;
+      border-top: 1px solid var(--color-divider);
+    }
+
+    .rows dd {
+      padding-top: var(--space-1);
+      border-top: 0;
+    }
+  }
+</style>

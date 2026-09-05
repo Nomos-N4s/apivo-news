@@ -1,0 +1,80 @@
+---
+import { APP_ENV, BRAND_DIR } from 'astro:env/server';
+
+import LegalPane from '../../components/LegalPane.astro';
+import Masthead from '../../components/Masthead.astro';
+import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import { brandOnHand } from '../../lib/brand/load';
+import { legalStrings } from '../../lib/legal/strings';
+import { frontPagePath, isReadingLanguage } from '../../lib/reader/axes';
+
+// One of the three notices issue #64 requires to render in el and de.
+// The pane itself is shared with /{lang}/legal, which stacks all three;
+// this route exists so the footer can link it and so a reader sent
+// straight here lands on the notice rather than on a page of three.
+const langSegment = Astro.params['lang'];
+if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+  return Astro.rewrite('/404');
+}
+const lang = langSegment;
+const t = legalStrings(lang);
+const { brand, source } = brandOnHand({ brandDir: BRAND_DIR, appEnv: APP_ENV });
+const home = frontPagePath(lang, ['munich', 'greece']);
+const heading = t.privacyHeading;
+---
+
+<ReaderLayout
+  lang={lang}
+  title={`${brand.name} — ${heading}`}
+  description={t.intro}
+  homeHref={home}
+>
+  <Masthead homeHref={home}>
+    <div class="seg" role="group">
+      {
+        lang === 'el' ? (
+          <span class="seg-opt" aria-current="true" lang="el">
+            Ελληνικά
+          </span>
+        ) : (
+          <a class="seg-opt" href="/el/privacy" lang="el">
+            Ελληνικά
+          </a>
+        )
+      }
+      {
+        lang === 'de' ? (
+          <span class="seg-opt" aria-current="true" lang="de">
+            Deutsch
+          </span>
+        ) : (
+          <a class="seg-opt" href="/de/privacy" lang="de">
+            Deutsch
+          </a>
+        )
+      }
+    </div>
+  </Masthead>
+
+  <main class="page">
+    <LegalPane lang={lang} brand={brand} source={source} pane="privacy" headingLevel="h1" />
+    <p class="more"><a href={`/${lang}/legal`}>{t.heading}</a></p>
+  </main>
+</ReaderLayout>
+
+<style>
+  .page {
+    padding-block: var(--space-4) var(--space-6);
+  }
+
+  .more {
+    margin: var(--space-4) 0 0;
+    font-size: 14px;
+  }
+
+  .more a {
+    color: var(--color-accent-700);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+</style>
