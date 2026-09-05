@@ -50,6 +50,47 @@ func servingRecording(t *testing.T, name string) *linkwise.Client {
 	})
 }
 
+// servingTransactions stands up a server that answers the PROGRAMME LIST from
+// the recording and hands everything else to handler.
+//
+// The interception exists because a transaction has no currency of its own -
+// the report carries no such field - so translating one now reads the
+// programme list. Answering it here from the recording is what makes these
+// tests a real join: the three programmes the recorded transactions name (5,
+// 73 and 300) are in the recorded programme list, so the currency each
+// transaction is denominated in is the one the network actually published for
+// its programme.
+//
+// handler never sees the programme request, so a test that records "the
+// request" records the transaction one.
+func servingTransactions(t *testing.T, handler http.HandlerFunc) *linkwise.Client {
+	t.Helper()
+	programmes, err := os.ReadFile(filepath.Join("testdata", "programs.json"))
+	if err != nil {
+		t.Fatalf("reading the programme recording: %v", err)
+	}
+	return serving(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "programs.html") {
+			_, _ = w.Write(programmes)
+			return
+		}
+		handler(w, r)
+	})
+}
+
+// servingRecordedTransactions answers the transaction endpoint with one of the
+// recordings and the programme list with its own.
+func servingRecordedTransactions(t *testing.T, name string) *linkwise.Client {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("reading the recording: %v", err)
+	}
+	return servingTransactions(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	})
+}
+
 // collect drains an iteration, returning what it yielded and the error it
 // ended with, if any.
 func collect(t *testing.T, seq func(func(networks.Reported, error) bool)) ([]networks.Reported, error) {
@@ -72,7 +113,7 @@ func collect(t *testing.T, seq func(func(networks.Reported, error) bool)) ([]net
 func TestTheRecordedTransactionIsTranslated(t *testing.T) {
 	t.Parallel()
 
-	client := servingRecording(t, "transactions.json")
+	client := servingRecordedTransactions(t, "transactions.json")
 	seq, err := client.FetchTransactions(t.Context(), theJuneWindow())
 	if err != nil {
 		t.Fatalf("FetchTransactions(): %v", err)
@@ -130,7 +171,7 @@ func TestTheRecordedTransactionIsTranslated(t *testing.T) {
 func TestTheRawPayloadIsTheRowsOwnBytes(t *testing.T) {
 	t.Parallel()
 
-	client := servingRecording(t, "transactions.json")
+	client := servingRecordedTransactions(t, "transactions.json")
 	seq, err := client.FetchTransactions(t.Context(), theJuneWindow())
 	if err != nil {
 		t.Fatalf("FetchTransactions(): %v", err)
@@ -167,7 +208,7 @@ func TestAWindowWiderThanTheNetworkAllowsIsRefusedBeforeAnyIO(t *testing.T) {
 	t.Parallel()
 
 	var requests atomic.Int32
-	client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
+	client := servingTransactions(t, func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
 		_, _ = w.Write([]byte(`[]`))
 	})
@@ -202,7 +243,7 @@ func TestAnUnusableWindowIsRefusedImmediately(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			client := servingRecording(t, "transactions.json")
+			client := servingRecordedTransactions(t, "transactions.json")
 			if _, err := client.FetchTransactions(t.Context(), tt.window); err == nil {
 				t.Fatal("an unusable window was accepted")
 			}
@@ -218,7 +259,7 @@ func TestTheQueryAsksForTheFieldsAndTheTransactionAxis(t *testing.T) {
 	t.Parallel()
 
 	var seen http.Request
-	client := serving(t, func(w http.ResponseWriter, r *http.Request) {
+	client := servingTransactions(t, func(w http.ResponseWriter, r *http.Request) {
 		seen = *r.Clone(context.Background())
 		_, _ = w.Write([]byte(`[]`))
 	})
@@ -263,7 +304,7 @@ func TestTheQueryAsksForTheFieldsAndTheTransactionAxis(t *testing.T) {
 func TestAnEmptyWindowIsNotAnError(t *testing.T) {
 	t.Parallel()
 
-	client := servingRecording(t, "transactions-empty.json")
+	client := servingRecordedTransactions(t, "transactions-empty.json")
 	seq, err := client.FetchTransactions(t.Context(), theJuneWindow())
 	if err != nil {
 		t.Fatalf("FetchTransactions(): %v", err)
@@ -284,7 +325,7 @@ func TestAnEmptyWindowIsNotAnError(t *testing.T) {
 func TestTheForcedObjectEnvelopeIsRead(t *testing.T) {
 	t.Parallel()
 
-	client := servingRecording(t, "transactions-object-envelope.json")
+	client := servingRecordedTransactions(t, "transactions-object-envelope.json")
 	seq, err := client.FetchTransactions(t.Context(), theJuneWindow())
 	if err != nil {
 		t.Fatalf("FetchTransactions(): %v", err)
@@ -305,7 +346,7 @@ func TestTheForcedObjectEnvelopeIsRead(t *testing.T) {
 func TestANetworkFailureIsYieldedRatherThanReturned(t *testing.T) {
 	t.Parallel()
 
-	client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
+	client := servingTransactions(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	})
 	seq, err := client.FetchTransactions(t.Context(), theJuneWindow())
@@ -328,7 +369,7 @@ func TestANetworkFailureIsYieldedRatherThanReturned(t *testing.T) {
 func TestAnErrorArrivingWithA200IsReportedAsOne(t *testing.T) {
 	t.Parallel()
 
-	client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
+	client := servingTransactions(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"error":{"code":400,"name":"Bad Request","description":"The request parameters are invalid or missing.\n\nUsage:\n..."}}`))
 	})
 	seq, err := client.FetchTransactions(t.Context(), theJuneWindow())
@@ -355,7 +396,7 @@ func TestAnAnswerThatIsNotAReportIsReported(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
+			client := servingTransactions(t, func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte(tt.body))
 			})
 			seq, err := client.FetchTransactions(t.Context(), theJuneWindow())
@@ -376,8 +417,8 @@ func TestAnAnswerThatIsNotAReportIsReported(t *testing.T) {
 func TestAStatusNobodyMappedFailsTheWindow(t *testing.T) {
 	t.Parallel()
 
-	client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"id":1,"amount":"1.00","commission":"0.10",` +
+	client := servingTransactions(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":1,"program":{"id":5},"amount":"1.00","commission":"0.10",` +
 			`"date":"2024-06-07T19:10:54+03:00","status":{"name":"Escalated","date":"2024-06-08T00:00:00+03:00"}}]`))
 	})
 	seq, err := client.FetchTransactions(t.Context(), theJuneWindow())
@@ -399,8 +440,8 @@ func TestAStatusNobodyMappedFailsTheWindow(t *testing.T) {
 func TestAnUnreadableAmountFailsTheWindow(t *testing.T) {
 	t.Parallel()
 
-	client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"id":1,"amount":"1,00","commission":"0.10",` +
+	client := servingTransactions(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":1,"program":{"id":5},"amount":"1,00","commission":"0.10",` +
 			`"date":"2024-06-07T19:10:54+03:00","status":{"name":"Validated","date":"2024-06-08T00:00:00+03:00"}}]`))
 	})
 	seq, err := client.FetchTransactions(t.Context(), theJuneWindow())
@@ -418,8 +459,8 @@ func TestAnUnreadableAmountFailsTheWindow(t *testing.T) {
 func TestABlankClickReferenceIsRefusedRatherThanCarried(t *testing.T) {
 	t.Parallel()
 
-	client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"id":1,"subid1":"   ","amount":"1.00","commission":"0.10",` +
+	client := servingTransactions(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":1,"program":{"id":5},"subid1":"   ","amount":"1.00","commission":"0.10",` +
 			`"date":"2024-06-07T19:10:54+03:00","status":{"name":"Validated","date":"2024-06-08T00:00:00+03:00"}}]`))
 	})
 	seq, err := client.FetchTransactions(t.Context(), theJuneWindow())
@@ -437,8 +478,8 @@ func TestASubIDThatIsPresentIsCarried(t *testing.T) {
 	t.Parallel()
 
 	const ref = "0mB7hQ2xKp4vT9sLcNfR1w"
-	client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"id":1,"subid1":"` + ref + `","amount":"1.00","commission":"0.10",` +
+	client := servingTransactions(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":1,"program":{"id":5},"subid1":"` + ref + `","amount":"1.00","commission":"0.10",` +
 			`"date":"2024-06-07T19:10:54+03:00","status":{"name":"Validated","date":"2024-06-08T00:00:00+03:00"}}]`))
 	})
 	seq, err := client.FetchTransactions(t.Context(), theJuneWindow())
@@ -464,7 +505,7 @@ func TestASubIDThatIsPresentIsCarried(t *testing.T) {
 func TestACancelledReadSaysSo(t *testing.T) {
 	t.Parallel()
 
-	client := servingRecording(t, "transactions.json")
+	client := servingRecordedTransactions(t, "transactions.json")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
@@ -486,7 +527,7 @@ func TestACancelledReadSaysSo(t *testing.T) {
 func TestACallersOwnBreakEndsSilently(t *testing.T) {
 	t.Parallel()
 
-	client := servingRecording(t, "transactions.json")
+	client := servingRecordedTransactions(t, "transactions.json")
 	seq, err := client.FetchTransactions(t.Context(), theJuneWindow())
 	if err != nil {
 		t.Fatalf("FetchTransactions(): %v", err)
@@ -511,7 +552,7 @@ func TestTheWindowIsAskedAgainFromTheBeginning(t *testing.T) {
 		t.Fatalf("reading the recording: %v", err)
 	}
 	var queries []url.Values
-	client := serving(t, func(w http.ResponseWriter, r *http.Request) {
+	client := servingTransactions(t, func(w http.ResponseWriter, r *http.Request) {
 		queries = append(queries, r.URL.Query())
 		_, _ = w.Write(body)
 	})
@@ -551,14 +592,10 @@ func TestTheAdapterSatisfiesThePort(t *testing.T) {
 
 	client, err := linkwise.New(account,
 		linkwise.WithCredential(theUsername, thePassword),
-		linkwise.WithReportCurrency(theCurrency),
 		linkwise.WithBaseURL(server.URL),
 		linkwise.WithHTTPClient(server.Client()))
 	if err != nil {
 		t.Fatalf("New(): %v", err)
-	}
-	if got := client.ReportCurrency(); got != money.Currency(theCurrency) {
-		t.Errorf("ReportCurrency() = %q, want %q", got, theCurrency)
 	}
 	// The adapter is not yet a whole networks.Network - BuildDeeplink and
 	// FetchCatalogue are still to come - so what is asserted here is the part

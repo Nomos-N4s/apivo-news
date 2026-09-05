@@ -106,7 +106,7 @@ func (c *Client) FetchTransactions(ctx context.Context, window networks.QueryWin
 				yield(networks.Reported{}, networks.AbandonedIteration(err))
 				return
 			}
-			reported, err := c.translate(row)
+			reported, err := c.translate(ctx, row)
 			if err != nil {
 				yield(networks.Reported{}, fmt.Errorf("linkwise: transaction %d of %s: %w", i+1, window, err))
 				return
@@ -245,18 +245,26 @@ func decodeRows(body []byte) ([]json.RawMessage, error) {
 // [networks.Reported.Validate] on it before anybody sees it (contract rule
 // 7): a mis-mapped field is then caught at the adapter that made it rather
 // than at an INSERT halfway through a window.
-func (c *Client) translate(row reportRow) (networks.Reported, error) {
+func (c *Client) translate(ctx context.Context, row reportRow) (networks.Reported, error) {
 	externalID := strings.TrimSpace(row.ID.String())
 
 	status, err := mapTransactionStatus(externalID, row.Status.Name)
 	if err != nil {
 		return networks.Reported{}, err
 	}
-	sale, err := c.amount(externalID, "amount", row.Amount)
+	// The currency comes from the PROGRAMME, because the transaction report
+	// carries none - see currencies.go. Both figures take the same one: the
+	// evidence row stores a single currency column for the pair, and
+	// Reported.Validate refuses a report that denominates them differently.
+	currency, err := c.currencyFor(ctx, strings.TrimSpace(row.Program.ID.String()))
+	if err != nil {
+		return networks.Reported{}, fmt.Errorf("transaction %s: %w", strconv.Quote(externalID), err)
+	}
+	sale, err := c.amount(externalID, "amount", row.Amount, currency)
 	if err != nil {
 		return networks.Reported{}, err
 	}
-	commission, err := c.amount(externalID, "commission", row.Commis)
+	commission, err := c.amount(externalID, "commission", row.Commis, currency)
 	if err != nil {
 		return networks.Reported{}, err
 	}
@@ -300,13 +308,13 @@ func clickRef(subID *string) networks.ClickRef {
 }
 
 // amount turns one of Linkwise's decimal strings into minor units of the
-// account's currency.
-func (c *Client) amount(externalID, field, raw string) (money.Amount, error) {
+// programme's currency.
+func (c *Client) amount(externalID, field, raw string, currency money.Currency) (money.Amount, error) {
 	minor, err := minorUnits(raw)
 	if err != nil {
 		return money.Amount{}, fmt.Errorf("transaction %s: %s: %w", strconv.Quote(externalID), field, err)
 	}
-	return money.New(minor, c.currency)
+	return money.New(minor, currency)
 }
 
 // timestamp parses one of Linkwise's dates, which arrive in ISO 8601 with an

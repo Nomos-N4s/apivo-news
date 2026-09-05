@@ -36,11 +36,6 @@ const (
 	thePassword = "pw-4f19ba7c-never-in-a-url"
 )
 
-// theCurrency is what this account's report is declared to be denominated
-// in. The report itself carries no currency field, so every client is built
-// with one.
-const theCurrency = "EUR"
-
 // anAccount is a publisher account at Linkwise.
 func anAccount(t *testing.T) networks.PublisherAccount {
 	t.Helper()
@@ -61,7 +56,6 @@ func serving(t *testing.T, handler http.HandlerFunc, opts ...linkwise.Option) *l
 
 	opts = append([]linkwise.Option{
 		linkwise.WithCredential(theUsername, thePassword),
-		linkwise.WithReportCurrency(theCurrency),
 		linkwise.WithBaseURL(server.URL),
 		linkwise.WithHTTPClient(server.Client()),
 		// A rate nothing waits on, and a budget short enough that a case
@@ -314,7 +308,6 @@ func TestATransportFailureIsRetriedAndThenReportedWithoutTheURL(t *testing.T) {
 
 	client, err := linkwise.New(anAccount(t),
 		linkwise.WithCredential(theUsername, thePassword),
-		linkwise.WithReportCurrency(theCurrency),
 		linkwise.WithBaseURL(base),
 		linkwise.WithHTTPClient(httpClient),
 		linkwise.WithRateLimitPerMinute(60_000),
@@ -349,14 +342,12 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 			account: func(*testing.T) networks.PublisherAccount { return networks.PublisherAccount{} },
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, thePassword),
-				linkwise.WithReportCurrency(theCurrency),
 			},
 			want: linkwise.ErrNoPublisherAccount,
 		},
 		{
 			name:    "no credential at all",
 			account: anAccount,
-			opts:    []linkwise.Option{linkwise.WithReportCurrency(theCurrency)},
 			want:    linkwise.ErrNoCredential,
 		},
 		{
@@ -368,7 +359,6 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, ""),
-				linkwise.WithReportCurrency(theCurrency),
 			},
 			want: linkwise.ErrNoCredential,
 		},
@@ -377,37 +367,26 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential("", thePassword),
-				linkwise.WithReportCurrency(theCurrency),
 			},
 			want: linkwise.ErrNoCredential,
 		},
 		{
-			// THE REPORT CARRIES NO CURRENCY FIELD - the endpoint's own
-			// usage text lists every field it can return and there is no
-			// currency among them - so it comes from configuration, and it
-			// is required rather than defaulted. A default would be right
-			// for a Greek programme and wrong the day one is Romanian, and
-			// the failure would be silent: RON stored as EUR.
-			name:    "no report currency",
-			account: anAccount,
-			opts:    []linkwise.Option{linkwise.WithCredential(theUsername, thePassword)},
-			want:    linkwise.ErrNoReportCurrency,
-		},
-		{
-			name:    "a report currency that is not a currency code",
+			// The currency index ages against this, and a non-positive
+			// interval would have every transaction re-read the whole
+			// four-megabyte programme list.
+			name:    "a currency refresh that is not an interval",
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, thePassword),
-				linkwise.WithReportCurrency("euro"),
+				linkwise.WithCurrencyRefresh(0),
 			},
-			want: linkwise.ErrNoReportCurrency,
+			want: linkwise.ErrNotConfigured,
 		},
 		{
 			name:    "http, not https",
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, thePassword),
-				linkwise.WithReportCurrency(theCurrency),
 				linkwise.WithBaseURL("http://affiliate.linkwi.se"),
 			},
 			want: linkwise.ErrNotConfigured,
@@ -417,7 +396,6 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, thePassword),
-				linkwise.WithReportCurrency(theCurrency),
 				linkwise.WithBaseURL("https:///api"),
 			},
 			want: linkwise.ErrNotConfigured,
@@ -427,7 +405,6 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, thePassword),
-				linkwise.WithReportCurrency(theCurrency),
 				linkwise.WithBaseURL("https://%zz"),
 			},
 			want: linkwise.ErrNotConfigured,
@@ -437,7 +414,6 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, thePassword),
-				linkwise.WithReportCurrency(theCurrency),
 				linkwise.WithRateLimitPerMinute(0),
 			},
 			want: linkwise.ErrNotConfigured,
@@ -447,7 +423,6 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, thePassword),
-				linkwise.WithReportCurrency(theCurrency),
 				linkwise.WithRetryPolicy(networks.RetryBackoffPolicy{MaxAttempts: -1}),
 			},
 			want: linkwise.ErrNotConfigured,
@@ -472,7 +447,6 @@ func TestNewRefusalsNeverRepeatTheCredential(t *testing.T) {
 	const pasted = "https://" + theUsername + ":" + thePassword + "@%zz"
 	_, err := linkwise.New(anAccount(t),
 		linkwise.WithCredential(theUsername, thePassword),
-		linkwise.WithReportCurrency(theCurrency),
 		linkwise.WithBaseURL(pasted))
 	if err == nil {
 		t.Fatal("an unparseable base URL was accepted")
@@ -510,9 +484,7 @@ func TestThePasswordIsNotTrimmed(t *testing.T) {
 func TestTheClientPacesToItsDeclaredRate(t *testing.T) {
 	t.Parallel()
 
-	client, err := linkwise.New(anAccount(t),
-		linkwise.WithCredential(theUsername, thePassword),
-		linkwise.WithReportCurrency(theCurrency))
+	client, err := linkwise.New(anAccount(t), linkwise.WithCredential(theUsername, thePassword))
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
@@ -528,5 +500,75 @@ func TestTheClientPacesToItsDeclaredRate(t *testing.T) {
 	}
 	if got := client.Account().Network(); got != linkwise.ID {
 		t.Errorf("Account() is held at %q, want %q", got, linkwise.ID)
+	}
+}
+
+// TestTheNetworksAskToComeBackIsReported. Linkwise sent no rate-limit header
+// in any recorded response, so this covers a header that has never been seen
+// from this network but is ordinary from a CDN in front of one - and a wait
+// the adapter dropped silently would be a poller ignoring an instruction it
+// was given.
+func TestTheNetworksAskToComeBackIsReported(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name       string
+		retryAfter string
+		says       string
+	}{
+		{name: "seconds", retryAfter: "30", says: "Retry-After 30s"},
+		// The HTTP-date form is deliberately not parsed. The ask is dropped
+		// - the adapter's own backoff still applies - but it is said out
+		// loud rather than silently read as "no wait asked for".
+		{name: "an http date", retryAfter: "Wed, 21 Oct 2026 07:28:00 GMT", says: "unreadable Retry-After"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", tt.retryAfter)
+				w.WriteHeader(http.StatusTooManyRequests)
+			})
+			_, err := client.Get(t.Context(), "reports_transaction.html", nil)
+			if !errors.Is(err, networks.ErrNetworkRateLimited) {
+				t.Fatalf("err = %v, want ErrNetworkRateLimited", err)
+			}
+			if !strings.Contains(err.Error(), tt.says) {
+				t.Errorf("the error does not say what the network asked for: %v", err)
+			}
+		})
+	}
+}
+
+// TestARefusalWithNoBodyStillNamesTheStatus. A refusal that could not be
+// explained is still a refusal.
+func TestARefusalWithNoBodyStillNamesTheStatus(t *testing.T) {
+	t.Parallel()
+
+	client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	})
+	_, err := client.Get(t.Context(), "reports_transaction.html", nil)
+	if !errors.Is(err, networks.ErrNetworkRefused) {
+		t.Fatalf("err = %v, want ErrNetworkRefused", err)
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Errorf("the error does not name the status: %v", err)
+	}
+}
+
+// TestABurstMayBeAllowed. The default is one - a limit of twenty a minute is
+// not an invitation to spend twenty at once - and on this network the default
+// is more than usually right, because a request costs a second at minimum.
+func TestABurstMayBeAllowed(t *testing.T) {
+	t.Parallel()
+
+	client, err := linkwise.New(anAccount(t),
+		linkwise.WithCredential(theUsername, thePassword),
+		linkwise.WithBurst(3))
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	if got, want := client.RateLimit(), float64(linkwise.Limits().RequestsPerMinute)/60; got != want {
+		t.Errorf("RateLimit() = %v, want %v: a burst changes what may be taken at once, not the rate", got, want)
 	}
 }

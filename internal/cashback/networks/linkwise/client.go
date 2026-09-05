@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
-	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
 
 // DefaultBaseURL is the root every Linkwise endpoint is relative to.
@@ -105,55 +104,24 @@ var (
 	// ErrNotConfigured reports a client that could not be built from what
 	// it was given: an unusable base URL, or a rate that paces nothing.
 	ErrNotConfigured = errors.New("linkwise: the client could not be configured")
-	// ErrNoReportCurrency reports a client built without being told which
-	// currency this publisher account's report is denominated in.
-	//
-	// THE REPORT CARRIES NO CURRENCY FIELD. That is not an omission in this
-	// adapter: the endpoint's own usage text lists every field the report can
-	// return - program_id, program, program_cat, rotator, creative,
-	// subid1..subid5, transaction_id, type, status, subaction, amended,
-	// amount, commission, click_date, transaction_date, status_date,
-	// click_ref_url, payout_cat, payment_status - and there is no currency
-	// among them. The programme list carries one per programme; the
-	// transaction report carries none at all.
-	//
-	// So it has to come from configuration, and it is REQUIRED rather than
-	// defaulted to EUR. A default would be right for the Greek programmes
-	// this account is joined to and wrong the day one of them is Romanian,
-	// and the failure would be silent: RON amounts stored as EUR, a member
-	// paid roughly five times what they earned, and nothing in the evidence
-	// saying which currency the number was.
-	//
-	// It is a per-ACCOUNT declaration, and the recording of the programme
-	// list (testdata/programs.json) now says that assumption is FALSE for the
-	// account it was captured from. Of the 334 joined programmes, 329 report
-	// in EUR, three in PLN and two in USD - so a single declared currency is
-	// right for 98.5% of them and silently wrong for the rest, storing zloty
-	// as euro at whatever this deployment declares.
-	//
-	// The fix is a join rather than a better default: every transaction row
-	// names its programme (program.id) and every programme names its
-	// currency, so the adapter can read the currency off the programme rather
-	// than off configuration. That is a real change - the client would hold
-	// a programme-to-currency map and decide when to refresh it - and it is
-	// not this constructor's to make silently. Until it lands, this value is
-	// the deployment's stated assumption, wrong for five programmes out of
-	// three hundred and thirty-four, and TestTheCurrencyIsPerProgrammeAndNot
-	// Uniform is what keeps that fact in the suite rather than only here.
-	ErrNoReportCurrency = errors.New("linkwise: a client needs the currency its report is denominated in; the transaction report carries none")
 )
 
 // Client performs authenticated requests against Linkwise, paced to the rate
 // the deployment configured and retried under the port's own backoff.
 type Client struct {
 	account  networks.PublisherAccount
-	currency money.Currency
 	username string
 	password string
 	base     *url.URL
 	http     *http.Client
 	limiter  *networks.RateLimiter
 	retry    *networks.RetryBackoff
+	clock    networks.RateLimitClock
+
+	// currencies is the programme-to-currency join, because the transaction
+	// report carries no currency of its own. See currencies.go.
+	currencies      *currencyIndex
+	currencyRefresh time.Duration
 }
 
 // Option configures a [Client].
@@ -162,15 +130,15 @@ type Option func(*settings)
 // settings collects what the options set, so New can validate the whole
 // picture once rather than each option guessing at the others.
 type settings struct {
-	username      string
-	password      string
-	currency      string
-	baseURL       string
-	ratePerMinute int
-	burst         int
-	httpClient    *http.Client
-	policy        networks.RetryBackoffPolicy
-	clock         networks.RateLimitClock
+	username        string
+	password        string
+	currencyRefresh time.Duration
+	baseURL         string
+	ratePerMinute   int
+	burst           int
+	httpClient      *http.Client
+	policy          networks.RetryBackoffPolicy
+	clock           networks.RateLimitClock
 }
 
 // WithCredential supplies the HTTP Basic pair. Both halves reach the client
@@ -187,13 +155,12 @@ func WithCredential(username, password string) Option {
 	}
 }
 
-// WithReportCurrency states which currency this publisher account's
-// transaction report is denominated in, as an ISO-4217 code.
-//
-// Required: see [ErrNoReportCurrency] for why the report itself cannot
-// answer this and why no default is chosen.
-func WithReportCurrency(code string) Option {
-	return func(s *settings) { s.currency = strings.ToUpper(strings.TrimSpace(code)) }
+// WithCurrencyRefresh overrides how long a programme's currency is believed
+// before the programme list is read again. See [DefaultCurrencyRefresh] for
+// why an hour, and currencies.go for why the currency is read from the
+// network at all rather than configured.
+func WithCurrencyRefresh(d time.Duration) Option {
+	return func(s *settings) { s.currencyRefresh = d }
 }
 
 // WithBaseURL overrides [DefaultBaseURL]. Tests point it at a local server;
@@ -240,10 +207,11 @@ func New(account networks.PublisherAccount, opts ...Option) (*Client, error) {
 		return nil, fmt.Errorf("%w: %w", ErrNoPublisherAccount, err)
 	}
 	s := settings{
-		baseURL:       DefaultBaseURL,
-		ratePerMinute: requestsPerMinute,
-		burst:         1,
-		httpClient:    &http.Client{Timeout: defaultRequestTimeout},
+		baseURL:         DefaultBaseURL,
+		ratePerMinute:   requestsPerMinute,
+		burst:           1,
+		httpClient:      &http.Client{Timeout: defaultRequestTimeout},
+		currencyRefresh: DefaultCurrencyRefresh,
 	}
 	for _, opt := range opts {
 		opt(&s)
@@ -251,9 +219,9 @@ func New(account networks.PublisherAccount, opts ...Option) (*Client, error) {
 	if s.username == "" || s.password == "" {
 		return nil, ErrNoCredential
 	}
-	currency, err := money.ParseCurrency(s.currency)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrNoReportCurrency, err)
+	if s.currencyRefresh <= 0 {
+		return nil, fmt.Errorf("%w: the currency refresh interval must be positive, and %s is not",
+			ErrNotConfigured, s.currencyRefresh)
 	}
 
 	base, err := url.Parse(s.baseURL)
@@ -273,6 +241,10 @@ func New(account networks.PublisherAccount, opts ...Option) (*Client, error) {
 		return nil, fmt.Errorf("%w: the base URL names no host", ErrNotConfigured)
 	}
 
+	clock := s.clock
+	if clock == nil {
+		clock = systemClock{}
+	}
 	var limiterOpts []networks.RateLimiterOption
 	var retryOpts []networks.RetryBackoffOption
 	if s.clock != nil {
@@ -289,14 +261,16 @@ func New(account networks.PublisherAccount, opts ...Option) (*Client, error) {
 	}
 
 	return &Client{
-		account:  account,
-		currency: currency,
-		username: s.username,
-		password: s.password,
-		base:     base,
-		http:     s.httpClient,
-		limiter:  limiter,
-		retry:    retry,
+		account:         account,
+		username:        s.username,
+		password:        s.password,
+		base:            base,
+		http:            s.httpClient,
+		limiter:         limiter,
+		retry:           retry,
+		clock:           clock,
+		currencies:      &currencyIndex{},
+		currencyRefresh: s.currencyRefresh,
 	}, nil
 }
 
@@ -316,11 +290,37 @@ func (c *Client) Limits() networks.Limits { return Limits() }
 // RateLimit reports the rate the client is pacing to, in requests a second.
 func (c *Client) RateLimit() float64 { return c.limiter.Rate() }
 
-// ReportCurrency is the currency this account's report is read as. Exposed
-// because it is configuration rather than an answer from the network, and an
-// operator reconciling a statement has to be able to see which currency the
-// stored numbers were taken to be.
-func (c *Client) ReportCurrency() money.Currency { return c.currency }
+// Clock is the view of time this client ages its currency index against.
+//
+// Exposed for the same reason [Client.RateLimit] is: the production clock is
+// only reached when nothing was injected, so nothing else in this package
+// exercises it, and the one thing it must get right - ending a wait on a
+// cancelled context rather than on its timer - is invisible from outside
+// unless it can be called.
+func (c *Client) Clock() networks.RateLimitClock { return c.clock }
+
+// systemClock is the client's own view of time when no clock was injected.
+// It exists because the currency index ages against a clock and a test must
+// be able to advance it without sleeping for an hour.
+type systemClock struct{}
+
+// Now reports the wall-clock instant.
+func (systemClock) Now() time.Time { return time.Now() }
+
+// Sleep waits for d, or until ctx ends.
+func (systemClock) Sleep(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // Get performs an authenticated GET of one API endpoint, paced and retried,
 // and answers the whole body.

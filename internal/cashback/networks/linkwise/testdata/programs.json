@@ -1,5 +1,706 @@
 [
     {
+        "id": 5,
+        "name": "Tokotoukan",
+        "start_date": "2012-05-23T21:00:00+00:00",
+        "end_date": null,
+        "logo": "https://affiliate.linkwi.se/files/logo-tokotoukan.gif",
+        "short_description": "<p>\r\n\tΤο καλύτερο ηλεκτρονικό κατάστημα T-Shirts! Custom-made online T-Shirt shop! Απίθανα σχέδια, Μοναδικά T-Shirts! Σχεδίασε το δικό σου T-Shirt γρήγορα, εύκολα και με ασφάλεια!</p>\r\n",
+        "description": "<p>\r\n\t<font face=\"arial\" size=\"2\">Τo TOKOTOUKAN είναι το πρώτο ηλεκτρονικό κατάστημα στο χώρο του custom t-shirt στην Ελλάδα, με 100% πρωτότυπα σχέδια! Διαθέτει θέματα από τα 70s, 80s, 90s, Retro, Humour, Shocking, Old School κ.α. καθώς και μεγάλη ποικιλία από επώνυμες μπλούζες για όλες τις εποχές. Απευθύνεται σε ανθρώπους όλων των ηλικιών, καθώς και σε μικρές επιχειρήσεις, συλλόγους, ομάδες κ.α.<br />\r\n\t<br />\r\n\tΔιασκεδάστε δημιουργώντας το t-shirt που σας εκφράζει, γρήγορα, εύκολα και με ασφάλεια!<br />\r\n\t<br />\r\n\t5 Λόγοι να προτιμήσετε το TOKOTOUKAN: </font></p>\r\n<ul>\r\n\t<li>\r\n\t\t<font face=\"arial\" size=\"2\">100% πρωτότυπα σχέδια.</font></li>\r\n\t<li>\r\n\t\t<font face=\"arial\" size=\"2\">Επώνυμα T-Shirt υψηλής ποιότητας.</font></li>\r\n\t<li>\r\n\t\t<font face=\"arial\" size=\"2\">Εύκολη, διασκεδαστική και ασφαλής πλοήγηση.</font></li>\r\n\t<li>\r\n\t\t<font face=\"arial\" size=\"2\">Δυνατότητα επιλογής και αποστολής συσκευασίας δώρου.</font></li>\r\n\t<li>\r\n\t\t<font face=\"arial\" size=\"2\">Ελκυστικές τιμές και προσφορές.</font></li>\r\n</ul>\r\n<p>\r\n\t<font face=\"arial\" size=\"2\"><b>Όροι και Προϋποθέσεις Προγράμματος:</b><br />\r\n\t<br />\r\n\t<b>Προμήθειες:</b><br />\r\n\t- 15% / πώληση<br />\r\n\t<br />\r\n\tΔιάρκεια Cookie: 30 ημέρες</font></p>\r\n",
+        "ended_date": "2013-06-01T21:00:02+00:00",
+        "mobile_ready": false,
+        "deeplinks": {
+            "allow_deeplinking": true,
+            "allow_subdomains": true,
+            "deeplink_domain": "tokotoukan.com"
+        },
+        "terms": {
+            "other": "",
+            "promotion_methods": {
+                "social_media": {
+                    "allow": true,
+                    "description": "Social media",
+                    "comments": ""
+                },
+                "cashback_sites": {
+                    "allow": true,
+                    "description": "Cashback sites",
+                    "comments": null
+                },
+                "incentivized_traffic": {
+                    "allow": true,
+                    "description": "Incentivised traffic (excl. cashback)",
+                    "comments": ""
+                },
+                "discount_coupon_sites": {
+                    "allow": true,
+                    "description": "Voucher / Coupon sites",
+                    "comments": ""
+                },
+                "email_newsletter": {
+                    "allow": true,
+                    "description": "Email / Newsletter",
+                    "comments": ""
+                },
+                "content_sites": {
+                    "allow": true,
+                    "description": "Content sites (portals, blogs κλπ)",
+                    "comments": ""
+                },
+                "google_shopping_ads": {
+                    "allow": false,
+                    "description": "Google CSS Partners",
+                    "comments": null
+                }
+            },
+            "ppc": {
+                "traffic_to_advertiser": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to send traffic directly to the advertiser's website?",
+                    "comments": ""
+                },
+                "brand_name_on_url": {
+                    "allow": true,
+                    "description": "Is it allowed to use the advertiser's brand name in the display URL?",
+                    "comments": ""
+                },
+                "brand_name_on_title": {
+                    "allow": true,
+                    "description": "Is it allowed to use the advertiser's brand name in the title or body of a text ad?",
+                    "comments": ""
+                },
+                "brand_on_negative_keywords": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to NOT add the brand name or any misspellings and/or variations to their list of negative keywords?",
+                    "comments": ""
+                },
+                "brand_bidding_variations": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on the advertiser's brand name, or any misspellings and/or variations?",
+                    "comments": ""
+                },
+                "brand_bidding_other_words": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on keywords that include the advertiser's brand name along with other words (e.g. gifts from Days4u)?",
+                    "comments": ""
+                },
+                "facebook_ads": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to buy PPC ads on social media?",
+                    "comments": ""
+                }
+            }
+        },
+        "url": "https://www.tokotoukan.com/el/",
+        "geoip_limits": [],
+        "currency": {
+            "id": 978,
+            "code": "EUR",
+            "name": "Euro",
+            "sign": "€"
+        },
+        "registration_date": "2012-10-18T03:55:51+00:00",
+        "datafeed": false,
+        "datafeed_list": null,
+        "conv_rate": "0.19",
+        "epc": "0.7",
+        "app_rate": "100",
+        "app_speed": "1006117",
+        "program_status": "Active",
+        "affiliate_status": "Accepted",
+        "commissions": {
+            "details": [
+                {
+                    "category": {
+                        "id": 1,
+                        "name": "Sales",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "percent",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "15.00",
+                                    "subaction": "15.00",
+                                    "formatted": {
+                                        "action": "15,00%",
+                                        "subaction": "15,00%"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ],
+            "summary": {
+                "percent": "15,00%",
+                "flat": "-"
+            },
+            "tiers": {
+                "count_type": "clicks",
+                "amount": 1,
+                "levels": []
+            }
+        },
+        "categories": [
+            {
+                "parent_category": {
+                    "name": "Μόδα & Ομορφιά",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Ένδυση"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "parent_category": {
+                    "name": "Προϊόντα",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Είδη Δώρων"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "countries": "TR,GR"
+    },
+    {
+        "id": 73,
+        "name": "Aegean Airlines",
+        "start_date": "2012-05-22T21:00:00+00:00",
+        "end_date": null,
+        "logo": "https://affiliate.linkwi.se/files/1804775349668d3202ee72f.jpg",
+        "short_description": "<p>\r\n\tAegean - Ο μεγαλύτερος ελληνικός αερομεταφορέας σας ταξιδεύει σε όλο τον κόσμο με μοναδικές προσφορές!</p>\r\n",
+        "description": "<p>\r\n\tΗ AEGEAN, η μεγαλύτερη ελληνική αεροπορική εταιρεία και μέλος της Star Alliance, ξεκινώντας την πορεία της τον Μάιο του 1999 ως και σήμερα, προσφέρει υπηρεσίες υψηλής ποιότητας, με πτήσεις μικρών και μεσαίων αποστάσεων στην Ευρώπη, τη Β.Αφρική, τη Μέση Ανατολή, τον Περσικό Κόλπο και την περιοχή του Καυκάσου. Ο στόλος της εταιρείας απαρτίζεται από 79 αεροσκάφη, μεταξύ των οποίων τα ολοκαίνουργια Airbus A320 and A321 neo συμβάλλοντας στα 25 χρόνια λειτουργίας της στην αναβάθμιση συνολικά της ταξιδιωτικής εμπειρίας και στην ανάπτυξη του&nbsp; τουρισμού στη χώρα.<br />\r\n\t<br />\r\n\tΤο 2024 η AEGEAN βραβεύτηκε για 13η συνεχή χρονιά και 14η φορά συνολικά ως η «Καλύτερη περιφερειακή αεροπορική εταιρεία στην Ευρώπη» στα Skytrax World Airline Awards. Το βραβείο αυτό αποτελεί ακόμη μια απόδειξη της υψηλής ποιότητας υπηρεσιών που παρέχει η εταιρεία στους επιβάτες της, οι οποίοι την εμπιστεύονται σταθερά και την τοποθετούν στην κορυφή των επιλογών τους.<br />\r\n\t<br />\r\n\tΤο 2023 η AEGEAN και η θυγατρική της Olympic Air μετέφεραν 15,5 εκατομμύρια επιβάτες και προσέφεραν συνολικά 18,5 εκατ. θέσεις με ένα δίκτυο 180 προορισμών και 307 απευθείας δρομολογίων σε 49 χώρες από τις 10 συνολικά βάσεις της εταιρείας.<br />\r\n\t<br />\r\n\t<b>Προμήθειες:</b><br />\r\n\t- 2.3% / πώληση<br />\r\n\t- 2.8% / 10 ή περισσότερες πωλήσεις<br />\r\n\t- 1.5% / πώληση Aegean pass</p>\r\n<p>\r\n\tΤο δεύτερο tier δεν ισχύει για τους metasearch engine affiliates.</p>\r\n<p>\r\n\tH προμήθεια υπολογίζεται στην καθαρή αξία του ναύλου μαζί με τα service fees (δεν συμπεριλαμβάνονται δηλαδή οι φόροι αεροδρομίου και λοιπές χρεώσεις).</p>\r\n<p>\r\n\t<b>Περιορισμοί:</b><br />\r\n\t- Δεν επιτρέπεται το PPC.<br />\r\n\t- Σε οποιαδήποτε προώθηση σε posts (social media, blog posts κ.α.) πρέπει να είστε πολύ προσεκτικοί στο κείμενό σας να μην περιέχει ανακρίβειες ή άσαφειες. Ειδικά εφόσον αναφέρεστε σε τιμές και σε προσφορές θα πρέπει να είστε ιδιαίτερα προσεκτικοί.<br />\r\n\t<br />\r\n\t&nbsp;</p>\r\n",
+        "ended_date": null,
+        "mobile_ready": true,
+        "deeplinks": {
+            "allow_deeplinking": true,
+            "allow_subdomains": true,
+            "deeplink_domain": "aegeanair.com/"
+        },
+        "terms": {
+            "other": "- Σε οποιαδήποτε προώθηση σε posts (social media, blog posts κ.α.) πρέπει να είστε πολύ προσεκτικοί στο κείμενό σας να μην περιέχει ανακρίβειες ή άσαφειες. Ειδικά εφόσον αναφέρεστε σε τιμές και σε προσφορές θα πρέπει να είστε ιδιαίτερα προσεκτικοί. ",
+            "promotion_methods": {
+                "social_media": {
+                    "allow": true,
+                    "description": "Social media",
+                    "comments": ""
+                },
+                "cashback_sites": {
+                    "allow": true,
+                    "description": "Cashback sites",
+                    "comments": null
+                },
+                "incentivized_traffic": {
+                    "allow": false,
+                    "description": "Incentivised traffic (excl. cashback)",
+                    "comments": ""
+                },
+                "discount_coupon_sites": {
+                    "allow": true,
+                    "description": "Voucher / Coupon sites",
+                    "comments": ""
+                },
+                "email_newsletter": {
+                    "allow": true,
+                    "description": "Email / Newsletter",
+                    "comments": ""
+                },
+                "content_sites": {
+                    "allow": true,
+                    "description": "Content sites (portals, blogs κλπ)",
+                    "comments": ""
+                },
+                "google_shopping_ads": {
+                    "allow": false,
+                    "description": "Google CSS Partners",
+                    "comments": null
+                }
+            },
+            "ppc": {
+                "traffic_to_advertiser": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to send traffic directly to the advertiser's website?",
+                    "comments": ""
+                },
+                "brand_name_on_url": {
+                    "allow": false,
+                    "description": "Is it allowed to use the advertiser's brand name in the display URL?",
+                    "comments": ""
+                },
+                "brand_name_on_title": {
+                    "allow": false,
+                    "description": "Is it allowed to use the advertiser's brand name in the title or body of a text ad?",
+                    "comments": ""
+                },
+                "brand_on_negative_keywords": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to NOT add the brand name or any misspellings and/or variations to their list of negative keywords?",
+                    "comments": ""
+                },
+                "brand_bidding_variations": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on the advertiser's brand name, or any misspellings and/or variations?",
+                    "comments": ""
+                },
+                "brand_bidding_other_words": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on keywords that include the advertiser's brand name along with other words (e.g. gifts from Days4u)?",
+                    "comments": ""
+                },
+                "facebook_ads": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to buy PPC ads on social media?",
+                    "comments": ""
+                }
+            }
+        },
+        "url": "http://www.aegeanair.com/",
+        "geoip_limits": [],
+        "currency": {
+            "id": 978,
+            "code": "EUR",
+            "name": "Euro",
+            "sign": "€"
+        },
+        "registration_date": "2012-10-10T00:44:51+00:00",
+        "datafeed": false,
+        "datafeed_list": null,
+        "conv_rate": null,
+        "epc": "37.32",
+        "app_rate": "99.67",
+        "app_speed": "595516",
+        "program_status": "Active",
+        "affiliate_status": "Accepted",
+        "commissions": {
+            "details": [
+                {
+                    "category": {
+                        "id": 3,
+                        "name": "Aegean Pass",
+                        "cookie_length": 20,
+                        "type": "sale",
+                        "payout_type": "percent",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "1.50",
+                                    "subaction": "1.50",
+                                    "formatted": {
+                                        "action": "1,50%",
+                                        "subaction": "1,50%"
+                                    }
+                                }
+                            },
+                            {
+                                "tier": {
+                                    "level": 2,
+                                    "action": "1.50",
+                                    "subaction": "1.50",
+                                    "formatted": {
+                                        "action": "1,50%",
+                                        "subaction": "1,50%"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 1,
+                        "name": "Sales",
+                        "cookie_length": 20,
+                        "type": "sale",
+                        "payout_type": "percent",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "2.30",
+                                    "subaction": "2.30",
+                                    "formatted": {
+                                        "action": "2,30%",
+                                        "subaction": "2,30%"
+                                    }
+                                }
+                            },
+                            {
+                                "tier": {
+                                    "level": 2,
+                                    "action": "2.80",
+                                    "subaction": "2.80",
+                                    "formatted": {
+                                        "action": "2,80%",
+                                        "subaction": "2,80%"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ],
+            "summary": {
+                "percent": "1,50% - 2,80%",
+                "flat": "-"
+            },
+            "tiers": {
+                "count_type": "sales_and_leads",
+                "amount": 2,
+                "levels": [
+                    {
+                        "id": 2,
+                        "level": 10
+                    }
+                ]
+            }
+        },
+        "categories": [
+            {
+                "parent_category": {
+                    "name": "Ταξίδια",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Αεροπορικά Εισιτήρια"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "countries": "US,CA,RU,DE,PK,CN,ZA,IR,MX,ID,SE,FR,AF,BR,VE,NZ,PE,AU,CO,PH,NO,TR,BA,MY,MM,PL,MZ,DZ,AR,TH,FI,ES,AT,MA,CU,IN,KP,NG,VN,CL,MG,GB,UA,LK,RS,ZM,BD,CD,IT,BO,JP,KR,RO,LB,KE,PT,HU,EG,KZ,IE,HR,SA,DO,LY,PG,BE,GR,SD,TN,LA,CZ,HN,ET,TD,ZW,AO,IQ,NL,SO,TW,CM,YE,SY,HT,PA,IS,ML,CI,TZ,CF,DK,GT,BY,GH,EC,SN,FJ,NE,BI,KH,GN,BF,UG,CG,CH,SB,MW,LT,SL,BG,LV,GE,NA,AL,GL,LR,SK,EE,GW,GA,MR,TL,PR,MN,SV,AZ,UZ,FM,TG,CY,GY,NI,JO,DJ,SJ,OM,BJ,MK,NC,UY,GQ,SI,PS,CR,TM,TJ,VU,JM,MH,IL,PY,AE,AD,RW,GF,ER,MT,GM,PF,KG,MD,SR,EH,BZ,BS,HK,AM,FO,VI,TF,GP,TT,PW,MQ,SG,MU,KM,GU,NP,FK,RE,BW,LS,AN,AS,BN,LU,CV,QA,KW,MV,BB,GD,SH,ST,BM,CK,MP,TO,WS,VG,LC,AG,PM,KN,GS,YT,KI,DM,SC,BH,BT,SZ,KY,MS,VC,AW,GI,TC,AI,WF,TV,UM,IO,CX,LI,CC,TK,MO,PN,NR,MC,SM,NF,ME,GG"
+    },
+    {
+        "id": 300,
+        "name": "Insurance Market",
+        "start_date": "2012-05-23T21:00:00+00:00",
+        "end_date": null,
+        "logo": "https://affiliate.linkwi.se/files/2745043235948c622d2d7c.png",
+        "short_description": "<p>\r\n\tΜειώστε το κόστος της ασφάλειάς σας μέσα σε 1', συγκρίνoντας εύκολα online ΟΛΗ την αγορά! Είμαστε ο μεγαλύτερος σύμμαχός σας στην επιλογή του καλύτερου για εσάς ασφαλιστικού πακέτου, εύκολα, γρήγορα και αντικειμενικά. Δείτε πόσα μπορείτε να εξοικονομήσετε στην ασφάλεια&nbsp; αυτοκινήτου, σπιτιού &amp; σκάφους, από την μεγαλύτερη εταιρεία στο χώρο.</p>\r\n",
+        "description": "<p>\r\n\tΤο <strong>insurancemarket.gr</strong> είναι η μεγαλύτερη και πιο αποτελεσματική πλατφόρμα σύγκρισης ασφαλειών από την Νο1 εταιρεία online διαμεσολάβησης στην Ελλάδα. και αναπτύχθηκε το 2011 από την moneymarket Α.Ε, με όραμα να γίνει ο μεγαλύτερος σύμμαχος του έλληνα καταναλωτή στην σύγκριση και επιλογή ασφαλιστικών προϊόντων.</p>\r\n<p>\r\n\tΑποστολή μας είναι να προσφέρουμε υψηλή αγοραστική εμπειρία και value for money μέσω της απλοποίησης και της <strong>ψηφιοποίησης της διανομής</strong> (digital distribution channel) των ασφαλιστικών και χρηματοοικονομικών προϊόντων και διαδικασιών.</p>\r\n<p>\r\n\tΤο <strong>insurancemarket.gr</strong> είναι το πρώτο πραγματικό online marketplace όπου παρουσιάζονται αναλυτικά τα προγράμματα και οι εξατομικευμένες προσφορές των μεγαλύτερων ασφαλιστικών εταιρειών και στο οποίο ο πελάτης μπορεί να ολοκληρώσει τη διαδικασία ασφάλισής του <strong>100% </strong><strong>online</strong><strong>!</strong></p>\r\n<p>\r\n\tΟ καταναλωτής μπορεί πλέον να κάνει εύκολα και γρήγορα σύγκριση της αγοράς και να κερδίσει χρόνο και χρήμα, πάντα με την άμεση εξυπηρέτηση και υποστήριξη των εξειδικευμένων ασφαλιστικών συμβούλων μας.</p>\r\n<p>\r\n\tΈχουμε βραβευτεί ως η καλύτερη ηλεκτρονική αγορά (e-market place) (2013), καλύτερες ασφαλιστικές υπηρεσίες (2014), καλύτερη ψηφιακή στρατηγική και καλύτερες b2b υπηρεσίες (2015) από τα evolution awards και είμαστε μέλη του παγκόσμιου δικτύου της Endeavor.</p>\r\n<p>\r\n\tΜέσω της καινοτομίας και των πρωτοποριακών υπηρεσιών μας, έχουμε εδραιωθεί ως η μεγαλύτερη online ασφαλιστική αγορά, το μοναδικό brand στην ασφαλιστική διαμεσολάβηση και μια από τις ταχύτερα αναπτυσσόμενες επιχειρήσεις στην Ελλάδα με μέσο ρυθμό ανάπτυξης 2011-2014, άνω του 130%.</p>\r\n<p>\r\n\t<strong>Βοηθήστε τους επισκέπτες σας να συγκρίνουν σε μόλις 1΄ τις μεγαλύτερες ασφαλιστικές εταιρείες και να μειώσουν το κόστος της ασφάλειάς τους και επωφεληθείτε από τα θεαματικά conversion rates και EPC's!</strong></p>\r\n<p>\r\n\t<strong>Όροι και Προϋποθέσεις Προγράμματος:</strong><br />\r\n\t<br />\r\n\t<strong>Προμήθειες: </strong><br />\r\n\t- 18.5 ευρώ / πώληση 12μηνης ασφάλειας αυτοκινήτου / φορτηγού / ταξί<br />\r\n\t- 8.5 ευρώ / πώληση 6μηνης ασφάλειας αυτοκινήτου / φορτηγού / ταξί<br />\r\n\t- 4 ευρώ / πώληση 3μηνης ασφάλειας αυτοκινήτου / ταξί<br />\r\n\t- 5.5 ευρώ / πώληση 12μηνης ασφάλειας μηχανής<br />\r\n\t- 2.5 ευρώ / πώληση 6μηνης ασφάλειας μηχανής<br />\r\n\t- 10 ευρώ / πώληση 12μηνης ασφάλειας σκάφους<br />\r\n\t- 25 ευρώ / πώληση 12μηνης ασφάλειας σπιτιού<br />\r\n\t- 0.50 ευρώ / πώληση μηνιαίας ασφάλειας αυτοκινήτου / 3μηνης ασφάλειας μηχανής</p>\r\n<p>\r\n\t<strong>Σημείωση:</strong> Στην καμπάνια υπάρχει και τηλεφωνικό tracking για να μην χάνεται καμία πώληση που θα φέρετε στο site!</p>\r\n<p>\r\n\t<strong>Λεκτικά προώθησης: </strong>Όπου γίνεται αναφορά σε αριθμό ασφαλιστικών εταιρειών πρέπει πάντα να υπάρχει και η λέξη \"έως\". π.χ. Σύγκρινε <strong>έως </strong>26 Ασφαλιστικές</p>\r\n<p>\r\n\tΔιάρκεια Cookie: 30 ημέρες</p>\r\n",
+        "ended_date": null,
+        "mobile_ready": true,
+        "deeplinks": {
+            "allow_deeplinking": true,
+            "allow_subdomains": true,
+            "deeplink_domain": "insurancemarket.gr"
+        },
+        "terms": {
+            "other": "",
+            "promotion_methods": {
+                "social_media": {
+                    "allow": true,
+                    "description": "Social media",
+                    "comments": ""
+                },
+                "cashback_sites": {
+                    "allow": false,
+                    "description": "Cashback sites",
+                    "comments": null
+                },
+                "incentivized_traffic": {
+                    "allow": true,
+                    "description": "Incentivised traffic (excl. cashback)",
+                    "comments": ""
+                },
+                "discount_coupon_sites": {
+                    "allow": true,
+                    "description": "Voucher / Coupon sites",
+                    "comments": ""
+                },
+                "email_newsletter": {
+                    "allow": true,
+                    "description": "Email / Newsletter",
+                    "comments": ""
+                },
+                "content_sites": {
+                    "allow": true,
+                    "description": "Content sites (portals, blogs κλπ)",
+                    "comments": ""
+                },
+                "google_shopping_ads": {
+                    "allow": false,
+                    "description": "Google CSS Partners",
+                    "comments": null
+                }
+            },
+            "ppc": {
+                "traffic_to_advertiser": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to send traffic directly to the advertiser's website?",
+                    "comments": ""
+                },
+                "brand_name_on_url": {
+                    "allow": false,
+                    "description": "Is it allowed to use the advertiser's brand name in the display URL?",
+                    "comments": ""
+                },
+                "brand_name_on_title": {
+                    "allow": false,
+                    "description": "Is it allowed to use the advertiser's brand name in the title or body of a text ad?",
+                    "comments": ""
+                },
+                "brand_on_negative_keywords": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to NOT add the brand name or any misspellings and/or variations to their list of negative keywords?",
+                    "comments": ""
+                },
+                "brand_bidding_variations": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on the advertiser's brand name, or any misspellings and/or variations?",
+                    "comments": ""
+                },
+                "brand_bidding_other_words": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on keywords that include the advertiser's brand name along with other words (e.g. gifts from Days4u)?",
+                    "comments": ""
+                },
+                "facebook_ads": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to buy PPC ads on social media?",
+                    "comments": ""
+                }
+            }
+        },
+        "url": "http://www.insurancemarket.gr",
+        "geoip_limits": [],
+        "currency": {
+            "id": 978,
+            "code": "EUR",
+            "name": "Euro",
+            "sign": "€"
+        },
+        "registration_date": "2012-10-10T00:37:36+00:00",
+        "datafeed": false,
+        "datafeed_list": null,
+        "conv_rate": "0.63",
+        "epc": "5.77",
+        "app_rate": "85.19",
+        "app_speed": "1165487",
+        "program_status": "Active",
+        "affiliate_status": "Accepted",
+        "commissions": {
+            "details": [
+                {
+                    "category": {
+                        "id": 1,
+                        "name": "12μηνη ασφάλεια αυτοκινήτου / φορτηγού / ταξί",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "18.50",
+                                    "subaction": "18.50",
+                                    "formatted": {
+                                        "action": "18,50 €",
+                                        "subaction": "18,50 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 9,
+                        "name": "1μήνας αυτοκίνητο / 3μηνο μηχανής",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "0.50",
+                                    "subaction": "0.50",
+                                    "formatted": {
+                                        "action": "0,50 €",
+                                        "subaction": "0,50 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 5,
+                        "name": "3μηνη ασφάλεια αυτοκινήτου / ταξί",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "4.00",
+                                    "subaction": "4.00",
+                                    "formatted": {
+                                        "action": "4,00 €",
+                                        "subaction": "4,00 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 4,
+                        "name": "6μηνη ασφάλεια αυτοκινήτου / φορτηγού / ταξί",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "8.50",
+                                    "subaction": "8.50",
+                                    "formatted": {
+                                        "action": "8,50 €",
+                                        "subaction": "8,50 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 6,
+                        "name": "6μηνη ασφάλεια μηχανής",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "2.50",
+                                    "subaction": "2.50",
+                                    "formatted": {
+                                        "action": "2,50 €",
+                                        "subaction": "2,50 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 8,
+                        "name": "Ασφάλεια σκάφους",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "10.00",
+                                    "subaction": "10.00",
+                                    "formatted": {
+                                        "action": "10,00 €",
+                                        "subaction": "10,00 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 7,
+                        "name": "Ασφάλεια σπιτιού",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "25.00",
+                                    "subaction": "25.00",
+                                    "formatted": {
+                                        "action": "25,00 €",
+                                        "subaction": "25,00 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 2,
+                        "name": "Ασφάλειες μηχανής",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "5.50",
+                                    "subaction": "5.50",
+                                    "formatted": {
+                                        "action": "5,50 €",
+                                        "subaction": "5,50 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ],
+            "summary": {
+                "percent": "-",
+                "flat": "0,50 € - 25,00 €",
+                "flat_nosign": "0,50 - 25,00"
+            },
+            "tiers": {
+                "count_type": "clicks",
+                "amount": 1,
+                "levels": []
+            }
+        },
+        "categories": [
+            {
+                "parent_category": {
+                    "name": "Τράπεζες & Ασφάλειες",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Ασφάλειες Αυτοκινήτου"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Ασφάλειες Μηχανής"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "countries": "GR"
+    },
+    {
         "id": 13847,
         "name": "Antallaktikaonline",
         "start_date": "2024-02-26T22:00:00+00:00",

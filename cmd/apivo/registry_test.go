@@ -26,6 +26,25 @@ import (
 // This is the test that would have. It reaches both answers through the two
 // exported paths an operator actually takes, so a future second list is a
 // failure here rather than a deployment nobody can start.
+// aConfigurationFor is the environment block a driver would be given, with a
+// placeholder wherever it needs a credential.
+//
+// A driver that needs one is not a driver this test can skip: the point of
+// the suite is that every SHIPPED driver is both seedable and servable, and
+// one that cannot be built without a password is still servable - it just
+// needs the password its own MissingKeys already requires. The values are
+// obviously not real, and they never reach a network: nothing here polls.
+func aConfigurationFor(driver string) config.NetworkConfig {
+	cfg := config.NetworkConfig{Driver: driver, AccountID: "publisher-1"}
+	if cfg.NeedsCredentials() {
+		cfg.APIKey = config.NewSecret("not-a-real-username")
+	}
+	if cfg.NeedsCredentialPair() {
+		cfg.APISecret = config.NewSecret("not-a-real-password")
+	}
+	return cfg
+}
+
 func TestEveryShippedDriverIsBothServableAndSeedable(t *testing.T) {
 	t.Parallel()
 
@@ -53,7 +72,7 @@ func TestEveryShippedDriverIsBothServableAndSeedable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("building a publisher account for %q: %v", driver, err)
 			}
-			adapter, err := networkAdapter(driver, account)
+			adapter, err := networkAdapter(aConfigurationFor(driver), account)
 			if err != nil {
 				t.Fatalf("networkAdapter(%q): a driver connect-network can seed must also be one the server can build: %v", driver, err)
 			}
@@ -100,7 +119,7 @@ func TestADriverTheBinaryDoesNotShipIsRefusedByBothPaths(t *testing.T) {
 			if err != nil {
 				t.Fatalf("building a publisher account for %q: %v", driver, err)
 			}
-			if _, err := networkAdapter(driver, account); err == nil {
+			if _, err := networkAdapter(aConfigurationFor(driver), account); err == nil {
 				t.Errorf("networkAdapter(%q) succeeded for a driver this binary does not ship", driver)
 			}
 		})
@@ -174,7 +193,8 @@ func TestTheConfiguredNetworkTakesTheFirstEntry(t *testing.T) {
 		},
 		"two networks: the first, in the order NETWORKS named them": {
 			cfg: config.CashbackConfig{Enabled: true, Networks: []config.NetworkConfig{
-				{Driver: "linkwise", AccountID: "publisher-42", APIKey: config.NewSecret("k")},
+				{Driver: "linkwise", AccountID: "publisher-42",
+					APIKey: config.NewSecret("k"), APISecret: config.NewSecret("s")},
 				{Driver: config.NetworkDriverFixture, AccountID: "publisher-1"},
 			}},
 			want: "linkwise", wired: true,
@@ -231,7 +251,10 @@ func TestReportNetworkConfiguration(t *testing.T) {
 			// text handler escapes them, and asserting on the escaping
 			// would pin the handler rather than the message.
 			says: []string{
-				"cannot poll: NETWORK_LINKWISE_ACCOUNT_ID, NETWORK_LINKWISE_API_KEY are unset",
+				// The SECRET is named too: Linkwise authenticates with HTTP
+				// Basic, so its credential is two values and both are keys
+				// an operator has to set.
+				"cannot poll: NETWORK_LINKWISE_ACCOUNT_ID, NETWORK_LINKWISE_API_KEY, NETWORK_LINKWISE_API_SECRET are unset",
 				"CASHBACK IS NOT MOUNTED",
 			},
 		},
@@ -255,7 +278,8 @@ func TestReportNetworkConfiguration(t *testing.T) {
 		"a second usable network is reported as not wired": {
 			cfg: config.CashbackConfig{Enabled: true, Networks: []config.NetworkConfig{
 				{Driver: config.NetworkDriverFixture, AccountID: "publisher-1"},
-				{Driver: "linkwise", AccountID: "publisher-42", APIKey: config.NewSecret("k")},
+				{Driver: "linkwise", AccountID: "publisher-42",
+					APIKey: config.NewSecret("k"), APISecret: config.NewSecret("s")},
 			}},
 			says: []string{"wires only the first", "not_wired=1", "wired=" + config.NetworkDriverFixture},
 			mute: []string{"CASHBACK IS NOT MOUNTED"},
