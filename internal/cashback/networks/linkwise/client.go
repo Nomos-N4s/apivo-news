@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
 
 // DefaultBaseURL is the root every Linkwise endpoint is relative to.
@@ -104,12 +105,38 @@ var (
 	// ErrNotConfigured reports a client that could not be built from what
 	// it was given: an unusable base URL, or a rate that paces nothing.
 	ErrNotConfigured = errors.New("linkwise: the client could not be configured")
+	// ErrNoReportCurrency reports a client built without being told which
+	// currency this publisher account's report is denominated in.
+	//
+	// THE REPORT CARRIES NO CURRENCY FIELD. That is not an omission in this
+	// adapter: the endpoint's own usage text lists every field the report can
+	// return - program_id, program, program_cat, rotator, creative,
+	// subid1..subid5, transaction_id, type, status, subaction, amended,
+	// amount, commission, click_date, transaction_date, status_date,
+	// click_ref_url, payout_cat, payment_status - and there is no currency
+	// among them. The programme list carries one per programme; the
+	// transaction report carries none at all.
+	//
+	// So it has to come from configuration, and it is REQUIRED rather than
+	// defaulted to EUR. A default would be right for the Greek programmes
+	// this account is joined to and wrong the day one of them is Romanian,
+	// and the failure would be silent: RON amounts stored as EUR, a member
+	// paid roughly five times what they earned, and nothing in the evidence
+	// saying which currency the number was.
+	//
+	// It is a per-ACCOUNT declaration, which is an assumption worth stating:
+	// it is correct only while every programme this account is joined to
+	// reports in the same currency. The per-programme join that would remove
+	// the assumption needs a recording of the programme list, which this
+	// adapter does not yet have.
+	ErrNoReportCurrency = errors.New("linkwise: a client needs the currency its report is denominated in; the transaction report carries none")
 )
 
 // Client performs authenticated requests against Linkwise, paced to the rate
 // the deployment configured and retried under the port's own backoff.
 type Client struct {
 	account  networks.PublisherAccount
+	currency money.Currency
 	username string
 	password string
 	base     *url.URL
@@ -126,6 +153,7 @@ type Option func(*settings)
 type settings struct {
 	username      string
 	password      string
+	currency      string
 	baseURL       string
 	ratePerMinute int
 	burst         int
@@ -146,6 +174,15 @@ func WithCredential(username, password string) Option {
 		// sends them looking at the account rather than at the whitespace.
 		s.password = password
 	}
+}
+
+// WithReportCurrency states which currency this publisher account's
+// transaction report is denominated in, as an ISO-4217 code.
+//
+// Required: see [ErrNoReportCurrency] for why the report itself cannot
+// answer this and why no default is chosen.
+func WithReportCurrency(code string) Option {
+	return func(s *settings) { s.currency = strings.ToUpper(strings.TrimSpace(code)) }
 }
 
 // WithBaseURL overrides [DefaultBaseURL]. Tests point it at a local server;
@@ -203,6 +240,10 @@ func New(account networks.PublisherAccount, opts ...Option) (*Client, error) {
 	if s.username == "" || s.password == "" {
 		return nil, ErrNoCredential
 	}
+	currency, err := money.ParseCurrency(s.currency)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrNoReportCurrency, err)
+	}
 
 	base, err := url.Parse(s.baseURL)
 	switch {
@@ -238,6 +279,7 @@ func New(account networks.PublisherAccount, opts ...Option) (*Client, error) {
 
 	return &Client{
 		account:  account,
+		currency: currency,
 		username: s.username,
 		password: s.password,
 		base:     base,
@@ -262,6 +304,12 @@ func (c *Client) Limits() networks.Limits { return Limits() }
 
 // RateLimit reports the rate the client is pacing to, in requests a second.
 func (c *Client) RateLimit() float64 { return c.limiter.Rate() }
+
+// ReportCurrency is the currency this account's report is read as. Exposed
+// because it is configuration rather than an answer from the network, and an
+// operator reconciling a statement has to be able to see which currency the
+// stored numbers were taken to be.
+func (c *Client) ReportCurrency() money.Currency { return c.currency }
 
 // Get performs an authenticated GET of one API endpoint, paced and retried,
 // and answers the whole body.

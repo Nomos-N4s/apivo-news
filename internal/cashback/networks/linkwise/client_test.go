@@ -36,6 +36,11 @@ const (
 	thePassword = "pw-4f19ba7c-never-in-a-url"
 )
 
+// theCurrency is what this account's report is declared to be denominated
+// in. The report itself carries no currency field, so every client is built
+// with one.
+const theCurrency = "EUR"
+
 // anAccount is a publisher account at Linkwise.
 func anAccount(t *testing.T) networks.PublisherAccount {
 	t.Helper()
@@ -56,6 +61,7 @@ func serving(t *testing.T, handler http.HandlerFunc, opts ...linkwise.Option) *l
 
 	opts = append([]linkwise.Option{
 		linkwise.WithCredential(theUsername, thePassword),
+		linkwise.WithReportCurrency(theCurrency),
 		linkwise.WithBaseURL(server.URL),
 		linkwise.WithHTTPClient(server.Client()),
 		// A rate nothing waits on, and a budget short enough that a case
@@ -308,6 +314,7 @@ func TestATransportFailureIsRetriedAndThenReportedWithoutTheURL(t *testing.T) {
 
 	client, err := linkwise.New(anAccount(t),
 		linkwise.WithCredential(theUsername, thePassword),
+		linkwise.WithReportCurrency(theCurrency),
 		linkwise.WithBaseURL(base),
 		linkwise.WithHTTPClient(httpClient),
 		linkwise.WithRateLimitPerMinute(60_000),
@@ -340,12 +347,16 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 		{
 			name:    "no account",
 			account: func(*testing.T) networks.PublisherAccount { return networks.PublisherAccount{} },
-			opts:    []linkwise.Option{linkwise.WithCredential(theUsername, thePassword)},
-			want:    linkwise.ErrNoPublisherAccount,
+			opts: []linkwise.Option{
+				linkwise.WithCredential(theUsername, thePassword),
+				linkwise.WithReportCurrency(theCurrency),
+			},
+			want: linkwise.ErrNoPublisherAccount,
 		},
 		{
 			name:    "no credential at all",
 			account: anAccount,
+			opts:    []linkwise.Option{linkwise.WithReportCurrency(theCurrency)},
 			want:    linkwise.ErrNoCredential,
 		},
 		{
@@ -355,20 +366,48 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 			// account having been rejected.
 			name:    "a username and no password",
 			account: anAccount,
-			opts:    []linkwise.Option{linkwise.WithCredential(theUsername, "")},
-			want:    linkwise.ErrNoCredential,
+			opts: []linkwise.Option{
+				linkwise.WithCredential(theUsername, ""),
+				linkwise.WithReportCurrency(theCurrency),
+			},
+			want: linkwise.ErrNoCredential,
 		},
 		{
 			name:    "a password and no username",
 			account: anAccount,
-			opts:    []linkwise.Option{linkwise.WithCredential("", thePassword)},
-			want:    linkwise.ErrNoCredential,
+			opts: []linkwise.Option{
+				linkwise.WithCredential("", thePassword),
+				linkwise.WithReportCurrency(theCurrency),
+			},
+			want: linkwise.ErrNoCredential,
+		},
+		{
+			// THE REPORT CARRIES NO CURRENCY FIELD - the endpoint's own
+			// usage text lists every field it can return and there is no
+			// currency among them - so it comes from configuration, and it
+			// is required rather than defaulted. A default would be right
+			// for a Greek programme and wrong the day one is Romanian, and
+			// the failure would be silent: RON stored as EUR.
+			name:    "no report currency",
+			account: anAccount,
+			opts:    []linkwise.Option{linkwise.WithCredential(theUsername, thePassword)},
+			want:    linkwise.ErrNoReportCurrency,
+		},
+		{
+			name:    "a report currency that is not a currency code",
+			account: anAccount,
+			opts: []linkwise.Option{
+				linkwise.WithCredential(theUsername, thePassword),
+				linkwise.WithReportCurrency("euro"),
+			},
+			want: linkwise.ErrNoReportCurrency,
 		},
 		{
 			name:    "http, not https",
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, thePassword),
+				linkwise.WithReportCurrency(theCurrency),
 				linkwise.WithBaseURL("http://affiliate.linkwi.se"),
 			},
 			want: linkwise.ErrNotConfigured,
@@ -378,6 +417,7 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, thePassword),
+				linkwise.WithReportCurrency(theCurrency),
 				linkwise.WithBaseURL("https:///api"),
 			},
 			want: linkwise.ErrNotConfigured,
@@ -387,6 +427,7 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, thePassword),
+				linkwise.WithReportCurrency(theCurrency),
 				linkwise.WithBaseURL("https://%zz"),
 			},
 			want: linkwise.ErrNotConfigured,
@@ -396,6 +437,7 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, thePassword),
+				linkwise.WithReportCurrency(theCurrency),
 				linkwise.WithRateLimitPerMinute(0),
 			},
 			want: linkwise.ErrNotConfigured,
@@ -405,6 +447,7 @@ func TestNewRefusesWhatCannotBeUsed(t *testing.T) {
 			account: anAccount,
 			opts: []linkwise.Option{
 				linkwise.WithCredential(theUsername, thePassword),
+				linkwise.WithReportCurrency(theCurrency),
 				linkwise.WithRetryPolicy(networks.RetryBackoffPolicy{MaxAttempts: -1}),
 			},
 			want: linkwise.ErrNotConfigured,
@@ -429,6 +472,7 @@ func TestNewRefusalsNeverRepeatTheCredential(t *testing.T) {
 	const pasted = "https://" + theUsername + ":" + thePassword + "@%zz"
 	_, err := linkwise.New(anAccount(t),
 		linkwise.WithCredential(theUsername, thePassword),
+		linkwise.WithReportCurrency(theCurrency),
 		linkwise.WithBaseURL(pasted))
 	if err == nil {
 		t.Fatal("an unparseable base URL was accepted")
@@ -466,7 +510,9 @@ func TestThePasswordIsNotTrimmed(t *testing.T) {
 func TestTheClientPacesToItsDeclaredRate(t *testing.T) {
 	t.Parallel()
 
-	client, err := linkwise.New(anAccount(t), linkwise.WithCredential(theUsername, thePassword))
+	client, err := linkwise.New(anAccount(t),
+		linkwise.WithCredential(theUsername, thePassword),
+		linkwise.WithReportCurrency(theCurrency))
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
