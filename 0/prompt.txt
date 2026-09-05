@@ -28,3 +28,11 @@ To re-run with edited post-processing: Workflow({scriptPath: 'C:\Users\madym\.cl
 ---
 
 Your claude.ai usage limit has reset. Continue the task you were working on when the limit was reached; do not repeat work that is already complete.
+
+---
+
+so, are you blocked? can't you move forward building the screens in different prs so I can validate/test them?
+
+---
+
+if you want, you can sync the work that's being done by the backend team, as they are literally about to finish the Linkwise integration but don't let it stop you or slow you down. Ideally I should be able to go on pr-*.raze.com/* and see the new screens
