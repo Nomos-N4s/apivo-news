@@ -10,8 +10,10 @@ import { uiStrings } from '../lib/reader/strings';
 //
 // The imprint and privacy notice are legally owed, not decorative — a
 // German-facing service needs an Impressum (TMG §5) and a GDPR privacy
-// notice — so their places are held and named as still owed rather than
-// linked to pages that do not exist (issue #64).
+// notice. Their places were held here as dead text for a month, named as
+// still owed, because the pages did not exist; they exist now and this
+// line links them (issue #64). The "still owed" string went with them —
+// a catalogue key nothing renders is copy nobody maintains.
 interface Props {
   lang: ReadingLanguage;
   note?: string | undefined;
@@ -57,12 +59,11 @@ const version = trimmedVersion === undefined || trimmedVersion === '' ? undefine
         than in the masthead because it is for the few, not the many. */}
     <a class="editorial" href={`/${lang}/editor/signin`}>{t.editorialLabel}</a>
     <p class="legal">
-      <span>{t.imprint}</span>
+      <a href={`/${lang}/impressum`}>{t.imprint}</a>
       <span aria-hidden="true">·</span>
-      <span>{t.privacy}</span>
+      <a href={`/${lang}/privacy`}>{t.privacy}</a>
       <span aria-hidden="true">·</span>
-      <span>{t.contact}</span>
-      <em>— {t.legalPending}</em>
+      <a href={`/${lang}/contact`}>{t.contact}</a>
     </p>
     <span class="copy">
       © {year} epiloYES{version !== undefined && <span class="version">· {version}</span>}
