@@ -123,7 +123,7 @@ type programme struct {
 	// mapping is keyed on the pair.
 	AffiliateStatus string `json:"affiliate_status"`
 	// Terms carries the promotion methods the advertiser permits, and
-	// cashback is one of them - see [promotable].
+	// cashback is one of them - see [cashbackAllowed].
 	Terms struct {
 		PromotionMethods struct {
 			CashbackSites struct {
@@ -131,6 +131,12 @@ type programme struct {
 			} `json:"cashback_sites"`
 		} `json:"promotion_methods"`
 	} `json:"terms"`
+	// Deeplinks carries whether the advertiser permits deeplinking at all.
+	// A route that may not be deeplinked cannot carry our click reference,
+	// which is contract rule 11 - see [deeplinkingAllowed].
+	Deeplinks struct {
+		AllowDeeplinking *bool `json:"allow_deeplinking"`
+	} `json:"deeplinks"`
 }
 
 // translateProgramme turns one row into a catalogue entry and validates it
@@ -181,42 +187,65 @@ func soleCountry(countries string) string {
 	return strings.ToUpper(only)
 }
 
-// routeStates maps the three things Linkwise says about whether a route can
-// be promoted onto the domain's closed set (contract rule 2).
+// routeStates maps the four things Linkwise says about whether a route can be
+// promoted onto the domain's closed set (contract rule 2).
 //
 // A map rather than a switch, for the reason the transaction table gives for
 // its own: rule 2 forbids a default branch, and a map lookup has no way to
-// grow one by accident. The key is a TRIPLE because no single field decides
-// it - see the three entries below, each of which is a different reason a
-// route may not be used.
+// grow one by accident. The key is a QUADRUPLE because no single field
+// decides it, and the two beyond the network's own status words are each a
+// different reason a route may not be used.
+//
+// Only two entries are active, and everything else that is representable
+// is paused. Written out rather than reduced to a boolean expression because
+// each line is a different fact about the advertiser and a reader should be
+// able to see which one they are looking at.
 var routeStates = map[routeState]networks.MerchantStatus{
-	// The ordinary case: the advertiser is running, we are accepted, and
-	// cashback is a promotion method they permit.
-	{programme: "active", affiliate: "accepted", cashback: true}: networks.MerchantStatusActive,
+	// The ordinary case: the advertiser is running, we are accepted,
+	// cashback is a promotion method they permit, and their routes may be
+	// deeplinked.
+	{programme: "active", affiliate: "accepted", cashback: true, deeplinkable: true}: networks.MerchantStatusActive,
 	// The advertiser paused their own programme. PAUSED and not departed,
 	// which is the entire reason this adapter asks for status=all rather
 	// than taking the endpoint's active-only default.
-	{programme: "inactive", affiliate: "accepted", cashback: true}: networks.MerchantStatusPaused,
+	{programme: "inactive", affiliate: "accepted", cashback: true, deeplinkable: true}: networks.MerchantStatusPaused,
+
 	// Cashback is not a promotion method this advertiser allows. Fifteen of
 	// the three hundred and thirty-four joined programmes say so.
 	//
 	// Mapped to paused rather than active, and that IS a judgement this
-	// adapter makes - the only one in it. The alternative is publishing
-	// offers on a programme whose own terms forbid what this product is, so
-	// members click through routes the advertiser may refuse to pay on and
-	// Apivo breaches the terms it agreed to. Paused is the port's word for
-	// "not a route we may send anybody down now", it is what an operator can
-	// reverse from the row if the terms change, and StatusRaw below records
-	// exactly which of the three fields caused it.
-	{programme: "active", affiliate: "accepted", cashback: false}:   networks.MerchantStatusPaused,
-	{programme: "inactive", affiliate: "accepted", cashback: false}: networks.MerchantStatusPaused,
+	// adapter makes. The alternative is publishing offers on a programme
+	// whose own terms forbid what this product is, so members click through
+	// routes the advertiser may refuse to pay on and Apivo breaches the
+	// terms it agreed to. Paused is the port's word for "not a route we may
+	// send anybody down now", an operator can reverse it from the row if the
+	// terms change, and StatusRaw below records which field caused it.
+	{programme: "active", affiliate: "accepted", cashback: false, deeplinkable: true}:   networks.MerchantStatusPaused,
+	{programme: "inactive", affiliate: "accepted", cashback: false, deeplinkable: true}: networks.MerchantStatusPaused,
+
+	// The advertiser does not permit deeplinking. This is contract rule 11
+	// and it is not the same fact as the one above: three of the joined
+	// programmes - Pricefox Energy, BOX NOW and Paok Tickets - allow
+	// cashback sites AND refuse deeplinking, so a table that read only the
+	// promotion methods would publish all three.
+	//
+	// A route that may not be deeplinked cannot carry a click reference, so
+	// a member sent down it reaches the retailer, buys, and is credited
+	// nothing - the same silent loss as a wrong sub-id slot, on every click.
+	// Paused is again the port's word for it, because ReportedMerchant has
+	// no can_attribute of its own to carry the distinction.
+	{programme: "active", affiliate: "accepted", cashback: true, deeplinkable: false}:    networks.MerchantStatusPaused,
+	{programme: "inactive", affiliate: "accepted", cashback: true, deeplinkable: false}:  networks.MerchantStatusPaused,
+	{programme: "active", affiliate: "accepted", cashback: false, deeplinkable: false}:   networks.MerchantStatusPaused,
+	{programme: "inactive", affiliate: "accepted", cashback: false, deeplinkable: false}: networks.MerchantStatusPaused,
 }
 
-// routeState is the triple the mapping is keyed on.
+// routeState is the quadruple the mapping is keyed on.
 type routeState struct {
-	programme string
-	affiliate string
-	cashback  bool
+	programme    string
+	affiliate    string
+	cashback     bool
+	deeplinkable bool
 }
 
 // mapRouteState translates one programme's state, refusing a combination
@@ -235,16 +264,17 @@ type routeState struct {
 // previous catalogue stands and an operator is told a word changed.
 func mapRouteState(externalID string, row programme) (networks.MerchantStatus, error) {
 	state := routeState{
-		programme: strings.ToLower(strings.TrimSpace(row.ProgramStatus)),
-		affiliate: strings.ToLower(strings.TrimSpace(row.AffiliateStatus)),
-		cashback:  cashbackAllowed(row),
+		programme:    strings.ToLower(strings.TrimSpace(row.ProgramStatus)),
+		affiliate:    strings.ToLower(strings.TrimSpace(row.AffiliateStatus)),
+		cashback:     cashbackAllowed(row),
+		deeplinkable: deeplinkingAllowed(row),
 	}
 	status, mapped := routeStates[state]
 	if !mapped {
-		return "", fmt.Errorf("%w: programme %s is %s, this account is %s and cashback sites are %s, and this adapter has no mapping for that combination",
+		return "", fmt.Errorf("%w: programme %s is %s, this account is %s, cashback sites are %s and deeplinking is %s, and this adapter has no mapping for that combination",
 			networks.ErrUnmappableStatus, strconv.Quote(externalID),
 			strconv.Quote(row.ProgramStatus), strconv.Quote(row.AffiliateStatus),
-			allowedWord(state.cashback))
+			allowedWord(state.cashback), allowedWord(state.deeplinkable))
 	}
 	return status, nil
 }
@@ -262,19 +292,33 @@ func cashbackAllowed(row programme) bool {
 	return allow != nil && *allow
 }
 
+// deeplinkingAllowed reports whether the advertiser permits deeplinking, which
+// is contract rule 11's evidence and the flag Linkwise publishes on each
+// programme.
+//
+// A MISSING flag is read as not allowed, for the same asymmetry
+// [cashbackAllowed] gives: a programme that says nothing has not said yes, and
+// being wrong this way loses a retailer while being wrong the other way sends
+// members down a route that cannot carry their reference.
+func deeplinkingAllowed(row programme) bool {
+	allow := row.Deeplinks.AllowDeeplinking
+	return allow != nil && *allow
+}
+
 // describeRouteState is the verbatim status kept beside the normalised one
 // (FR-032), and it has to name all three fields because all three decide the
 // mapping.
 //
 // It is a composite rather than one of Linkwise's words, and that is the
 // point: an evidence row carrying only "Active" could not explain why a route
-// this network called active was stored as paused. Every value in it is
-// Linkwise's own, under Linkwise's own field name; nothing here invents a
-// vocabulary.
+// this network called active was stored as paused, nor WHICH of the two
+// reasons it was. Every value in it is Linkwise's own, under Linkwise's own
+// field name; nothing here invents a vocabulary.
 func describeRouteState(row programme) string {
 	return "program_status=" + strings.TrimSpace(row.ProgramStatus) +
 		";affiliate_status=" + strings.TrimSpace(row.AffiliateStatus) +
-		";cashback_sites=" + allowedWord(cashbackAllowed(row))
+		";cashback_sites=" + allowedWord(cashbackAllowed(row)) +
+		";allow_deeplinking=" + allowedWord(deeplinkingAllowed(row))
 }
 
 // allowedWord renders the cashback flag for both the evidence and the
