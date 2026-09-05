@@ -1,0 +1,1288 @@
+[
+    {
+        "id": 13847,
+        "name": "Antallaktikaonline",
+        "start_date": "2024-02-26T22:00:00+00:00",
+        "end_date": null,
+        "logo": "https://affiliate.linkwi.se/files/82061771765560718e4433.png",
+        "short_description": "<p>\r\n\tΤο Antallaktikaonline.gr είναι ένα από τα κορυφαία ηλεκτρονικά καταστήματα ανταλλακτικών αυτοκινήτων, χάρη στην πολυετή εμπειρία του και τους χιλιάδες ικανοποιημένους πελάτες. Δείτε και μόνοι σας και θα εντυπωσιαστείτε από τις υπηρεσίες μας και τις εξαιρετικές τιμές.</p>\r\n",
+        "description": "<p>\r\n\tΗ εταιρεία Antallaktikaonline GR ιδρύθηκε το 2008.<br />\r\n\t<br />\r\n\tΕπί του παρόντος, είμαστε ένας από τους κορυφαίους λιανοπωλητές στην αγορά ανταλλακτικών αυτοκινήτων.<br />\r\n\tΤα δυνατά μας σημεία:<br />\r\n\t<br />\r\n\t• Η εταιρεία μας είναι μια εταιρεία που δραστηριοποιείται στην αγορά ανταλλακτικών αυτοκινήτων, η οποία είναι η πιο ισχυρή εταιρεία στον τομέα των αυτοκινήτων:<br />\r\n\t• Δραστηριοποιούμαστε σε 27 χώρες της Ευρωπαϊκής Ένωσης.<br />\r\n\t• Η γκάμα των προϊόντων μας ξεπερνά το 1,5 εκατομμύριο είδη από 300 διαφορετικές μάρκες.<br />\r\n\t• Πουλάμε ανταλλακτικά αυτοκινήτων για περισσότερα από 75.000 μοντέλα αυτοκινήτων.<br />\r\n\t• Έχουμε περισσότερους από 5 εκατομμύρια ικανοποιημένους πελάτες.<br />\r\n\t• Προσφέρουμε μια ευρεία επιλογή μεθόδων πληρωμής και παράδοσης.<br />\r\n\t• Παράδοση εντός 1 έως 3 ημερών.<br />\r\n\t• Ο ιστότοπος είναι εύχρηστος και μπορείτε να ολοκληρώσετε την παραγγελία σας μέσα σε λίγα λεπτά.<br />\r\n\t• Τις περισσότερες φορές οι χαμηλότερες τιμές στην αγορά.</p>\r\n<p>\r\n\t<strong>Όροι και Προϋποθέσεις Προγράμματος:</strong><br />\r\n\t<br />\r\n\t<strong>Προμήθειες:</strong><br />\r\n\t- 6.15% / πώληση (New Customer)<br />\r\n\t- 3.08% / πώληση (Existing Customer)<br />\r\n\t<br />\r\n\t<strong>Διάρκεια Cookie</strong>: 30 ημέρες</p>\r\n",
+        "ended_date": null,
+        "mobile_ready": true,
+        "deeplinks": {
+            "allow_deeplinking": true,
+            "allow_subdomains": true,
+            "deeplink_domain": "antallaktikaonline.gr"
+        },
+        "terms": {
+            "other": "",
+            "promotion_methods": {
+                "social_media": {
+                    "allow": true,
+                    "description": "Social media",
+                    "comments": ""
+                },
+                "cashback_sites": {
+                    "allow": true,
+                    "description": "Cashback sites",
+                    "comments": ""
+                },
+                "incentivized_traffic": {
+                    "allow": false,
+                    "description": "Incentivised traffic (excl. cashback)",
+                    "comments": ""
+                },
+                "discount_coupon_sites": {
+                    "allow": false,
+                    "description": "Voucher / Coupon sites",
+                    "comments": ""
+                },
+                "email_newsletter": {
+                    "allow": true,
+                    "description": "Email / Newsletter",
+                    "comments": ""
+                },
+                "content_sites": {
+                    "allow": true,
+                    "description": "Content sites (portals, blogs κλπ)",
+                    "comments": ""
+                },
+                "google_shopping_ads": {
+                    "allow": false,
+                    "description": "Google CSS Partners",
+                    "comments": null
+                }
+            },
+            "ppc": {
+                "traffic_to_advertiser": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to send traffic directly to the advertiser's website?",
+                    "comments": ""
+                },
+                "brand_name_on_url": {
+                    "allow": false,
+                    "description": "Is it allowed to use the advertiser's brand name in the display URL?",
+                    "comments": ""
+                },
+                "brand_name_on_title": {
+                    "allow": false,
+                    "description": "Is it allowed to use the advertiser's brand name in the title or body of a text ad?",
+                    "comments": ""
+                },
+                "brand_on_negative_keywords": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to NOT add the brand name or any misspellings and/or variations to their list of negative keywords?",
+                    "comments": ""
+                },
+                "brand_bidding_variations": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on the advertiser's brand name, or any misspellings and/or variations?",
+                    "comments": ""
+                },
+                "brand_bidding_other_words": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on keywords that include the advertiser's brand name along with other words (e.g. gifts from Days4u)?",
+                    "comments": ""
+                },
+                "facebook_ads": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to buy PPC ads on social media?",
+                    "comments": ""
+                }
+            }
+        },
+        "url": "https://www.antallaktikaonline.gr/",
+        "geoip_limits": [],
+        "currency": {
+            "id": 985,
+            "code": "PLN",
+            "name": "Polish zloty",
+            "sign": "zł"
+        },
+        "registration_date": "2024-04-01T01:37:41+00:00",
+        "datafeed": true,
+        "datafeed_list": null,
+        "conv_rate": "0.42",
+        "epc": "4.5",
+        "app_rate": null,
+        "app_speed": null,
+        "program_status": "Active",
+        "affiliate_status": "Accepted",
+        "commissions": {
+            "details": [
+                {
+                    "category": {
+                        "id": 2,
+                        "name": "Existing Customer",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "percent",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "3.08",
+                                    "subaction": "3.08",
+                                    "formatted": {
+                                        "action": "3,08%",
+                                        "subaction": "3,08%"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 1,
+                        "name": "New Customer",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "percent",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "6.15",
+                                    "subaction": "6.15",
+                                    "formatted": {
+                                        "action": "6,15%",
+                                        "subaction": "6,15%"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ],
+            "summary": {
+                "percent": "3,08% - 6,15%",
+                "flat": "-"
+            },
+            "tiers": {
+                "count_type": "clicks",
+                "amount": 1,
+                "levels": []
+            }
+        },
+        "categories": [
+            {
+                "parent_category": {
+                    "name": "Προϊόντα",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Αυτοκίνητα / Μηχανές"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "countries": "GR"
+    },
+    {
+        "id": 12975,
+        "name": "geekbuying",
+        "start_date": "2019-03-31T21:00:00+00:00",
+        "end_date": null,
+        "logo": "https://affiliate.linkwi.se/files/956988145629890c3e0164.png",
+        "short_description": "<p>\r\n\tΤο Geekbuying είναι ένα υψηλής ποιότητας ηλεκτρονικό κατάστημα πώλησης κινεζικών smartphones, tablets, tv boxes, rc drones, έξυπνων ρολογιών κλπ. Γνήσια προϊόντα με εγγύηση 1 έτους. Πάνω από 5 εκατομμύρια πελάτες από 100 χώρες έχουν αγοράσει από το Geekbuying.com.</p>\r\n",
+        "description": "<p>\r\n\tΤο Geekbuying.com είναι μια εταιρεία ηλεκτρονικού εμπορίου που ειδικεύεται σε προϊόντα πολλαπλών κατηγοριών, συμπεριλαμβανομένων των Smartphone, tablet, TV box, καταναλωτικών ηλεκτρονικών ειδών, αξεσουάρ αυτοκινήτων και ηλεκτρονικών υπολογιστών, κάμερες δράσης, αξεσουάρ Apple &amp; Samsung, χόμπι RC &amp; παιχνίδια, σύστημα ασφαλείας και smart home gadgets.</p>\r\n<p>\r\n\t<b style=\"border: 0px; margin: 0px; padding: 0px; font-variant-numeric: inherit; font-variant-east-asian: inherit; font-stretch: inherit; line-height: inherit; font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif; vertical-align: baseline; color: rgb(45, 46, 47);\">Όροι και Προϋποθέσεις Προγράμματος:</b></p>\r\n<div>\r\n\t- Απαγορεύεται αυστηρά η πραγματοποίηση PPC καμπάνιας σε <strong>όλες </strong>τις μηχανές αναζήτησης.</div>\r\n<div>\r\n\t-&nbsp;Απαγορεύεται αυστηρά η χρήση των παρακάτω keywords σε οποιαδήποτε&nbsp;match type: broad, phrase, advanced, specific, exact, quoted κλπ. Oι affiliates δεν επιτρέπεται να κάνουν bid στον όρο 'Geekbuying', 'Geekbuying.com', σε οποιοδήποτε misspelling αυτών ή σε οποιονδήποτε παρεμφερή όρο: Geekbuying, geekbuying, geekbuy, geek buying, and geekbuying coupon κ.ο.κ.&nbsp;Η παραπάνω λίστα είναι ενδεικτική.</div>\r\n<div>\r\n\t-&nbsp;Δεν επιτρέπεται οι affiliates να προωθούν κουπόνια που δεν υπάρχουν διαθέσιμα στο δίκτυο.</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\tΗ παραβίαση των παραπάνω όρων θα έχει ως αποτέλεσμα τη διαγραφή του affiliate από το πρόγραμμα καθώς και την μη πληρωμή του για προμήθειες που συγκέντρωσε κατά τη διάρκεια της affiliate συνεργασίας.</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<p>\r\n\t<strong style=\"border: 0px; margin: 0px; padding: 0px; font-variant-numeric: inherit; font-variant-east-asian: inherit; font-stretch: inherit; line-height: inherit; font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif; vertical-align: baseline; color: rgb(45, 46, 47);\">Προμήθειες:</strong><br style=\"color: rgb(45, 46, 47); font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif;\" />\r\n\t<span style=\"color: rgb(45, 46, 47); font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif;\">- 3,85% / πώληση</span></p>\r\n<p>\r\n\tΟ διαφημιζόμενος αποδίδει προμήθεια για την 1η πώληση, δεν αποδίδει προμήθεια για τις επόμενες πωλήσεις (subaction). Ως subaction ορίζονται οι πωλήσεις πέραν της πρώτης που πραγματοποιούνται από τον ίδιο χρήστη εντός της διάρκειας του cookie,&nbsp;<strong>εφόσον ο χρήστης δεν ανανεώσει το cookie&nbsp;</strong>πατώντας ξανά σε affiliate link.</p>\r\n<div>\r\n\tΑκολουθούν 2 παραδείγματα:</div>\r\n<ol>\r\n\t<li>\r\n\t\tΧρήστης που έχετε συστήσει πραγματοποιεί μια αγορά και&nbsp;<strong>ακολούθως εντός της διάρκειας του cookie</strong>,&nbsp;επισκέπτεται ξανά τη σελίδα του διαφημιζόμενου για να πραγματοποιήσει μια ακόμα αγορά, χωρίς να πατήσει εκ νέου σε κάποιο affiliate link. Η αγορά αυτή θεωρείται&nbsp;<strong>επόμενη πώληση</strong>&nbsp;(subaction) και o διαφημιζόμενος geekbuying δεν θα αποδίδει προμήθεια (για την ακρίβεια, οι συναλλαγές αυτές δεν εμφανίζονται στο affiliate interface).</li>\r\n\t<li>\r\n\t\tXρήστης που έχετε συστήσει πραγματοποιεί μια αγορά και είτε&nbsp;<strong>εντός της διάρκειας του cookie είτε αφού αυτό λήξει</strong>, επισκέπτεται ξανά τη σελίδα του διαφημιζόμενου μέσω δικού σας affiliate link. Η πώληση αυτή δεν θεωρείται subaction και θα αποδοθεί προμήθεια κανονικά.</li>\r\n</ol>\r\n<p>\r\n\tΔιάρκεια Cookie: 30 ημέρες</p>\r\n",
+        "ended_date": null,
+        "mobile_ready": true,
+        "deeplinks": {
+            "allow_deeplinking": true,
+            "allow_subdomains": true,
+            "deeplink_domain": "geekbuying.com"
+        },
+        "terms": {
+            "other": "<b>Περιορισμοί:</b><br>\r\n- Απαγορεύεται αυστηρά η πραγματοποίηση PPC καμπάνιας σε όλες τις μηχανές αναζήτησης.<br>\r\n- Απαγορεύεται αυστηρά η χρήση των παρακάτω keywords σε οποιαδήποτε match type: broad, phrase, advanced, specific, exact, quoted κλπ. Oι affiliates δεν επιτρέπεται να κάνουν bid στον όρο 'Geekbuying', 'Geekbuying.com', σε οποιοδήποτε misspelling αυτών ή σε οποιονδήποτε παρεμφερή όρο: Geekbuying, geekbuying, geekbuy, geek buying, and geekbuying coupon κ.ο.κ. Η παραπάνω λίστα είναι ενδεικτική.<br>\r\n- Δεν επιτρέπεται οι affiliates να προωθούν κουπόνια που δεν υπάρχουν διαθέσιμα στο δίκτυο.<br><br>\r\n\r\nΗ παραβίαση των παραπάνω όρων θα έχει ως αποτέλεσμα τη διαγραφή του affiliate από το πρόγραμμα καθώς και την μη πληρωμή του για προμήθειες που συγκέντρωσε κατά τη διάρκεια της affiliate συνεργασίας.",
+            "promotion_methods": {
+                "social_media": {
+                    "allow": true,
+                    "description": "Social media",
+                    "comments": ""
+                },
+                "cashback_sites": {
+                    "allow": true,
+                    "description": "Cashback sites",
+                    "comments": ""
+                },
+                "incentivized_traffic": {
+                    "allow": true,
+                    "description": "Incentivised traffic (excl. cashback)",
+                    "comments": ""
+                },
+                "discount_coupon_sites": {
+                    "allow": true,
+                    "description": "Voucher / Coupon sites",
+                    "comments": ""
+                },
+                "email_newsletter": {
+                    "allow": true,
+                    "description": "Email / Newsletter",
+                    "comments": ""
+                },
+                "content_sites": {
+                    "allow": true,
+                    "description": "Content sites (portals, blogs κλπ)",
+                    "comments": ""
+                },
+                "google_shopping_ads": {
+                    "allow": true,
+                    "description": "Google CSS Partners",
+                    "comments": null
+                }
+            },
+            "ppc": {
+                "traffic_to_advertiser": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to send traffic directly to the advertiser's website?",
+                    "comments": ""
+                },
+                "brand_name_on_url": {
+                    "allow": false,
+                    "description": "Is it allowed to use the advertiser's brand name in the display URL?",
+                    "comments": ""
+                },
+                "brand_name_on_title": {
+                    "allow": false,
+                    "description": "Is it allowed to use the advertiser's brand name in the title or body of a text ad?",
+                    "comments": ""
+                },
+                "brand_on_negative_keywords": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to NOT add the brand name or any misspellings and/or variations to their list of negative keywords?",
+                    "comments": ""
+                },
+                "brand_bidding_variations": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on the advertiser's brand name, or any misspellings and/or variations?",
+                    "comments": ""
+                },
+                "brand_bidding_other_words": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on keywords that include the advertiser's brand name along with other words (e.g. gifts from Days4u)?",
+                    "comments": ""
+                },
+                "facebook_ads": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to buy PPC ads on social media?",
+                    "comments": ""
+                }
+            }
+        },
+        "url": "https://www.geekbuying.com/",
+        "geoip_limits": [],
+        "currency": {
+            "id": 840,
+            "code": "USD",
+            "name": "United States dollar",
+            "sign": "$"
+        },
+        "registration_date": "2020-11-11T06:22:34+00:00",
+        "datafeed": true,
+        "datafeed_list": null,
+        "conv_rate": "0.45",
+        "epc": "1.72",
+        "app_rate": "100",
+        "app_speed": "478140",
+        "program_status": "Active",
+        "affiliate_status": "Accepted",
+        "commissions": {
+            "details": [
+                {
+                    "category": {
+                        "id": 1,
+                        "name": "Sales",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "percent",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "3.85",
+                                    "subaction": "3.85",
+                                    "formatted": {
+                                        "action": "3,85%",
+                                        "subaction": "3,85%"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ],
+            "summary": {
+                "percent": "3,85%",
+                "flat": "-"
+            },
+            "tiers": {
+                "count_type": "clicks",
+                "amount": 1,
+                "levels": []
+            }
+        },
+        "categories": [
+            {
+                "parent_category": {
+                    "name": "Μόδα & Ομορφιά",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Αθλητικά Είδη"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Αξεσουάρ"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Εσώρουχα"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Κοσμήματα"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Παπούτσια"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Προσωπική Φροντίδα / Καλλυντικά"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Ρολόγια"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "parent_category": {
+                    "name": "Προϊόντα",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Gadgets"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Βιβλία / CD / DVD"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Είδη Δώρων"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Είδη Σπιτιού / Κήπος / DIY"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Η/Υ / Ηλεκτρονικά"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Μουσική / Εξοπλισμός"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Παιχνίδια"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Πολυκαταστήματα"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "parent_category": {
+                    "name": "Ταξίδια",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Είδη Ταξιδίου"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "parent_category": {
+                    "name": "Υπηρεσίες",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Διακόσμηση"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Ενέργεια / Φωτοβολταϊκά"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "countries": "GR,CY"
+    },
+    {
+        "id": 14026,
+        "name": "SigrinoRevma",
+        "start_date": "2025-03-06T22:00:00+00:00",
+        "end_date": null,
+        "logo": "https://affiliate.linkwi.se/files/59292591867c83a2b97f56.png",
+        "short_description": "<p>\r\n\tΤο SigrinoRevma συγκρίνει για εσάς τις προσφορές των μεγαλύτερων παρόχων ενέργειας και σας προτείνει την καλύτερη προσφορά της αγοράς.&nbsp;</p>\r\n",
+        "description": "<p>\r\n\tΦθηνό ρεύμα για οικιακή ή επαγγελματική χρήση για όλους εσάς που θέλετε να βρείτε τον καλύτερο και φθηνότερο πάροχο ενέργειας χωρίς να ψάχνετε ανάμεσα στα αναρίθμητα πακέτα της αγοράς, το SigrinoRevma έχει την λύση.</p>\r\n<p>\r\n\tΗ ομάδα του SigrinoRevma ενημερώνεται καθημερινά για τα νέα στην αγορά της ηλεκτρικής ενέργειας και του φυσικού αερίου, με αποτέλεσμα να προσφέρει λύσεις που κουμπώνουν τέλεια στις ανάγκες της κάθε οικογένειας ή επιχείρησης.&nbsp;</p>\r\n<p>\r\n\t<strong style=\"border: 0px; margin: 0px; padding: 0px; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-size: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; vertical-align: baseline; color: rgb(45, 46, 47);\">Όροι και Προϋποθέσεις Προγράμματος:</strong></p>\r\n<p>\r\n\t<strong style=\"color: rgb(45, 46, 47); font-family: inherit; font-size: inherit; border: 0px; margin: 0px; padding: 0px; font-style: inherit; font-variant: inherit; font-stretch: inherit; line-height: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; vertical-align: baseline;\">Προμήθειες:</strong><br />\r\n\t<span style=\"color: rgb(45, 46, 47); font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif;\">- 3.50 EUR / αίτηση (SOI - Single Opt In). Ως έγκυρη αίτηση θεωρείται αυτή που έχει πλήρη και αληθή στοιχεία.</span></p>\r\n<p>\r\n\t<span style=\"color: rgb(45, 46, 47); font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif;\">Από 25/06 μέχρι και 30/09 η προμήθεια θα είναι 15,4€ / αίτηση! </span></p>\r\n<p style=\"border: 0px; margin: 0px 0px 1em; padding: 0px; font-variant-numeric: inherit; font-variant-east-asian: inherit; font-variant-alternates: inherit; font-variant-position: inherit; font-variant-emoji: inherit; font-stretch: inherit; line-height: inherit; font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; vertical-align: baseline; color: rgb(45, 46, 47);\">\r\n\t<strong>Διάρκεια Cookie</strong>: 30 ημέρες</p>\r\n",
+        "ended_date": null,
+        "mobile_ready": true,
+        "deeplinks": {
+            "allow_deeplinking": false,
+            "allow_subdomains": true,
+            "deeplink_domain": "sigrinorevma.gr"
+        },
+        "terms": {
+            "other": "",
+            "promotion_methods": {
+                "social_media": {
+                    "allow": true,
+                    "description": "Social media",
+                    "comments": ""
+                },
+                "cashback_sites": {
+                    "allow": false,
+                    "description": "Cashback sites",
+                    "comments": ""
+                },
+                "incentivized_traffic": {
+                    "allow": false,
+                    "description": "Incentivised traffic (excl. cashback)",
+                    "comments": ""
+                },
+                "discount_coupon_sites": {
+                    "allow": false,
+                    "description": "Voucher / Coupon sites",
+                    "comments": ""
+                },
+                "email_newsletter": {
+                    "allow": true,
+                    "description": "Email / Newsletter",
+                    "comments": ""
+                },
+                "content_sites": {
+                    "allow": true,
+                    "description": "Content sites (portals, blogs κλπ)",
+                    "comments": ""
+                },
+                "google_shopping_ads": {
+                    "allow": false,
+                    "description": "Google CSS Partners",
+                    "comments": null
+                }
+            },
+            "ppc": {
+                "traffic_to_advertiser": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to send traffic directly to the advertiser's website?",
+                    "comments": ""
+                },
+                "brand_name_on_url": {
+                    "allow": true,
+                    "description": "Is it allowed to use the advertiser's brand name in the display URL?",
+                    "comments": ""
+                },
+                "brand_name_on_title": {
+                    "allow": true,
+                    "description": "Is it allowed to use the advertiser's brand name in the title or body of a text ad?",
+                    "comments": ""
+                },
+                "brand_on_negative_keywords": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to NOT add the brand name or any misspellings and/or variations to their list of negative keywords?",
+                    "comments": ""
+                },
+                "brand_bidding_variations": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on the advertiser's brand name, or any misspellings and/or variations?",
+                    "comments": ""
+                },
+                "brand_bidding_other_words": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on keywords that include the advertiser's brand name along with other words (e.g. gifts from Days4u)?",
+                    "comments": ""
+                },
+                "facebook_ads": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to buy PPC ads on social media?",
+                    "comments": ""
+                }
+            }
+        },
+        "url": "https://sigrinorevma.gr/form/",
+        "geoip_limits": [],
+        "currency": {
+            "id": 978,
+            "code": "EUR",
+            "name": "Euro",
+            "sign": "€"
+        },
+        "registration_date": "2025-03-07T11:20:13+00:00",
+        "datafeed": false,
+        "datafeed_list": null,
+        "conv_rate": null,
+        "epc": null,
+        "app_rate": null,
+        "app_speed": "681758",
+        "program_status": "Active",
+        "affiliate_status": "Accepted",
+        "commissions": {
+            "details": [
+                {
+                    "category": {
+                        "id": 1,
+                        "name": "Lead",
+                        "cookie_length": 30,
+                        "type": "lead",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "3.50",
+                                    "subaction": "3.50",
+                                    "formatted": {
+                                        "action": "3,50 €",
+                                        "subaction": "3,50 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ],
+            "summary": {
+                "percent": "-",
+                "flat": "3,50 €",
+                "flat_nosign": "3,50"
+            },
+            "tiers": {
+                "count_type": "clicks",
+                "amount": 1,
+                "levels": []
+            }
+        },
+        "categories": [
+            {
+                "parent_category": {
+                    "name": "Υπηρεσίες",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Ενέργεια / Φωτοβολταϊκά"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "countries": "GR"
+    },
+    {
+        "id": 13117,
+        "name": "Magenta Insurance",
+        "start_date": "2026-07-06T21:00:00+00:00",
+        "end_date": null,
+        "logo": "https://affiliate.linkwi.se/files/14227544146a4ca20b3c784.png",
+        "short_description": "<p>\r\n\tΤο Magenta Insurance αποτελεί την ψηφιακή πλατφόρμα σύγκρισης και αγοράς ασφαλιστικών προϊόντων που παρέχει ολοκληρωμένες λύσεις και εξατομικευμένες υπηρεσίες ασφάλισης αυτοκινήτου, μοτοσυκλέτας, πρωτοβάθμιας υγείας και σκάφους, σε συνεργασία με 18 ασφαλιστικές εταιρίες.</p>\r\n",
+        "description": "<p>\r\n\tΤο <strong>Magenta Insurance</strong> είναι εδώ για να σου προσφέρει ακόμα περισσότερες ασφαλιστικές λύσεις, με πιο ολοκληρωμένο τρόπο, πάντα με επίκεντρο εσένα και όσα θέλεις να προστατεύσεις.</p>\r\n<p>\r\n\tΓιατί οι ανάγκες ασφάλισης δεν είναι ίδιες για όλους.</p>\r\n<p>\r\n\tΆλλες φορές θέλεις να συγκρίνεις online και να ασφαλιστείς γρήγορα και οικονομικά. Άλλες φορές χρειάζεσαι προσωπική καθοδήγηση, για να βρεις τη λύση που ταιριάζει πραγματικά σε εσένα.</p>\r\n<p>\r\n\tΓι’ αυτό, στο Magenta Insurance συγκεντρώσαμε σε ένα σημείο όλα όσα χρειάζεσαι για να ασφαλίσεις ό,τι είναι σημαντικό για εσένα, εύκολα, γρήγορα και με τη σιγουριά ότι κάνεις τη σωστή επιλογή.</p>\r\n<p>\r\n\t<strong style=\"border: 0px; margin: 0px; padding: 0px; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-size: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; vertical-align: baseline; color: rgb(45, 46, 47);\">Όροι και Προϋποθέσεις Προγράμματος:</strong></p>\r\n<div>\r\n\t<strong>Προμήθειες:</strong></div>\r\n<div>\r\n\t- 18,50 ευρώ / πώληση 12μηνης ασφάλειας αυτοκινήτου</div>\r\n<div>\r\n\t- 8,50 ευρώ / πώληση 6μηνης ασφάλειας αυτοκινήτου</div>\r\n<div>\r\n\t- 4 ευρώ / πώληση 3μηνης ασφάλειας αυτοκινήτου</div>\r\n<div>\r\n\t- 5,50 ευρώ / πώληση 12μηνης ασφάλειας μηχανής</div>\r\n<div>\r\n\t- 2,50 ευρώ / πώληση 6μηνης ασφάλειας μηχανής</div>\r\n<div>\r\n\t- 0,50 ευρώ / πώληση 3μηνης ασφάλειας μηχανής</div>\r\n<div>\r\n\t- 10,10 ευρώ / πώληση 12μηνης&nbsp;ασφάλειας σκάφους</div>\r\n<div>\r\n\t-&nbsp;10 ευρώ / πώληση 12μηνης&nbsp;ασφάλειας υγείας</div>\r\n<div>\r\n\t- 25 ευρώ / πώληση 12μηνης&nbsp;ασφάλειας οικίας</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\tΑπό 27/11 μέχρι και 26/01/2025 οι προμήθειες θα είναι οι παρακάτω:</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\t<div>\r\n\t\t<strong>Προμήθειες:</strong></div>\r\n\t<div>\r\n\t\t- 21,30 ευρώ / πώληση 12μηνης ασφάλειας αυτοκινήτου</div>\r\n\t<div>\r\n\t\t- 9,80 ευρώ / πώληση 6μηνης ασφάλειας αυτοκινήτου</div>\r\n\t<div>\r\n\t\t- 4,60 ευρώ / πώληση 3μηνης ασφάλειας αυτοκινήτου</div>\r\n\t<div>\r\n\t\t- 6,30 ευρώ / πώληση 12μηνης ασφάλειας μηχανής</div>\r\n\t<div>\r\n\t\t- 2,90 ευρώ / πώληση 6μηνης ασφάλειας μηχανής</div>\r\n\t<div>\r\n\t\t- 0,60 ευρώ / πώληση 3μηνης ασφάλειας μηχανής</div>\r\n\t<div>\r\n\t\t- 11,60 ευρώ / πώληση 12μηνης&nbsp;ασφάλειας σκάφους</div>\r\n\t<div>\r\n\t\t-&nbsp;11,50 ευρώ / πώληση 12μηνης&nbsp;ασφάλειας υγείας</div>\r\n\t<div>\r\n\t\t- 28,80 ευρώ / πώληση 12μηνης&nbsp;ασφάλειας οικίας</div>\r\n</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\tΔιάρκεια Cookie: 30 ημέρες</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\t<strong>Σημαντική σημείωση: </strong>Δεν αποδίδεται προμήθεια για ανανεώσεις συμβολαίων (renewals). Οι πωλήσεις αυτές θα καταγράφονται, αλλά θα ακυρώνονται στη συνέχεια από τον διαφημιζόμενο.</div>\r\n",
+        "ended_date": "2026-06-13T21:00:01+00:00",
+        "mobile_ready": true,
+        "deeplinks": {
+            "allow_deeplinking": true,
+            "allow_subdomains": true,
+            "deeplink_domain": "magentainsurance.gr"
+        },
+        "terms": {
+            "other": "Άλλα είδη προώθησης επιτρέπονται μόνο κατόπιν έγκρισης από τον διαφημιζόμενο",
+            "promotion_methods": {
+                "social_media": {
+                    "allow": true,
+                    "description": "Social media",
+                    "comments": ""
+                },
+                "cashback_sites": {
+                    "allow": false,
+                    "description": "Cashback sites",
+                    "comments": ""
+                },
+                "incentivized_traffic": {
+                    "allow": false,
+                    "description": "Incentivised traffic (excl. cashback)",
+                    "comments": ""
+                },
+                "discount_coupon_sites": {
+                    "allow": true,
+                    "description": "Voucher / Coupon sites",
+                    "comments": ""
+                },
+                "email_newsletter": {
+                    "allow": true,
+                    "description": "Email / Newsletter",
+                    "comments": ""
+                },
+                "content_sites": {
+                    "allow": true,
+                    "description": "Content sites (portals, blogs κλπ)",
+                    "comments": ""
+                },
+                "google_shopping_ads": {
+                    "allow": false,
+                    "description": "Google CSS Partners",
+                    "comments": null
+                }
+            },
+            "ppc": {
+                "traffic_to_advertiser": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to send traffic directly to the advertiser's website?",
+                    "comments": ""
+                },
+                "brand_name_on_url": {
+                    "allow": false,
+                    "description": "Is it allowed to use the advertiser's brand name in the display URL?",
+                    "comments": ""
+                },
+                "brand_name_on_title": {
+                    "allow": false,
+                    "description": "Is it allowed to use the advertiser's brand name in the title or body of a text ad?",
+                    "comments": ""
+                },
+                "brand_on_negative_keywords": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to NOT add the brand name or any misspellings and/or variations to their list of negative keywords?",
+                    "comments": ""
+                },
+                "brand_bidding_variations": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on the advertiser's brand name, or any misspellings and/or variations?",
+                    "comments": ""
+                },
+                "brand_bidding_other_words": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on keywords that include the advertiser's brand name along with other words (e.g. gifts from Days4u)?",
+                    "comments": ""
+                },
+                "facebook_ads": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to buy PPC ads on social media?",
+                    "comments": ""
+                }
+            }
+        },
+        "url": "https://www.magentainsurance.gr",
+        "geoip_limits": [],
+        "currency": {
+            "id": 978,
+            "code": "EUR",
+            "name": "Euro",
+            "sign": "€"
+        },
+        "registration_date": "2020-11-11T05:55:27+00:00",
+        "datafeed": false,
+        "datafeed_list": null,
+        "conv_rate": null,
+        "epc": null,
+        "app_rate": null,
+        "app_speed": null,
+        "program_status": "Active",
+        "affiliate_status": "Accepted",
+        "commissions": {
+            "details": [
+                {
+                    "category": {
+                        "id": 10,
+                        "name": "Boat - 12 months",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "10.10",
+                                    "subaction": "10.10",
+                                    "formatted": {
+                                        "action": "10,10 €",
+                                        "subaction": "10,10 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 1,
+                        "name": "Car - 12 months",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "18.50",
+                                    "subaction": "18.50",
+                                    "formatted": {
+                                        "action": "18,50 €",
+                                        "subaction": "18,50 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 3,
+                        "name": "Car - 3 months",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "4.00",
+                                    "subaction": "4.00",
+                                    "formatted": {
+                                        "action": "4,00 €",
+                                        "subaction": "4,00 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 2,
+                        "name": "Car - 6 months",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "8.50",
+                                    "subaction": "8.50",
+                                    "formatted": {
+                                        "action": "8,50 €",
+                                        "subaction": "8,50 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 11,
+                        "name": "Health - 12 months",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "10.00",
+                                    "subaction": "10.00",
+                                    "formatted": {
+                                        "action": "10,00 €",
+                                        "subaction": "10,00 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 12,
+                        "name": "Home - 12 months",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "25.00",
+                                    "subaction": "25.00",
+                                    "formatted": {
+                                        "action": "25,00 €",
+                                        "subaction": "25,00 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 4,
+                        "name": "Motorbike - 12 months",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "5.50",
+                                    "subaction": "5.50",
+                                    "formatted": {
+                                        "action": "5,50 €",
+                                        "subaction": "5,50 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 6,
+                        "name": "Motorbike - 3 months",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "0.50",
+                                    "subaction": "0.50",
+                                    "formatted": {
+                                        "action": "0,50 €",
+                                        "subaction": "0,50 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "category": {
+                        "id": 5,
+                        "name": "Motorbike - 6 months",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "2.50",
+                                    "subaction": "2.50",
+                                    "formatted": {
+                                        "action": "2,50 €",
+                                        "subaction": "2,50 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ],
+            "summary": {
+                "percent": "-",
+                "flat": "0,50 € - 25,00 €",
+                "flat_nosign": "0,50 - 25,00"
+            },
+            "tiers": {
+                "count_type": "clicks",
+                "amount": 1,
+                "levels": []
+            }
+        },
+        "categories": [
+            {
+                "parent_category": {
+                    "name": "Τράπεζες & Ασφάλειες",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Ασφάλειες Αυτοκινήτου"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Ασφάλειες Ζωής"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Ασφάλειες Μηχανής"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Ασφάλειες Σπιτιού"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "countries": "GR"
+    },
+    {
+        "id": 14174,
+        "name": "Dazzle",
+        "start_date": "2026-07-12T21:00:00+00:00",
+        "end_date": null,
+        "logo": "https://affiliate.linkwi.se/files/4293426266a54a2863fa12.png",
+        "short_description": "<p>\r\n\tΗ Dazzle είναι ένα ελληνικό fashion brand με έμφαση στα γυναικεία φορέματα για ξεχωριστές περιστάσεις, καθώς και επιλεγμένα looks για εμφανίσεις από το πρωί έως το βράδυ.</p>\r\n",
+        "description": "<div>\r\n\tΗ Dazzle είναι ένα ελληνικό fashion brand γυναικείας ένδυσης με βασική εξειδίκευση στα φορέματα. Στο ηλεκτρονικό μας κατάστημα θα βρείτε mini, midi και maxi φορέματα για γάμους, βαπτίσεις, αρραβώνες, αποφοιτήσεις, βραδινές εξόδους και ξεχωριστές περιστάσεις, καθώς και επιλεγμένες ολόσωμες φόρμες, σετ και γυναικεία looks που μπορούν να φορεθούν από το πρωί έως το βράδυ.</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\tΟι συλλογές μας σχεδιάζονται και κατασκευάζονται στην Ελλάδα, με έμφαση στη θηλυκή γραμμή, τη σύγχρονη αισθητική και την προσεγμένη εφαρμογή. <strong>Κάθε φόρεμα ράβεται αφού πραγματοποιηθεί η παραγγελία</strong>, ακολουθώντας τη made-to-order φιλοσοφία της Dazzle, ενώ όπου είναι εφικτό παρέχεται δυνατότητα επιλεγμένων προσαρμογών.</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\t<div style=\"border: 0px; margin: 0px; padding: 0px; font-variant-numeric: inherit; font-variant-east-asian: inherit; font-variant-alternates: inherit; font-variant-position: inherit; font-variant-emoji: inherit; font-stretch: inherit; font-size: 12.8px; line-height: inherit; font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; vertical-align: baseline; color: rgb(45, 46, 47);\">\r\n\t\t<strong style=\"border: 0px; margin: 0px; padding: 0px; font-style: inherit; font-variant: inherit; font-weight: bold; font-stretch: inherit; font-size: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; vertical-align: baseline;\">Όροι και Προϋποθέσεις Προγράμματος:</strong></div>\r\n\t<div style=\"border: 0px; margin: 0px; padding: 0px; font-variant-numeric: inherit; font-variant-east-asian: inherit; font-variant-alternates: inherit; font-variant-position: inherit; font-variant-emoji: inherit; font-stretch: inherit; font-size: 12.8px; line-height: inherit; font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; vertical-align: baseline; color: rgb(45, 46, 47);\">\r\n\t\t&nbsp;</div>\r\n\t<div style=\"border: 0px; margin: 0px; padding: 0px; font-variant-numeric: inherit; font-variant-east-asian: inherit; font-variant-alternates: inherit; font-variant-position: inherit; font-variant-emoji: inherit; font-stretch: inherit; font-size: 12.8px; line-height: inherit; font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; vertical-align: baseline; color: rgb(45, 46, 47);\">\r\n\t\t<b style=\"border: 0px; margin: 0px; padding: 0px; font-style: inherit; font-variant: inherit; font-weight: bold; font-stretch: inherit; font-size: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; vertical-align: baseline;\">Προμήθειες:</b><br />\r\n\t\t<span style=\"border: 0px; margin: 0px; padding: 0px; font: inherit; vertical-align: baseline;\">- 12% / πώληση</span><br />\r\n\t\t<br />\r\n\t\t<span style=\"border: 0px; margin: 0px; padding: 0px; font: inherit; vertical-align: baseline;\">Διάρκεια Cookie: 30 ημέρες</span></div>\r\n</div>\r\n",
+        "ended_date": "2026-07-28T21:00:01+00:00",
+        "mobile_ready": true,
+        "deeplinks": {
+            "allow_deeplinking": true,
+            "allow_subdomains": true,
+            "deeplink_domain": "dazzleshop.gr"
+        },
+        "terms": {
+            "other": "",
+            "promotion_methods": {
+                "social_media": {
+                    "allow": true,
+                    "description": "Social media",
+                    "comments": ""
+                },
+                "cashback_sites": {
+                    "allow": true,
+                    "description": "Cashback sites",
+                    "comments": ""
+                },
+                "incentivized_traffic": {
+                    "allow": true,
+                    "description": "Incentivised traffic (excl. cashback)",
+                    "comments": ""
+                },
+                "discount_coupon_sites": {
+                    "allow": true,
+                    "description": "Voucher / Coupon sites",
+                    "comments": ""
+                },
+                "email_newsletter": {
+                    "allow": true,
+                    "description": "Email / Newsletter",
+                    "comments": ""
+                },
+                "content_sites": {
+                    "allow": true,
+                    "description": "Content sites (portals, blogs κλπ)",
+                    "comments": ""
+                },
+                "google_shopping_ads": {
+                    "allow": true,
+                    "description": "Google CSS Partners",
+                    "comments": null
+                }
+            },
+            "ppc": {
+                "traffic_to_advertiser": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to send traffic directly to the advertiser's website?",
+                    "comments": ""
+                },
+                "brand_name_on_url": {
+                    "allow": true,
+                    "description": "Is it allowed to use the advertiser's brand name in the display URL?",
+                    "comments": ""
+                },
+                "brand_name_on_title": {
+                    "allow": true,
+                    "description": "Is it allowed to use the advertiser's brand name in the title or body of a text ad?",
+                    "comments": ""
+                },
+                "brand_on_negative_keywords": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to NOT add the brand name or any misspellings and/or variations to their list of negative keywords?",
+                    "comments": ""
+                },
+                "brand_bidding_variations": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on the advertiser's brand name, or any misspellings and/or variations?",
+                    "comments": ""
+                },
+                "brand_bidding_other_words": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on keywords that include the advertiser's brand name along with other words (e.g. gifts from Days4u)?",
+                    "comments": ""
+                },
+                "facebook_ads": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to buy PPC ads on social media?",
+                    "comments": ""
+                }
+            }
+        },
+        "url": "https://www.dazzleshop.gr/",
+        "geoip_limits": [],
+        "currency": {
+            "id": 978,
+            "code": "EUR",
+            "name": "Euro",
+            "sign": "€"
+        },
+        "registration_date": "2026-07-27T07:57:20+00:00",
+        "datafeed": true,
+        "datafeed_list": [
+            {
+                "datafeed": {
+                    "id": "14174-2811",
+                    "name": "Dazzle",
+                    "url": "https://affiliate.linkwi.se/feeds/1.2/CD00/programs-all/columns-product_id,barcode,sku,part_number,isbn,model_name,product_name,description,category,brand_name,tracking_url,thumb_url,image_url,in_stock,availability,valid_from,valid_to,on_sale,currency,price,full_price,discount,city,times_bought,longitude,latitude,address,size,colour,custom,extra_images/catinc-0/catex-0/proginc-14174-2811/progex-0/feed.xml"
+                }
+            }
+        ],
+        "conv_rate": null,
+        "epc": null,
+        "app_rate": null,
+        "app_speed": null,
+        "program_status": "Active",
+        "affiliate_status": "Accepted",
+        "commissions": {
+            "details": [
+                {
+                    "category": {
+                        "id": 1,
+                        "name": "Sales",
+                        "cookie_length": 30,
+                        "type": "sale",
+                        "payout_type": "percent",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "12.00",
+                                    "subaction": "12.00",
+                                    "formatted": {
+                                        "action": "12,00%",
+                                        "subaction": "12,00%"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ],
+            "summary": {
+                "percent": "12,00%",
+                "flat": "-"
+            },
+            "tiers": {
+                "count_type": "clicks",
+                "amount": 1,
+                "levels": []
+            }
+        },
+        "categories": [
+            {
+                "parent_category": {
+                    "name": "Μόδα & Ομορφιά",
+                    "child_categories": [
+                        {
+                            "child_category": {
+                                "name": "Αξεσουάρ"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Ένδυση"
+                            }
+                        },
+                        {
+                            "child_category": {
+                                "name": "Κοσμήματα"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "countries": "GR,CY"
+    },
+    {
+        "id": 13856,
+        "name": "Metafraseis24",
+        "start_date": "2023-12-06T22:00:00+00:00",
+        "end_date": null,
+        "logo": "https://affiliate.linkwi.se/files/16425620126571dae2240cd.png",
+        "short_description": "<p>\r\n\tMetafraseis24: Το μεγαλύτερο μεταφραστικό γραφείο της Ελλάδος, με άμεσες παραδόσεις, στις πιο ανταγωνιστικές τιμές.</p>\r\n",
+        "description": "<div>\r\n\tΤο μεταφραστικό γραφείο <strong>Metafraseis24</strong> αποτελεί τη σίγουρη και αξιόπιστη επιλογή για επίσημες μεταφράσεις και διερμηνείες στις πιο ανταγωνιστικές τιμές της αγοράς, παρέχοντας ταχύτατη εξυπηρέτηση, διασφαλίζοντας ποιότητα και συνέπεια στις παραδόσεις.</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\tΜε εμπειρία 15 ετών και έχοντας αναπτύξει ένα μεγάλο δίκτυο συνεργατών αποτελούμενο από <strong>επαγγελματίες μεταφραστές και δικηγόρους</strong>, μέλη δικηγορικών συλλόγων, αναλαμβάνουμε κείμενα που εκτείνονται σε μια ευρεία γκάμα, μεταξύ των οποίων: πιστοποιητικά, νομικά, ιατρικά, οικονομικά, φορολογικά, ιστοσελίδες, κείμενα τουριστικού και λογοτεχνικού περιεχομένου.</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\tΗ σταθερή συνεργασία μας με τις μεγαλύτερες εταιρείες της χώρας και της παγκόσμιας αγοράς, διασφαλίζει την επίγνωση των απαιτήσεών τους στις προκλήσεις των καθημερινών αναγκών τους, παρέχοντας υπηρεσίες και υποστήριξη με πλήρη εχεμύθεια.</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\tΜε δυνατότητα μετάφρασης σε περισσότερους από 100 γλωσσικούς συνδυασμούς, το μεταφραστικό γραφείο <strong>Metafraseis24</strong> καλύπτει άμεσα ένα σύνολο δραστηριοτήτων και υπηρεσιών αναλόγως τις απαιτήσεις του έργου και τη γλώσσα εξειδίκευσης του κάθε συνεργάτη. Κύριο μέλημά μας, η μετάφραση να προσαρμόζεται αναλόγως της ορολογίας του κειμένου, εφαρμόζοντας τις αρχές του Localization εφόσον απαιτείται, βασιζόμενοι πάντα στις τεχνικές βάσεις των θεωριών της μετάφρασης.</div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\t<strong style=\"border: 0px; margin: 0px; padding: 0px; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-size: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; vertical-align: baseline; color: rgb(45, 46, 47);\">Όροι και Προϋποθέσεις Προγράμματος:</strong></div>\r\n<div>\r\n\t&nbsp;</div>\r\n<div>\r\n\t<p style=\"border: 0px; margin: 0px 0px 1em; padding: 0px; font-variant-numeric: inherit; font-variant-east-asian: inherit; font-variant-alternates: inherit; font-variant-position: inherit; font-stretch: inherit; line-height: inherit; font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif; font-optical-sizing: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; vertical-align: baseline; color: rgb(45, 46, 47);\">\r\n\t\t<strong style=\"border: 0px; margin: 0px; padding: 0px; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-size: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; vertical-align: baseline;\">Προμήθειες:</strong><br />\r\n\t\t- 17.70 EUR / αίτηση&nbsp;κοστολόγησης μετάφρασης (SOI - Single Opt In). Ως έγκυρη αίτηση θεωρείται αυτή που έχει πλήρη και αληθή στοιχεία.</p>\r\n\t<p style=\"border: 0px; margin: 0px 0px 1em; padding: 0px; font-variant-numeric: inherit; font-variant-east-asian: inherit; font-variant-alternates: inherit; font-variant-position: inherit; font-stretch: inherit; line-height: inherit; font-family: Arial, &quot;Helvetica Neue&quot;, sans-serif; font-optical-sizing: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; vertical-align: baseline; color: rgb(45, 46, 47);\">\r\n\t\tΔιάρκεια Cookie: 30 ημέρες</p>\r\n</div>\r\n",
+        "ended_date": "2024-12-27T22:00:02+00:00",
+        "mobile_ready": true,
+        "deeplinks": {
+            "allow_deeplinking": true,
+            "allow_subdomains": true,
+            "deeplink_domain": "metafraseis24.gr"
+        },
+        "terms": {
+            "other": "",
+            "promotion_methods": {
+                "social_media": {
+                    "allow": true,
+                    "description": "Social media",
+                    "comments": ""
+                },
+                "cashback_sites": {
+                    "allow": false,
+                    "description": "Cashback sites",
+                    "comments": ""
+                },
+                "incentivized_traffic": {
+                    "allow": false,
+                    "description": "Incentivised traffic (excl. cashback)",
+                    "comments": ""
+                },
+                "discount_coupon_sites": {
+                    "allow": true,
+                    "description": "Voucher / Coupon sites",
+                    "comments": ""
+                },
+                "email_newsletter": {
+                    "allow": true,
+                    "description": "Email / Newsletter",
+                    "comments": ""
+                },
+                "content_sites": {
+                    "allow": true,
+                    "description": "Content sites (portals, blogs κλπ)",
+                    "comments": ""
+                },
+                "google_shopping_ads": {
+                    "allow": false,
+                    "description": "Google CSS Partners",
+                    "comments": null
+                }
+            },
+            "ppc": {
+                "traffic_to_advertiser": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to send traffic directly to the advertiser's website?",
+                    "comments": ""
+                },
+                "brand_name_on_url": {
+                    "allow": true,
+                    "description": "Is it allowed to use the advertiser's brand name in the display URL?",
+                    "comments": ""
+                },
+                "brand_name_on_title": {
+                    "allow": true,
+                    "description": "Is it allowed to use the advertiser's brand name in the title or body of a text ad?",
+                    "comments": ""
+                },
+                "brand_on_negative_keywords": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to NOT add the brand name or any misspellings and/or variations to their list of negative keywords?",
+                    "comments": ""
+                },
+                "brand_bidding_variations": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on the advertiser's brand name, or any misspellings and/or variations?",
+                    "comments": ""
+                },
+                "brand_bidding_other_words": {
+                    "allow": false,
+                    "description": "Are affiliates allowed to bid on keywords that include the advertiser's brand name along with other words (e.g. gifts from Days4u)?",
+                    "comments": ""
+                },
+                "facebook_ads": {
+                    "allow": true,
+                    "description": "Are affiliates allowed to buy PPC ads on social media?",
+                    "comments": ""
+                }
+            }
+        },
+        "url": "https://metafraseis24.gr/",
+        "geoip_limits": [],
+        "currency": {
+            "id": 978,
+            "code": "EUR",
+            "name": "Euro",
+            "sign": "€"
+        },
+        "registration_date": "2023-12-10T01:53:29+00:00",
+        "datafeed": false,
+        "datafeed_list": null,
+        "conv_rate": null,
+        "epc": null,
+        "app_rate": null,
+        "app_speed": null,
+        "program_status": "Active",
+        "affiliate_status": "Accepted",
+        "commissions": {
+            "details": [
+                {
+                    "category": {
+                        "id": 1,
+                        "name": "Lead",
+                        "cookie_length": 30,
+                        "type": "lead",
+                        "payout_type": "fixed_amount",
+                        "tiers": [
+                            {
+                                "tier": {
+                                    "level": 1,
+                                    "action": "17.70",
+                                    "subaction": "17.70",
+                                    "formatted": {
+                                        "action": "17,70 €",
+                                        "subaction": "17,70 €"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ],
+            "summary": {
+                "percent": "-",
+                "flat": "17,70 €",
+                "flat_nosign": "17,70"
+            },
+            "tiers": {
+                "count_type": "clicks",
+                "amount": 1,
+                "levels": []
+            }
+        },
+        "countries": "GR"
+    }
+]
