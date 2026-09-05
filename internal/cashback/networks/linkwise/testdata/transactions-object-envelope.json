@@ -1,0 +1,117 @@
+{
+    "response": [
+    {
+        "program": {
+            "id": 5,
+            "name": "Tokotoukan"
+        },
+        "subid1": null,
+        "subid2": null,
+        "subid3": null,
+        "id": 420343717,
+        "type": "Sale",
+        "status": {
+            "name": "Validated",
+            "date": "2024-07-08T15:11:10+03:00"
+        },
+        "subaction": "No",
+        "amended": "No",
+        "amount": "19.51",
+        "commission": "2.93",
+        "click": {
+            "date": "2024-06-04T17:48:18+03:00",
+            "ref_url": null
+        },
+        "date": "2024-06-07T19:10:54+03:00",
+        "payment_status": {
+            "affiliate_payment_date": "",
+            "advertiser_payment_date": "2024-08-10T03:00:00+03:00"
+        },
+        "payout_categories": [
+            {
+                "payout_category": {
+                    "id": 1,
+                    "name": "Sales",
+                    "amount": "19.51",
+                    "commission": "2.93"
+                }
+            }
+        ]
+    },
+    {
+        "program": {
+            "id": 73,
+            "name": "Aegean Airlines"
+        },
+        "subid1": null,
+        "subid2": null,
+        "subid3": null,
+        "id": 431535475,
+        "type": "Sale",
+        "status": {
+            "name": "Validated",
+            "date": "2024-10-30T10:27:52+02:00"
+        },
+        "subaction": "No",
+        "amended": "No",
+        "amount": "164.00",
+        "commission": "3.77",
+        "click": {
+            "date": "2024-10-03T16:19:02+03:00",
+            "ref_url": null
+        },
+        "date": "2024-10-03T16:33:58+03:00",
+        "payment_status": {
+            "affiliate_payment_date": "",
+            "advertiser_payment_date": "2024-11-29T02:00:00+02:00"
+        },
+        "payout_categories": [
+            {
+                "payout_category": {
+                    "id": 1,
+                    "name": "Sales",
+                    "amount": "164.00",
+                    "commission": "3.77"
+                }
+            }
+        ]
+    },
+    {
+        "program": {
+            "id": 300,
+            "name": "Insurance Market"
+        },
+        "subid1": null,
+        "subid2": null,
+        "subid3": null,
+        "id": 438545831,
+        "type": "Sale",
+        "status": {
+            "name": "Validated",
+            "date": "2024-12-23T11:29:22+02:00"
+        },
+        "subaction": "No",
+        "amended": "No",
+        "amount": "10.00",
+        "commission": "18.50",
+        "click": {
+            "date": "2024-12-16T06:47:30+02:00",
+            "ref_url": null
+        },
+        "date": "2024-12-16T06:58:45+02:00",
+        "payment_status": {
+            "affiliate_payment_date": "",
+            "advertiser_payment_date": "2025-01-27T02:00:00+02:00"
+        },
+        "payout_categories": [
+            {
+                "payout_category": {
+                    "id": 1,
+                    "name": "12μηνη ασφάλεια αυτοκινήτου / φορτηγού / ταξί",
+                    "amount": "10.00",
+                    "commission": "18.50"
+                }
+            }
+        ]
+    }
+]}
