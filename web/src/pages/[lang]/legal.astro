@@ -1,0 +1,112 @@
+---
+import { APP_ENV, BRAND_DIR } from 'astro:env/server';
+
+import LegalPane from '../../components/LegalPane.astro';
+import Masthead from '../../components/Masthead.astro';
+import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import { brandOnHand } from '../../lib/brand/load';
+import { legalStrings } from '../../lib/legal/strings';
+import { frontPagePath, isReadingLanguage } from '../../lib/reader/axes';
+
+// The three notices on one page, as the desktop board draws them
+// (issue #64). Each pane is also its own route — /{lang}/impressum,
+// /{lang}/privacy, /{lang}/contact — because the footer links them
+// individually and a reader who was sent a link to the privacy notice
+// should land on the privacy notice.
+//
+// Reachable signed out, and noindex like every other route: the crawler
+// gate in src/middleware.ts stamps X-Robots-Tag on every response, so
+// there is nothing per-route to do and nothing per-route to forget.
+const langSegment = Astro.params['lang'];
+if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+  return Astro.rewrite('/404');
+}
+const lang = langSegment;
+const t = legalStrings(lang);
+
+// A deployment that names no brand cannot print an Impressum. In
+// development the fixture answers and every pane says so; in prod this
+// throws, which is the correct 500 — a page that names the wrong company
+// as the legally responsible provider is worse than a page that is down.
+const { brand, source } = brandOnHand({ brandDir: BRAND_DIR, appEnv: APP_ENV });
+
+// The page has a language axis but no place axis, so the switcher links
+// /el/legal ↔ /de/legal and the brand falls back to the flagship journey
+// under the READER'S language (FR-009: chrome never changes an axis the
+// reader did not touch).
+const home = frontPagePath(lang, ['munich', 'greece']);
+---
+
+<ReaderLayout
+  lang={lang}
+  title={`${brand.name} — ${t.heading}`}
+  description={t.intro}
+  homeHref={home}
+>
+  <Masthead homeHref={home}>
+    <div class="seg" role="group">
+      {
+        lang === 'el' ? (
+          <span class="seg-opt" aria-current="true" lang="el">
+            Ελληνικά
+          </span>
+        ) : (
+          <a class="seg-opt" href="/el/legal" lang="el">
+            Ελληνικά
+          </a>
+        )
+      }
+      {
+        lang === 'de' ? (
+          <span class="seg-opt" aria-current="true" lang="de">
+            Deutsch
+          </span>
+        ) : (
+          <a class="seg-opt" href="/de/legal" lang="de">
+            Deutsch
+          </a>
+        )
+      }
+    </div>
+  </Masthead>
+
+  <main class="page">
+    <header class="head">
+      <h1>{t.heading}</h1>
+      <p class="intro">{t.intro}</p>
+    </header>
+
+    <LegalPane lang={lang} brand={brand} source={source} pane="imprint" />
+    <LegalPane lang={lang} brand={brand} source={source} pane="privacy" />
+    <LegalPane lang={lang} brand={brand} source={source} pane="contact" />
+  </main>
+</ReaderLayout>
+
+<style>
+  /* The same inline inset the masthead uses, so the page's text starts on
+     the masthead's left edge rather than on the frame's 2px rule. */
+  .page {
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-8);
+  }
+
+  .head {
+    margin-bottom: var(--space-8);
+  }
+
+  .head h1 {
+    margin: 0 0 var(--space-2);
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 34px;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+
+  .intro {
+    margin: 0;
+    max-width: 62ch;
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+  }
+</style>

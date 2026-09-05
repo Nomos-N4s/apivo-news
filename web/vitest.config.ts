@@ -31,12 +31,19 @@ export default getViteConfig({
         'src/lib/reader/format.ts',
         'src/lib/reader/preference.ts',
         'src/lib/reader/strings.ts',
+        // The copy of the three legal notices (issue #64). Measured for
+        // the same reason reader/strings.ts is: a language it answers in
+        // nothing has ever rendered is copy nobody has read.
+        'src/lib/legal/strings.ts',
         'src/lib/account/consent.ts',
         'src/lib/account/tours.ts',
         'src/lib/app-env.ts',
         // The brand loader. brand.types.ts beside it is generated from
         // the Go types and carries no logic to measure.
         'src/lib/brand/index.ts',
+        // Reading the brand file, and the refusal that keeps a fixture
+        // entity out of a deployed Impressum.
+        'src/lib/brand/load.ts',
         'src/lib/csrf.ts',
         'src/lib/secure-request.ts',
         'src/lib/editorial/api.ts',

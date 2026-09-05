@@ -64,14 +64,14 @@ export interface UiStrings {
   /**
    * Site footer. The imprint and privacy notice are not decoration: a
    * German-facing service owes an Impressum (TMG §5) and a GDPR privacy
-   * notice, so the footer carries their places and says openly that they
-   * are still owed rather than linking to pages that do not exist.
+   * notice. These are the link labels; the notices themselves live under
+   * /{lang}/impressum, /{lang}/privacy and /{lang}/contact, and their own
+   * copy is in lib/legal/strings.ts (issue #64).
    */
   readonly alphaLabel: string;
   readonly imprint: string;
   readonly privacy: string;
   readonly contact: string;
-  readonly legalPending: string;
   /**
    * The about page (issue #92, FR-016). Every statement below derives from
    * the spec or from shipped behaviour — the page describes the pipeline
@@ -177,7 +177,6 @@ const EL: UiStrings = {
   imprint: 'Ταυτότητα',
   privacy: 'Απόρρητο',
   contact: 'Επικοινωνία',
-  legalPending: 'εκκρεμούν πριν από τη δημόσια κυκλοφορία',
   aboutLabel: 'Σχετικά',
   editorialLabel: 'Σύνταξη',
   aboutHeading: 'Σχετικά με το epiloYES',
@@ -288,7 +287,6 @@ const DE: UiStrings = {
   imprint: 'Impressum',
   privacy: 'Datenschutz',
   contact: 'Kontakt',
-  legalPending: 'vor dem öffentlichen Start erforderlich',
   aboutLabel: 'Über epiloYES',
   editorialLabel: 'Redaktion',
   aboutHeading: 'Über epiloYES',
