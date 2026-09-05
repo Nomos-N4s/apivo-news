@@ -11,6 +11,7 @@
 package linkwise
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -177,46 +178,14 @@ type reportRow struct {
 	raw json.RawMessage
 }
 
-// decodeReport turns one response body into rows, accepting either envelope
-// this API can answer in.
-//
-// The default is a bare JSON array and rest_json_force_object=on makes it an
-// object carrying "response"; both are recorded. This adapter never sends
-// that option, so the object form should not arrive - but reading it costs a
-// second attempt at unmarshalling and buys immunity to a deployment-wide
-// default nobody here set.
-//
-// An error body arriving with a 200 is the case worth naming: without this,
-// {"error":{...}} would fail to unmarshal into a slice and be reported as
-// "cannot unmarshal object into []reportRow", which is a true sentence that
-// names neither the network nor what it said.
+// decodeReport turns one response body into transaction rows, each keeping
+// its own bytes for RawPayload (contract rule 1). A re-encoding would
+// silently drop every field [reportRow] does not name, which is most of them.
 func decodeReport(body []byte) ([]reportRow, error) {
-	trimmed := strings.TrimSpace(string(body))
-	if trimmed == "" {
-		return nil, fmt.Errorf("%w: Linkwise answered 200 with an empty body", networks.ErrNetworkUnavailable)
+	rawRows, err := decodeRows(body)
+	if err != nil {
+		return nil, err
 	}
-
-	// Raw first, so each row keeps its own bytes for RawPayload.
-	var rawRows []json.RawMessage
-	if err := json.Unmarshal(body, &rawRows); err != nil {
-		var envelope struct {
-			Response []json.RawMessage `json:"response"`
-			Error    struct {
-				Name        string `json:"name"`
-				Description string `json:"description"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal(body, &envelope); err != nil {
-			return nil, fmt.Errorf("%w: Linkwise's answer is neither a report nor an error: %w",
-				networks.ErrNetworkUnavailable, err)
-		}
-		if envelope.Error.Name != "" || envelope.Error.Description != "" {
-			return nil, fmt.Errorf("%w: Linkwise answered 200 carrying an error (%s: %s)",
-				networks.ErrNetworkUnavailable, envelope.Error.Name, firstLine(envelope.Error.Description))
-		}
-		rawRows = envelope.Response
-	}
-
 	rows := make([]reportRow, 0, len(rawRows))
 	for i, raw := range rawRows {
 		var row reportRow
@@ -228,6 +197,48 @@ func decodeReport(body []byte) ([]reportRow, error) {
 		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+// decodeRows unwraps one response body into its rows, still as bytes, and is
+// shared by every endpoint this adapter reads because they all answer in the
+// same two shapes.
+//
+// The default is a bare JSON array and rest_json_force_object=on makes it an
+// object carrying "response"; both are recorded. This adapter never sends
+// that option, so the object form should not arrive - but reading it costs a
+// second attempt at unmarshalling and buys immunity to a deployment-wide
+// default nobody here set.
+//
+// An error body arriving with a 200 is the case worth naming: without this,
+// {"error":{...}} would fail to unmarshal into a slice and be reported as
+// "cannot unmarshal object into []json.RawMessage", which is a true sentence
+// that names neither the network nor what it said.
+func decodeRows(body []byte) ([]json.RawMessage, error) {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil, fmt.Errorf("%w: Linkwise answered 200 with an empty body", networks.ErrNetworkUnavailable)
+	}
+
+	var rows []json.RawMessage
+	if err := json.Unmarshal(body, &rows); err == nil {
+		return rows, nil
+	}
+
+	var envelope struct {
+		Response []json.RawMessage `json:"response"`
+		Error    struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("%w: Linkwise's answer is neither a report nor an error: %w",
+			networks.ErrNetworkUnavailable, err)
+	}
+	if envelope.Error.Name != "" || envelope.Error.Description != "" {
+		return nil, fmt.Errorf("%w: Linkwise answered 200 carrying an error (%s: %s)",
+			networks.ErrNetworkUnavailable, envelope.Error.Name, firstLine(envelope.Error.Description))
+	}
+	return envelope.Response, nil
 }
 
 // translate turns one reported row into the port's value, and calls

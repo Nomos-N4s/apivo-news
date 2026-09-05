@@ -124,11 +124,22 @@ var (
 	// paid roughly five times what they earned, and nothing in the evidence
 	// saying which currency the number was.
 	//
-	// It is a per-ACCOUNT declaration, which is an assumption worth stating:
-	// it is correct only while every programme this account is joined to
-	// reports in the same currency. The per-programme join that would remove
-	// the assumption needs a recording of the programme list, which this
-	// adapter does not yet have.
+	// It is a per-ACCOUNT declaration, and the recording of the programme
+	// list (testdata/programs.json) now says that assumption is FALSE for the
+	// account it was captured from. Of the 334 joined programmes, 329 report
+	// in EUR, three in PLN and two in USD - so a single declared currency is
+	// right for 98.5% of them and silently wrong for the rest, storing zloty
+	// as euro at whatever this deployment declares.
+	//
+	// The fix is a join rather than a better default: every transaction row
+	// names its programme (program.id) and every programme names its
+	// currency, so the adapter can read the currency off the programme rather
+	// than off configuration. That is a real change - the client would hold
+	// a programme-to-currency map and decide when to refresh it - and it is
+	// not this constructor's to make silently. Until it lands, this value is
+	// the deployment's stated assumption, wrong for five programmes out of
+	// three hundred and thirty-four, and TestTheCurrencyIsPerProgrammeAndNot
+	// Uniform is what keeps that fact in the suite rather than only here.
 	ErrNoReportCurrency = errors.New("linkwise: a client needs the currency its report is denominated in; the transaction report carries none")
 )
 

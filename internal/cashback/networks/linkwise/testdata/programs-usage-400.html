@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>400 Bad Request</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width">
+</head>
+<body>
+<h1>400 Bad Request</h1>
+The request parameters are invalid or missing.
+                        
+<pre>Usage:
+
+https://affiliate.linkwi.se/api/1.1/programs.html?&lt;parameter_name&gt;=&lt;parameter_value&gt;
+
+required parameters:
+
+joined               Filter results according to the program's status.
+                     Can be either all / no / yes
+                     
+optional parameters:
+
+format               Can be either xml or json
+
+keyword              Only show programs with names that contain this string
+
+program_ids          Only show programs with these ids
+                     Please specify a list of program ids, separated by
+                     commas.
+
+scope                Can be either contains or begins.
+                     For use with the &quot;keyword&quot; parameter.
+
+has_datafeed         1 to enable, 0 to disable
+
+categories           Only show programs belonging to specific categories.
+                     Please specify a list of category names (or IDs), separated by
+                     commas.
+
+parent_categories    Only show programs belonging to specific parent categories.
+                     Please specify a list of category IDS, separated by
+                     commas.
+
+types                Filter programs according to their payout category types.
+                     Can be either sale,lead,click.
+                     You can specify more than one values, separated with commas
+
+countries            Filter programs according to their country.
+                     Please specify a list of country names(e.g. greece) or country_codes(e.g. gr), separated by commas.
+                
+lang                 If you specify &quot;gr&quot; or &quot;eng&quot; with this parameter, all applicable
+                     program information will be translated to the specified language.
+                
+status               Filter results according to the program\'s status.
+                     Can be active or inactive or all. Default value is active.
+
+Example: https://affiliate.linkwi.se/api/1.1/programs.html?joined=yes&amp;countries=Greece
+
+Currency fields are strings to avoid rounding errors on large values
+
+Global options:
+
+timezone    Can be either &quot;UTC&quot; (the default) or &quot;Europe/Athens&quot;
+
+rest_date_format    All dates use the ISO 8601 format by default
+                    (http://en.wikipedia.org/wiki/ISO_8601). You can change this
+                    by setting this option to &quot;timestamp&quot;.
+
+rest_json_force_object  If you use the JSON format, set this option to &quot;on&quot; to
+                        force the response to be enclosed into an object.
+
+rest_jsonp_callback   If you use the JSON format, set this option to callback function's name to
+                      force the response to be enclosed into a function call. It must be a valid
+                      function name.
+
+</pre>
+
+<hr />
+<i>Linkwise Affiliation Network</i>
+</body>
+</html>
