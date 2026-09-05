@@ -290,6 +290,15 @@ func (c *Client) Limits() networks.Limits { return Limits() }
 // RateLimit reports the rate the client is pacing to, in requests a second.
 func (c *Client) RateLimit() float64 { return c.limiter.Rate() }
 
+// Clock is the view of time this client ages its currency index against.
+//
+// Exposed for the same reason [Client.RateLimit] is: the production clock is
+// only reached when nothing was injected, so nothing else in this package
+// exercises it, and the one thing it must get right - ending a wait on a
+// cancelled context rather than on its timer - is invisible from outside
+// unless it can be called.
+func (c *Client) Clock() networks.RateLimitClock { return c.clock }
+
 // systemClock is the client's own view of time when no clock was injected.
 // It exists because the currency index ages against a clock and a test must
 // be able to advance it without sleeping for an hour.

@@ -502,3 +502,73 @@ func TestTheClientPacesToItsDeclaredRate(t *testing.T) {
 		t.Errorf("Account() is held at %q, want %q", got, linkwise.ID)
 	}
 }
+
+// TestTheNetworksAskToComeBackIsReported. Linkwise sent no rate-limit header
+// in any recorded response, so this covers a header that has never been seen
+// from this network but is ordinary from a CDN in front of one - and a wait
+// the adapter dropped silently would be a poller ignoring an instruction it
+// was given.
+func TestTheNetworksAskToComeBackIsReported(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name       string
+		retryAfter string
+		says       string
+	}{
+		{name: "seconds", retryAfter: "30", says: "Retry-After 30s"},
+		// The HTTP-date form is deliberately not parsed. The ask is dropped
+		// - the adapter's own backoff still applies - but it is said out
+		// loud rather than silently read as "no wait asked for".
+		{name: "an http date", retryAfter: "Wed, 21 Oct 2026 07:28:00 GMT", says: "unreadable Retry-After"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", tt.retryAfter)
+				w.WriteHeader(http.StatusTooManyRequests)
+			})
+			_, err := client.Get(t.Context(), "reports_transaction.html", nil)
+			if !errors.Is(err, networks.ErrNetworkRateLimited) {
+				t.Fatalf("err = %v, want ErrNetworkRateLimited", err)
+			}
+			if !strings.Contains(err.Error(), tt.says) {
+				t.Errorf("the error does not say what the network asked for: %v", err)
+			}
+		})
+	}
+}
+
+// TestARefusalWithNoBodyStillNamesTheStatus. A refusal that could not be
+// explained is still a refusal.
+func TestARefusalWithNoBodyStillNamesTheStatus(t *testing.T) {
+	t.Parallel()
+
+	client := serving(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	})
+	_, err := client.Get(t.Context(), "reports_transaction.html", nil)
+	if !errors.Is(err, networks.ErrNetworkRefused) {
+		t.Fatalf("err = %v, want ErrNetworkRefused", err)
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Errorf("the error does not name the status: %v", err)
+	}
+}
+
+// TestABurstMayBeAllowed. The default is one - a limit of twenty a minute is
+// not an invitation to spend twenty at once - and on this network the default
+// is more than usually right, because a request costs a second at minimum.
+func TestABurstMayBeAllowed(t *testing.T) {
+	t.Parallel()
+
+	client, err := linkwise.New(anAccount(t),
+		linkwise.WithCredential(theUsername, thePassword),
+		linkwise.WithBurst(3))
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	if got, want := client.RateLimit(), float64(linkwise.Limits().RequestsPerMinute)/60; got != want {
+		t.Errorf("RateLimit() = %v, want %v: a burst changes what may be taken at once, not the rate", got, want)
+	}
+}

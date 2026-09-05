@@ -367,3 +367,35 @@ func TestAProgrammeWithAnUnreadableCurrencyIsSkippedRatherThanFatal(t *testing.T
 		t.Errorf("the sale is in %q, want EUR", got[0].SaleAmount.Currency)
 	}
 }
+
+// TestTheProductionClockHonoursCancellation.
+//
+// The client's own clock is only reached when no clock was injected, so no
+// other test in this package exercises it - and the one thing it must get
+// right is the one thing a hand-rolled timer usually gets wrong. A Sleep that
+// ignored the context would hold a shutting-down poller open for the whole of
+// a rate-limit wait.
+func TestTheProductionClockHonoursCancellation(t *testing.T) {
+	t.Parallel()
+
+	client, err := linkwise.New(anAccount(t), linkwise.WithCredential(theUsername, thePassword))
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	clock := client.Clock()
+
+	// A non-positive wait returns without waiting at all.
+	if err := clock.Sleep(t.Context(), 0); err != nil {
+		t.Errorf("Sleep(0) = %v, want it to return immediately", err)
+	}
+	// A real wait ends on the context rather than on the timer.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := clock.Sleep(ctx, time.Hour); !errors.Is(err, context.Canceled) {
+		t.Errorf("Sleep on a cancelled context = %v, want context.Canceled", err)
+	}
+	// And a wait that finishes reports nothing.
+	if err := clock.Sleep(t.Context(), time.Millisecond); err != nil {
+		t.Errorf("Sleep(1ms) = %v, want nil", err)
+	}
+}
