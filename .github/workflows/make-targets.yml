@@ -29,7 +29,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Lint the suite
-        run: shellcheck -s sh scripts/make_targets_test.sh
+      - name: Lint the suite and the script a target runs
+        # cashback_demo.sh is what `make cashback-demo` invokes, so it belongs
+        # to the same contract this job checks. It is also the one script here
+        # that nothing else exercises: it needs a Postgres, a built api and a
+        # web app, so no job can run it, and a syntax error in it would be
+        # found by the person trying to see the product for the first time.
+        run: shellcheck -s sh scripts/make_targets_test.sh scripts/cashback_demo.sh
       - name: Prove the cashback targets guard rather than merely fail
         run: sh scripts/make_targets_test.sh

@@ -17,7 +17,7 @@ DATABASE_URL_TEST ?= postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
 # `make test RACE=` and let CI cover the race detection.
 RACE ?= -race
 
-.PHONY: setup db-up db-down test test-unit cover arch-test vet lint openapi-lint sqlc ts-types web-install web-dev web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status cashback-up cashback-seed cashback-scenario cashback-verify-ledger cashback-brand-check migration-lint migration-numbering-lint ref-lint
+.PHONY: setup db-up db-down test test-unit cover arch-test vet lint openapi-lint sqlc ts-types web-install web-dev web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status cashback-up cashback-demo cashback-seed cashback-scenario cashback-verify-ledger cashback-brand-check migration-lint migration-numbering-lint ref-lint
 
 # ---------------------------------------------------------------------------
 # `missing` — how a cashback target behaves before its dependency has landed.
@@ -222,6 +222,20 @@ cashback-up:
 	@grep -q '^  blnk:' docker-compose.yml || \
 		$(call missing,a blnk service in docker-compose.yml,task T002 (issue #149) - blnk and redis in the local compose stack,run the api with LEDGER_DRIVER=memory NETWORKS=fixture and skip the ledger entirely)
 	$(COMPOSE) up -d --wait postgres redis blnk
+
+## cashback-demo: run the whole product locally - api, ledger, auth and web
+# The one command that answers "can I see it". It migrates, seeds a fixture
+# catalogue, stands in for the auth provider, starts the api, walks the member
+# surfaces with a real token against the real database, and starts the web app
+# beside them.
+#
+# Needs a Postgres and nothing else: no Docker, no Blnk, no Redis, no
+# credentials. Ctrl-C stops everything it started.
+#
+# Not a test. internal/cashback/scenarios/ is what proves the money loop; this
+# is what shows the product, which is a different job.
+cashback-demo:
+	sh scripts/cashback_demo.sh
 
 ## cashback-seed: seed the fixture network, its catalogue and three rate bands
 # Pass ACCOUNT=<supabase-auth-user-id> to opt an account in as well. The
