@@ -76,21 +76,39 @@ const home = frontPagePath(lang, ['munich', 'greece']);
       <p class="intro">{t.intro}</p>
     </header>
 
-    <LegalPane lang={lang} brand={brand} source={source} pane="imprint" />
-    <LegalPane lang={lang} brand={brand} source={source} pane="privacy" />
-    <LegalPane lang={lang} brand={brand} source={source} pane="contact" />
+    <div class="split">
+      <LegalPane lang={lang} brand={brand} source={source} pane="imprint" />
+      <LegalPane lang={lang} brand={brand} source={source} pane="privacy" />
+      <LegalPane lang={lang} brand={brand} source={source} pane="contact" />
+    </div>
   </main>
 </ReaderLayout>
 
 <style>
-  /* The same inline inset the masthead uses, so the page's text starts on
-     the masthead's left edge rather than on the frame's 2px rule. */
+  /* The header keeps the masthead's inline inset; the split below runs to
+     the frame's rules, because each pane carries that inset itself. */
   .page {
-    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-8);
+    padding-bottom: var(--space-8);
   }
 
   .head {
-    margin-bottom: var(--space-8);
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1));
+    border-bottom: 2px solid var(--color-text);
+  }
+
+  /* The board's own layout: three equal columns across the full width,
+     which is what the desktop board draws and what a page of three short
+     notices is for. Stacked below 900px, where three columns would be
+     three ribbons. */
+  .split {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  @media (max-width: 900px) {
+    .split {
+      grid-template-columns: 1fr;
+    }
   }
 
   .head h1 {
