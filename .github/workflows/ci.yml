@@ -264,6 +264,14 @@ jobs:
           go-version-file: go.mod
       - name: Vet
         run: go vet ./...
+      - name: Vet the demo helper, which ./... cannot see
+        # scripts/demo/auth.go carries //go:build ignore so that it stays out
+        # of every build, every test binary and the coverage profile - it
+        # signs tokens for any subject asked of it and has no business in an
+        # image. The cost of that tag is that ./... does not reach it, so a
+        # compile error in it would first be met by whoever ran the demo.
+        # Named outright here for the same reason `go run` names it.
+        run: go vet scripts/demo/auth.go
       - name: Build
         run: go build ./...
       - name: Test (invariant tests run against the service Postgres)
