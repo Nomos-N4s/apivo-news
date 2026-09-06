@@ -461,12 +461,20 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// a job registered above cannot be forgotten here.
 		//
 		// Two connections per job plus two reserved is the locker's
-		// arithmetic. The zero-sum check alone needs 4; the settlement
-		// sweep takes that to 6, the earnings lifecycle to 8, the two
-		// network sweeps to 12, and the catalogue import to 14. pgx
-		// defaults MaxConns to max(4, NumCPU), which is why a deployment
-		// with cashback on may have to raise pool_max_conns in
+		// arithmetic. Three of the jobs are global - the zero-sum check,
+		// the settlement sweep, the earnings lifecycle - and THREE MORE
+		// ARRIVE WITH EVERY CONFIGURED NETWORK: its forward sweep, its
+		// trailing sweep and its catalogue import. So the floor is 14 for
+		// one network, 20 for two and 26 for three, and a deployment that
+		// adds a network without raising its pool discovers it at the next
+		// restart rather than at the next poll.
+		//
+		// pgx defaults MaxConns to max(4, NumCPU), which is why a
+		// deployment with cashback on may have to raise pool_max_conns in
 		// DATABASE_URL - the error below says so with the numbers in it.
+		// The count passed here is the one actually registered above, not
+		// a figure repeated from this comment, so a job added later is
+		// counted whether or not anybody updates these numbers.
 		if err := locker.CheckCapacity(registered); err != nil {
 			return err
 		}
