@@ -5,9 +5,22 @@ import { frontPagePath } from '../lib/reader/axes';
 import { cataloguePath, walletPath } from '../lib/cashback/paths';
 import { cashbackStrings } from '../i18n/cashback';
 
-// The cashback top bar — mockups 4a/4b: the wordmark, a vertical rule, the
+// The member top bar — mockups 4a/4b: the wordmark, a vertical rule, the
 // section links with the current one underlined in accent, and a muted line
 // on the right (who is signed in, or how many partners the catalogue has).
+//
+// It carries every member-facing section, news included, which is why it is
+// no longer called the cashback bar. It was: the reader's front page drew a
+// plain masthead with no section links at all, so a member could reach the
+// news from the catalogue but never the catalogue from the news. One bar,
+// used by both, is the only version of this that cannot drift apart.
+//
+// This is the WEB's answer to a job the design canvas gives to the evreos
+// shell — "the shell owns movement between modules", and the module draws no
+// launcher of its own. That shell does not exist, and the pilot runs on these
+// pages, so the bar stands in for it here and is expected to give the job
+// back when the shell ships. Recorded so it is not mistaken for the module
+// growing its own launcher.
 //
 // The wordmark comes from Masthead, which is where the product name already
 // lives and is budgeted by the brand-literal lint; this component adds no
@@ -16,29 +29,34 @@ import { cashbackStrings } from '../i18n/cashback';
 interface Props {
   lang: ReadingLanguage;
   slugs: readonly string[];
-  current: 'catalogue' | 'wallet' | 'merchant';
+  current: 'news' | 'catalogue' | 'wallet' | 'merchant';
   /** The muted line at the right edge. */
   aside?: string | undefined;
+  /** The masthead's dateline, on the surfaces that carry one. */
+  dateText?: string | undefined;
 }
 
-const { lang, slugs, current, aside } = Astro.props;
+const { lang, slugs, current, aside, dateText } = Astro.props;
 const t = cashbackStrings(lang);
 const homeHref = frontPagePath(lang, slugs);
 const links = [
-  { key: 'news', href: homeHref, label: t.news, on: false },
+  { key: 'news', href: homeHref, label: t.news, on: current === 'news' },
   { key: 'catalogue', href: cataloguePath(lang, slugs), label: t.cashback, on: current === 'catalogue' || current === 'merchant' },
   { key: 'wallet', href: walletPath(lang, slugs), label: t.wallet, on: current === 'wallet' },
 ] as const;
 ---
 
-<Masthead homeHref={homeHref}>
+<Masthead homeHref={homeHref} dateText={dateText}>
   <span class="rule" aria-hidden="true"></span>
-  <nav class="links section-links" aria-label={t.cashback}>
+  <nav class="links section-links" aria-label={t.sections}>
     {links.map((link) => (
       <a href={link.href} class:list={['link', { on: link.on }]} aria-current={link.on ? 'page' : undefined}>{link.label}</a>
     ))}
   </nav>
   {aside !== undefined && aside !== '' && <span class="aside">{aside}</span>}
+  {/* Trailing actions belong to the page, not the bar: the front page's
+      sign-in control is the reader's, and it is still disabled. */}
+  <slot />
 </Masthead>
 
 <style>

@@ -1,6 +1,6 @@
 ---
 import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
-import CashbackBar from '../../../../components/CashbackBar.astro';
+import MemberBar from '../../../../components/MemberBar.astro';
 import FixtureNotice from '../../../../components/FixtureNotice.astro';
 import RateBadge from '../../../../components/RateBadge.astro';
 import ReaderLayout from '../../../../layouts/ReaderLayout.astro';
@@ -92,7 +92,7 @@ function shelfLine(item: CatalogueItem): string {
 
 <ReaderLayout lang={lang} title={t.catalogue} description={t.cashback} homeHref={homeHref}>
   <div class="bar">
-    <CashbackBar lang={lang} slugs={slugs} current="catalogue" aside={aside} />
+    <MemberBar lang={lang} slugs={slugs} current="catalogue" aside={aside} />
   </div>
 
   <main class="catalogue">
