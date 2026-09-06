@@ -562,19 +562,48 @@ defaults are recorded; the plan must not silently resolve them.
 - **Q3 — Clawback posture** when a transaction reverses after payout: absorb
   as a business loss, or carry a negative member balance against future
   earnings? *Default*: absorb, record the loss, never chase the member.
-- **Q4 — Revenue share and rounding**: what percentage of commission goes to
-  the member, and does rounding favour the member or the house? *Default*:
-  configuration with no value committed; rounding to the member's favour at
-  the minor unit, remainder to a house account.
-- **Q5 — Payout rails and threshold**: SEPA credit transfer, PayPal payouts,
-  vouchers? Minimum threshold? *Default*: manual/offline rail plus a stub,
-  threshold as configuration.
-- **Q6 — KYC and sanctions posture** for payouts. *Default*: verified
-  destination ownership only; no identity verification in the alpha, which
-  constrains payout size and rail choice.
-- **Q7 — Tax treatment and member reporting** in Germany and Greece
-  (cashback as a purchase rebate versus taxable income). *Default*: rebate
-  framing in all copy; no tax statements issued.
+- ~~**Q4 — Revenue share and rounding**~~
+  **DECIDED 2026-09-06**: **60% of the commission to the member**
+  (`member_share_bps` = 6000), **rounding in the member's favour** at the
+  minor unit, the remainder to `HOUSE_ACCOUNT_ROUNDING`. Founder: *"agree
+  with you."* The share is a property of each offer and is snapshotted at
+  click (FR-013), so a later change never reaches back; 6000 is the value
+  every rate band is published with until a founder decision varies it per
+  merchant. The rounding half was the recorded default and is what
+  `internal/cashback/earnings/share.go` implements. **Not yet in place**: a
+  way to publish a rate band for a real network. Only `seed cashback` writes
+  `cashback.offer` today, and it writes the fixture's. That is a task before
+  the first live offer, not a decision.
+- ~~**Q5 — Payout rails and threshold**~~
+  **DECIDED 2026-09-06**: **SEPA credit transfer on the manual rail, a €20
+  threshold, paid in a monthly batch.** Founder: *"Agree with you."* The
+  threshold is `PAYOUT_THRESHOLD_MINOR=2000` with `PAYOUT_THRESHOLD_CURRENCY=EUR`,
+  which is what `deploy/hetzner/compose/docker-compose.cashback.yml` already
+  carries. The manual rail (FR-052) is the rail, not a stand-in for one: a
+  named operator makes the transfer and records the bank's own reference,
+  and C-4 and C-5 hold there exactly as they would on an API. Revisited when
+  doing it by hand hurts, which at alpha volume it will not.
+- ~~**Q6 — KYC and sanctions posture** for payouts~~
+  **DECIDED 2026-09-06, for the alpha only**: name and IBAN collected at
+  payout and nothing more; every payout screened against the EU
+  consolidated sanctions list before it is approved; a second look by a
+  named person for any single payout above €200 or any member above €1,000
+  lifetime; no identity documents. Founder: *"I'm with you on this one, just
+  for alpha."* Two things follow. The screening step and the review
+  thresholds are **unbuilt** — nothing in the repository names a sanctions
+  list today — and are tasks that gate the first payout. And this posture is
+  to be put to a Greek solicitor before public launch, in the same
+  conversation as Q7; anything beyond the alpha is a new decision taken with
+  that advice, not an extension of this one.
+- ~~**Q7 — Tax treatment and member reporting**~~
+  **DECIDED 2026-09-06**: cashback on a member's own purchase is a
+  **rebate** — a partial refund of their own spending — and not income;
+  rebate framing in all copy, and no member tax statements. Goodwill and
+  referral payments are not rebates, and stay in a separate, separately
+  labelled bucket — which C-10's goodwill house account already enforces, so
+  "cashback passed on" and "money given away" are never the same row.
+  Founder: *"Your recommendation is spot on."* To be confirmed by the same
+  solicitor as Q6, in the same conversation.
 - **Q8 — Click-log retention.** Ties directly to the still-deferred news
   retention question. *Default*: no automated deletion, consistent with the
   2026-08-14 decision.
