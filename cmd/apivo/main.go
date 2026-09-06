@@ -246,7 +246,22 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// failure than editorial endpoints answering 404. ERROR level and a
 		// named consequence make the cause obvious in the first log line
 		// rather than something to deduce from a 404 later.
-		log.ErrorContext(ctx, "JWKS_URL is not set: every /api/v1/editorial/ and /api/v1/account/ route is UNMOUNTED and will answer 404; reader endpoints are unaffected. Set JWKS_URL to the auth provider JWKS endpoint to enable them")
+		//
+		// The surfaces are listed rather than summarised, and cashback is in
+		// the list only when it is switched on. That half matters: cashback
+		// has no anonymous surface (FR-023), so EVERY cashback route is
+		// behind this gate too - the member wallet and the operator queues
+		// alike - and a deployment with CASHBACK_ENABLED set, a ledger, a
+		// polling network and no JWKS is one where every cashback route
+		// answers 404 while nothing in the log mentions cashback at all. A
+		// line that named editorial and account only sent a reader looking
+		// at the cashback configuration, which was correct, for as long as
+		// it took to find this gate instead.
+		surfaces := "every /api/v1/editorial/ and /api/v1/account/ route"
+		if cfg.Cashback.Enabled {
+			surfaces = "every /api/v1/editorial/, /api/v1/account/ and /api/v1/cashback/ route - the member wallet, the merchant catalogue, click-outs, participation and the operator queues among them -"
+		}
+		log.ErrorContext(ctx, "JWKS_URL is not set: "+surfaces+" is UNMOUNTED and will answer 404; reader endpoints are unaffected. Set JWKS_URL to the auth provider JWKS endpoint to enable them")
 	} else {
 		authenticated, built, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, log, pool, adapter)
 		if err != nil {
@@ -587,8 +602,22 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		// configured network that cannot poll - was already reported by
 		// reportNetworkConfiguration, in more detail than this line could
 		// carry, and repeating it would read as two separate problems.
+		//
+		// Every cashback route, not the operator prefix alone. The return
+		// below hands back the routes built above it, which are editorial
+		// and account; the member surfaces are built after it and so are
+		// dropped by the same decision. Naming only the queues understated
+		// the consequence by the whole product.
+		//
+		// The subtrees are listed from the constants that mount them, and
+		// the base path is written out rather than made a constant of its
+		// own: there is deliberately no cashbackPrefix, because a route
+		// mounted on the bare path would be a catch-all swallowing every
+		// other module's 404s (see opsPrefix). A sentence is not a mount.
 		if !cfg.Cashback.Enabled {
-			log.InfoContext(ctx, "CASHBACK_ENABLED is off: every "+opsPrefix+" route is UNMOUNTED and will answer 404")
+			log.InfoContext(ctx, "CASHBACK_ENABLED is off: every /api/v1/cashback/ route is UNMOUNTED and will answer 404 - "+
+				walletPrefix+", "+participationPrefix+", "+merchantPrefix+" and "+clickoutPrefix+
+				" as much as the operator queues under "+opsPrefix)
 		}
 		// No sweep either: with no payouts there is nothing in flight to
 		// ask a rail about, and a job that woke every five minutes to read
