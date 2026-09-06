@@ -1,6 +1,10 @@
 # Go
 /bin/
 *.exe
+# `go build ./cmd/apivo` from the repository root drops the binary HERE, not in
+# /bin/, and a 24MB ELF file is the one piece of untracked noise somebody might
+# actually `git add -A` by accident.
+/apivo
 
 # Release stamping: written by the release workflow (and by local release
 # rehearsals) for the Docker build to read; never a committed fact.
