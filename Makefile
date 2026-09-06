@@ -17,7 +17,7 @@ DATABASE_URL_TEST ?= postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable
 # `make test RACE=` and let CI cover the race detection.
 RACE ?= -race
 
-.PHONY: setup db-up db-down test test-unit cover arch-test vet lint openapi-lint sqlc ts-types web-install web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status cashback-up cashback-seed cashback-scenario cashback-verify-ledger cashback-brand-check migration-lint migration-numbering-lint ref-lint
+.PHONY: setup db-up db-down test test-unit cover arch-test vet lint openapi-lint sqlc ts-types web-install web-dev web-check web-build worker-test worker-validate hetzner-test hetzner-validate env-status cashback-up cashback-seed cashback-scenario cashback-verify-ledger cashback-brand-check migration-lint migration-numbering-lint ref-lint
 
 # ---------------------------------------------------------------------------
 # `missing` — how a cashback target behaves before its dependency has landed.
@@ -123,6 +123,25 @@ ts-types: db-up
 ## web-install: install frontend dependencies exactly as locked
 web-install:
 	cd web && npm ci
+
+## web-dev: run the frontend on http://localhost:4321 to look at it
+# No database, no Go binary, no Docker. With API_BASE_URL unset the frontend
+# answers from its built-in fixtures and every page says so in a band at the
+# top, which is the state to review the screens in: the layout, the copy in
+# both languages and every state a surface has, without standing anything up.
+# Set API_BASE_URL to point the same pages at a running api instead.
+web-dev: web-install
+	@printf '\n  Cashback screens, once the server is up:\n\n'
+	@printf '    http://localhost:4321/el/munich/cashback           catalogue\n'
+	@printf '    http://localhost:4321/el/munich/cashback/agora     one merchant\n'
+	@printf '    http://localhost:4321/el/munich/cashback/wallet    wallet and entries\n'
+	@printf '    http://localhost:4321/el/munich/cashback/withdraw  withdrawal\n'
+	@printf '    http://localhost:4321/ops/unattributed             operator queues\n'
+	@printf '    http://localhost:4321/ops/held\n'
+	@printf '    http://localhost:4321/ops/withdrawals\n'
+	@printf '    http://localhost:4321/ops/reconciliation\n\n'
+	@printf '  Swap /el/ for /de/ on any member page; add ?lang=de to any operator page.\n\n'
+	cd web && npm run dev
 
 ## web-check: typecheck the frontend
 web-check:

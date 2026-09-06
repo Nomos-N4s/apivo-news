@@ -98,6 +98,27 @@ DATABASE_URL="postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable" \
 cd web && npm ci && npm run check && npm run build
 ```
 
+### Looking at the screens
+
+To review the frontend — layout, copy in both languages, every state a
+surface has — nothing needs to be standing up:
+
+```sh
+make web-dev            # http://localhost:4321, no database, no Go binary, no Docker
+```
+
+With `API_BASE_URL` unset the pages answer from their built-in fixtures and
+every one of them says so in a band at the top. That band is not decoration:
+a fixture wallet states a balance nobody is owed, so a page in that state
+must never be mistakable for the record. The target prints the cashback URLs
+when it starts.
+
+Member surfaces sit under `/{lang}/{place}/cashback/…` — swap `/el/` for
+`/de/` on any of them. Operator queues sit under `/ops/…` and take `?lang=de`.
+
+Point the same pages at a running api by setting `API_BASE_URL`; in
+`APP_ENV=prod` an unset one is refused rather than falling back to fixtures.
+
 `make setup db-up test cover lint openapi-lint sqlc web-check` wraps the same steps (see
 the [Makefile](Makefile)). On Windows, `-race` needs a C toolchain; run
 `make test RACE=` or plain `go test` locally and let CI run the race
