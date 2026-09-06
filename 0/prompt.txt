@@ -68,3 +68,15 @@ gosh I thought #493 was ready to be merged?
 ---
 
 So, I just merged 493, what's next?
+
+---
+
+so, 518 an 520 were merged, 526 seems to be opened, what about it? what about the ops entrance? have you changed and/or created the new screens based on the mockups we've created?
+
+---
+
+graft ask "how does auth work"
+
+---
+
+so, 518 an 520 were merged, 526 seems to be opened, what about it? what about the ops entrance? have you changed and/or created the new screens based on the mockups we've created?
