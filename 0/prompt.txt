@@ -48,3 +48,7 @@ it's working but I see some of the margins to close or narrow to the left side o
 ---
 
 ok, the margin thing is fixed, however the content it's too "vertical" and it is not using the whole x-axis (horizontal), meaning there's a lot of real estate just wasted as a white or black screen, you know what I mean?
+
+---
+
+correction, small one... The lines (seprators) in the contact page are misaligned.
