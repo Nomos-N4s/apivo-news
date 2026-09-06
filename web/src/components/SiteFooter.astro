@@ -73,8 +73,13 @@ const version = trimmedVersion === undefined || trimmedVersion === '' ? undefine
 
 <style>
   .editorial {
+    font-size: var(--footer-label);
     color: var(--color-text);
     opacity: 0.7;
+    /* 24px touch-target floor, same treatment as the brand (SC 2.5.8). */
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
   }
   .editorial:hover,
   .editorial:focus-visible {
@@ -83,12 +88,20 @@ const version = trimmedVersion === undefined || trimmedVersion === '' ? undefine
 
   .site-footer {
     border-top: 2px solid var(--color-divider);
+    /* Three roles, three sizes, declared once. The row had five: the
+       wordmark at 15px, labels at 11.5px, the version at 10.5px, the alpha
+       tag at 10px — and `.editorial`, which never set a size at all and so
+       inherited the body's 15px, rendering as large as the wordmark beside
+       its 11.5px siblings. A local token means the next item added to this
+       row cannot quietly introduce a sixth. */
+    --footer-label: 11.5px;
+    --footer-fine: 10px;
   }
   .note {
     margin: 0;
     padding: var(--space-4) calc(var(--space-6) + var(--space-1));
     border-bottom: 1px solid var(--color-divider);
-    font-size: 11.5px;
+    font-size: var(--footer-label);
     color: var(--ink-soft);
     text-wrap: pretty;
   }
@@ -116,10 +129,10 @@ const version = trimmedVersion === undefined || trimmedVersion === '' ? undefine
     color: var(--color-accent);
   }
   .alpha {
-    font-size: 10px;
+    font-size: var(--footer-fine);
   }
   .about {
-    font-size: 11.5px;
+    font-size: var(--footer-label);
     /* 24px touch-target floor, same treatment as the brand (SC 2.5.8). */
     display: inline-flex;
     align-items: center;
@@ -131,20 +144,16 @@ const version = trimmedVersion === undefined || trimmedVersion === '' ? undefine
     align-items: baseline;
     gap: var(--space-2);
     flex-wrap: wrap;
-    font-size: 11.5px;
-    color: var(--ink-soft);
-  }
-  .legal em {
-    font-style: normal;
+    font-size: var(--footer-label);
     color: var(--ink-soft);
   }
   .copy {
     margin-left: auto;
-    font-size: 11.5px;
+    font-size: var(--footer-label);
     color: var(--ink-soft);
   }
   .version {
     font-family: var(--font-mono, monospace);
-    font-size: 10.5px;
+    font-size: var(--footer-fine);
   }
 </style>
