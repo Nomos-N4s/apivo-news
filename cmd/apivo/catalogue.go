@@ -37,9 +37,22 @@ func newCatalogueImport(log *slog.Logger, cfg config.Config, adapter networks.Ne
 		return nil, nil, err
 	}
 
+	// The network the root wired, so the language reported missing is the
+	// one belonging to the network actually being imported - which is what
+	// makes NETWORK_<DRIVER>_SOURCE_LANGUAGE nameable rather than generic.
+	network, wired := theConfiguredNetwork(cfg.Cashback)
+
 	var missing []string
-	if cfg.Cashback.Network.SourceLanguage == "" {
-		missing = append(missing, "NETWORK_SOURCE_LANGUAGE")
+	switch {
+	case !wired:
+		// NETWORKS itself, because there is no driver to name a key after.
+		// Reported alongside BRAND_DIR rather than instead of it: a
+		// deployment that has neither should learn both in one line, not
+		// one per restart.
+		missing = append(missing, config.NetworksKey)
+	case network.SourceLanguage == "":
+		_, _, _, sourceLanguageKey := network.Keys()
+		missing = append(missing, sourceLanguageKey)
 	}
 	if publisher == "" {
 		missing = append(missing, "BRAND_DIR")
@@ -48,7 +61,7 @@ func newCatalogueImport(log *slog.Logger, cfg config.Config, adapter networks.Ne
 		return nil, missing, nil
 	}
 
-	importer, err := catalogue.NewImporter(publisher, cfg.Cashback.Network.SourceLanguage)
+	importer, err := catalogue.NewImporter(publisher, network.SourceLanguage)
 	if err != nil {
 		return nil, nil, err
 	}

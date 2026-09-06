@@ -398,10 +398,21 @@ func TestTwoRetailersWithOneNameStayTwoBusinesses(t *testing.T) {
 	}
 }
 
-// TestARetailerWithNoLatinNameStillGetsImported: refusing it would fail the
-// whole import, and an import that fails is one whose absent routes cannot be
-// reconciled - so one Greek retailer name would freeze the catalogue.
-func TestARetailerWithNoLatinNameStillGetsImported(t *testing.T) {
+// TestAGreekRetailerGetsATransliteratedSlugAndNotAFallback.
+//
+// It began as "still gets imported", against the bar that refusing it would
+// fail the whole import - one Greek retailer name freezing the catalogue.
+// That bar is still met and is no longer the interesting one. Since T259 the
+// name transliterates, so the assertion is the stronger one: the slug is
+// derived from the NAME, which means FallbackSlug did not fire.
+//
+// That distinction is the whole commercial point. A fallback slug embeds the
+// network's own id, and merchantForSlug unifies a retailer across networks by
+// slug equality alone - so a Greek retailer on a fallback slug could never be
+// recognised as the same shop when the second network reports it. Two
+// merchant rows, two catalogue entries, two rates, and nothing anywhere
+// saying they are one shop.
+func TestAGreekRetailerGetsATransliteratedSlugAndNotAFallback(t *testing.T) {
 	ctx, tx, net := importTestTx(t)
 	net.merchants = []networks.ReportedMerchant{
 		aReportedMerchant(t, "77", "Καταστήματα", "", networks.MerchantStatusActive),
@@ -426,8 +437,9 @@ func TestARetailerWithNoLatinNameStillGetsImported(t *testing.T) {
 		 where mn.network_id = $1`, net.id.String(), importTestLanguage).Scan(&slug, &country, &name); err != nil {
 		t.Fatalf("reading back the retailer: %v", err)
 	}
-	if slug == "" {
-		t.Fatal("the retailer got no slug")
+	if slug != "katastimata" {
+		t.Errorf("slug = %q, want the transliterated name; a slug carrying %q would be a fallback, which no second network could ever match",
+			slug, net.id.String())
 	}
 	// The name a member reads is untouched; only the URL is transliterated.
 	if name != "Καταστήματα" {

@@ -42,19 +42,36 @@ const slugMaxLength = 80
 // trimmed to [slugMaxLength] at a group boundary so a truncated slug never
 // ends in a hyphen.
 //
-// A script with no Latin form at all - Greek, Cyrillic, Han - folds to
-// nothing, which is not an error here: the caller falls back to
-// [FallbackSlug]. Refusing the retailer instead would fail the whole import,
-// and an import that fails is one whose absent routes cannot be reconciled.
+// Greek is TRANSLITERATED first, along with the Latin characters that have
+// no decomposition of their own - "Καταστήματα" becomes "katastimata" and
+// "Weißenhaus" becomes "weissenhaus" (T259). Before that it produced,
+// respectively, nothing at all and "wei-enhaus": every rune above
+// unicode.MaxASCII is a separator to the loop below, so a character with no
+// Latin form does not merely vanish, it breaks a word in half. See
+// transliterate.go for the table and for why it runs before the fold.
+//
+// A script this still has no table for - Cyrillic, Han - folds to nothing,
+// which is not an error here: the caller falls back to [FallbackSlug].
+// Refusing the retailer instead would fail the whole import, and an import
+// that fails is one whose absent routes cannot be reconciled.
 func Slug(name string) string {
+	// Composed first, so that the rune rules in transliterate see one rune
+	// per character. A name can arrive decomposed - a Greek letter followed
+	// by a separate combining tonos - and those rules read runes, including
+	// the rune after next.
+	composed, _, err := transform.String(norm.NFC, name)
+	if err != nil {
+		composed = name
+	}
+
 	folded, _, err := transform.String(
 		transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC),
-		name)
+		transliterate(composed))
 	if err != nil {
 		// Chain only fails on malformed input, which a Go string built from
-		// decoded JSON cannot be. Falling back to the unfolded name keeps
-		// the accented characters, which the loop below then drops - a worse
-		// slug, never a wrong one.
+		// decoded JSON cannot be. Falling back to the untransliterated name
+		// keeps the accented characters, which the loop below then drops - a
+		// worse slug, never a wrong one.
 		folded = name
 	}
 

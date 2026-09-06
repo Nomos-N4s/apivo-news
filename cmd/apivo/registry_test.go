@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -23,6 +26,25 @@ import (
 // This is the test that would have. It reaches both answers through the two
 // exported paths an operator actually takes, so a future second list is a
 // failure here rather than a deployment nobody can start.
+// aConfigurationFor is the environment block a driver would be given, with a
+// placeholder wherever it needs a credential.
+//
+// A driver that needs one is not a driver this test can skip: the point of
+// the suite is that every SHIPPED driver is both seedable and servable, and
+// one that cannot be built without a password is still servable - it just
+// needs the password its own MissingKeys already requires. The values are
+// obviously not real, and they never reach a network: nothing here polls.
+func aConfigurationFor(driver string) config.NetworkConfig {
+	cfg := config.NetworkConfig{Driver: driver, AccountID: "publisher-1"}
+	if cfg.NeedsCredentials() {
+		cfg.APIKey = config.NewSecret("not-a-real-username")
+	}
+	if cfg.NeedsCredentialPair() {
+		cfg.APISecret = config.NewSecret("not-a-real-password")
+	}
+	return cfg
+}
+
 func TestEveryShippedDriverIsBothServableAndSeedable(t *testing.T) {
 	t.Parallel()
 
@@ -50,7 +72,7 @@ func TestEveryShippedDriverIsBothServableAndSeedable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("building a publisher account for %q: %v", driver, err)
 			}
-			adapter, err := networkAdapter(driver, account)
+			adapter, err := networkAdapter(aConfigurationFor(driver), account)
 			if err != nil {
 				t.Fatalf("networkAdapter(%q): a driver connect-network can seed must also be one the server can build: %v", driver, err)
 			}
@@ -97,7 +119,7 @@ func TestADriverTheBinaryDoesNotShipIsRefusedByBothPaths(t *testing.T) {
 			if err != nil {
 				t.Fatalf("building a publisher account for %q: %v", driver, err)
 			}
-			if _, err := networkAdapter(driver, account); err == nil {
+			if _, err := networkAdapter(aConfigurationFor(driver), account); err == nil {
 				t.Errorf("networkAdapter(%q) succeeded for a driver this binary does not ship", driver)
 			}
 		})
@@ -144,5 +166,159 @@ func TestShippedDriversReadsTheSameEveryTime(t *testing.T) {
 	}
 	if first == "" {
 		t.Error("shippedDrivers named nothing at all")
+	}
+}
+
+// TestTheConfiguredNetworkTakesTheFirstEntry. It used to scan for the first
+// USABLE one, so that a deployment whose leading network lacked a credential
+// polled the one behind it. CashbackConfig.Mountable makes that unreachable
+// - cashback is not built at all while any configured network is unusable -
+// and scanning would now only hide the day the two stopped agreeing.
+func TestTheConfiguredNetworkTakesTheFirstEntry(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		cfg   config.CashbackConfig
+		want  string
+		wired bool
+	}{
+		"nothing configured": {
+			cfg: config.CashbackConfig{Enabled: true},
+		},
+		"one network": {
+			cfg: config.CashbackConfig{Enabled: true, Networks: []config.NetworkConfig{
+				{Driver: config.NetworkDriverFixture, AccountID: "publisher-1"},
+			}},
+			want: config.NetworkDriverFixture, wired: true,
+		},
+		"two networks: the first, in the order NETWORKS named them": {
+			cfg: config.CashbackConfig{Enabled: true, Networks: []config.NetworkConfig{
+				{Driver: "linkwise", AccountID: "publisher-42",
+					APIKey: config.NewSecret("k"), APISecret: config.NewSecret("s")},
+				{Driver: config.NetworkDriverFixture, AccountID: "publisher-1"},
+			}},
+			want: "linkwise", wired: true,
+		},
+		// The one that changed. This configuration never reaches serve -
+		// Mountable is false over it - but connect-network is not behind
+		// that gate and must be handed the network the operator NAMED, so
+		// it can report every key that network is missing.
+		"an unusable first network is still the first network": {
+			cfg: config.CashbackConfig{Enabled: true, Networks: []config.NetworkConfig{
+				{Driver: "linkwise"},
+				{Driver: config.NetworkDriverFixture, AccountID: "publisher-1"},
+			}},
+			want: "linkwise", wired: true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, wired := theConfiguredNetwork(tt.cfg)
+			if wired != tt.wired {
+				t.Fatalf("theConfiguredNetwork() wired = %v, want %v", wired, tt.wired)
+			}
+			if got.Driver != tt.want {
+				t.Fatalf("theConfiguredNetwork() = %q, want %q", got.Driver, tt.want)
+			}
+		})
+	}
+}
+
+// TestReportNetworkConfiguration holds the startup report to what FR-091 and
+// the founder's decision of 2026-09-04 each require of it: the cause named
+// per network, and the consequence said once, separately.
+func TestReportNetworkConfiguration(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		cfg  config.CashbackConfig
+		says []string
+		mute []string
+	}{
+		"complete": {
+			cfg: config.CashbackConfig{Enabled: true, Networks: []config.NetworkConfig{
+				{Driver: config.NetworkDriverFixture, AccountID: "publisher-1"},
+			}},
+			mute: []string{"cannot poll", "CASHBACK IS NOT MOUNTED", "only the first"},
+		},
+		"one unusable network": {
+			cfg: config.CashbackConfig{Enabled: true, Networks: []config.NetworkConfig{
+				{Driver: "linkwise"},
+			}},
+			// Without the quotes the renderer puts around the driver: the
+			// text handler escapes them, and asserting on the escaping
+			// would pin the handler rather than the message.
+			says: []string{
+				// The SECRET is named too: Linkwise authenticates with HTTP
+				// Basic, so its credential is two values and both are keys
+				// an operator has to set.
+				"cannot poll: NETWORK_LINKWISE_ACCOUNT_ID, NETWORK_LINKWISE_API_KEY, NETWORK_LINKWISE_API_SECRET are unset",
+				"CASHBACK IS NOT MOUNTED",
+			},
+		},
+		// The consequence is said ONCE however many networks caused it: an
+		// operator reading two "cashback is off" lines would look for two
+		// problems.
+		"two unusable networks name both and stop once": {
+			cfg: config.CashbackConfig{Enabled: true, Networks: []config.NetworkConfig{
+				{Driver: "linkwise"},
+				{Driver: "tradetracker"},
+			}},
+			says: []string{
+				"cannot poll: NETWORK_LINKWISE_ACCOUNT_ID",
+				"cannot poll: NETWORK_TRADETRACKER_ACCOUNT_ID",
+				"drivers=\"linkwise, tradetracker\"",
+			},
+		},
+		// Usable and not wired is a different report and must not be
+		// confused with the one above: nothing is broken, this build simply
+		// polls one network.
+		"a second usable network is reported as not wired": {
+			cfg: config.CashbackConfig{Enabled: true, Networks: []config.NetworkConfig{
+				{Driver: config.NetworkDriverFixture, AccountID: "publisher-1"},
+				{Driver: "linkwise", AccountID: "publisher-42",
+					APIKey: config.NewSecret("k"), APISecret: config.NewSecret("s")},
+			}},
+			says: []string{"wires only the first", "not_wired=1", "wired=" + config.NetworkDriverFixture},
+			mute: []string{"CASHBACK IS NOT MOUNTED"},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			reportNetworkConfiguration(context.Background(),
+				slog.New(slog.NewTextHandler(&buf, nil)), tt.cfg)
+			logged := buf.String()
+			for _, want := range tt.says {
+				if !strings.Contains(logged, want) {
+					t.Errorf("the report does not carry %q; output: %q", want, logged)
+				}
+			}
+			for _, unwanted := range tt.mute {
+				if strings.Contains(logged, unwanted) {
+					t.Errorf("the report carries %q and should not; output: %q", unwanted, logged)
+				}
+			}
+			if got := strings.Count(logged, "CASHBACK IS NOT MOUNTED"); got > 1 {
+				t.Errorf("the consequence is reported %d times, want at most once; output: %q", got, logged)
+			}
+		})
+	}
+}
+
+// TestCredentialRefNamesThisNetworksKey. The row records a KEY INTO
+// CONFIGURATION and never a credential (ADR-0003). It was the literal
+// "NETWORK_API_KEY", which was true while one network existed and became a
+// lie the moment the keys grew a driver in them: every account row would
+// have named one key and at most one of them could have been right.
+func TestCredentialRefNamesThisNetworksKey(t *testing.T) {
+	t.Parallel()
+
+	if got := credentialRef(config.NetworkConfig{Driver: "linkwise"}); got != "NETWORK_LINKWISE_API_KEY" {
+		t.Fatalf("credentialRef() = %q, want the network's own key", got)
 	}
 }

@@ -75,7 +75,7 @@ func aConnectRequest(t *testing.T) networks.ConnectRequest {
 	return networks.ConnectRequest{
 		Network:             aNetworkDeclaration(t),
 		ExternalPublisherID: "123456",
-		CredentialRef:       "NETWORK_API_KEY",
+		CredentialRef:       "NETWORK_FIXTURE_API_KEY",
 		BackfillFrom:        time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC),
 		Active:              true,
 	}
@@ -303,7 +303,7 @@ func TestARerunCanMoveTheCredentialKey(t *testing.T) {
 	}
 
 	moved := req
-	moved.CredentialRef = "NETWORK_API_KEY_SECONDARY"
+	moved.CredentialRef = "NETWORK_FIXTURE_API_KEY_SECONDARY"
 	if _, err := networks.ConnectPublisherAccount(ctx, tx, moved); err != nil {
 		t.Fatalf("the re-run failed: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestARequestThatCouldNotProduceAWorkingAccountIsRefused(t *testing.T) {
 					MaxQueryWindowDays: 31, RateLimitPerMinute: 20,
 				},
 				ExternalPublisherID: "123456",
-				CredentialRef:       "NETWORK_API_KEY",
+				CredentialRef:       "NETWORK_FIXTURE_API_KEY",
 				BackfillFrom:        time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC),
 				Active:              true,
 			}

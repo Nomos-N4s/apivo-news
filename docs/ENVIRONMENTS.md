@@ -208,32 +208,42 @@ to `/etc/apivo/<env>/`, and editing the template on a host edits nothing.
 |---|---|---|---|
 | `CASHBACK_ENABLED` | `false` — flip it to try cashback | `deploy/hetzner/compose/docker-compose.cashback.yml` | `deploy/k8s/cashback/cashback-configmap.yaml` |
 | `LEDGER_DRIVER` | `memory` | the same overlay — `blnk`, because it brings one | `deploy/k8s/cashback/cashback-configmap.yaml` — `blnk` |
-| `NETWORK_DRIVER` | `fixture` | **`/etc/apivo/<env>/api.env`** on the host (template: `deploy/hetzner/env/api.env.example`) — an operator's choice, empty = `fixture` | `deploy/k8s/cashback/cashback-configmap.yaml`, empty |
+| `NETWORKS` | `fixture` | **`/etc/apivo/<env>/api.env`** on the host (template: `deploy/hetzner/env/api.env.example`) — an operator's choice; a comma-separated list, empty polls nothing | `deploy/k8s/cashback/cashback-configmap.yaml` — `fixture` |
 | `BLNK_URL` | `http://localhost:5001` | the same overlay, from the container name | the `blnk` Service — `deploy/k8s/cashback/blnk-service.yaml` |
 | `REDIS_URL` | `redis://localhost:6379` | the same overlay, from the container name | the `redis` Service — `deploy/k8s/cashback/redis-service.yaml` |
 | `HOUSE_ACCOUNT_ROUNDING`, `HOUSE_ACCOUNT_CLAWBACK`, `HOUSE_ACCOUNT_NETWORK_RECEIVABLE` | `rounding-remainder` / `clawback-loss` / `network-receivable` | the same overlay — the house account the sub-minor-unit rounding remainder accrues to (D6), the one an absorbed post-payout clawback is recorded against (Q3), and the one holding the commission an earning is paid out of, whose residue is Apivo's own cut (FR-040). Required once `CASHBACK_ENABLED=true` in production, which every deployed environment is (`APP_ENV=prod`); the api refuses to start anywhere if any two share a name, and renaming one later strands whatever balance had accrued under the old name | `deploy/k8s/cashback/cashback-configmap.yaml` |
-| `NETWORK_ACCOUNT_ID` | empty | **`/etc/apivo/<env>/api.env`** | `deploy/k8s/cashback/cashback-configmap.yaml` — not a credential, and logged in clear. **This is the key that turns ingestion on**, see below |
+| `NETWORK_<DRIVER>_ACCOUNT_ID` | `fixture-publisher` | **`/etc/apivo/<env>/api.env`** | `deploy/k8s/cashback/cashback-configmap.yaml` — not a credential, and logged in clear. One per entry in `NETWORKS`. **Required, or cashback does not mount at all**, see below |
 | `CLICK_CONTEXT_HEADER` | empty | empty unless the edge sets one | `deploy/k8s/cashback/cashback-configmap.yaml`, empty. The header this deployment's edge sets to carry the real client address. Empty — the default — means the click context is digested from the connection's own peer, which behind a proxy is the proxy: still a context, not one that tells devices apart, so the **per-device half of the click rule stays off** and the per-member half carries it alone. Name only a header the edge sets itself and strips any inbound copy of — a header a client can set is a context a client can choose, and a chosen context evades a per-device rule by changing on every request |
 | `HOLD_SHARED_CONTEXT_ACCOUNTS` · `HOLD_SHARED_CONTEXT_WINDOW` · `HOLD_NEW_ACCOUNT_AGE` · `HOLD_SALE_CAP_MINOR` · `HOLD_SALE_CAP_CURRENCY` · `HOLD_MEMBER_VELOCITY` · `HOLD_MEMBER_VELOCITY_WINDOW` | empty | set the rules the deployment wants | `deploy/k8s/cashback/cashback-configmap.yaml`, all empty. The hard rules that hold a suspicious credit for review instead of crediting it (US7). Every rule is **off** until its keys are set; a count and its window are one rule and are refused apart, and the sale cap is one value in two keys like `PAYOUT_THRESHOLD`. A held credit sits in the member's held stage, counts toward nothing they can see or withdraw, and names its rule in the review queue until an operator releases or rejects it with their name and a reason. The shared-context rule reads the click's device digest, so it only tells devices apart where `CLICK_CONTEXT_HEADER` is set. Windows are Go durations (`24h`, `720h`) |
-| `NETWORK_API_KEY`, `NETWORK_API_SECRET` | empty | **`/etc/apivo/<env>/api.env`** — real credentials | the `apivo-secrets` Secret — structure in `deploy/k8s/examples/secret.example.yaml` |
+| `NETWORK_<DRIVER>_API_KEY`, `NETWORK_<DRIVER>_API_SECRET` | empty | **`/etc/apivo/<env>/api.env`** — real credentials | the `apivo-secrets` Secret — structure in `deploy/k8s/examples/secret.example.yaml` |
 | `BLNK_SECRET_KEY` | empty (local ledger is unauthenticated) | **`/etc/apivo/<env>/api.env`** — **required**, see below | the `apivo-secrets` Secret |
 | `BLNK_SERVER_SECRET_KEY` | n/a | **`/etc/apivo/<env>/blnk.env`** — the value the ledger accepts | the `apivo-secrets` Secret |
 | `BLNK_SERVER_SECURE` | n/a (local ledger is unauthenticated) | the compose overlay — **`true`**, and without it the two keys above do nothing | `deploy/k8s/cashback/blnk-configmap.yaml` |
 | `BLNK_DATA_SOURCE_DNS` (**runtime**, `blnk_app`) | n/a — the memory driver has no database | **`/etc/apivo/<env>/blnk.env`**, 0600, read by the Docker daemon (template: `deploy/hetzner/env/blnk.env.example`) | Secret key `BLNK_DATA_SOURCE_DNS` |
 | `BLNK_DATA_SOURCE_DNS` (**migration**, the owner) | n/a | **`/etc/apivo/<env>/blnk-migrate.env`**, 0600 (template: `deploy/hetzner/env/blnk-migrate.env.example`) | Secret key `BLNK_MIGRATE_DSN` |
 
-The network keys are named for the role each value plays rather than for a
-particular network — the adapter selected by `NETWORK_DRIVER` reads them and
-decides what they mean. An earlier revision of this page invented
-`NETWORK_AWIN_PUBLISHER_ID` and `NETWORK_AWIN_API_TOKEN`, which nothing has
-ever read; a documented key that reaches no code is worse than a missing one,
-because it looks configured.
+`NETWORKS` is a comma-separated list, in the order the networks are wired,
+and each entry gets a block of settings named after it —
+`NETWORK_LINKWISE_ACCOUNT_ID`, `NETWORK_TRADETRACKER_API_KEY`. **The list
+decides**, not the presence of a block: a block whose driver is not named is
+read by nothing at all. That is deliberate. If presence implied intent, a
+typo in `NETWORK_LINKWISE_API_KEY` would make Linkwise vanish — no name to
+report, nothing to complain about, and a deployment quietly polling one
+network while its operator believes it polls two.
 
-`NETWORK_DRIVER` and the network credentials are the exception that proves
-the rule: they are genuinely an operator's decision, against a founder
-question that is still open (**Q1 — which affiliate networks to join**), so
-they sit in `/etc/apivo/<env>/api.env` and default to the fixture adapter.
-Everything else
+The flat `NETWORK_DRIVER`, `NETWORK_ACCOUNT_ID`, `NETWORK_API_KEY`,
+`NETWORK_API_SECRET` and `NETWORK_SOURCE_LANGUAGE` keys this replaces are
+**refused rather than aliased**: an environment still carrying them fails to
+start and names them. Aliasing would let a deployment that meant to run two
+networks run one with every diagnostic green. An earlier revision of this page
+also invented `NETWORK_AWIN_PUBLISHER_ID` and `NETWORK_AWIN_API_TOKEN` — the
+`NETWORK_<DRIVER>_*` shape is now real, but those two suffixes are not: they
+are `ACCOUNT_ID`, `API_KEY`, `API_SECRET` and `SOURCE_LANGUAGE`.
+
+`NETWORKS` and the network credentials are the exception that proves the
+rule: they are genuinely an operator's decision, against a founder question
+that is still open (**Q1 — which affiliate networks to join**), so they sit in
+`/etc/apivo/<env>/api.env` and default to the fixture adapter. Everything else
 follows mechanically from the overlay.
 
 **QA and Staging must never hold production's publisher credentials.** A poll
@@ -244,22 +254,45 @@ the same reason.
 
 ### Turning ingestion on
 
-`CASHBACK_ENABLED=true` mounts the product. It does **not** start polling. A
-deployment with cashback enabled and no network being polled serves normally
-and says so at ERROR on every start:
+`CASHBACK_ENABLED=true` is the intent. It does **not** on its own mount the
+product, and mounting does **not** start polling.
+
+**A network named in `NETWORKS` whose keys are unset turns cashback OFF.**
+Every cashback route answers 404, no member can click out, and the startup
+log names the network and the exact key:
 
 ```
-NO AFFILIATE NETWORK IS BEING POLLED: NETWORK_ACCOUNT_ID names no publisher
-account at "fixture". Cashback is enabled, so nothing will ingest what a
-network reports and no member can be credited
+ERROR a configured network cannot poll  problem="\"linkwise\" cannot poll: NETWORK_LINKWISE_ACCOUNT_ID, NETWORK_LINKWISE_API_KEY are unset"
+ERROR CASHBACK IS NOT MOUNTED: every cashback route will answer 404 and no
+member can click out, because a configured network cannot poll. The rest of
+this deployment - the news site included - is unaffected and keeps serving
 ```
 
-Three things turn it on, and only the first is configuration.
+Every configured network, not merely one: a deployment that names two and can
+poll one is not the deployment its operator described, and quietly running the
+half that works is how a member ends up owed money from a network nobody is
+reading.
 
-1. **`NETWORK_ACCOUNT_ID`**, which names a row of `cashback.network_account` —
-   the row that owns the two durable cursors. It is required for the
-   `fixture` adapter as much as for a live one: an adapter that needs no
-   credential still polls on behalf of somebody.
+The **process** still starts and the news site keeps serving. That is the
+whole point of the split — these keys are deliberately *not* in
+`CashbackConfig.Missing()`, which fails config parsing and would take
+`apivo.news` down over a typo in one network's credential.
+
+With cashback mounted and no `cashback.network_account` row to poll, the
+deployment serves normally and says so at ERROR on every start:
+
+```
+NO AFFILIATE NETWORK IS CONNECTED: no publisher account "publisher-1" is
+connected at "fixture". Cashback is mounted, so nothing will ingest what a
+network reports and every click-out will be refused
+```
+
+Three things turn polling on, and only the first is configuration.
+
+1. **`NETWORK_<DRIVER>_ACCOUNT_ID`**, which names a row of
+   `cashback.network_account` — the row that owns the two durable cursors. It
+   is required for the `fixture` adapter as much as for a live one: an adapter
+   that needs no credential still polls on behalf of somebody.
 
 2. **The account row**, which an operator creates. It is not created by the
    binary and there is no seed command yet (T130):
@@ -267,7 +300,7 @@ Three things turn it on, and only the first is configuration.
    ```sql
    insert into cashback.network_account
        (network_id, external_publisher_id, credential_ref, active, backfill_from)
-   values ('fixture', 'publisher-1', 'config:networks.fixture.credential',
+   values ('fixture', 'fixture-publisher', 'NETWORK_FIXTURE_API_KEY',
            true, '2026-06-01T00:00:00Z');
    ```
 
@@ -408,7 +441,8 @@ machine**, and it is the default in `.env.example` for exactly that reason —
 the configuration most likely to be copied has to be the one that works.
 
 ```sh
-CASHBACK_ENABLED=true LEDGER_DRIVER=memory NETWORK_DRIVER=fixture go run ./cmd/apivo
+CASHBACK_ENABLED=true LEDGER_DRIVER=memory \
+  NETWORKS=fixture NETWORK_FIXTURE_ACCOUNT_ID=fixture-publisher go run ./cmd/apivo
 ```
 
 Catalogue, click-out, the entry state machine, the wallet and payout

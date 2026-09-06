@@ -36,12 +36,20 @@ import (
 // section, verbatim, plus the DATABASE_URL the binary requires whatever the
 // ledger is. That extra key is the spike's main finding — see
 // TestS3MemoryModeStillNeedsPostgres.
+//
+// Five keys since T215, not four. NETWORK_DRIVER became NETWORKS, a list, and
+// the account id joined it: a network named in that list without an account
+// id cannot poll, and CashbackConfig.Mountable now declines to build cashback
+// over one that cannot. The fixture adapter needs no CREDENTIAL, which is
+// still the whole point of it, but the two durable cursors live on a
+// cashback.network_account row and this is the only value that says which.
 func noDockerEnv() map[string]string {
 	return map[string]string{
-		"DATABASE_URL":     "postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable",
-		"CASHBACK_ENABLED": "true",
-		"LEDGER_DRIVER":    config.LedgerDriverMemory,
-		"NETWORK_DRIVER":   config.NetworkDriverFixture,
+		"DATABASE_URL":               "postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable",
+		"CASHBACK_ENABLED":           "true",
+		"LEDGER_DRIVER":              config.LedgerDriverMemory,
+		"NETWORKS":                   config.NetworkDriverFixture,
+		"NETWORK_FIXTURE_ACCOUNT_ID": "fixture-publisher",
 	}
 }
 
@@ -82,6 +90,14 @@ func TestS3TheNoDockerEnvironmentIsAccepted(t *testing.T) {
 	if missing := cfg.Cashback.Missing(); len(missing) != 0 {
 		t.Fatalf("the no-Docker configuration is incomplete: %v", missing)
 	}
+	// Startable is no longer the whole of it. Missing() decides whether the
+	// PROCESS starts; Mountable decides whether cashback is built into it,
+	// and a no-Docker environment that starts a binary serving no cashback
+	// would satisfy every line above while running none of the product this
+	// spike exists to demonstrate.
+	if !cfg.Cashback.Mountable() {
+		t.Fatalf("the no-Docker configuration starts but mounts no cashback: %v", cfg.Cashback.UnusableNetworks())
+	}
 }
 
 // TestS3MemoryModeNeedsNoSidecar pins what the memory ledger removes from the
@@ -96,9 +112,13 @@ func TestS3MemoryModeNeedsNoSidecar(t *testing.T) {
 		{name: "no ledger endpoint", key: "BLNK_URL"},
 		{name: "no ledger credential", key: "BLNK_SECRET_KEY"},
 		{name: "no redis", key: "REDIS_URL"},
-		{name: "no network account", key: "NETWORK_ACCOUNT_ID"},
-		{name: "no network key", key: "NETWORK_API_KEY"},
-		{name: "no network secret", key: "NETWORK_API_SECRET"},
+		// The account id is NOT in this list any more: it is in the
+		// environment above, because without it cashback does not mount.
+		// The two CREDENTIALS still are, which is the fixture adapter's
+		// whole reason to exist - the money path runs before any publisher
+		// account is approved (ADR-0003).
+		{name: "no network key", key: "NETWORK_FIXTURE_API_KEY"},
+		{name: "no network secret", key: "NETWORK_FIXTURE_API_SECRET"},
 	}
 
 	for _, tt := range tests {

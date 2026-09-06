@@ -209,12 +209,19 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		networkOff *ingestionOff
 	)
 	if cfg.Cashback.Enabled {
+		// On Enabled and not on Mountable, deliberately: the report is most
+		// worth reading in the deployment where cashback does NOT mount, and
+		// gating it on Mountable would silence it exactly there.
+		reportNetworkConfiguration(ctx, log, cfg.Cashback)
+	}
+	if cfg.Cashback.Mountable() {
 		var err error
-		adapter, connected, err = connectNetwork(ctx, cfg.Cashback.Network, pool)
+		network, _ := theConfiguredNetwork(cfg.Cashback)
+		adapter, connected, err = connectNetwork(ctx, network, pool)
 		switch {
 		case errors.As(err, &networkOff):
 			log.ErrorContext(ctx, "NO AFFILIATE NETWORK IS CONNECTED: "+networkOff.reason+
-				". Cashback is enabled, so nothing will ingest what a network reports and every click-out will be refused")
+				". Cashback is mounted, so nothing will ingest what a network reports and every click-out will be refused")
 		case err != nil:
 			return err
 		}
@@ -351,7 +358,14 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 	// in the wallet package (T046): this block gives it a scheduler, a
 	// lifetime, and the one fact only the composition root holds - which
 	// schema its ledger driver implies.
-	if cfg.Cashback.Enabled {
+	//
+	// Mountable rather than Enabled since T215: every job below is part of
+	// the cashback surface, and two of them read the `adapter` resolved
+	// above - which is nil in a deployment whose network cannot poll. The
+	// gate is the same one the routes take, because a process with cashback
+	// jobs running and no cashback routes is the half-mounted product this
+	// decision exists to refuse.
+	if cfg.Cashback.Mountable() {
 		// LEDGER_DRIVER=postgres keeps the exit-route ledger in this
 		// database's own `ledger` schema (0022), which 0020's `blnk`
 		// default never resolves: a check left on the default would sum
@@ -557,10 +571,17 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		},
 	}
 
-	if !cfg.Cashback.Enabled {
+	if !cfg.Cashback.Mountable() {
 		// Named, not silent. An operator who cannot find the queue should
 		// read why in the first log line rather than deduce it from a 404.
-		log.InfoContext(ctx, "CASHBACK_ENABLED is off: every "+opsPrefix+" route is UNMOUNTED and will answer 404")
+		//
+		// Only the CASHBACK_ENABLED half is said here. The other half - a
+		// configured network that cannot poll - was already reported by
+		// reportNetworkConfiguration, in more detail than this line could
+		// carry, and repeating it would read as two separate problems.
+		if !cfg.Cashback.Enabled {
+			log.InfoContext(ctx, "CASHBACK_ENABLED is off: every "+opsPrefix+" route is UNMOUNTED and will answer 404")
+		}
 		// No sweep either: with no payouts there is nothing in flight to
 		// ask a rail about, and a job that woke every five minutes to read
 		// an empty table would be one more thing to explain.

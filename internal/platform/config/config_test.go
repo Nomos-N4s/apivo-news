@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -209,7 +210,9 @@ func TestFromEnv(t *testing.T) {
 			if err != nil {
 				t.Fatalf("FromEnv() error: %v", err)
 			}
-			if got != tt.want {
+			// reflect.DeepEqual rather than !=: CashbackConfig carries a
+			// slice of networks since T215 and is no longer comparable.
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("FromEnv() = %+v, want %+v", got, tt.want)
 			}
 		})

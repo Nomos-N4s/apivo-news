@@ -22,7 +22,7 @@ Design references: [data-model.md](data-model.md),
 |---|---|---|
 | Postgres | schema + invariant tests | `make db-up` (compose) |
 | Blnk + Redis | the ledger (ADR-0002) | run with `LEDGER_DRIVER=memory` — everything except the Blnk conformance suite still runs |
-| Network credentials | live adapter | **not required** — `NETWORK_DRIVER=fixture` (ADR-0003) |
+| Network credentials | live adapter | **not required** — `NETWORKS=fixture` (ADR-0003). An account id still is: `NETWORK_FIXTURE_ACCOUNT_ID` names the `cashback.network_account` row the cursors live on |
 | Docker | compose stack | while Docker Desktop is unavailable on the founder's machine, run unit and pure suites locally and treat **CI as the verification of record**; say plainly in every PR which checks ran where |
 
 ## Run the stack locally
@@ -35,7 +35,8 @@ make db-up && make cashback-up
 0010–0017. Then:
 
 ```bash
-CASHBACK_ENABLED=true LEDGER_DRIVER=blnk NETWORK_DRIVER=fixture go run ./cmd/apivo
+CASHBACK_ENABLED=true LEDGER_DRIVER=blnk \
+  NETWORKS=fixture NETWORK_FIXTURE_ACCOUNT_ID=fixture-publisher go run ./cmd/apivo
 ```
 
 Frontend as usual (`cd web && npm ci && npm run dev`). Cashback routes are
@@ -61,7 +62,8 @@ spike S3 asserts it in CI so it cannot quietly stop being true.
 
 To run the server itself you need a Postgres — Docker locally, or a
 `DATABASE_URL` pointing at a reachable database. With one, `LEDGER_DRIVER=memory
-NETWORK_DRIVER=fixture` then exercises catalogue, click-out, the entry state
+NETWORKS=fixture NETWORK_FIXTURE_ACCOUNT_ID=fixture-publisher` then exercises
+catalogue, click-out, the entry state
 machine, wallet and payout orchestration without Blnk or Redis.
 
 ## Seed a member and a catalogue

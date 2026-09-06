@@ -37,10 +37,17 @@ unset S2_WORKER_MODE
 
 # The documented local shape: the product on, the in-process ledger, the
 # fixture network. No sidecar is named because none can be reached.
+#
+# NETWORKS and a block named after its one entry, not the flat NETWORK_DRIVER
+# this used to export: that key is refused outright now, so a script still
+# carrying it would document a shape the binary will not start on. The
+# account id joins it because a network named without one cannot poll, and
+# cashback then does not mount at all.
 CASHBACK_ENABLED=true
 LEDGER_DRIVER=memory
-NETWORK_DRIVER=fixture
-export CASHBACK_ENABLED LEDGER_DRIVER NETWORK_DRIVER
+NETWORKS=fixture
+NETWORK_FIXTURE_ACCOUNT_ID=fixture-publisher
+export CASHBACK_ENABLED LEDGER_DRIVER NETWORKS NETWORK_FIXTURE_ACCOUNT_ID
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

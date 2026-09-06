@@ -9,7 +9,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -30,12 +29,20 @@ const connectNetworkName = "connect-network"
 // cannot silently differ between the operator's laptop and the container.
 var backfillFromLayouts = []string{time.RFC3339, "2006-01-02"}
 
-// credentialRefKey is what the account row records as the place this
+// credentialRef is what the account row records as the place this
 // deployment reads its credential from. It is a KEY INTO CONFIGURATION and
 // never a credential (ADR-0003), and it is this binary's own key rather than
 // a flag because a row naming a key this binary does not read would describe
 // an account nothing could authenticate as.
-const credentialRefKey = "NETWORK_API_KEY"
+//
+// Per network since T215. It used to be the literal "NETWORK_API_KEY",
+// which was true while one network existed and became a lie the moment the
+// keys grew a driver in them: every account row would have named one key,
+// and at most one of them could have been right.
+func credentialRef(network config.NetworkConfig) string {
+	_, apiKey, _, _ := network.Keys()
+	return apiKey
+}
 
 // connectNetworkCommand runs the subcommand: it connects the publisher account this
 // deployment is configured for, and is safe to run again.
@@ -68,12 +75,23 @@ func connectNetworkCommand(ctx context.Context, args []string, getenv func(strin
 	if err != nil {
 		return err
 	}
-	documented, err := documentedNetwork(cfg.Cashback.Network.Driver)
+	network, wired := theConfiguredNetwork(cfg.Cashback)
+	if !wired {
+		return fmt.Errorf("%s names no network, and a network is what this would connect", config.NetworksKey)
+	}
+	documented, err := documentedNetwork(network.Driver)
 	if err != nil {
 		return err
 	}
-	if cfg.Cashback.Network.AccountID == "" {
-		return errors.New("NETWORK_ACCOUNT_ID names no publisher account, and it is the account this would connect")
+	// Every missing key at once, rather than the account id alone and the
+	// credential key on the next run. This command is not behind the
+	// Mountable gate the server is - it exists to be run against a
+	// deployment that is not yet working - so the check belongs here, and
+	// asking an operator to discover their configuration one error at a
+	// time is the wrong shape for a command whose whole job is one write.
+	if missing := network.MissingKeys(); len(missing) > 0 {
+		return fmt.Errorf("%s: %s", connectNetworkName,
+			config.UnusableNetwork{Driver: network.Driver, Missing: missing})
 	}
 	start, err := parseBackfillFrom(*backfillFrom)
 	if err != nil {
@@ -98,8 +116,8 @@ func connectNetworkCommand(ctx context.Context, args []string, getenv func(strin
 
 	connection, err := networks.ConnectPublisherAccount(ctx, tx, networks.ConnectRequest{
 		Network:             documented,
-		ExternalPublisherID: cfg.Cashback.Network.AccountID,
-		CredentialRef:       credentialRefKey,
+		ExternalPublisherID: network.AccountID,
+		CredentialRef:       credentialRef(network),
 		BackfillFrom:        start,
 		Active:              !*inactive,
 	})
@@ -110,7 +128,7 @@ func connectNetworkCommand(ctx context.Context, args []string, getenv func(strin
 		return fmt.Errorf("%s: %w", connectNetworkName, err)
 	}
 
-	return reportConnection(stdout, connection, start)
+	return reportConnection(stdout, connection, credentialRef(network), start)
 }
 
 // parseBackfillFrom reads the flag, allowing it to be absent - a re-run does
@@ -134,7 +152,7 @@ func parseBackfillFrom(value string) (time.Time, error) {
 // asked for. The one place those differ is the history start on an account
 // that already had one, and an operator who typed a date has to be told
 // plainly that it did not move rather than left to assume it did.
-func reportConnection(stdout io.Writer, c networks.Connection, asked time.Time) error {
+func reportConnection(stdout io.Writer, c networks.Connection, ref string, asked time.Time) error {
 	state := "active"
 	if !c.Active {
 		state = "inactive"
@@ -151,7 +169,7 @@ func reportConnection(stdout io.Writer, c networks.Connection, asked time.Time) 
 		madeOrFound(c.AccountCreated, "created", "already there"), c.Account.ID()); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(stdout, "  credential key  %s (the value is never stored)\n", credentialRefKey); err != nil {
+	if _, err := fmt.Fprintf(stdout, "  credential key  %s (the value is never stored)\n", ref); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "  history from    %s\n", c.BackfillFrom.UTC().Format(time.RFC3339)); err != nil {

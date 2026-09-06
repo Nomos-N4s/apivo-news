@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks/fixture"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks/linkwise"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/config"
 )
 
@@ -40,8 +43,17 @@ type registration struct {
 	// the network publishes about how it may be queried.
 	documented func() networks.Documented
 
-	// construct builds the adapter for one publisher account.
-	construct func(networks.PublisherAccount) (networks.Network, error)
+	// construct builds the adapter for one publisher account, from that
+	// network's own configuration block.
+	//
+	// It takes the block rather than the credential fields because a real
+	// network's credential is not one shape: Awin's is a bearer token,
+	// Linkwise's is an HTTP Basic pair, and the fixture's is nothing at all.
+	// Handing each driver its own block lets it read what it needs without
+	// this signature growing a parameter per network - and the block is
+	// where a Secret already lives, so no credential is copied out of one to
+	// get here.
+	construct func(networks.PublisherAccount, config.NetworkConfig) (networks.Network, error)
 }
 
 // shippedNetworks is every driver this binary has.
@@ -56,10 +68,18 @@ type registration struct {
 // compiler. Listing it here would restore the seedable-but-not-servable state
 // above. It returns when it implements the port (T236-T241, deferred by
 // founder decision of 2026-09-04).
+//
+// linkwise IS here, and by the same rule: *linkwise.Client implements every
+// method of the port, which is what the compiler is asked to prove in
+// newLinkwiseAdapter's signature.
 var shippedNetworks = map[string]registration{
 	config.NetworkDriverFixture: {
 		documented: fixture.Documented,
 		construct:  newFixtureAdapter,
+	},
+	config.NetworkDriverLinkwise: {
+		documented: linkwise.Documented,
+		construct:  newLinkwiseAdapter,
 	},
 }
 
@@ -68,8 +88,30 @@ var shippedNetworks = map[string]registration{
 // fixture.New returns *fixture.Network so its own tests can reach the knobs
 // the conformance table needs. The registry holds the interface, because the
 // composition root has no business knowing which one it built.
-func newFixtureAdapter(account networks.PublisherAccount) (networks.Network, error) {
+func newFixtureAdapter(account networks.PublisherAccount, _ config.NetworkConfig) (networks.Network, error) {
 	return fixture.New(account)
+}
+
+// newLinkwiseAdapter builds the Linkwise adapter from its configuration
+// block.
+//
+// The credential is TWO values, read here and passed straight in: Linkwise
+// authenticates with HTTP Basic, so the api key is the username and the api
+// secret is the password. config.NetworkConfig.MissingKeys requires both for
+// this driver, and CashbackConfig.Mountable declines to build the cashback
+// surface while any configured network is missing a key - so by the time this
+// runs, both are set. linkwise.New refuses a half credential anyway, because
+// a constructor that trusted a gate somewhere else is a constructor that
+// breaks when the gate moves.
+//
+// The rate comes from the network row rather than from the adapter's own
+// declaration, so a limit an operator revises is a configuration change and a
+// restart rather than a release. Nothing here reads a currency: the
+// transaction report carries none, and the adapter joins it from the
+// programme list itself.
+func newLinkwiseAdapter(account networks.PublisherAccount, cfg config.NetworkConfig) (networks.Network, error) {
+	return linkwise.New(account,
+		linkwise.WithCredential(cfg.APIKey.Reveal(), cfg.APISecret.Reveal()))
 }
 
 // errNoDriverNamed reports a lookup with no driver to look up. It is
@@ -112,4 +154,80 @@ func shippedDrivers() string {
 	default:
 		return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 	}
+}
+
+// theConfiguredNetwork picks the one network this composition root wires.
+//
+// NETWORKS is a list, and config parses all of it - but the root still
+// builds ONE adapter, one poller and one catalogue import. Making those
+// plural is T220-T224; until then this is where the list narrows, in one
+// named place rather than at each of the four call sites that used to read
+// the flat keys.
+//
+// The FIRST entry, not the first USABLE one. It briefly scanned for a usable
+// entry, so that a deployment whose leading network was missing a credential
+// would poll the one behind it. That is no longer what happens:
+// [config.CashbackConfig.Mountable] declines to build the cashback surface
+// at all while any configured network is unusable, so by the time the server
+// asks this question every entry is usable and "the first" and "the first
+// usable" are the same network. Scanning would only hide the day they
+// stopped being.
+//
+// ok is false when NETWORKS is empty. That is not an error: a deployment
+// that polls nothing still serves the wallet, the money loop and click-outs
+// on an existing catalogue.
+//
+// Callers that are NOT behind the Mountable gate - connect-network is the
+// one - must check [config.NetworkConfig.MissingKeys] themselves. Returning
+// an unusable network to them is deliberate: the subcommand can then name
+// every key that is missing, which is more use than being told the list is
+// empty.
+func theConfiguredNetwork(cfg config.CashbackConfig) (config.NetworkConfig, bool) {
+	if len(cfg.Networks) == 0 {
+		return config.NetworkConfig{}, false
+	}
+	return cfg.Networks[0], true
+}
+
+// reportNetworkConfiguration says, once, what this deployment will and will
+// not poll, and what that costs.
+//
+// Called on CASHBACK_ENABLED - the operator's INTENT - rather than on
+// Mountable, because the case worth reporting most is exactly the one where
+// cashback does not mount: an operator who set CASHBACK_ENABLED=true and
+// finds no cashback routes has to read why here rather than deduce it from a
+// 404.
+func reportNetworkConfiguration(ctx context.Context, log *slog.Logger, cfg config.CashbackConfig) {
+	unusable := cfg.UnusableNetworks()
+	for _, network := range unusable {
+		log.ErrorContext(ctx, "a configured network cannot poll", "problem", network.String())
+	}
+	if len(unusable) > 0 {
+		// The consequence, said separately from the cause. FR-091 asks for
+		// the network named; the founder's decision of 2026-09-04 is that
+		// naming it is not enough on its own, because "one network is
+		// misconfigured" and "the cashback product is not running" are
+		// different sizes of news and an operator must not have to infer
+		// the second from the first.
+		log.ErrorContext(ctx,
+			"CASHBACK IS NOT MOUNTED: every cashback route will answer 404 and no member can click out, because a configured network cannot poll. "+
+				"The rest of this deployment - the news site included - is unaffected and keeps serving",
+			"configured", len(cfg.Networks), "unusable", len(unusable), "drivers", unusableDrivers(unusable))
+		return
+	}
+	if extra := len(cfg.Networks) - 1; extra > 0 {
+		log.ErrorContext(ctx,
+			"more than one network is configured and this build wires only the first; the rest are not polled",
+			"wired", cfg.Networks[0].Driver, "not_wired", extra)
+	}
+}
+
+// unusableDrivers names them in the order NETWORKS did, for the one line
+// that reports the consequence rather than each cause.
+func unusableDrivers(unusable []config.UnusableNetwork) string {
+	names := make([]string, 0, len(unusable))
+	for _, network := range unusable {
+		names = append(names, network.Driver)
+	}
+	return strings.Join(names, ", ")
 }

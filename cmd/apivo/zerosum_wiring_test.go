@@ -29,7 +29,13 @@ func cashbackEnv(dbURL string) map[string]string {
 		"POLL_INTERVAL":    "0",
 		"CASHBACK_ENABLED": "true",
 		"LEDGER_DRIVER":    "memory",
-		"NETWORK_DRIVER":   "fixture",
+		"NETWORKS":         "fixture",
+		// Required even for the fixture, which needs no credential: the
+		// cursors live on a network_account row and this names which one.
+		// Without it CashbackConfig.Mountable is false and cashback does
+		// not mount at all, which every caller of this helper assumes it
+		// does.
+		"NETWORK_FIXTURE_ACCOUNT_ID": "publisher-1",
 	}
 }
 
