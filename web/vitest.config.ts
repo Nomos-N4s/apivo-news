@@ -41,6 +41,10 @@ export default getViteConfig({
         // it is what stops an answer being written here instead of
         // referenced from the catalogue that already renders it.
         'src/lib/faq/strings.ts',
+        // Member sign-in copy. Measured because its job is to state what
+        // does NOT work: a case there asserts the catalogue promises no
+        // mechanism, and an unmeasured catalogue proves nothing.
+        'src/lib/member/strings.ts',
         'src/lib/account/consent.ts',
         'src/lib/account/tours.ts',
         'src/lib/app-env.ts',
