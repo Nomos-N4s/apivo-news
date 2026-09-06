@@ -3,7 +3,7 @@ import { API_BASE_URL, APP_ENV } from 'astro:env/server';
 import AxisBar from '../../../components/AxisBar.astro';
 import EmptyPlaceBand from '../../../components/EmptyPlaceBand.astro';
 import FixtureNotice from '../../../components/FixtureNotice.astro';
-import Masthead from '../../../components/Masthead.astro';
+import MemberBar from '../../../components/MemberBar.astro';
 import ProvenanceDisclosure from '../../../components/ProvenanceDisclosure.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
 import ProductTour from '../../../components/ProductTour.astro';
@@ -126,9 +126,17 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
   footerNote={t.reassurance}
   homeHref={homeHref}
 >
-  <Masthead homeHref={homeHref} dateText={formatMastheadDate(lang, now)}>
+  {/* The section bar rather than a bare masthead: until this page carried
+      it, a member could reach the news from the catalogue and never the
+      catalogue from the news. */}
+  <MemberBar
+    lang={lang}
+    slugs={slugs}
+    current="news"
+    dateText={formatMastheadDate(lang, now)}
+  >
     <button class="btn btn-secondary sign-in" disabled title={t.signInPending}>{t.signIn}</button>
-  </Masthead>
+  </MemberBar>
 
   <AxisBar lang={lang} places={places} />
 
