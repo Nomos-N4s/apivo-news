@@ -246,7 +246,22 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// failure than editorial endpoints answering 404. ERROR level and a
 		// named consequence make the cause obvious in the first log line
 		// rather than something to deduce from a 404 later.
-		log.ErrorContext(ctx, "JWKS_URL is not set: every /api/v1/editorial/ and /api/v1/account/ route is UNMOUNTED and will answer 404; reader endpoints are unaffected. Set JWKS_URL to the auth provider JWKS endpoint to enable them")
+		//
+		// The surfaces are listed rather than summarised, and cashback is in
+		// the list only when it is switched on. That half matters: cashback
+		// has no anonymous surface (FR-023), so EVERY cashback route is
+		// behind this gate too - the member wallet and the operator queues
+		// alike - and a deployment with CASHBACK_ENABLED set, a ledger, a
+		// polling network and no JWKS is one where every cashback route
+		// answers 404 while nothing in the log mentions cashback at all. A
+		// line that named editorial and account only sent a reader looking
+		// at the cashback configuration, which was correct, for as long as
+		// it took to find this gate instead.
+		surfaces := "every /api/v1/editorial/ and /api/v1/account/ route"
+		if cfg.Cashback.Enabled {
+			surfaces = "every /api/v1/editorial/, /api/v1/account/ and /api/v1/cashback/ route - the member wallet, the merchant catalogue, click-outs, participation and the operator queues among them -"
+		}
+		log.ErrorContext(ctx, "JWKS_URL is not set: "+surfaces+" is UNMOUNTED and will answer 404; reader endpoints are unaffected. Set JWKS_URL to the auth provider JWKS endpoint to enable them")
 	} else {
 		authenticated, built, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, log, pool, adapter)
 		if err != nil {
@@ -461,12 +476,20 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// a job registered above cannot be forgotten here.
 		//
 		// Two connections per job plus two reserved is the locker's
-		// arithmetic. The zero-sum check alone needs 4; the settlement
-		// sweep takes that to 6, the earnings lifecycle to 8, the two
-		// network sweeps to 12, and the catalogue import to 14. pgx
-		// defaults MaxConns to max(4, NumCPU), which is why a deployment
-		// with cashback on may have to raise pool_max_conns in
+		// arithmetic. Three of the jobs are global - the zero-sum check,
+		// the settlement sweep, the earnings lifecycle - and THREE MORE
+		// ARRIVE WITH EVERY CONFIGURED NETWORK: its forward sweep, its
+		// trailing sweep and its catalogue import. So the floor is 14 for
+		// one network, 20 for two and 26 for three, and a deployment that
+		// adds a network without raising its pool discovers it at the next
+		// restart rather than at the next poll.
+		//
+		// pgx defaults MaxConns to max(4, NumCPU), which is why a
+		// deployment with cashback on may have to raise pool_max_conns in
 		// DATABASE_URL - the error below says so with the numbers in it.
+		// The count passed here is the one actually registered above, not
+		// a figure repeated from this comment, so a job added later is
+		// counted whether or not anybody updates these numbers.
 		if err := locker.CheckCapacity(registered); err != nil {
 			return err
 		}
@@ -579,8 +602,22 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		// configured network that cannot poll - was already reported by
 		// reportNetworkConfiguration, in more detail than this line could
 		// carry, and repeating it would read as two separate problems.
+		//
+		// Every cashback route, not the operator prefix alone. The return
+		// below hands back the routes built above it, which are editorial
+		// and account; the member surfaces are built after it and so are
+		// dropped by the same decision. Naming only the queues understated
+		// the consequence by the whole product.
+		//
+		// The subtrees are listed from the constants that mount them, and
+		// the base path is written out rather than made a constant of its
+		// own: there is deliberately no cashbackPrefix, because a route
+		// mounted on the bare path would be a catch-all swallowing every
+		// other module's 404s (see opsPrefix). A sentence is not a mount.
 		if !cfg.Cashback.Enabled {
-			log.InfoContext(ctx, "CASHBACK_ENABLED is off: every "+opsPrefix+" route is UNMOUNTED and will answer 404")
+			log.InfoContext(ctx, "CASHBACK_ENABLED is off: every /api/v1/cashback/ route is UNMOUNTED and will answer 404 - "+
+				walletPrefix+", "+participationPrefix+", "+merchantPrefix+" and "+clickoutPrefix+
+				" as much as the operator queues under "+opsPrefix)
 		}
 		// No sweep either: with no payouts there is nothing in flight to
 		// ask a rail about, and a job that woke every five minutes to read
