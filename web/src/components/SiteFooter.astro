@@ -2,6 +2,8 @@
 import { PUBLIC_APP_VERSION } from 'astro:env/server';
 import type { ReadingLanguage } from '../lib/reader/axes';
 import { DEFAULT_FRONT_PAGE } from '../lib/reader/axes';
+import { OPS_PATHS } from '../lib/cashback/paths';
+import { editorSession } from '../lib/editorial/session';
 import { uiStrings } from '../lib/reader/strings';
 
 // The footer every screen shares. Beyond closing the page, it carries the
@@ -42,6 +44,19 @@ const year = new Date().getUTCFullYear();
 // unset rendered nothing; the empty value rendered a dangling "·" separator
 // with no version after it. Trim first, then decide, so a deployment that
 // cannot name its version shows no version rather than punctuation.
+// The operator way in (#447 follow-up). Nothing linked /ops from anywhere:
+// an operator typed the URL, which is the failure the editorial link above
+// was added to fix.
+//
+// Read from the request rather than taken as a prop, because the session is
+// already resolved once per request by the middleware and threading a role
+// through every layout and page would be five call sites that can disagree.
+// `editorSession` fails closed — an unresolved request answers "nobody is
+// signed in" — so on a plain reader page, where the middleware deliberately
+// resolves no identity to keep a crawler's 403 off the auth path, this is
+// simply false and no link is drawn.
+const isOperator = editorSession(Astro.request).role === 'operator';
+
 const trimmedVersion = PUBLIC_APP_VERSION?.trim();
 const version = trimmedVersion === undefined || trimmedVersion === '' ? undefined : trimmedVersion;
 ---
@@ -58,6 +73,13 @@ const version = trimmedVersion === undefined || trimmedVersion === '' ? undefine
         only route to the editorial screens was typing the URL. Here rather
         than in the masthead because it is for the few, not the many. */}
     <a class="editorial" href={`/${lang}/editor/signin`}>{t.editorialLabel}</a>
+    {
+      isOperator && (
+        <a class="editorial" href={`${OPS_PATHS.unattributed}?lang=${lang}`}>
+          {t.operationsLabel}
+        </a>
+      )
+    }
     <p class="legal">
       <a href={`/${lang}/impressum`}>{t.imprint}</a>
       <span aria-hidden="true">·</span>
