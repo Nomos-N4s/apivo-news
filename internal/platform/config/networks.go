@@ -142,7 +142,7 @@ func (n NetworkConfig) Keys() (accountID, apiKey, apiSecret, sourceLanguage stri
 // still needs an account id, because the cursors live on a network_account
 // row and this is the only value that says which one.
 func (n NetworkConfig) MissingKeys() []string {
-	accountID, apiKey, _, _ := n.Keys()
+	accountID, apiKey, apiSecret, _ := n.Keys()
 	var missing []string
 	if n.AccountID == "" {
 		missing = append(missing, accountID)
@@ -150,7 +150,28 @@ func (n NetworkConfig) MissingKeys() []string {
 	if n.NeedsCredentials() && n.APIKey.IsZero() {
 		missing = append(missing, apiKey)
 	}
+	if n.NeedsCredentialPair() && n.APISecret.IsZero() {
+		missing = append(missing, apiSecret)
+	}
 	return missing
+}
+
+// NeedsCredentialPair reports whether this driver's credential is TWO values
+// rather than one.
+//
+// Linkwise authenticates with HTTP Basic, so its credential is a username
+// and a password and both are required. Awin's is a single bearer token, and
+// the fixture's is nothing at all.
+//
+// It is a fact about the network rather than about this package, and naming
+// the driver here is the same compromise [NetworkConfig.NeedsCredentials]
+// already makes for the fixture. The alternative is worse: without it a
+// deployment carrying a username and no password reports every key present,
+// mounts cashback, and is refused by the network on its first poll - which
+// an operator reads as the publisher account having been rejected rather
+// than as an environment variable nobody set.
+func (n NetworkConfig) NeedsCredentialPair() bool {
+	return n.Driver == NetworkDriverLinkwise
 }
 
 // Usable reports whether this network has everything it needs to poll.

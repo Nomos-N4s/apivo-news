@@ -280,7 +280,7 @@ func seedConnection(ctx context.Context, pool *pgxpool.Pool, req seedRequest) (n
 // catalogue is the same catalogue the job maintains, and running the job
 // afterwards re-affirms it rather than emptying it.
 func seedCatalogue(ctx context.Context, pool *pgxpool.Pool, req seedRequest, account networks.PublisherAccount, stdout io.Writer) ([]seededRoute, error) {
-	adapter, err := networkAdapter(config.NetworkDriverFixture, account)
+	adapter, err := networkAdapter(config.NetworkConfig{Driver: config.NetworkDriverFixture}, account)
 	if err != nil {
 		return nil, err
 	}

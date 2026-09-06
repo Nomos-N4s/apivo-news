@@ -1,0 +1,353 @@
+---
+import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
+import OpsLayout from '../../layouts/OpsLayout.astro';
+import {
+  CashbackApiError,
+  CashbackConfigurationError,
+  createCashbackApi,
+  type CashbackApi,
+} from '../../lib/cashback/api';
+import { formatMoney } from '../../lib/cashback/money';
+import { opsAccess } from '../../lib/cashback/ops-guard';
+import { opsLanguage } from '../../lib/cashback/ops-language';
+import type { UnattributedTransaction } from '../../lib/cashback/types';
+import { isSameOrigin } from '../../lib/csrf';
+import { editorSession } from '../../lib/editorial/session';
+import { formatItemDate } from '../../lib/reader/format';
+import { cashbackStrings } from '../../i18n/cashback';
+
+// Transactions the network reported that matched no click.
+//
+// The load-bearing detail is `attributable`, and it is served rather than
+// worked out here. `entry_evidence_guard` allows an entry with a null click
+// only where the network named no reference at all; a report whose reference
+// matched no click can only be dismissed. So a row that cannot be attributed
+// does not get an attribute button — it gets the sentence saying why, and
+// the form has nothing to press that the database is going to refuse.
+//
+// This is the same discipline the claims spec (003) states for its own
+// remedies: the API decides what is lawful, the screen renders what it
+// decided.
+const lang = opsLanguage(Astro.url);
+const t = cashbackStrings(lang);
+const session = editorSession(Astro.request);
+
+let api: CashbackApi | null = null;
+let items: readonly UnattributedTransaction[] = [];
+let apiUnavailable = false;
+let notice: string | null = null;
+let refusal: string | null = null;
+
+try {
+  api = createCashbackApi(API_BASE_URL, {
+    appEnv: APP_ENV,
+    token: session.token,
+    appVersion: PUBLIC_APP_VERSION,
+  });
+  const access = opsAccess(session, api.source);
+
+  if (Astro.request.method === 'POST') {
+    if (!isSameOrigin(Astro.request, Astro.url.origin)) {
+      return new Response('cross-origin request refused', { status: 403 });
+    }
+    if (!access.mayAct) {
+      return new Response('operator role required', { status: 403 });
+    }
+    const form = await Astro.request.formData();
+    const id = String(form.get('id') ?? '');
+    const action = String(form.get('action') ?? '');
+    const accountId = String(form.get('account_id') ?? '').trim();
+    const reason = String(form.get('reason') ?? '').trim();
+    if (reason === '') {
+      refusal = t.reasonRequired;
+    } else if (action === 'attribute' && accountId === '') {
+      refusal = t.accountLabel;
+    } else {
+      try {
+        if (action === 'attribute') {
+          await api.attributeTransaction(id, accountId, reason);
+        } else {
+          await api.dismissTransaction(id, reason);
+        }
+        notice = t.decisionRecorded;
+      } catch (error) {
+        if (!(error instanceof CashbackApiError)) {
+          throw error;
+        }
+        refusal = error.problem?.title ?? error.message;
+      }
+    }
+  }
+
+  if (access.mayRead) {
+    items = (await api.unattributed()).items;
+  }
+} catch (error) {
+  if (error instanceof CashbackConfigurationError) {
+    console.error(`cashback ops: ${error.message}`);
+  }
+  apiUnavailable = true;
+  Astro.response.status = 503;
+  Astro.response.headers.set('Retry-After', '60');
+}
+
+const access = opsAccess(session, api?.source ?? 'api');
+if (access.blocked && !apiUnavailable) {
+  Astro.response.status = 403;
+}
+
+// Selection — mockup 4f shows one row open beside the queue. `?id=` names
+// it; otherwise the oldest row, which is the first the queue lists.
+const asked = Astro.url.searchParams.get('id');
+const selected: UnattributedTransaction | null =
+  items.find((item) => item.id === asked) ?? items[0] ?? null;
+
+const rowHref = (id: string): string => {
+  const params = new URLSearchParams();
+  params.set('id', id);
+  params.set('lang', lang);
+  return `?${params.toString()}`;
+};
+
+const now = Date.now();
+const ageOf = (iso: string): string =>
+  t.daysOld(Math.max(0, Math.floor((now - new Date(iso).getTime()) / 86_400_000)));
+---
+
+<OpsLayout
+  lang={lang}
+  session={session}
+  current="unattributed"
+  title={t.queueUnattributed}
+  fixtures={api?.source === 'fixture'}
+  blocked={access.blocked}
+  notice={notice}
+  refusal={refusal}
+  api={api}
+  mayRead={access.mayRead}
+>
+  <Fragment slot="queue">
+    {items.length === 0 && !access.blocked && <p class="queue-note">{t.emptyQueue}</p>}
+    {
+      items.map((item) => (
+        <a
+          href={rowHref(item.id)}
+          class:list={['qrow', { on: item.id === selected?.id }]}
+          aria-current={item.id === selected?.id ? 'true' : undefined}
+        >
+          <div class="qrow-top">
+            <span class="card-kicker">{t.networkReported}</span>
+            <span class="qrow-age">{ageOf(item.transacted_at)}</span>
+          </div>
+          <div class="qrow-title">
+            {item.external_id} · {formatMoney(lang, item.commission)}
+          </div>
+          <div class="qrow-sub">
+            {t.sale} {formatMoney(lang, item.sale)} · {item.attributable ? t.attribute : t.dismiss}
+          </div>
+        </a>
+      ))
+    }
+  </Fragment>
+
+  <Fragment slot="detail">
+    {
+      selected === null ? (
+        !access.blocked && <p class="queue-note">{t.selectRow}</p>
+      ) : (
+        <>
+          <div class="d-head">
+            <div class="d-meta">
+              <span class="card-kicker">{t.networkReported}</span>
+              <span class="d-rule" aria-hidden="true" />
+              <span class="d-ref">
+                {t.reference} <span class="mono">{selected.id}</span> · {ageOf(selected.transacted_at)}
+              </span>
+            </div>
+            <h3>
+              {selected.external_id} · {formatMoney(lang, selected.commission)}
+            </h3>
+          </div>
+          <div class="d-body">
+            <div class="d-left">
+              <h6>{t.theRecord}</h6>
+              <dl class="record">
+                <dt>{t.member}</dt>
+                <dd>{t.none}</dd>
+                <dt>{t.purchase}</dt>
+                <dd>{formatItemDate(lang, new Date(selected.transacted_at))}</dd>
+                <dt>{t.sale}</dt>
+                <dd>{formatMoney(lang, selected.sale)}</dd>
+                <dt>{t.expected}</dt>
+                <dd class="strong">{formatMoney(lang, selected.commission)}</dd>
+                <dt>{t.reference}</dt>
+                <dd class="mono">{selected.external_id}</dd>
+              </dl>
+              <h6 class="evidence-head">{t.evidence}</h6>
+              <pre class="evidence">{`network_id: ${selected.network_id}\nexternal_id: ${selected.external_id}\ntransacted_at: ${selected.transacted_at}\nattributable: ${String(selected.attributable)}`}</pre>
+            </div>
+            <div class="d-right">
+              <div class="d-say">
+                <h6>{t.whatRecordsSay}</h6>
+                <span class:list={['tag', selected.attributable ? 'tag-accent' : 'tag-neutral']}>
+                  {selected.attributable ? t.attribute : t.dismiss}
+                </span>
+              </div>
+              <p class="assess">{selected.attributable ? t.reasonRequired : t.notAttributable}</p>
+              <div class="records">
+                <div class="rec">
+                  <span>{t.trackingLog}</span>
+                  <span>{t.noClick}</span>
+                </div>
+                <div class="rec">
+                  <span>{t.partnerFeed}</span>
+                  <span class="mono">{selected.external_id}</span>
+                </div>
+                <div class="rec">
+                  <span>{t.rateTable}</span>
+                  <span>{t.none}</span>
+                </div>
+              </div>
+              <form method="post" class="act">
+                <input type="hidden" name="id" value={selected.id} />
+                {selected.attributable && (
+                  <div class="field">
+                    <label for="account">{t.accountLabel}</label>
+                    <input class="input" id="account" name="account_id" autocomplete="off" />
+                  </div>
+                )}
+                <div class="field">
+                  <label for="reason">{t.reasonLabel}</label>
+                  <input class="input" id="reason" name="reason" required autocomplete="off" />
+                </div>
+                <div class="btns">
+                  {selected.attributable && (
+                    <button
+                      class="btn btn-primary"
+                      name="action"
+                      value="attribute"
+                      disabled={!access.mayAct}
+                    >
+                      {t.attribute}
+                    </button>
+                  )}
+                  <button
+                    class="btn btn-secondary"
+                    name="action"
+                    value="dismiss"
+                    disabled={!access.mayAct}
+                  >
+                    {t.dismiss}
+                  </button>
+                </div>
+                <p class="perm">{t.decisionIsPermanent}</p>
+              </form>
+            </div>
+          </div>
+        </>
+      )
+    }
+  </Fragment>
+</OpsLayout>
+
+<style>
+  .record {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    row-gap: 9px;
+    column-gap: 12px;
+    font-size: 12.5px;
+    margin: 0 0 16px;
+  }
+  .record dt {
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .record dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .strong {
+    font-weight: 600;
+  }
+  .mono {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .d-left h6 {
+    margin: 0 0 12px;
+  }
+  .d-left .evidence-head {
+    margin: 0 0 10px;
+  }
+  .evidence {
+    background: var(--color-surface);
+    border-left: 2px solid var(--color-accent);
+    padding: 12px 14px;
+    font: 11.5px/1.7 ui-monospace, Menlo, monospace;
+    margin: 0 0 16px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .d-say {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .d-say h6 {
+    margin: 0;
+  }
+  .d-say .tag {
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .assess {
+    margin: 0 0 16px;
+    font-size: 13.5px;
+    text-wrap: pretty;
+  }
+  .records {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--color-divider);
+    font-size: 12.5px;
+    margin-bottom: 18px;
+  }
+  .rec {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--color-divider);
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .rec > span:first-child {
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .rec > span:last-child {
+    text-align: right;
+  }
+  .act {
+    margin-top: auto;
+  }
+  .act .field {
+    margin-bottom: 12px;
+  }
+  .btns {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .btns .btn {
+    font-size: 13px;
+  }
+  .perm {
+    margin: 0;
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    text-wrap: pretty;
+  }
+</style>

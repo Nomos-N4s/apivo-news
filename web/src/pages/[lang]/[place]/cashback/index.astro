@@ -1,0 +1,347 @@
+---
+import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
+import CashbackBar from '../../../../components/CashbackBar.astro';
+import FixtureNotice from '../../../../components/FixtureNotice.astro';
+import RateBadge from '../../../../components/RateBadge.astro';
+import ReaderLayout from '../../../../layouts/ReaderLayout.astro';
+import {
+  CashbackConfigurationError,
+  createCashbackApi,
+  type CashbackApi,
+} from '../../../../lib/cashback/api';
+import { cataloguePath, merchantPath } from '../../../../lib/cashback/paths';
+import type { CatalogueItem } from '../../../../lib/cashback/types';
+import { editorSession } from '../../../../lib/editorial/session';
+import { frontPagePath, parseAxes } from '../../../../lib/reader/axes';
+import { cashbackStrings, languageName } from '../../../../i18n/cashback';
+
+// The merchant catalogue — mockup 4b, bound to what GET /catalogue answers
+// (T106 #253).
+//
+// The composition is the mockup's, block by block: the top bar with the
+// partner count on the right, the search / place band, the chip row with
+// the placement sentence, and the three-column shelf whose last cell
+// explains the ordering. Three things the mockup draws are not built, each
+// for a reason recorded elsewhere rather than decided here:
+//
+//   - **The category chips.** `category` is documented as a query parameter
+//     and has nothing behind it: no table records one, and inventing a
+//     taxonomy would settle four product questions in a member-facing URL.
+//     Issue #414. Only the "All" chip is drawn, active, next to the note.
+//   - **The "timed for you" band.** It explains offers by a saved route and
+//     reading habits. The route product does not exist here (#447) and
+//     nothing records habits, so the band would be three cards of fiction
+//     above the real shelf.
+//   - **The in-store cards.** Card-linked offers are out of scope (#445).
+//     Every partner on this shelf is online, reached by a tracked link.
+//
+// What the mockup gets exactly right is the sentence under the filters, and
+// it is kept: placement is not for sale. Ordering follows the member's
+// language and places, which is the API's own ordering.
+const axes = parseAxes(Astro.params['lang'], Astro.params['place']);
+if (axes === null) {
+  return Astro.rewrite('/404');
+}
+const { lang, places } = axes;
+const slugs = places.map((place) => place.slug);
+const t = cashbackStrings(lang);
+
+// The search term travels in the URL: a searched catalogue is a thing a
+// member links to, and the API takes `q` as a parameter for the same reason.
+const query = Astro.url.searchParams.get('q')?.trim() ?? '';
+
+const session = editorSession(Astro.request);
+
+let api: CashbackApi | null = null;
+let items: readonly CatalogueItem[] = [];
+let apiUnavailable = false;
+
+try {
+  api = createCashbackApi(API_BASE_URL, {
+    appEnv: APP_ENV,
+    token: session.token,
+    appVersion: PUBLIC_APP_VERSION,
+  });
+  items = (await api.catalogue({ lang, places: slugs, q: query === '' ? undefined : query })).items;
+} catch (error) {
+  if (error instanceof CashbackConfigurationError) {
+    console.error(`cashback: ${error.message}`);
+  }
+  apiUnavailable = true;
+  Astro.response.status = 503;
+  Astro.response.headers.set('Retry-After', '60');
+}
+
+const fixtures = api?.source === 'fixture';
+const homeHref = frontPagePath(lang, slugs);
+const placeNames = places.map((place) => place.endonym).join(' · ');
+const kicker = `${t.online} · ${t.trackedLink}`;
+// The aside counts what the shelf shows: the answer to the query, for the
+// places in the URL.
+const aside = t.partnersCount(items.length, placeNames);
+
+/** The muted line under the name: the first band's terms, or the plain fact of no band. */
+function shelfLine(item: CatalogueItem): string {
+  const first = item.rates[0];
+  if (first === undefined) {
+    return t.noRatesToday;
+  }
+  return first.conditions ?? first.exclusions ?? item.summary ?? '';
+}
+---
+
+<ReaderLayout lang={lang} title={t.catalogue} description={t.cashback} homeHref={homeHref}>
+  <div class="bar">
+    <CashbackBar lang={lang} slugs={slugs} current="catalogue" aside={aside} />
+  </div>
+
+  <main class="catalogue">
+    {fixtures && <FixtureNotice title={t.cashback} body={t.fixtureNotice} />}
+
+    <form class="filters" method="get" role="search">
+      <div class="field">
+        <label for="q">{t.searchLabel}</label>
+        <input
+          class="input"
+          id="q"
+          name="q"
+          type="search"
+          value={query}
+          placeholder={t.searchPlaceholder}
+        />
+      </div>
+      <div class="field">
+        <label for="place">{t.placeLabel}</label>
+        <input class="input" id="place" type="text" value={placeNames} readonly />
+      </div>
+      <button class="submit" type="submit">{t.searchLabel}</button>
+    </form>
+
+    <div class="chips">
+      <a class="tag tag-accent" href={cataloguePath(lang, slugs)} aria-current="page">{t.filterAll}</a>
+      <span class="note">{t.sortedNote}</span>
+    </div>
+
+    <section class="shelf" aria-label={t.catalogue}>
+      {apiUnavailable && <p class="empty" role="alert">{t.emptyQueue}</p>}
+      {!apiUnavailable && items.length === 0 && <p class="empty">{t.noMerchants}</p>}
+      {
+        items.map((item) => {
+          const first = item.rates[0];
+          const href = merchantPath(lang, slugs, item.slug);
+          return (
+            <article class="cell">
+              <span class="card-kicker">{kicker}</span>
+              <div class="head">
+                <h4>
+                  <a href={href}>{item.name}</a>
+                </h4>
+                {first !== undefined && <RateBadge lang={lang} rate={first} />}
+              </div>
+              <div class="line">{shelfLine(item)}</div>
+              {item.name_is_fallback && (
+                <div class="line fallback">
+                  {t.shownInLanguage(languageName(lang, item.name_language))}
+                </div>
+              )}
+              <div class="row">
+                <a class="btn btn-secondary" href={href}>
+                  {t.seeTerms}
+                </a>
+                <span class="tag tag-neutral">{t.trackedLink}</span>
+              </div>
+            </article>
+          );
+        })
+      }
+      <aside class="cell explainer">
+        <h6>{t.howShelfOrdered}</h6>
+        <p>{t.shelfP1}</p>
+        <p>{t.shelfP2}</p>
+      </aside>
+    </section>
+  </main>
+</ReaderLayout>
+
+<style>
+  .catalogue {
+    flex: 1;
+  }
+
+  /* The top bar, as the mockup draws it: the wordmark, the rule and the
+     links sit flush left as one group (gap 18px, padding 14px 26px, a 22px
+     wordmark); only the muted partner count is pushed to the right edge.
+     The shared masthead pushes its brand away from everything else with
+     margin-right:auto, which is right for the newspaper and wrong here,
+     so the page corrects it from its own scope. */
+  .bar :global(.masthead) {
+    gap: 18px;
+    padding: 14px 26px;
+  }
+  .bar :global(.brand) {
+    margin-right: 0;
+    font-size: 22px;
+  }
+
+  /* Search and place — 1fr 240px, a rule between, a rule below. */
+  .filters {
+    display: grid;
+    grid-template-columns: 1fr 240px;
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .filters .field {
+    padding: 16px 20px;
+  }
+  .filters .field:first-child {
+    border-right: 1px solid var(--color-divider);
+  }
+  .submit {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+    padding: 0;
+  }
+
+  /* The chip row: the one chip that is true, and the sentence. */
+  .chips {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border-bottom: 2px solid var(--color-divider);
+    flex-wrap: wrap;
+  }
+  .chips .tag {
+    font-size: 11px;
+    text-decoration: none;
+  }
+  .chips .tag-accent {
+    color: var(--color-accent-800);
+  }
+  .note {
+    margin-left: auto;
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+
+  /* The shelf: three columns, ruled right and below. */
+  .shelf {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .cell {
+    padding: 20px 22px;
+    border-right: 1px solid var(--color-divider);
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .cell:nth-child(3n) {
+    border-right: 0;
+  }
+  .cell .card-kicker {
+    font-size: 10px;
+  }
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 8px 0 6px;
+  }
+  .head h4 {
+    margin: 0;
+    font-size: 19px;
+    overflow-wrap: anywhere;
+  }
+  .head h4 a {
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  .head h4 a:hover {
+    color: var(--color-accent-700);
+  }
+  .line {
+    font-size: 12px;
+    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+    margin-bottom: 12px;
+    text-wrap: pretty;
+  }
+  .fallback {
+    margin-top: -8px;
+    font-style: italic;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .row .btn {
+    font-size: 12.5px;
+  }
+  .row .tag {
+    font-size: 10px;
+  }
+  .explainer {
+    background: var(--color-surface);
+  }
+  .explainer h6 {
+    margin: 0 0 8px;
+    color: var(--color-accent);
+  }
+  .explainer p {
+    margin: 0 0 8px;
+    font-size: 12px;
+    text-wrap: pretty;
+  }
+  .explainer p:last-child {
+    margin: 0;
+  }
+  .empty {
+    grid-column: 1 / -1;
+    margin: 0;
+    padding: 20px 22px;
+    border-bottom: 1px solid var(--color-divider);
+    font-size: 14px;
+    color: var(--ink-muted);
+  }
+
+  /* Phone: the bar stays one row — tighter gutters, a smaller wordmark,
+     links that never break mid-phrase — then one column, the two fields
+     stacked. */
+  @media (max-width: 660px) {
+    .bar :global(.masthead) {
+      gap: 12px;
+      padding: 12px 16px;
+    }
+    .bar :global(.brand) {
+      font-size: 20px;
+    }
+    .bar :global(.links) {
+      gap: 12px;
+      font-size: 13px;
+      white-space: nowrap;
+      min-width: 0;
+      overflow-x: auto;
+    }
+    .filters {
+      grid-template-columns: 1fr;
+    }
+    .filters .field:first-child {
+      border-right: 0;
+      border-bottom: 1px solid var(--color-divider);
+    }
+    .note {
+      margin-left: 0;
+    }
+    .shelf {
+      grid-template-columns: 1fr;
+    }
+    .cell {
+      border-right: 0;
+    }
+  }
+</style>

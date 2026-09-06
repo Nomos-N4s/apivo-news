@@ -1,0 +1,36 @@
+---
+import type { ReadingLanguage } from '../lib/reader/axes';
+import type { Rate } from '../lib/cashback/types';
+import { formatMoney, formatRateBps } from '../lib/cashback/money';
+
+// One published rate band, as the member earns it.
+//
+// The API publishes `kind` and then either `bps` or `amount`, and
+// deliberately does not publish a single pre-formatted `display_rate`: a
+// fixed band IS money, and money on that API is always minor units plus a
+// currency. So the discrimination happens here, where the language is known
+// and the formatting belongs.
+//
+// Every figure shown is the member's share, never the network's commission.
+// The API composes the two before it answers, because publishing the
+// commission would promise roughly twice what arrives and would publish the
+// margin along with it.
+interface Props {
+  lang: ReadingLanguage;
+  rate: Rate;
+}
+
+const { lang, rate } = Astro.props;
+const label =
+  rate.kind === 'percent' ? formatRateBps(lang, rate.bps) : formatMoney(lang, rate.amount);
+---
+
+<span class="rate">{label}</span>
+
+<style>
+  .rate {
+    font: var(--font-heading-weight) 19px/1 var(--font-heading);
+    color: var(--color-accent);
+    white-space: nowrap;
+  }
+</style>

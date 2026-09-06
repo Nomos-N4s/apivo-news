@@ -67,6 +67,24 @@ services:
       PORT: "4321"
       API_BASE_URL: http://apivo-${APIVO_PREVIEW}-api:8080
       PUBLIC_APP_VERSION: ${APIVO_PREVIEW_VERSION:-preview}
+      # Show the cashback surfaces to a reviewer.
+      #
+      # A preview runs APP_ENV=prod for fidelity, and it does not include
+      # docker-compose.cashback.yml — so CASHBACK_ENABLED is off, every
+      # cashback call answers 404, and the screens render an unavailable band.
+      # A preview that cannot show the change is a preview that has stopped
+      # doing its job.
+      #
+      # This makes the cashback pages, and only those, answer from their
+      # built-in fixtures, with the fixture band above every one of them
+      # saying so in the reading language. It moves no money: the fixture
+      # client refuses every operator decision with a 503 naming itself.
+      #
+      # It belongs to this file alone. QA, staging and production include
+      # docker-compose.yml instead, which does not set it, and the frontend
+      # reads it as the exact string "1" so a half-set value elsewhere does
+      # nothing. The reader pages keep their own refusal untouched.
+      CASHBACK_PREVIEW_FIXTURES: "1"
       # See docker-compose.yml for why the container serves TLS: Astro.url
       # takes its scheme from the socket, and a preview is the environment
       # that proved it, because a WILDCARD host cannot have the Origin

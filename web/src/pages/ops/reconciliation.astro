@@ -1,0 +1,480 @@
+---
+import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
+import OpsLayout from '../../layouts/OpsLayout.astro';
+import {
+  CashbackApiError,
+  CashbackConfigurationError,
+  createCashbackApi,
+  type CashbackApi,
+} from '../../lib/cashback/api';
+import { formatMoney } from '../../lib/cashback/money';
+import { opsAccess } from '../../lib/cashback/ops-guard';
+import { opsLanguage } from '../../lib/cashback/ops-language';
+import type { ReconciliationDifference, ReconciliationRun } from '../../lib/cashback/types';
+import { isSameOrigin } from '../../lib/csrf';
+import { editorSession } from '../../lib/editorial/session';
+import { formatItemDate } from '../../lib/reader/format';
+import { cashbackStrings } from '../../i18n/cashback';
+
+// Reconciliation: what the network's statement says against what our
+// records say (T115 #262).
+//
+// Two verdicts, and the screen offers only those two, because the contract
+// has only those two and the omission is deliberate. "The network owes us
+// and we are chasing it" is not a resolution: an open difference IS the
+// chase, and it holds the confirmation gate shut until the money arrives or
+// the network restates the report. Resolving early would confirm a member's
+// balance out of money that was never received, which is the single thing
+// US6 exists to prevent. The sentence saying so is on the page, next to the
+// buttons, rather than in a comment only we read.
+//
+// `delta` is paid less owed, so a shorted report is negative and an
+// overpayment positive. It is rendered with its sign rather than as an
+// absolute with a word beside it: an operator scanning a column needs the
+// direction in the figure.
+const lang = opsLanguage(Astro.url);
+const t = cashbackStrings(lang);
+const session = editorSession(Astro.request);
+
+let api: CashbackApi | null = null;
+let runs: readonly ReconciliationRun[] = [];
+let differences: readonly ReconciliationDifference[] = [];
+let selected: ReconciliationRun | null = null;
+let apiUnavailable = false;
+let notice: string | null = null;
+let refusal: string | null = null;
+
+try {
+  api = createCashbackApi(API_BASE_URL, {
+    appEnv: APP_ENV,
+    token: session.token,
+    appVersion: PUBLIC_APP_VERSION,
+  });
+  const access = opsAccess(session, api.source);
+
+  if (Astro.request.method === 'POST') {
+    if (!isSameOrigin(Astro.request, Astro.url.origin)) {
+      return new Response('cross-origin request refused', { status: 403 });
+    }
+    if (!access.mayAct) {
+      return new Response('operator role required', { status: 403 });
+    }
+    const form = await Astro.request.formData();
+    const id = String(form.get('id') ?? '');
+    const resolution = String(form.get('resolution') ?? '');
+    const reason = String(form.get('reason') ?? '').trim();
+    if (reason === '') {
+      refusal = t.reasonRequired;
+    } else if (resolution !== 'explained' && resolution !== 'absorbed') {
+      refusal = t.openDifferenceIsTheChase;
+    } else {
+      try {
+        await api.resolveDifference(id, resolution, reason);
+        notice = t.decisionRecorded;
+      } catch (error) {
+        if (!(error instanceof CashbackApiError)) {
+          throw error;
+        }
+        refusal = error.problem?.title ?? error.message;
+      }
+    }
+  }
+
+  if (access.mayRead) {
+    runs = (await api.reconciliationRuns()).items;
+    const asked = Astro.url.searchParams.get('run');
+    selected = runs.find((run) => run.id === asked) ?? runs[0] ?? null;
+    if (selected !== null) {
+      differences = (await api.differences(selected.id)).items;
+    }
+  }
+} catch (error) {
+  if (error instanceof CashbackConfigurationError) {
+    console.error(`cashback ops: ${error.message}`);
+  }
+  apiUnavailable = true;
+  Astro.response.status = 503;
+  Astro.response.headers.set('Retry-After', '60');
+}
+
+const access = opsAccess(session, api?.source ?? 'api');
+if (access.blocked && !apiUnavailable) {
+  Astro.response.status = 403;
+}
+
+// Selection — mockup 4f shows one row open beside the queue. `?id=` names
+// the difference; otherwise the first of the selected run.
+const askedId = Astro.url.searchParams.get('id');
+const current: ReconciliationDifference | null =
+  differences.find((difference) => difference.id === askedId) ?? differences[0] ?? null;
+
+const hrefFor = (runId: string, differenceId?: string): string => {
+  const params = new URLSearchParams();
+  params.set('run', runId);
+  if (differenceId !== undefined) {
+    params.set('id', differenceId);
+  }
+  params.set('lang', lang);
+  return `?${params.toString()}`;
+};
+
+// A difference carries no date of its own; it is as old as the statement
+// import that raised it.
+const now = Date.now();
+const ageOf = (iso: string): string =>
+  t.daysOld(Math.max(0, Math.floor((now - new Date(iso).getTime()) / 86_400_000)));
+const runAge = selected === null ? '' : ageOf(selected.imported_at);
+
+const kindOf = (difference: ReconciliationDifference): string =>
+  t.differenceKinds[difference.kind] ?? difference.kind;
+const moneyOrNone = (amount: ReconciliationDifference['expected']): string =>
+  amount === null ? t.none : formatMoney(lang, amount);
+const period = (run: ReconciliationRun): string =>
+  `${formatItemDate(lang, new Date(run.period.start))} – ${formatItemDate(lang, new Date(run.period.end))}`;
+---
+
+<OpsLayout
+  lang={lang}
+  session={session}
+  current="reconciliation"
+  title={t.queueReconciliation}
+  fixtures={api?.source === 'fixture'}
+  blocked={access.blocked}
+  notice={notice}
+  refusal={refusal}
+  api={api}
+  mayRead={access.mayRead}
+>
+  <Fragment slot="queue">
+    {runs.length === 0 && !access.blocked && <p class="queue-note">{t.noRuns}</p>}
+    {runs.length > 0 && differences.length === 0 && <p class="queue-note">{t.emptyQueue}</p>}
+    {
+      differences.map((difference) => (
+        <a
+          href={hrefFor(selected?.id ?? '', difference.id)}
+          class:list={['qrow', { on: difference.id === current?.id }]}
+          aria-current={difference.id === current?.id ? 'true' : undefined}
+        >
+          <div class="qrow-top">
+            <span class="card-kicker">{kindOf(difference)}</span>
+            <span class="qrow-age">{runAge}</span>
+          </div>
+          <div class="qrow-title">
+            {difference.transaction_id} · {formatMoney(lang, difference.delta)}
+          </div>
+          <div class="qrow-sub">
+            {t.expected} {moneyOrNone(difference.expected)} · {t.actual}{' '}
+            {moneyOrNone(difference.actual)}
+            {difference.resolution !== null && (
+              <>
+                {' · '}
+                {difference.resolution.resolution === 'explained'
+                  ? t.resolutionExplained
+                  : t.resolutionAbsorbed}
+              </>
+            )}
+          </div>
+        </a>
+      ))
+    }
+  </Fragment>
+
+  <Fragment slot="panel">
+    {
+      runs.length > 0 && (
+        <nav class="runs" aria-label={t.period}>
+          <h6>{t.period}</h6>
+          <div class="runs-list">
+            {runs.map((run) => (
+              <div class="run">
+                <div class="run-text">
+                  <div class="run-period">{period(run)}</div>
+                  <div class="run-counts">
+                    {t.differences} {run.difference_count} · {t.openDifferences} {run.open_count}
+                  </div>
+                </div>
+                <a
+                  href={hrefFor(run.id)}
+                  class="btn btn-secondary run-open"
+                  aria-current={run.id === selected?.id ? 'true' : undefined}
+                >
+                  {t.openEntry}
+                </a>
+              </div>
+            ))}
+          </div>
+        </nav>
+      )
+    }
+    {runs.length > 0 && <p class="queue-note">{t.openDifferenceIsTheChase}</p>}
+  </Fragment>
+
+  <Fragment slot="detail">
+    {
+      current === null || selected === null ? (
+        !access.blocked && <p class="queue-note">{t.selectRow}</p>
+      ) : (
+        <>
+          <div class="d-head">
+            <div class="d-meta">
+              <span class="card-kicker">{kindOf(current)}</span>
+              <span class="d-rule" aria-hidden="true" />
+              <span class="d-ref">
+                {t.reference} <span class="mono">{current.id}</span> · {runAge}
+              </span>
+            </div>
+            <h3>
+              {current.transaction_id} · {formatMoney(lang, current.delta)}
+            </h3>
+          </div>
+          <div class="d-body">
+            <div class="d-left">
+              <h6>{t.theRecord}</h6>
+              <dl class="record">
+                <dt>{t.period}</dt>
+                <dd>{period(selected)}</dd>
+                <dt>{t.reference}</dt>
+                <dd class="strong mono">{current.transaction_id}</dd>
+                <dt>{t.expected}</dt>
+                <dd>{moneyOrNone(current.expected)}</dd>
+                <dt>{t.actual}</dt>
+                <dd>{moneyOrNone(current.actual)}</dd>
+                <dt>{t.delta}</dt>
+                <dd class="strong">{formatMoney(lang, current.delta)}</dd>
+              </dl>
+              <h6 class="evidence-head">{t.evidence}</h6>
+              <pre class="evidence">{`run_id: ${selected.id}\nnetwork_account_id: ${selected.network_account_id}\nimported_at: ${selected.imported_at}\ntransaction_id: ${current.transaction_id}\nnetwork_transaction_id: ${current.network_transaction_id ?? '—'}\nkind: ${current.kind}\nsuperseded: ${String(current.superseded)}`}</pre>
+            </div>
+            <div class="d-right">
+              <div class="d-say">
+                <h6>{t.whatRecordsSay}</h6>
+                {current.resolution === null ? (
+                  <span class="tag tag-neutral">{t.openDifferences}</span>
+                ) : (
+                  <span class="tag tag-accent">
+                    {current.resolution.resolution === 'explained'
+                      ? t.resolutionExplained
+                      : t.resolutionAbsorbed}
+                  </span>
+                )}
+                {current.superseded && <span class="tag tag-outline">{t.superseded}</span>}
+              </div>
+              <p class="assess">
+                {current.resolution === null
+                  ? t.openDifferenceIsTheChase
+                  : current.resolution.reason}
+              </p>
+              <div class="records">
+                <div class="rec">
+                  <span>{t.trackingLog}</span>
+                  <span>
+                    {current.network_transaction_id === null ? t.noClick : t.clickRecorded}
+                  </span>
+                </div>
+                <div class="rec">
+                  <span>{t.partnerFeed}</span>
+                  <span class="mono">{current.transaction_id}</span>
+                </div>
+                <div class="rec">
+                  <span>{t.rateTable}</span>
+                  <span>{t.none}</span>
+                </div>
+              </div>
+              {current.resolution === null ? (
+                <form method="post" class="act">
+                  <input type="hidden" name="id" value={current.id} />
+                  <div class="field">
+                    <label for="reason">{t.reasonLabel}</label>
+                    <input class="input" id="reason" name="reason" required autocomplete="off" />
+                  </div>
+                  <div class="btns">
+                    <button
+                      class="btn btn-primary"
+                      name="resolution"
+                      value="explained"
+                      disabled={!access.mayAct}
+                    >
+                      {t.resolutionExplained}
+                    </button>
+                    <button
+                      class="btn btn-secondary"
+                      name="resolution"
+                      value="absorbed"
+                      disabled={!access.mayAct}
+                    >
+                      {t.resolutionAbsorbed}
+                    </button>
+                  </div>
+                  <p class="perm">{t.decisionIsPermanent}</p>
+                </form>
+              ) : (
+                <div class="act resolved">
+                  <div class="verdict">
+                    {current.resolution.resolution === 'explained'
+                      ? t.resolutionExplained
+                      : t.resolutionAbsorbed}
+                    {' · '}
+                    <span class="mono">{current.resolution.resolved_by}</span>
+                    {' · '}
+                    {formatItemDate(lang, new Date(current.resolution.resolved_at))}
+                  </div>
+                  <p class="perm">{t.decisionIsPermanent}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )
+    }
+  </Fragment>
+</OpsLayout>
+
+<style>
+  /* The statement imports, in the surface block the mockup draws under the
+     queue rows. */
+  .runs {
+    padding: 14px 18px;
+    border-bottom: 2px solid var(--color-divider);
+    background: var(--color-surface);
+  }
+  .runs h6 {
+    margin: 0 0 10px;
+  }
+  .runs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .run {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .run-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .run-period {
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .run-counts {
+    font-size: 11px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .run-open {
+    font-size: 11.5px;
+    padding: 6px 10px;
+  }
+  .run-open[aria-current='true'] {
+    border-color: var(--color-accent);
+    color: var(--color-accent-700);
+  }
+
+  .record {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    row-gap: 9px;
+    column-gap: 12px;
+    font-size: 12.5px;
+    margin: 0 0 16px;
+  }
+  .record dt {
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .record dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .strong {
+    font-weight: 600;
+  }
+  .mono {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .d-left h6 {
+    margin: 0 0 12px;
+  }
+  .d-left .evidence-head {
+    margin: 0 0 10px;
+  }
+  .evidence {
+    background: var(--color-surface);
+    border-left: 2px solid var(--color-accent);
+    padding: 12px 14px;
+    font: 11.5px/1.7 ui-monospace, Menlo, monospace;
+    margin: 0 0 16px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .d-say {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .d-say h6 {
+    margin: 0;
+  }
+  .d-say .tag {
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .assess {
+    margin: 0 0 16px;
+    font-size: 13.5px;
+    text-wrap: pretty;
+  }
+  .records {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--color-divider);
+    font-size: 12.5px;
+    margin-bottom: 18px;
+  }
+  .rec {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--color-divider);
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .rec > span:first-child {
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .rec > span:last-child {
+    text-align: right;
+  }
+  .act {
+    margin-top: auto;
+  }
+  .act .field {
+    margin-bottom: 12px;
+  }
+  .btns {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .btns .btn {
+    font-size: 13px;
+  }
+  .verdict {
+    font-size: 13px;
+    font-weight: 600;
+    border-left: 2px solid var(--color-divider);
+    padding-left: var(--space-3);
+    margin-bottom: 10px;
+  }
+  .perm {
+    margin: 0;
+    font-size: 11.5px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    text-wrap: pretty;
+  }
+</style>
