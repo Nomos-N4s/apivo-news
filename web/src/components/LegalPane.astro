@@ -210,9 +210,15 @@ const note =
 
   /* One pane alone: the term sits beside its value so the pair spans the
      page instead of running down its left edge. */
+  /* NOT `baseline`. The term and its value each carry a border-top, and
+     they are set at different sizes — 10.5px uppercase against 14px. On a
+     baseline, the two boxes are offset by the difference between those
+     baselines, and each takes its border with it, so the two halves of
+     what should be one rule land on different lines. `start` puts both box
+     tops on the grid row, which is where the rule belongs. */
   .pane.wide .rows {
     grid-template-columns: minmax(9rem, 14rem) 1fr;
-    align-items: baseline;
+    align-items: start;
   }
 
   .pane.wide .rows dt {
@@ -242,12 +248,16 @@ const note =
     padding-top: var(--space-6);
   }
 
+  /* The note is the second grid column, so its own rule sits on the same
+     grid row as the first term's. Zero the spacing above it and the three
+     rules — term, value, note — start on one line across the page. */
   .pane.wide .note {
     margin-top: 0;
+    padding-top: 0;
   }
 
   .pane.wide .note .note-title {
-    margin-top: var(--space-4);
+    margin-top: 0;
   }
 
   .note-title {
