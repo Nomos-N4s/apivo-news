@@ -1,6 +1,6 @@
 ---
 import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
-import CashbackBar from '../../../../components/CashbackBar.astro';
+import MemberBar from '../../../../components/MemberBar.astro';
 import FixtureNotice from '../../../../components/FixtureNotice.astro';
 import ReaderLayout from '../../../../layouts/ReaderLayout.astro';
 import {
@@ -212,7 +212,7 @@ const progress = step === 'receipt' ? 3 : step === 'review' ? 2 : 1;
 ---
 
 <ReaderLayout lang={lang} title={t.withdrawTitle} description={t.cashback} homeHref={homeHref}>
-  <CashbackBar
+  <MemberBar
     lang={lang}
     slugs={slugs}
     current="wallet"

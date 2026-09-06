@@ -148,6 +148,14 @@ export interface CashbackStrings {
 
   /* Composition — mockups 4a to 4f, bound to the contract */
   readonly news: string;
+  /**
+   * The accessible name of the member section nav (MemberBar).
+   *
+   * Not `cashback`, which it was while the bar served one product: a nav
+   * whose accessible name is one of its own destinations tells a screen
+   * reader on the news page that it is in the cashback nav.
+   */
+  readonly sections: string;
   readonly verifiedPayoutsOn: string;
   readonly pendingLine: (amount: string) => string;
   readonly browseOffers: string;
@@ -375,6 +383,7 @@ const el: CashbackStrings = {
   noRuns: 'Καμία εισαγωγή κατάστασης ακόμη.',
 
   news: 'Ειδήσεις',
+  sections: 'Ενότητες',
   verifiedPayoutsOn: 'Επαληθευμένο · οι πληρωμές είναι ενεργές',
   pendingLine: (amount) => `+ ${amount} σε εκκρεμότητα · επιβεβαιώνεται με το ρολόι του συνεργάτη, όχι με το δικό μας`,
   browseOffers: 'Δες τα καταστήματα',
@@ -600,6 +609,7 @@ const de: CashbackStrings = {
   noRuns: 'Noch kein Kontoauszug importiert.',
 
   news: 'Nachrichten',
+  sections: 'Bereiche',
   verifiedPayoutsOn: 'Verifiziert · Auszahlungen aktiv',
   pendingLine: (amount) => `+ ${amount} offen · bestätigt nach der Uhr des Partners, nicht nach unserer`,
   browseOffers: 'Shops ansehen',
