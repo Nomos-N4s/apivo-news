@@ -52,3 +52,7 @@ ok, the margin thing is fixed, however the content it's too "vertical" and it is
 ---
 
 correction, small one... The lines (seprators) in the contact page are misaligned.
+
+---
+
+The other small caveat, is how inconsistent the footer is. I see different font sizes on every item.
