@@ -1,0 +1,54 @@
+{
+  "id": "zephyra",
+  "name": "Zephyra",
+  "legal": {
+    "entity": "Zephyra Fixture Kooperativ AB",
+    "jurisdiction": "SE",
+    "address": "Kungsgatan 1, 411 19 Göteborg, Sweden",
+    "documents": {
+      "terms": { "id": "zephyra-terms", "version": "3.1.0" },
+      "privacy": { "id": "zephyra-privacy", "version": "2026-05-04" },
+      "cookies": { "id": "zephyra-cookies", "version": "1.0.0" }
+    }
+  },
+  "domains": {
+    "primary": "zephyra.example",
+    "aliases": ["www.zephyra.example", "zephyra-forna.example"]
+  },
+  "support": {
+    "general": "hej@zephyra.example",
+    "legal": "juridik@zephyra.example",
+    "privacy": "dataskydd@www.zephyra.example"
+  },
+  "assets": {
+    "logo": "/brand/zephyra/logo.svg",
+    "logoDark": "/brand/zephyra/logo-dark.svg",
+    "favicon": "/brand/zephyra/favicon.ico"
+  },
+  "theme": {
+    "colours": {
+      "bg": "#0b1d26",
+      "surface": "#123243",
+      "text": "#eef6f8",
+      "accent": "#2ec4b6",
+      "accent-2": "#ffbf47"
+    },
+    "typography": {
+      "heading": "\"Fraunces\", Georgia, serif",
+      "body": "\"Public Sans\", system-ui, sans-serif",
+      "headingWeight": 700
+    }
+  },
+  "defaults": {
+    "language": "sv",
+    "place": "goteborg",
+    "currency": "SEK"
+  },
+  "payout": {
+    "descriptor": "ZEPHYRA CASHBACK"
+  },
+  "features": {
+    "cashback": { "wallet": true, "withdrawal": true },
+    "news": { "reader": false }
+  }
+}

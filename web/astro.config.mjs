@@ -74,6 +74,24 @@ export default defineConfig({
         access: 'secret',
         optional: true,
       }),
+      // The directory holding this deployment's brand.json — the same name
+      // and the same file the Go binary reads (internal/platform/brand,
+      // ADR-0004). The legal notices render the entity, the address, the
+      // jurisdiction and the support addresses out of it, so a deployment
+      // that names no brand cannot print an Impressum.
+      //
+      // Optional, and unset is a working state in development only: the
+      // notices fall back to the repository's fixture brand and say so on
+      // the page, exactly as the reader falls back to fixture articles.
+      // src/lib/brand/load.ts refuses that fallback when APP_ENV is prod,
+      // because a Swedish co-operative printed as a German service's
+      // provider identification is a false legal statement, not a
+      // placeholder.
+      BRAND_DIR: envField.string({
+        context: 'server',
+        access: 'secret',
+        optional: true,
+      }),
     },
   },
 });

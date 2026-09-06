@@ -1,0 +1,330 @@
+---
+import type { Brand } from '../lib/brand/brand.types';
+import { BRAND_SOURCE_FIXTURE, type BrandSource } from '../lib/brand/load';
+import type { ReadingLanguage } from '../lib/reader/axes';
+import { legalStrings } from '../lib/legal/strings';
+
+// One of the three notices a German-facing service owes (issue #64):
+// the provider identification under TMG §5, the GDPR privacy notice, and
+// the contact addresses that are part of both.
+//
+// Two layouts, because the pane is used at two very different widths and
+// the board only draws one of them.
+//
+//   `column` — the desktop board's shape. Three panes share the width as
+//     equal columns, so each is narrow and the term sits ABOVE its value.
+//   `wide`   — one pane alone on /{lang}/impressum and its siblings. A
+//     lone stacked column on a 1440px screen is a ribbon of text down the
+//     left with the page empty beside it, so the term moves alongside the
+//     value and the pair uses the width it has.
+//
+// Every value comes from `brand`. Nothing here is a literal: an Impressum
+// whose entity is written into the template is wrong for every deployment
+// but one, and `scripts/lint-brand-literals.sh` gives a new file no budget
+// at all, so the first one would fail the build.
+interface Props {
+  lang: ReadingLanguage;
+  brand: Brand;
+  source: BrandSource;
+  pane: 'imprint' | 'privacy' | 'contact';
+  /** Heading level, so a stacked page keeps one h1 and three h2s. */
+  headingLevel?: 'h1' | 'h2';
+  layout?: 'column' | 'wide';
+}
+
+const { lang, brand, source, pane, headingLevel = 'h2', layout = 'column' } = Astro.props;
+const t = legalStrings(lang);
+const Heading = headingLevel;
+
+// The privacy document may be absent from a brand that is otherwise
+// valid — `documents` is a map, and only `terms` is load-bearing for the
+// money path. Absent means the version line is not drawn, never that the
+// page prints "undefined" at a reader.
+const privacyDocument = brand.legal.documents['privacy'];
+
+const terms: readonly { readonly term: string; readonly values: readonly string[]; readonly mail?: boolean }[] =
+  pane === 'imprint'
+    ? [
+        { term: t.entityTerm, values: [brand.legal.entity] },
+        { term: t.addressTerm, values: [brand.legal.address] },
+        { term: t.jurisdictionTerm, values: [brand.legal.jurisdiction] },
+        { term: t.contactTerm, values: [brand.support.general, brand.support.legal], mail: true },
+      ]
+    : pane === 'privacy'
+      ? [
+          { term: t.keepTerm, values: [t.keepBody] },
+          { term: t.whereTerm, values: [t.whereBody] },
+          { term: t.rightsTerm, values: [t.rightsBody] },
+        ]
+      : [
+          { term: t.generalTerm, values: [brand.support.general], mail: true },
+          { term: t.legalTerm, values: [brand.support.legal], mail: true },
+          { term: t.privacyTerm, values: [brand.support.privacy], mail: true },
+        ];
+
+const heading =
+  pane === 'imprint' ? t.imprintHeading : pane === 'privacy' ? t.privacyHeading : t.contactHeading;
+
+const kicker =
+  pane === 'imprint'
+    ? t.imprintStatute
+    : pane === 'privacy'
+      ? privacyDocument === undefined
+        ? undefined
+        : t.privacyVersion(privacyDocument.version)
+      : t.contactIntro;
+
+// The closing note each pane ends on. The imprint's says why the entity
+// is not the operator's when the fixture is answering; it is drawn only
+// then, because on a configured deployment it would be a lie.
+const note =
+  pane === 'imprint'
+    ? source === BRAND_SOURCE_FIXTURE
+      ? { title: t.fixtureTitle, body: t.fixtureBody, mail: undefined }
+      : undefined
+    : pane === 'privacy'
+      ? { title: t.rightsHowTitle, body: t.rightsHowBody, mail: brand.support.privacy }
+      : { title: t.correctionTitle, body: t.correctionBody, mail: undefined };
+---
+
+<section class={`pane ${layout}`} id={pane}>
+  <header class="pane-head">
+    <Heading>{heading}</Heading>
+    {kicker !== undefined && <p class="kicker">{kicker}</p>}
+  </header>
+
+  <dl class="rows">
+    {
+      terms.map((row) => (
+        <>
+          <dt>{row.term}</dt>
+          <dd>
+            {row.values.map((value) =>
+              row.mail === true ? <a href={`mailto:${value}`}>{value}</a> : <span>{value}</span>,
+            )}
+          </dd>
+        </>
+      ))
+    }
+  </dl>
+
+  {
+    note !== undefined && (
+      <aside class="note" role="note">
+        <p class="note-title">{note.title}</p>
+        <p class="note-body">{note.body}</p>
+        {note.mail !== undefined && (
+          <p class="note-body">
+            <a href={`mailto:${note.mail}`}>{note.mail}</a>
+          </p>
+        )}
+      </aside>
+    )
+  }
+</section>
+
+<style>
+  .pane {
+    display: flex;
+    flex-direction: column;
+    padding: calc(var(--space-6) + var(--space-1)) calc(var(--space-6) + var(--space-1));
+  }
+
+  /* In the three-up grid the panes are separated by a rule, as the board
+     draws them. The last one carries none — a trailing rule against the
+     frame's own border reads as a doubled line. */
+  .pane.column {
+    border-right: 1px solid var(--color-divider);
+  }
+
+  .pane.column:last-of-type {
+    border-right: 0;
+  }
+
+  /* A lone pane has four short values and a closing note. Stacked, that is
+     a ribbon down the left of a 1440px page; side by side, the two halves
+     use the width the page actually has. */
+  .pane.wide {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
+    column-gap: var(--space-8);
+    align-items: start;
+    padding-inline: 0;
+  }
+
+  .pane.wide .pane-head {
+    grid-column: 1 / -1;
+  }
+
+  .pane-head {
+    margin-bottom: var(--space-2);
+  }
+
+  .pane-head :global(h1),
+  .pane-head :global(h2) {
+    margin: 0;
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 26px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+  }
+
+  /* The board sets these labels in accent-400. That step is decorative
+     weight, not text weight: at 10.5px it does not clear WCAG 1.4.3 on
+     either background. accent-700 is the step contrast.test.ts asserts at
+     4.5:1, and is what .card-kicker in modernist.css already uses for the
+     same treatment. */
+  .kicker {
+    margin: var(--space-1) 0 0;
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-accent-700);
+    font-weight: 800;
+  }
+
+  .rows {
+    display: grid;
+    margin: 0;
+  }
+
+  .rows dt {
+    margin-top: var(--space-4);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 800;
+    color: var(--ink-muted);
+  }
+
+  .rows dd {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin: var(--space-2) 0 0;
+    font-size: 14px;
+    line-height: 1.55;
+    text-wrap: pretty;
+  }
+
+  /* One pane alone: the term sits beside its value so the pair spans the
+     page instead of running down its left edge. */
+  /* NOT `baseline`. The term and its value each carry a border-top, and
+     they are set at different sizes — 10.5px uppercase against 14px. On a
+     baseline, the two boxes are offset by the difference between those
+     baselines, and each takes its border with it, so the two halves of
+     what should be one rule land on different lines. `start` puts both box
+     tops on the grid row, which is where the rule belongs. */
+  .pane.wide .rows {
+    grid-template-columns: minmax(9rem, 14rem) 1fr;
+    align-items: start;
+  }
+
+  .pane.wide .rows dt {
+    padding-right: var(--space-6);
+    border-top: 1px solid var(--color-divider);
+    padding-top: var(--space-4);
+    margin-top: 0;
+  }
+
+  .pane.wide .rows dd {
+    border-top: 1px solid var(--color-divider);
+    padding-top: var(--space-4);
+    margin-top: 0;
+  }
+
+  .rows a {
+    color: var(--color-accent-700);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  /* `margin-top: auto` is the board's own: the closing note sits on the
+     floor of its column, so three panes of different lengths still end on
+     one line. */
+  .note {
+    margin-top: auto;
+    padding-top: var(--space-6);
+  }
+
+  /* The note is the second grid column, so its own rule sits on the same
+     grid row as the first term's. Zero the spacing above it and the three
+     rules — term, value, note — start on one line across the page. */
+  .pane.wide .note {
+    margin-top: 0;
+    padding-top: 0;
+  }
+
+  .pane.wide .note .note-title {
+    margin-top: 0;
+  }
+
+  .note-title {
+    margin: var(--space-6) 0 var(--space-2);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-strong);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .note-body {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  .note-body + .note-body {
+    margin-top: var(--space-2);
+  }
+
+  .note-body a {
+    color: var(--color-accent-700);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  @media (max-width: 900px) {
+    .pane.wide {
+      grid-template-columns: 1fr;
+    }
+
+    .pane.wide .note {
+      margin-top: var(--space-4);
+    }
+
+    .pane.column {
+      border-right: 0;
+      border-bottom: 1px solid var(--color-divider);
+    }
+
+    .pane.column:last-of-type {
+      border-bottom: 0;
+    }
+
+    .note {
+      margin-top: 0;
+    }
+  }
+
+  /* A two-column term/value pair at 390px is a horizontal scroll the
+     reader has to discover. The cohort this ships for is 40+ and arrives
+     on a phone. */
+  @media (max-width: 660px) {
+    .pane {
+      padding-inline: 0;
+    }
+
+    .pane.wide .rows {
+      grid-template-columns: 1fr;
+    }
+
+    .pane.wide .rows dd {
+      border-top: 0;
+      padding-top: 0;
+      margin-top: var(--space-2);
+    }
+  }
+</style>

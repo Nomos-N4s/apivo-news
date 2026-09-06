@@ -96,3 +96,33 @@ describe('SiteFooter version', () => {
     RENDER_TIMEOUT_MS,
   );
 });
+
+describe('the legal notices', () => {
+  // For a month this line printed "Impressum · Datenschutz · Kontakt —
+  // vor dem öffentlichen Start erforderlich" as dead text in front of
+  // readers, because the pages did not exist (issue #64). They exist now.
+  // The regression this pins is the return of that state: a German-facing
+  // service that names its Impressum without linking it is in the same
+  // position as one that never mentioned it.
+  it(
+    'links all three rather than naming them',
+    async () => {
+      const html = await renderFooter('1.0.0');
+
+      expect(html).toContain('href="/de/impressum"');
+      expect(html).toContain('href="/de/privacy"');
+      expect(html).toContain('href="/de/contact"');
+    },
+    RENDER_TIMEOUT_MS,
+  );
+
+  it(
+    'no longer says they are still owed',
+    async () => {
+      const html = await renderFooter('1.0.0');
+
+      expect(html).not.toMatch(/erforderlich|εκκρεμούν/);
+    },
+    RENDER_TIMEOUT_MS,
+  );
+});
