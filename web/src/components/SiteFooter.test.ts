@@ -22,13 +22,31 @@ const RENDER_TIMEOUT_MS = 20_000;
 // that module resolves to nothing whatever process.env holds, so the value
 // is supplied by mocking the module - the same seam the component imports.
 
-async function renderFooter(version: string | undefined): Promise<string> {
+async function renderFooter(
+  version: string | undefined,
+  role?: 'reader' | 'editor' | 'operator',
+): Promise<string> {
   vi.resetModules();
   vi.doMock('astro:env/server', () => ({ PUBLIC_APP_VERSION: version }));
   const { experimental_AstroContainer } = await import('astro/container');
   const container = await experimental_AstroContainer.create();
   const SiteFooter = (await import('./SiteFooter.astro')).default;
-  return container.renderToString(SiteFooter, { props: { lang: 'de' } });
+
+  // The footer reads the session the middleware filed against the request,
+  // so the request is the seam: file one here, or file nothing and get the
+  // fail-closed answer a plain reader page gets.
+  const request = new Request('https://example.invalid/de/munich');
+  if (role !== undefined) {
+    const { rememberEditorSession } = await import('../lib/editorial/session');
+    rememberEditorSession(request, {
+      displayName: 'A. Operator',
+      email: 'op@example.invalid',
+      role,
+      token: 'token',
+      authenticated: true,
+    });
+  }
+  return container.renderToString(SiteFooter, { props: { lang: 'de' }, request });
 }
 
 /** The rendered version chip, or undefined when the footer drew none. */
@@ -122,6 +140,40 @@ describe('the legal notices', () => {
       const html = await renderFooter('1.0.0');
 
       expect(html).not.toMatch(/erforderlich|εκκρεμούν/);
+    },
+    RENDER_TIMEOUT_MS,
+  );
+});
+
+describe('the operator way in', () => {
+  // Nothing linked /ops from any surface: an operator typed the URL. That is
+  // the same failure the editorial link was added to fix in b998473.
+  it(
+    'is offered to an operator',
+    async () => {
+      const html = await renderFooter('1.0.0', 'operator');
+
+      expect(html).toContain('/ops/unattributed');
+      expect(html).toContain('Betrieb');
+    },
+    RENDER_TIMEOUT_MS,
+  );
+
+  it.each(['reader', 'editor'] as const)('is not offered to a %s', async (role) => {
+    const html = await renderFooter('1.0.0', role);
+
+    expect(html).not.toContain('/ops/');
+  });
+
+  it(
+    'is not offered on a page where no identity was resolved',
+    async () => {
+      // The middleware resolves identity only on the editorial and cashback
+      // paths, so a plain reader page files nothing. The footer must fail
+      // closed there rather than assume the last role it saw.
+      const html = await renderFooter('1.0.0');
+
+      expect(html).not.toContain('/ops/');
     },
     RENDER_TIMEOUT_MS,
   );

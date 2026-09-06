@@ -87,6 +87,17 @@ export interface UiStrings {
    * typing it — which is how the editorial staff found out.
    */
   readonly editorialLabel: string;
+  /**
+   * The way in to the operator queues, shown only to an operator.
+   *
+   * Same reason the editorial link exists — until it did, the only route to
+   * /ops was typing it — but gated, because the queues carry members'
+   * account ids, held amounts and network references. The gate is a
+   * courtesy, not a defence: the API answers 403 and migration 0019's
+   * trigger refuses under that. This just stops the link being offered to
+   * people it would only refuse.
+   */
+  readonly operationsLabel: string;
   readonly aboutHeading: string;
   readonly aboutIntro: string;
   readonly aboutPipelineHeading: string;
@@ -179,6 +190,7 @@ const EL: UiStrings = {
   contact: 'Επικοινωνία',
   aboutLabel: 'Σχετικά',
   editorialLabel: 'Σύνταξη',
+  operationsLabel: 'Διαχείριση',
   aboutHeading: 'Σχετικά με το epiloYES',
   aboutIntro:
     'Το epiloYES είναι μια πολύγλωσση τοπική εφημερίδα για τις ελληνικές κοινότητες του εξωτερικού. Η γλώσσα ανάγνωσης και οι τόποι που παρακολουθείτε είναι δύο ανεξάρτητοι άξονες: διαβάζετε στα ελληνικά ή στα γερμανικά, για όποιους τόπους σας αφορούν — η αλλαγή του ενός δεν αγγίζει ποτέ τον άλλον.',
@@ -289,6 +301,7 @@ const DE: UiStrings = {
   contact: 'Kontakt',
   aboutLabel: 'Über epiloYES',
   editorialLabel: 'Redaktion',
+  operationsLabel: 'Betrieb',
   aboutHeading: 'Über epiloYES',
   aboutIntro:
     'epiloYES ist eine mehrsprachige Lokalzeitung für die griechischen Gemeinden im Ausland. Lesesprache und Orte sind zwei unabhängige Achsen: Sie lesen auf Griechisch oder Deutsch, über die Orte, die Sie betreffen — die eine Wahl berührt die andere nie.',
