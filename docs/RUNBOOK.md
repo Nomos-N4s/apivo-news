@@ -541,6 +541,7 @@ Read the shape of it first, because it decides how much time you have:
 | Symptom | How bad | Time you have |
 |---|---|---|
 | The zero-sum check is failing | **Incident.** The ledger and the wallets disagree | None. Stop writes if you cannot explain it in ten minutes |
+| The attribution canary is refusing | **Incident.** Every purchase through a network is being lost | Hours. Members are being told they will be paid |
 | The catalogue emptied | **Incident.** Members see no retailers, and the routes say they left | Hours. The next complete import is the remedy, not the deadline |
 | A payout is stuck | Serious. One member's money is in flight | Hours |
 | The poller has stalled | Serious, and silent. Commissions are not arriving | Hours, but the backlog grows |
@@ -750,6 +751,10 @@ was edited, or the network's `click_ref_param` is wrong. Both are
 configuration, and both lose money silently on **every** click while they
 last — the member clicks, buys, and nothing comes back.
 
+A network that has *never* been fine is the case below: the attribution
+canary refuses the forward sweep for it, so it does not depend on somebody
+noticing a proportion.
+
 Check one live offer end to end before you assume the network is at fault:
 
 ```sql
@@ -765,6 +770,57 @@ Attributing by hand from the queue is a legitimate operator action and the
 queue exists for it. Attributing *in bulk* to clear a backlog is not: each
 one is a decision about whose purchase it was, and C-2 means the entry rests
 on that decision for ever.
+
+## The attribution canary is refusing (#524)
+
+```
+job failed  job=network-poll:linkwise:CD20  error="networks: attribution has never succeeded at this network: 3 distinct transaction(s) dated after the first click (…) went unattributed and 0 were ever credited to a click; …"
+```
+
+Every forward sweep, for as long as it stands. **The poll itself succeeded**:
+the reports are stored, the cursor moved, and the queue has them. What the
+line says is that since the first member clicked through this network, not
+one reported purchase has come back matched to a click, and enough have now
+come back unmatched to rule out chance.
+
+That has two known causes, and they look identical from here:
+
+- the tracking URL carries our reference in a parameter the network does
+  not read — every report arrives with **no** reference at all;
+- the parameter is right but the network cuts the reference short — every
+  report arrives with a reference that matches **no** click.
+
+Tell them apart from the queue, which already has the evidence:
+
+```sql
+select nt.external_id, nt.click_ref, nt.transacted_at
+  from cashback.unattributed_transaction u
+  join cashback.network_transaction nt on nt.id = u.network_transaction_id
+ where nt.network_id = 'linkwise'
+ order by nt.transacted_at desc
+ limit 10;
+```
+
+`click_ref` null on every row is the first cause: fix `click_ref_param`.
+A value on every row that is a **prefix** of one of ours is the second:
+compare it byte for byte against `cashback.click.click_ref`, and the length
+at which it stops is the network's maximum — which is a code change to the
+reference minting and a decision about collision risk, so raise it on #524
+rather than shortening anything by hand.
+
+```sql
+update cashback.network set click_ref_param = 'subid1' where id = 'linkwise';
+```
+
+No restart. The next forward sweep re-counts, and the canary stays refusing
+until the first purchase made *after* the fix comes back matched — which,
+for a network with a validation delay, can be days. That is the canary
+working, not the fix failing: the queued reports from before the fix will
+never match, and they are what an operator attributes by hand from the
+queue once the cause is known.
+
+Once one credit to a click exists at the network the canary retires for
+good, and later unattributed reports are the ordinary case above.
 
 ## A network is unreachable
 

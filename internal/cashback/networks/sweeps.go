@@ -86,6 +86,24 @@ type Sweeps struct {
 	log     *slog.Logger
 	poller  *Poller
 	adapter Network
+	// canary, when set, is asked after every successful forward poll
+	// whether attribution has ever worked at this network. Nil means the
+	// question is never asked - a test driving cursors, or a wiring that
+	// chose not to - and the sweep behaves exactly as it did before the
+	// canary existed.
+	canary *AttributionCanary
+}
+
+// SweepOption configures a [Sweeps].
+type SweepOption func(*Sweeps)
+
+// WithAttributionCanary has the forward sweep ask, after every successful
+// poll, whether a click reference has ever come back matched at this
+// network, and refuse the run once enough have not (#524). See
+// [AttributionCanary] for why that lives in the sweep rather than in a job
+// of its own.
+func WithAttributionCanary(canary *AttributionCanary) SweepOption {
+	return func(s *Sweeps) { s.canary = canary }
 }
 
 // NewSweeps builds the pair over one adapter and the poller that drives it.
@@ -96,14 +114,20 @@ type Sweeps struct {
 // every tick of two jobs for the life of the process. The poller checks the
 // same things again on every poll, and that is not redundant - a poller may
 // be handed an adapter this constructor never saw.
-func NewSweeps(log *slog.Logger, poller *Poller, adapter Network) (*Sweeps, error) {
+func NewSweeps(log *slog.Logger, poller *Poller, adapter Network, opts ...SweepOption) (*Sweeps, error) {
 	if poller == nil || adapter == nil {
 		return nil, ErrNoSweepPoller
 	}
 	if err := ValidateNetwork(adapter); err != nil {
 		return nil, err
 	}
-	return &Sweeps{log: log, poller: poller, adapter: adapter}, nil
+	s := &Sweeps{log: log, poller: poller, adapter: adapter}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+	return s, nil
 }
 
 // Account is the publisher account these sweeps poll, so a caller that
@@ -133,10 +157,22 @@ func (s *Sweeps) Register(sch *scheduler.Scheduler) error {
 }
 
 // RunForward is one run of the forward sweep: read the next period nobody
-// has read, and advance the main cursor over it.
+// has read, advance the main cursor over it, and then - the poll having
+// succeeded and its evidence being stored - ask the canary whether any of
+// that evidence has ever been credited to a click.
+//
+// The canary's refusal is returned as the run's error, so the scheduler
+// logs it under this job's name every tick it stands, with the counts and
+// the remedy in the one line. It is a refusal of the RUN and not of the
+// poll: the cursor has advanced and the reports are stored, and the error
+// says so, because an operator reading "job failed" must not conclude the
+// network was not read.
 func (s *Sweeps) RunForward(ctx context.Context) error {
 	poll, err := s.poller.PollForward(ctx, s.adapter)
-	return s.report(ctx, ForwardJobName(s.adapter.Account()), poll, err)
+	if err := s.report(ctx, ForwardJobName(s.adapter.Account()), poll, err); err != nil {
+		return err
+	}
+	return s.checkAttribution(ctx)
 }
 
 // RunTrailing is one run of the re-read sweep: walk ground the forward
@@ -177,6 +213,37 @@ func (s *Sweeps) report(ctx context.Context, job string, poll Poll, err error) e
 		s.log.DebugContext(ctx, "the sweep read a period in which nothing had changed",
 			"job", job, "account", s.adapter.Account().String(), "window", poll.Window.String(),
 			"unchanged", poll.Outcome.Unchanged, "cursor_at", poll.CursorAdvancedTo)
+	}
+	return nil
+}
+
+// checkAttribution asks the canary, when there is one, and reports what it
+// found at the level the finding deserves.
+//
+// Idle and retired are the steady states and get a Debug line each: a
+// network nobody has clicked through yet, and one whose reference has
+// already round-tripped, are both networks with nothing to say every
+// quarter of an hour. Only the refusal is returned, and it is returned
+// rather than logged here for the reason report gives - the scheduler logs
+// every failed run under the job's name, and that line is the alarm.
+func (s *Sweeps) checkAttribution(ctx context.Context) error {
+	if s.canary == nil {
+		return nil
+	}
+	verdict, err := s.canary.Check(ctx, s.adapter.ID())
+	switch {
+	case err != nil:
+		return err
+	case verdict.Idle():
+		s.log.DebugContext(ctx, "the attribution canary has nothing to judge: no member has clicked through this network yet",
+			"network", verdict.Network.String())
+	case verdict.Retired():
+		s.log.DebugContext(ctx, "the attribution canary is retired: a click reference has round-tripped at this network",
+			"network", verdict.Network.String(), "attributed", verdict.Attributed, "unattributed", verdict.Unattributed)
+	default:
+		s.log.DebugContext(ctx, "the attribution canary is watching: nothing credited yet, and not enough unattributed to rule out chance",
+			"network", verdict.Network.String(), "unattributed", verdict.Unattributed,
+			"threshold", AttributionCanaryThreshold, "first_click_at", verdict.FirstClickAt)
 	}
 	return nil
 }
