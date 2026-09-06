@@ -116,7 +116,15 @@ func newNetworkSweeps(ctx context.Context, log *slog.Logger, adapter networks.Ne
 	if err != nil {
 		return nil, err
 	}
-	sweeps, err := networks.NewSweeps(log, poller, adapter)
+	// The first-attribution canary rides the forward sweep (#524). It is
+	// wired unconditionally: a deployment that polls a network is a
+	// deployment whose click side can be misconfigured in the two ways the
+	// canary exists to catch, and the check costs one count per poll.
+	canary, err := networks.NewAttributionCanary(db)
+	if err != nil {
+		return nil, err
+	}
+	sweeps, err := networks.NewSweeps(log, poller, adapter, networks.WithAttributionCanary(canary))
 	if err != nil {
 		return nil, err
 	}
