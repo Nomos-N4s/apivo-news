@@ -198,3 +198,31 @@ describe('parseCookieHeader', () => {
     expect(parseCookieHeader('   ')).toEqual([]);
   });
 });
+
+describe('the operator role', () => {
+  it('maps an operator claim to operator, not to reader', () => {
+    const session = editorSessionFrom(
+      { app_metadata: { role: 'operator' }, email: 'ops@example.invalid' },
+      'jwt',
+    );
+    expect(session.role).toBe('operator');
+  });
+
+  it('still maps an editor claim to editor', () => {
+    const session = editorSessionFrom(
+      { app_metadata: { role: 'editor' }, email: 'ed@example.invalid' },
+      'jwt',
+    );
+    expect(session.role).toBe('editor');
+  });
+
+  it('maps anything it does not recognise to reader', () => {
+    for (const claimed of ['admin', 'Operator', '', 'superuser']) {
+      const session = editorSessionFrom(
+        { app_metadata: { role: claimed }, email: 'x@example.invalid' },
+        'jwt',
+      );
+      expect(session.role, `${claimed} must not be trusted`).toBe('reader');
+    }
+  });
+});

@@ -138,7 +138,35 @@ export function isEditorialPath(pathname: string): boolean {
 }
 
 /**
- * Resolves the editor identity once per request, before anything renders.
+ * Whether a path is a cashback surface — a member's own money, or an
+ * operator queue over everybody's.
+ *
+ * Three shapes, and all three need an identity resolved: the member
+ * surfaces at `/{lang}/{place}/cashback…`, the operator queues at `/ops…`,
+ * and the click-out endpoint at `/api/cashback…`, which creates the row a
+ * later credit is attributed to.
+ *
+ * Every cashback endpoint requires a bearer token — there is no anonymous
+ * cashback surface at all, because an anonymous click can never be
+ * back-attributed. A page that reached the API without one would be
+ * answered 401 on every call and would have no way to say why, which is
+ * exactly what happened while this list named only the editorial screens.
+ */
+export function isCashbackPath(pathname: string): boolean {
+  return (
+    /^\/[^/]+\/[^/]+\/cashback(?:\/|$)/.test(pathname) ||
+    /^\/ops(?:\/|$)/.test(pathname) ||
+    /^\/api\/cashback(?:\/|$)/.test(pathname)
+  );
+}
+
+/** Every path that needs a signed-in identity resolved before it renders. */
+export function isAuthenticatedPath(pathname: string): boolean {
+  return isEditorialPath(pathname) || isCashbackPath(pathname);
+}
+
+/**
+ * Resolves the signed-in identity once per request, before anything renders.
  *
  * The screens read it back through `editorSession()`. It happens here
  * rather than in each page because resolving a session can refresh the
@@ -149,10 +177,11 @@ export function isEditorialPath(pathname: string): boolean {
  * The response is marked uncacheable for the same reason auth cookies
  * are: an editorial page carries one named person's session, and a shared
  * cache handing it to someone else would put the wrong name beside the
- * word "approver".
+ * word "approver". A cashback page carries one member's balances, and the
+ * same cache handing those on would be worse.
  */
 const resolveEditorIdentity = defineMiddleware(async (context, next) => {
-  if (!isEditorialPath(context.url.pathname)) {
+  if (!isAuthenticatedPath(context.url.pathname)) {
     return next();
   }
   rememberEditorSession(
