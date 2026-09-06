@@ -1,0 +1,255 @@
+---
+import { APP_ENV, BRAND_DIR } from 'astro:env/server';
+
+import Masthead from '../../components/Masthead.astro';
+import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import { brandOnHand } from '../../lib/brand/load';
+import { memberStrings } from '../../lib/member/strings';
+import { frontPagePath, isReadingLanguage } from '../../lib/reader/axes';
+import { uiStrings } from '../../lib/reader/strings';
+
+// Member sign-in (issue #529) — the screen the design board draws, and the
+// sentence the board prints on it: this does not work yet.
+//
+// Supabase Auth is not wired for members. `signInWithPassword` appears once
+// in this repository, on the editorial sign-in, and nothing anywhere creates
+// a member session. So every control here is genuinely `disabled` — the
+// native attribute, which reaches assistive technology, not a class that
+// merely looks the part — and a panel under both paths says what is owed.
+//
+// What this page must NOT do, and why each one matters:
+//
+//   * No <form>, no method, no action. A form with no action posts to
+//     itself; the page reloads, the reader concludes something was sent,
+//     and nothing was. `register.astro` sets the precedent — its disabled
+//     account fields sit in a bare section.
+//   * No password field. The board draws none, and the token-exchange note
+//     forbids one outright: no password takes this route.
+//   * No magic link. Nothing in this repository sends mail, so the button
+//     is disabled and must never be followed by copy implying a message is
+//     on its way.
+//   * No OAuth href, no callback route, no session cookie, no import of the
+//     editorial Supabase client — borrowing it would either fail closed or
+//     mint an editor session from a member screen.
+//   * No MemberBar. Its links are the member surfaces, and the whole
+//     subject of this page is that membership is not available yet.
+//
+// Reachable by URL only, exactly as /{lang}/register is. The front page's
+// sign-in button stays disabled, because this page quotes that state as the
+// current truth; linking the two would make the sentence contradict itself.
+const langSegment = Astro.params['lang'];
+if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+  return Astro.rewrite('/404');
+}
+const lang = langSegment;
+const t = uiStrings(lang);
+const m = memberStrings(lang);
+const { brand } = brandOnHand({ brandDir: BRAND_DIR, appEnv: APP_ENV });
+
+// Under the READER'S language: DEFAULT_FRONT_PAGE is hard-coded to Greek and
+// would flip a German reader's language axis (FR-009).
+const home = frontPagePath(lang, ['munich', 'greece']);
+---
+
+<ReaderLayout lang={lang} title={`${brand.name} — ${t.signIn}`} description={m.intro} homeHref={home}>
+  <Masthead homeHref={home}>
+    <div class="seg" role="group">
+      {
+        lang === 'el' ? (
+          <span class="seg-opt" aria-current="true" lang="el">
+            Ελληνικά
+          </span>
+        ) : (
+          <a class="seg-opt" href="/el/signin" lang="el">
+            Ελληνικά
+          </a>
+        )
+      }
+      {
+        lang === 'de' ? (
+          <span class="seg-opt" aria-current="true" lang="de">
+            Deutsch
+          </span>
+        ) : (
+          <a class="seg-opt" href="/de/signin" lang="de">
+            Deutsch
+          </a>
+        )
+      }
+    </div>
+  </Masthead>
+
+  <main class="page">
+    <header class="head">
+      <h1>{t.signIn}</h1>
+      <p>{m.intro}</p>
+    </header>
+
+    <div class="split">
+      {/* A bare section, never a form: there is nothing to post to. */}
+      <section class="panel">
+        <button class="btn btn-primary btn-block" type="button" disabled>
+          {m.continueWithApp}
+        </button>
+        <p class="fine">{m.tokenExchangeNote}</p>
+
+        <div class="or" aria-hidden="true"><i></i>{m.orWord}<i></i></div>
+
+        <div class="field">
+          <label for="member-email">{t.emailLabel}</label>
+          <input class="input" id="member-email" name="email" type="email" disabled />
+        </div>
+        <button class="btn btn-secondary btn-block" type="button" disabled>{m.sendLink}</button>
+      </section>
+
+      {/* Beside BOTH paths, so it is not read as belonging only to the email
+          one. Named as owed, never mocked up as working. */}
+      <aside class="owed">
+        <b>{m.notWorkingTitle}</b>
+        <p>{t.registrationPending}</p>
+        <p>{m.frontPageButtonState(t.signInPending)}</p>
+      </aside>
+    </div>
+  </main>
+</ReaderLayout>
+
+<style>
+  .page {
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-8);
+  }
+
+  .head {
+    padding-bottom: var(--space-6);
+    border-bottom: 2px solid var(--color-text);
+  }
+
+  .head h1 {
+    margin: 0 0 var(--space-2);
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 28px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+  }
+
+  .head p {
+    margin: 0;
+    max-width: 52ch;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  /* The board draws a 390px phone. Left alone on a desktop that is a narrow
+     column with the page empty beside it, so the panel keeps its readable
+     measure and the statement of what is owed moves alongside — the same
+     treatment the legal notices get on their own routes. */
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 46ch) minmax(0, 34ch);
+    gap: var(--space-8);
+    align-items: start;
+    padding-top: var(--space-6);
+  }
+
+  @media (max-width: 900px) {
+    .split {
+      grid-template-columns: 1fr;
+      gap: var(--space-6);
+    }
+  }
+
+  .panel {
+    max-width: 46ch;
+  }
+
+  .fine {
+    margin: var(--space-2) 0 0;
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    text-wrap: pretty;
+  }
+
+  .or {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin: var(--space-6) 0;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  .or i {
+    flex: 1;
+    height: 1px;
+    background: var(--color-divider);
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+  }
+
+  .field label {
+    font-size: 13px;
+    color: var(--ink-muted);
+  }
+
+  .owed {
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-accent-100);
+    border-left: 2px solid var(--color-accent-700);
+  }
+
+  .owed b {
+    display: block;
+    margin-bottom: var(--space-2);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-accent-800);
+  }
+
+  .owed p {
+    margin: 0 0 var(--space-2);
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--color-accent-800);
+    text-wrap: pretty;
+  }
+
+  .owed p:last-child {
+    margin-bottom: 0;
+  }
+
+  .seg {
+    margin-left: auto;
+  }
+
+  .seg-opt {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: var(--color-text);
+    text-decoration: none;
+  }
+
+  .seg-opt[aria-current='true'] {
+    background: var(--color-accent-700);
+    color: var(--color-bg);
+  }
+
+  a.seg-opt:hover,
+  a.seg-opt:focus-visible {
+    background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  }
+</style>
