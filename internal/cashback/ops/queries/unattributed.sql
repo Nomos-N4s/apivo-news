@@ -35,7 +35,7 @@ update cashback.unattributed_transaction u
  where u.id = sqlc.arg(id)
    and u.resolved_at is null
 returning u.id, u.network_transaction_id, u.detected_at,
-          u.resolved_by, u.resolved_reason, u.resolved_at;
+          u.resolved_by, u.resolved_reason, u.resolved_at, u.reason;
 
 -- name: ClassifyUnattributedReport :one
 -- Why a row the caller named is not open work, for the answer that says so.

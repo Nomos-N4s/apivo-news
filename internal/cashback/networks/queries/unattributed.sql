@@ -42,8 +42,8 @@
 --
 -- No rows back means the report carried a reference, or its observation is
 -- already stored. Both mean there is nothing to do, so both answer alike.
-insert into cashback.unattributed_transaction (network_transaction_id)
-select nt.id
+insert into cashback.unattributed_transaction (network_transaction_id, reason)
+select nt.id, 'no_reference'
   from cashback.network_transaction nt
  where nt.id = sqlc.arg(network_transaction_id)
    and nt.click_ref is null
@@ -100,7 +100,14 @@ select
     -- records today is the first kind; T067 will record the second into this
     -- same table, and this column is what lets the operator surface tell
     -- them apart without a kind column and without a migration.
-    (nt.click_ref is null)::boolean as attributable
+    (nt.click_ref is null)::boolean as attributable,
+    -- Why the statement that queued it says it could not be credited
+    -- (0038, FR-098). Stored beside the derived flag above rather than
+    -- instead of it: that one answers whether an operator may lawfully
+    -- attribute this report, and this one answers what happened - and with
+    -- five causes collapsing onto one boolean, the second is the question
+    -- an operator actually has.
+    u.reason
   from cashback.unattributed_transaction u
   join cashback.network_transaction nt on nt.id = u.network_transaction_id
  where u.resolved_at is null
@@ -143,7 +150,8 @@ select
     nt.currency,
     nt.transacted_at,
     nt.retrieved_at,
-    (nt.click_ref is null)::boolean as attributable
+    (nt.click_ref is null)::boolean as attributable,
+    u.reason
   from cashback.unattributed_transaction u
   join cashback.network_transaction nt on nt.id = u.network_transaction_id
  where u.id = sqlc.arg(id)

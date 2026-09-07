@@ -69,7 +69,7 @@ update cashback.unattributed_transaction u
  where u.id = $3
    and u.resolved_at is null
 returning u.id, u.network_transaction_id, u.detected_at,
-          u.resolved_by, u.resolved_reason, u.resolved_at
+          u.resolved_by, u.resolved_reason, u.resolved_at, u.reason
 `
 
 type ResolveUnattributedReportParams struct {
@@ -116,6 +116,7 @@ func (q *Queries) ResolveUnattributedReport(ctx context.Context, arg ResolveUnat
 		&i.ResolvedBy,
 		&i.ResolvedReason,
 		&i.ResolvedAt,
+		&i.Reason,
 	)
 	return i, err
 }

@@ -37,20 +37,35 @@ network id is the likeliest way to be told there is none.
 
 ### The unattributed reason becomes discriminating (FR-098)
 
-Today an unmatched report is unattributed. With two networks there are four
-distinct causes and four distinct operator actions:
+Today an unmatched report is unattributed. With two networks, and the
+integrity rules that came with them, there are **six** distinct causes and
+six distinct operator actions:
 
 | Reason | What happened | What an operator does |
 |---|---|---|
 | `no_reference` | The network reported no click reference at all | Attribute by hand, or dismiss |
 | `unknown_reference` | A reference that matches no click we ever issued | Suspect the network, or an expired click |
 | `foreign_network` | A reference that matches a click issued through **another** network | **Nothing** — this is the correct outcome of two networks reporting one purchase (FR-096). Dismiss it and expect the sibling report to have been credited |
+| `click_already_credited` | The click it names already earned its one credit (`entry_click_id_idx`, 0034) | Nothing. Dismiss it |
+| `foreign_currency` | The report is in a currency this member cannot be paid in (`entry_currency_is_the_members`, 0036) | Fix the deployment — the network's declared `reports_currency`, or the member's — then expect the re-report |
 | `route_cannot_attribute` | The route carries no click reference by design (rule 11) | Stop publishing the route, or accept it as unattributable |
 
 `foreign_network` is the one that matters most and is easiest to get wrong.
 Without it, the correct behaviour of a two-network deployment looks exactly
 like a bug, and an operator's instinct — attribute it by hand — would create
 the second credit the database now refuses.
+
+**As landed (0038, #581).** The table originally listed four; two more
+arrived with the integrity migrations and are named above. The value is
+`reason` on the queue row — stored by the statement that queued the report
+rather than derived on read, because that statement's own `WHERE` clause is
+the cause, and re-deriving would restate five predicates in a sixth place
+and let the answer change under an operator mid-page. It is frozen with the
+rest of the observation. `attributable` is unchanged beside it: five of the
+six read `attributable: false`, which is exactly why the flag alone stopped
+being enough. `route_cannot_attribute` is carried by the schema and the
+document with nothing writing it yet, so the importer learning
+`can_attribute` (T233/T241) does not widen an enum clients have seen.
 
 ---
 

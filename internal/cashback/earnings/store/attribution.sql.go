@@ -12,8 +12,8 @@ import (
 )
 
 const recordCreditedClickReference = `-- name: RecordCreditedClickReference :one
-insert into cashback.unattributed_transaction (network_transaction_id)
-select nt.id
+insert into cashback.unattributed_transaction (network_transaction_id, reason)
+select nt.id, 'click_already_credited'
   from cashback.network_transaction nt
  where nt.id = $1
    and nt.click_ref is not null
@@ -58,8 +58,8 @@ func (q *Queries) RecordCreditedClickReference(ctx context.Context, networkTrans
 }
 
 const recordForeignCurrencyReference = `-- name: RecordForeignCurrencyReference :one
-insert into cashback.unattributed_transaction (network_transaction_id)
-select nt.id
+insert into cashback.unattributed_transaction (network_transaction_id, reason)
+select nt.id, 'foreign_currency'
   from cashback.network_transaction nt
   join cashback.click c on c.click_ref = nt.click_ref
   left join cashback.participation p on p.account_id = c.account_id
@@ -96,8 +96,8 @@ func (q *Queries) RecordForeignCurrencyReference(ctx context.Context, networkTra
 }
 
 const recordForeignNetworkReference = `-- name: RecordForeignNetworkReference :one
-insert into cashback.unattributed_transaction (network_transaction_id)
-select nt.id
+insert into cashback.unattributed_transaction (network_transaction_id, reason)
+select nt.id, 'foreign_network'
   from cashback.network_transaction nt
   join cashback.click c on c.click_ref = nt.click_ref
  where nt.id = $1
@@ -140,8 +140,8 @@ func (q *Queries) RecordForeignNetworkReference(ctx context.Context, networkTran
 }
 
 const recordUnmatchedReference = `-- name: RecordUnmatchedReference :one
-insert into cashback.unattributed_transaction (network_transaction_id)
-select nt.id
+insert into cashback.unattributed_transaction (network_transaction_id, reason)
+select nt.id, 'unknown_reference'
   from cashback.network_transaction nt
  where nt.id = $1
    and nt.click_ref is not null

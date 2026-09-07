@@ -30,8 +30,8 @@
 -- No rows back covers three outcomes that mean the same thing to a caller:
 -- the report carried no reference at all (the sibling's half), its reference
 -- matched a click, or its observation is already recorded.
-insert into cashback.unattributed_transaction (network_transaction_id)
-select nt.id
+insert into cashback.unattributed_transaction (network_transaction_id, reason)
+select nt.id, 'unknown_reference'
   from cashback.network_transaction nt
  where nt.id = sqlc.arg(network_transaction_id)
    and nt.click_ref is not null
@@ -61,8 +61,8 @@ returning id, network_transaction_id, detected_at;
 -- no credit yet is not queued by this, whatever the caller thinks.
 --
 -- Reversals do not count as the click's credit, mirroring the index.
-insert into cashback.unattributed_transaction (network_transaction_id)
-select nt.id
+insert into cashback.unattributed_transaction (network_transaction_id, reason)
+select nt.id, 'click_already_credited'
   from cashback.network_transaction nt
  where nt.id = sqlc.arg(network_transaction_id)
    and nt.click_ref is not null
@@ -89,8 +89,8 @@ returning id, network_transaction_id, detected_at;
 -- The predicate is the STATEMENT'S, as its two siblings' are: the stored
 -- columns decide, not a caller that was just refused and believes it knows
 -- why. A report whose currency IS the member's is not queued by this.
-insert into cashback.unattributed_transaction (network_transaction_id)
-select nt.id
+insert into cashback.unattributed_transaction (network_transaction_id, reason)
+select nt.id, 'foreign_currency'
   from cashback.network_transaction nt
   join cashback.click c on c.click_ref = nt.click_ref
   left join cashback.participation p on p.account_id = c.account_id
@@ -120,8 +120,8 @@ returning id, network_transaction_id, detected_at;
 -- Until the queue carries a reason column, which statement wrote the row is
 -- the only record of why; the join is what an operator would run to find
 -- out.
-insert into cashback.unattributed_transaction (network_transaction_id)
-select nt.id
+insert into cashback.unattributed_transaction (network_transaction_id, reason)
+select nt.id, 'foreign_network'
   from cashback.network_transaction nt
   join cashback.click c on c.click_ref = nt.click_ref
  where nt.id = sqlc.arg(network_transaction_id)

@@ -25,7 +25,8 @@ select
     nt.currency,
     nt.transacted_at,
     nt.retrieved_at,
-    (nt.click_ref is null)::boolean as attributable
+    (nt.click_ref is null)::boolean as attributable,
+    u.reason
   from cashback.unattributed_transaction u
   join cashback.network_transaction nt on nt.id = u.network_transaction_id
  where u.id = $1
@@ -52,6 +53,7 @@ type GetOpenUnattributedReportRow struct {
 	TransactedAt         pgtype.Timestamptz
 	RetrievedAt          pgtype.Timestamptz
 	Attributable         bool
+	Reason               string
 }
 
 // The same question about one row, asked again inside the transaction of the
@@ -86,6 +88,7 @@ func (q *Queries) GetOpenUnattributedReport(ctx context.Context, id pgtype.UUID)
 		&i.TransactedAt,
 		&i.RetrievedAt,
 		&i.Attributable,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -112,7 +115,14 @@ select
     -- records today is the first kind; T067 will record the second into this
     -- same table, and this column is what lets the operator surface tell
     -- them apart without a kind column and without a migration.
-    (nt.click_ref is null)::boolean as attributable
+    (nt.click_ref is null)::boolean as attributable,
+    -- Why the statement that queued it says it could not be credited
+    -- (0038, FR-098). Stored beside the derived flag above rather than
+    -- instead of it: that one answers whether an operator may lawfully
+    -- attribute this report, and this one answers what happened - and with
+    -- five causes collapsing onto one boolean, the second is the question
+    -- an operator actually has.
+    u.reason
   from cashback.unattributed_transaction u
   join cashback.network_transaction nt on nt.id = u.network_transaction_id
  where u.resolved_at is null
@@ -147,6 +157,7 @@ type ListOpenUnattributedReportsRow struct {
 	TransactedAt         pgtype.Timestamptz
 	RetrievedAt          pgtype.Timestamptz
 	Attributable         bool
+	Reason               string
 }
 
 // The unattributed work an operator still has (FR-034, FR-060).
@@ -200,6 +211,7 @@ func (q *Queries) ListOpenUnattributedReports(ctx context.Context, arg ListOpenU
 			&i.TransactedAt,
 			&i.RetrievedAt,
 			&i.Attributable,
+			&i.Reason,
 		); err != nil {
 			return nil, err
 		}
@@ -213,8 +225,8 @@ func (q *Queries) ListOpenUnattributedReports(ctx context.Context, arg ListOpenU
 
 const recordUnattributedReport = `-- name: RecordUnattributedReport :one
 
-insert into cashback.unattributed_transaction (network_transaction_id)
-select nt.id
+insert into cashback.unattributed_transaction (network_transaction_id, reason)
+select nt.id, 'no_reference'
   from cashback.network_transaction nt
  where nt.id = $1
    and nt.click_ref is null

@@ -194,7 +194,7 @@ reported, and the delay is visible rather than inferred.
 
 ## Phase B: Operator surface and proof
 
-- [ ] T225 [P] [US2] The unattributed reason discriminates four causes — `no_reference`, `unknown_reference`, `foreign_network`, `route_cannot_attribute` — in the store and in the API (FR-098, [contracts/http-api.md](contracts/http-api.md) §1)
+- [x] T225 [P] [US2] The unattributed reason discriminates four causes — `no_reference`, `unknown_reference`, `foreign_network`, `route_cannot_attribute` — in the store and in the API (FR-098, [contracts/http-api.md](contracts/http-api.md) §1). Landed as **six**: 0034 and 0036 added `click_already_credited` and `foreign_currency` after this task was written, and the contract table is widened to match. `route_cannot_attribute` is admitted with no writer until T233/T241
 - [ ] T226 [P] [US4] `GET …/ops/unattributed` and `GET …/ops/held` take `?network=`, name the network on every row, and answer **400** for a network that is not connected
 - [ ] T227 [P] [US4] A network column in `GET …/ops/exports/ledger` and `…/exports/reconciliation`, JSON and CSV alike — added, never replacing an existing column
 - [ ] T228 [US4] `GET /api/v1/cashback/ops/networks`: connected networks, each account's cursors, last poll and outcome, `driver_shipped`, and `credential_present` as a **boolean** — never the credential, never a prefix, never its length (ADR-0003)

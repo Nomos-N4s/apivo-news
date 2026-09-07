@@ -96,6 +96,12 @@ func report(t *testing.T, i int) networks.OpenReport {
 		TransactedAt: detectedAt.Add(-2 * time.Hour),
 		RetrievedAt:  detectedAt.Add(-time.Minute),
 		Attributable: i%2 == 0,
+		// The two causes that share one attributable flag between them, so
+		// a rendering that dropped the reason would still look right.
+		Reason: map[bool]networks.QueueReason{
+			true:  networks.ReasonNoReference,
+			false: networks.ReasonForeignNetwork,
+		}[i%2 == 0],
 	}
 }
 
@@ -125,6 +131,7 @@ type listedPage struct {
 		TransactedAt         string          `json:"transacted_at"`
 		RetrievedAt          string          `json:"retrieved_at"`
 		Attributable         bool            `json:"attributable"`
+		Reason               string          `json:"reason"`
 	} `json:"items"`
 	NextCursor *string `json:"next_cursor"`
 }
@@ -208,6 +215,38 @@ func TestEveryFactTheOperatorNeedsSurvivesTheRendering(t *testing.T) {
 	}
 	if got.Attributable != row.Attributable {
 		t.Errorf("attributable = %v, want %v", got.Attributable, row.Attributable)
+	}
+	// FR-098. Five of the six causes read attributable = false, so the flag
+	// alone cannot tell an operator whether to act; dropping this field
+	// would leave a queue whose correct rows look like broken ones.
+	if got.Reason != row.Reason.String() {
+		t.Errorf("reason = %q, want %q", got.Reason, row.Reason)
+	}
+}
+
+// TestTwoRowsAnOperatorMustTreatDifferentlyLookDifferent is why the reason
+// is on the wire at all. A report whose reference named a click ANOTHER
+// network issued needs no action - the sibling report carried the credit -
+// and one the network gave no reference for may still be attributed by
+// hand. Rendered without the cause, the first reads as the second's
+// problem, and attributing it is the second credit the database refuses.
+func TestTwoRowsAnOperatorMustTreatDifferentlyLookDifferent(t *testing.T) {
+	t.Parallel()
+
+	byHand, foreign := report(t, 0), report(t, 1)
+	page := listOK(t, &pageStore{rows: []networks.OpenReport{byHand, foreign}}, "")
+
+	if len(page.Items) != 2 {
+		t.Fatalf("items = %d rows, want 2", len(page.Items))
+	}
+	if page.Items[0].Reason == page.Items[1].Reason {
+		t.Fatalf("both rows read %q; the queue cannot tell an operator they need opposite responses", page.Items[0].Reason)
+	}
+	if page.Items[0].Reason != string(networks.ReasonNoReference) {
+		t.Errorf("reason = %q, want %q", page.Items[0].Reason, networks.ReasonNoReference)
+	}
+	if page.Items[1].Reason != string(networks.ReasonForeignNetwork) {
+		t.Errorf("reason = %q, want %q", page.Items[1].Reason, networks.ReasonForeignNetwork)
 	}
 }
 

@@ -89,6 +89,12 @@ type unattributedItem struct {
 	// is then the only outcome, and saying so here is what stops an
 	// operator interface offering an action the database will refuse.
 	Attributable bool `json:"attributable"`
+	// Reason is why this report could not be credited (FR-098). Five of the
+	// six causes read attributable = false, so this is what separates "the
+	// network named a reference nobody minted" from "another network
+	// reported a purchase this one sent the member on" - which need
+	// opposite responses, and the second of which needs none at all.
+	Reason string `json:"reason"`
 }
 
 // unattributedPage is one page of the queue: the contract's list shape.
@@ -146,6 +152,7 @@ func unattributedItemOf(row networks.OpenReport) unattributedItem {
 		TransactedAt:         stamp(row.TransactedAt),
 		RetrievedAt:          stamp(row.RetrievedAt),
 		Attributable:         row.Attributable,
+		Reason:               row.Reason.String(),
 	}
 }
 

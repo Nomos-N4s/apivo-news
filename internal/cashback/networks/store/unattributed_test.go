@@ -224,7 +224,7 @@ func TestUnattributedQueueAgainstSchema(t *testing.T) {
 		// carry it, which is what lets the operator surface be written once.
 		orphan := storeReport(ctx, t, q, networkID, accountID, "bm90LWEtY2xpY2std2Uta25vdw", pgtype.UUID{})
 		if _, err := tx.Exec(ctx,
-			`insert into cashback.unattributed_transaction (network_transaction_id) values ($1)`, orphan); err != nil {
+			`insert into cashback.unattributed_transaction (network_transaction_id, reason) values ($1, 'unknown_reference')`, orphan); err != nil {
 			t.Fatalf("planting the orphan observation: %v", err)
 		}
 
