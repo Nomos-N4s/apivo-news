@@ -103,6 +103,7 @@ describe('every interpolating string', () => {
         t.requestRecorded('WD-1'),
         t.reservedForRequest('18,40 \u20ac'),
         t.joinConsent('0.1.0'),
+        t.clickoutTooManyUntil('in 45 seconds'),
       ];
       for (const line of built) {
         expect(line.trim()).not.toBe('');

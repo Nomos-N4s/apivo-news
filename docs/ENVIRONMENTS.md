@@ -211,7 +211,7 @@ to `/etc/apivo/<env>/`, and editing the template on a host edits nothing.
 | `NETWORKS` | `fixture` | **`/etc/apivo/<env>/api.env`** on the host (template: `deploy/hetzner/env/api.env.example`) — an operator's choice; a comma-separated list, empty polls nothing | `deploy/k8s/cashback/cashback-configmap.yaml` — `fixture` |
 | `BLNK_URL` | `http://localhost:5001` | the same overlay, from the container name | the `blnk` Service — `deploy/k8s/cashback/blnk-service.yaml` |
 | `REDIS_URL` | `redis://localhost:6379` | the same overlay, from the container name | the `redis` Service — `deploy/k8s/cashback/redis-service.yaml` |
-| `PAYOUT_VAULT_URL` · `PAYOUT_VAULT_TOKEN` · `PAYOUT_VAULT_MOUNT` | commented out | **`/etc/apivo/<env>/api.env`** — the token is a credential and belongs nowhere else | not shipped in any manifest yet: OpenBao is a dependency a deployment brings, as Blnk is. Where members' payout details live (ADR-0006). Unset, the api starts and answers 503 on `POST /payout-destinations` alone, so no member can add somewhere to be paid while everything else keeps working; set to something that is not an absolute http or https URL, the api refuses to start, because a deployment that named a vault meant it. **Losing this vault strands every destination** — the rows referencing it survive and the details do not — so its backup is not optional |
+| `PAYOUT_VAULT_URL` · `PAYOUT_VAULT_TOKEN` · `PAYOUT_VAULT_MOUNT` | commented out; `make cashback-demo` runs a dev-mode vault and points the api at it | the URL from `deploy/hetzner/compose/docker-compose.vault.yml`, from the container name; the token and the mount from **`/etc/apivo/<env>/api.env`**, because the token is a credential and belongs nowhere else. Listing that overlay in `COMPOSE_FILE` is the whole decision, as it is for the ledger — it is a **separate file** from the cashback overlay precisely because cashback without a vault is a supported state | not shipped in any manifest, deliberately: a vault there would be this repository's first `StatefulSet` and `PersistentVolumeClaim`, and `deploy/k8s/` is deployed nowhere. Where members' payout details live (ADR-0006). Unset, the api starts and answers 503 on `POST /payout-destinations` alone, so no member can add somewhere to be paid while everything else keeps working; set to something that is not an absolute http or https URL, the api refuses to start, because a deployment that named a vault meant it. It comes up **sealed** after every restart and answers nothing until an operator unseals it — the rollout gate is written to tolerate that and not to roll back over it. **Losing this vault strands every destination** — the rows referencing it survive and the details do not — so its backup is not optional |
 | `HOUSE_ACCOUNT_ROUNDING`, `HOUSE_ACCOUNT_CLAWBACK`, `HOUSE_ACCOUNT_NETWORK_RECEIVABLE` | `rounding-remainder` / `clawback-loss` / `network-receivable` | the same overlay — the house account the sub-minor-unit rounding remainder accrues to (D6), the one an absorbed post-payout clawback is recorded against (Q3), and the one holding the commission an earning is paid out of, whose residue is Apivo's own cut (FR-040). Required once `CASHBACK_ENABLED=true` in production, which every deployed environment is (`APP_ENV=prod`); the api refuses to start anywhere if any two share a name, and renaming one later strands whatever balance had accrued under the old name | `deploy/k8s/cashback/cashback-configmap.yaml` |
 | `NETWORK_<DRIVER>_ACCOUNT_ID` | `fixture-publisher` | **`/etc/apivo/<env>/api.env`** | `deploy/k8s/cashback/cashback-configmap.yaml` — not a credential, and logged in clear. One per entry in `NETWORKS`. **Required, or cashback does not mount at all**, see below |
 | `NETWORK_<DRIVER>_SOURCE_LANGUAGE` | empty | **`/etc/apivo/<env>/api.env`** — the language that network supplies its catalogue copy in, as a BCP-47 primary subtag (`el`, `en`), stated by the operator because no network says. With `BRAND_DIR` it turns the **catalogue import** on; with either unset the api serves normally and says at ERROR that no import is scheduled | `deploy/k8s/cashback/cashback-configmap.yaml`, empty |
@@ -810,8 +810,23 @@ against. Deleting `deploy/cloudflare/` is what that port unblocks.
 - **Backups.** Supabase covers production. QA and Staging are containers on
   the VPS with no backup at all — QA is fixtures and deliberately disposable,
   and staging's data is rebuilt from a release candidate rather than kept.
-  Nothing on a VPS holds state that matters yet — and the moment production
-  exists, that sentence needs re-checking.
+
+  **The payout details vault is the exception, and it is the first one.**
+  Everything else on a VPS can be rebuilt from somewhere: the database from
+  Supabase or from a seed, the ledger from its own Postgres schema, Redis from
+  nothing at all because it holds no source of truth. `apivo-<env>-baodata`
+  cannot. It holds the only copy of every member's payout details, and losing
+  it leaves the members, their balances and their withdrawal requests all
+  intact and unpayable until each person re-enters their bank details by hand
+  (ADR-0006). On QA that is an annoyance; the first time this overlay is
+  listed on staging or production it is not, and its volume needs a backup
+  before that day rather than after it. `docker compose stop openbao`, copy
+  the volume, start it again — stopped, because a file-backend directory
+  copied mid-write can be torn.
+
+  The unseal shares are the other half and do not belong in the same place:
+  a host holding both the sealed storage and the keys to it is a host where
+  the seal means nothing.
 - **`linux/arm64` images.** Built for `amd64` only. Hetzner's ARM line (CAX)
   needs the Dockerfile made cross-aware first — two lines, `TARGETARCH` and
   `--platform=$BUILDPLATFORM` — and is worth it if the box is ARM.
