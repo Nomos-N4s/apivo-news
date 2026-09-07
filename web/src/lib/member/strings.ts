@@ -40,6 +40,12 @@ export interface MemberStrings {
   readonly sendLink: string;
   /** The heading of the panel that states what is owed. */
   readonly notWorkingTitle: string;
+  /**
+   * What is owed, under that heading. This page cannot borrow the register
+   * page's sentence: that one names the shell's vendor and ends by saying
+   * the form sends nothing, and this page has no form to say it about.
+   */
+  readonly notWorkingBody: string;
   /** Names the front page's disabled control by its own current label. */
   readonly frontPageButtonState: (label: string) => string;
 }
@@ -53,6 +59,8 @@ const EL: MemberStrings = {
   orWord: 'ή',
   sendLink: 'Αποστολή συνδέσμου',
   notWorkingTitle: 'Δεν λειτουργεί ακόμη',
+  notWorkingBody:
+    'Καμία από τις δύο διαδρομές δεν είναι συνδεδεμένη ακόμη· κάθε πεδίο και κάθε κουμπί εδώ είναι απενεργοποιημένο και τίποτα σε αυτή τη σελίδα δεν αποστέλλει στοιχεία.',
   frontPageButtonState: (label) =>
     `Σήμερα το κουμπί σύνδεσης στην αρχική σελίδα είναι απενεργοποιημένο και γράφει «${label}».`,
 };
@@ -66,6 +74,8 @@ const DE: MemberStrings = {
   orWord: 'oder',
   sendLink: 'Link senden',
   notWorkingTitle: 'Funktioniert noch nicht',
+  notWorkingBody:
+    'Keiner der beiden Wege ist bislang angebunden; jedes Feld und jede Schaltfläche hier ist deaktiviert, und nichts auf dieser Seite übermittelt Daten.',
   frontPageButtonState: (label) =>
     `Zurzeit ist die Anmeldeschaltfläche auf der Startseite deaktiviert und trägt den Hinweis „${label}“.`,
 };

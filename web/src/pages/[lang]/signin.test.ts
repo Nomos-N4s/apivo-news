@@ -77,7 +77,7 @@ describe.each(READING_LANGUAGES)('member sign-in in %s', (lang) => {
       const m = memberStrings(lang);
 
       expect(html).toContain(m.notWorkingTitle);
-      expect(html).toContain(t.registrationPending);
+      expect(html).toContain(m.notWorkingBody);
       // Read from the catalogues rather than retyped, so this case cannot
       // disagree with the page about what it promises.
       expect(html).toContain(m.frontPageButtonState(t.signInPending));
@@ -115,7 +115,11 @@ describe.each(READING_LANGUAGES)('member sign-in in %s', (lang) => {
     async () => {
       const html = await renderSignIn(lang);
 
-      expect(html.toLowerCase()).not.toContain('evreos');
+      // Both names, because the page reached for a neighbouring string
+      // that carried the second one and this case did not notice.
+      for (const vendor of ['evreos', 'supabase']) {
+        expect(html.toLowerCase(), `rendered ${vendor}`).not.toContain(vendor);
+      }
     },
     RENDER_TIMEOUT_MS,
   );
