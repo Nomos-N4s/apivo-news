@@ -332,3 +332,62 @@ records the *name* of the environment key the credential is read from —
 that network — and never its value (ADR-0003). Per network since T215: it was
 the literal `NETWORK_API_KEY`, which was true while one network existed and
 became a lie the moment the keys grew a driver in them.
+
+### Publishing a rate band
+
+A connected, imported network is a catalogue of retailers with **nothing to
+click**. The import writes merchants and routes and deliberately leaves the
+network's commission structure in the raw payload — sale, lead and click
+categories, percent or flat, tiers — because a published rate is a promise
+to a member and that structure does not reduce to one number without a
+person deciding. `apivo publish-offer` is where that decision becomes a row
+(#537):
+
+```sh
+kubectl exec deploy/apivo-api -- apivo publish-offer \
+  -merchant 14174 \
+  -rate-bps 1500 \
+  -deeplink 'https://go.linkwi.se/z/14174-3/CD20/?lnkurl=https%3A%2F%2Fdazzleshop.gr%2F'
+```
+
+**The network comes from the environment**, for the reason connect-network's
+does: the band is published on the network `NETWORKS` names, so it cannot be
+published on one this deployment would never issue a click through. The
+retailer is named by the **network's own id** for it — the programme id on
+Linkwise — as the import stored it on the route.
+
+**The rate is given in the schema's own units.** `-rate-bps 1500` is 15% of
+the sale; `-fixed-minor 250 -currency EUR` is €2.50 per sale; exactly one of
+the two. `-share-bps` is the member's share of that commission and defaults
+to **6000** — founder decision Q4. Nothing here parses a decimal: the one
+place a rounding bug must not live is the row that states the promise.
+
+**Three things are refused before the row exists**, because each is
+otherwise met by a member at their first click:
+
+- a route no click could be issued against — paused by the import because
+  the programme's terms forbid cashback sites or deeplinking, or a retailer
+  or network that is off. The refusal names the leg;
+- a template the adapter **cannot build a redirect from**. The command tries
+  it exactly as the click-out will, with a reference the click table would
+  accept, and repeats the adapter's own words when it refuses — on Linkwise,
+  an `lnkurl` that is not escaped, or a click-reference slot it does not
+  read;
+- the same promise already in force on the route: the same rate, share and
+  terms, whatever its end date or template.
+
+**A rate change is one command.** `-replaces <offer id>` closes that band at
+the instant the new one opens, in the same transaction, so the merchant page
+never shows two rates for one retailer by accident. Clicks already made keep
+the band they were issued against (FR-013). The same flag is how a tracking
+URL is changed while the promise stays: without it, the same promise on a
+new template is refused as a duplicate.
+
+Bands with **different** terms are different bands and publish side by side —
+a retailer whose rate varies by what you buy lists several at once. The
+report ends by listing every band now in force on the route, read back from
+the database rather than echoed from the flags, with the new one marked.
+
+A band on a route that is **not the preferred one** is published and said to
+be so: it is clickable by id and the merchant page does not list it, because
+that page lists the preferred route's bands only.
