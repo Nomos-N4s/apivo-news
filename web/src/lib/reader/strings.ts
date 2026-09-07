@@ -60,7 +60,6 @@ export interface UiStrings {
   readonly fixtureNoticeBody: string;
   /** Masthead sign-in (mockup 1a) — disabled until registration ships (T031). */
   readonly signIn: string;
-  readonly signInPending: string;
   /**
    * Site footer. The imprint and privacy notice are not decoration: a
    * German-facing service owes an Impressum (TMG §5) and a GDPR privacy
@@ -116,12 +115,16 @@ export interface UiStrings {
   /** Registration and consent (mockup 1j, US6/FR-011). */
   readonly createAccount: string;
   readonly accountSubtitle: string;
-  readonly nameLabel: string;
   readonly emailLabel: string;
   readonly passwordLabel: string;
   readonly placesToFollow: string;
   readonly followNote: string;
-  readonly registrationPending: string;
+  /**
+   * How an account comes to exist, on the page that used to offer to make
+   * one. It is the sign-in link that creates it, so this sentence sends
+   * somebody there rather than describing a form that is not coming.
+   */
+  readonly registrationBySignIn: string;
   readonly consentHeading: string;
   readonly consentIntro: string;
   readonly purposeLabels: Readonly<Record<string, string>>;
@@ -188,7 +191,6 @@ const EL: UiStrings = {
   fixtureNoticeBody:
     'Αυτή η σελίδα δεν συνδέεται με τη βάση δεδομένων. Τα άρθρα, οι εκδότες και τα ονόματα των συντακτών παρακάτω είναι επινοημένα: κανένα δεν εγκρίθηκε από άνθρωπο και κανένα δεν αποτελεί δημοσιευμένη ύλη.',
   signIn: 'Σύνδεση',
-  signInPending: 'Διαθέσιμο με την εγγραφή',
   alphaLabel: 'Άλφα',
   imprint: 'Ταυτότητα',
   privacy: 'Απόρρητο',
@@ -221,14 +223,13 @@ const EL: UiStrings = {
   createAccount: 'Δημιουργία λογαριασμού',
   accountSubtitle:
     'Ο λογαριασμός θυμάται τη γλώσσα σας και τους τόπους που ακολουθείτε. Η ανάγνωση λειτουργεί και χωρίς αυτόν.',
-  nameLabel: 'Όνομα (αυτό εμφανίζεται αν γράψετε ποτέ εδώ)',
   emailLabel: 'Ηλεκτρονικό ταχυδρομείο',
   passwordLabel: 'Κωδικός',
   placesToFollow: 'Τόποι προς παρακολούθηση',
   followNote:
     'Ακολουθήστε όσους θέλετε. Η γλώσσα ανάγνωσης παραμένει ξεχωριστή ρύθμιση.',
-  registrationPending:
-    'Η εγγραφή ολοκληρώνεται μέσω Supabase Auth, που δεν έχει συνδεθεί ακόμη — κανένα στοιχείο δεν αποστέλλεται από αυτή τη φόρμα.',
+  registrationBySignIn:
+    'Ο λογαριασμός δημιουργείται με τον σύνδεσμο που στέλνουμε στο email σου. Δεν υπάρχει κωδικός να ορίσεις, ούτε τώρα ούτε αργότερα.',
   consentHeading: 'Συγκατάθεση — μία εγγραφή ανά σκοπό',
   consentIntro:
     'Κάθε μία αποθηκεύεται ως δική της χρονολογημένη εγγραφή. Ανακαλέστε οποιαδήποτε ανά πάσα στιγμή· η προηγούμενη εγγραφή διατηρείται, δεν αντικαθίσταται.',
@@ -300,7 +301,6 @@ const DE: UiStrings = {
   fixtureNoticeBody:
     'Diese Seite ist mit keiner Datenbank verbunden. Die Beiträge, die Verlage und die genannten Redaktionsnamen sind erfunden: nichts davon wurde von einem Menschen freigegeben, nichts davon ist veröffentlicht.',
   signIn: 'Anmelden',
-  signInPending: 'Verfügbar mit der Registrierung',
   alphaLabel: 'Alpha',
   imprint: 'Impressum',
   privacy: 'Datenschutz',
@@ -333,13 +333,12 @@ const DE: UiStrings = {
   createAccount: 'Konto anlegen',
   accountSubtitle:
     'Ein Konto merkt sich Ihre Sprache und die Orte, denen Sie folgen. Lesen geht auch ohne.',
-  nameLabel: 'Name (dieser Name erscheint, falls Sie hier je schreiben)',
   emailLabel: 'E-Mail',
   passwordLabel: 'Passwort',
   placesToFollow: 'Orte, denen Sie folgen',
   followNote: 'Folgen Sie so vielen, wie Sie mögen. Ihre Lesesprache bleibt eine eigene Einstellung.',
-  registrationPending:
-    'Die Registrierung läuft über Supabase Auth, das noch nicht angebunden ist — dieses Formular sendet nichts.',
+  registrationBySignIn:
+    'Das Konto entsteht über den Link, den wir an deine E-Mail schicken. Ein Passwort gibt es nicht zu setzen, jetzt nicht und später auch nicht.',
   consentHeading: 'Einwilligung — ein Eintrag je Zweck',
   consentIntro:
     'Jede wird als eigener datierter Eintrag gespeichert. Widerrufen Sie jederzeit; der frühere Eintrag bleibt erhalten und wird nicht überschrieben.',
