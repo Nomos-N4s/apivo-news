@@ -143,6 +143,8 @@ Create the tracked click and get the redirect target (FR-020, FR-021).
   problem document the frontend renders plainly (US1 scenario 1).
 - 401 when unauthenticated — an anonymous click is never created and can
   never be back-attributed (FR-023).
+- 403 when the member has not opted in (FR-110, spec 004): nothing is
+  minted or recorded, and the problem names where the terms are accepted.
 - 409 when the offer is expired or its merchant is inactive.
 - 429 when the member or context exceeds the click rule (US7 scenario 1),
   with `Retry-After`.

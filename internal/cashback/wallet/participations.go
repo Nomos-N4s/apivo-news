@@ -153,6 +153,22 @@ func (p *Participations) Of(ctx context.Context, member uuid.UUID) (Participatio
 	return participationFrom(row)
 }
 
+// Participating answers the click-out's question (FR-110): is this member
+// in cashback right now - opted in, and not since left. A member who never
+// joined and a member who left are the same answer, and neither is an
+// error: "no" is what the caller asked to find out. Only a read that could
+// not be made is reported as one.
+func (p *Participations) Participating(ctx context.Context, member uuid.UUID) (bool, error) {
+	participation, err := p.Of(ctx, member)
+	switch {
+	case errors.Is(err, ErrNotJoined):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return participation.Active(), nil
+}
+
 // Join records one member's acceptance of the terms in force, or their
 // re-join after having left.
 //

@@ -17,7 +17,7 @@ import (
 
 var (
 	// ErrNoClickOuts reports a service built without one of its parts.
-	ErrNoClickOuts = errors.New("clickout: issuing a redirect needs an offer reader, a recorder and a deeplink builder")
+	ErrNoClickOuts = errors.New("clickout: issuing a redirect needs an offer reader, an enrolment reader, a recorder and a deeplink builder")
 	// ErrOfferNotAvailable reports an offer that is not published at this
 	// moment: expired, not yet started, or with an inactive leg in its
 	// chain. The endpoint answers 409 - the member is looking at a stale
@@ -28,6 +28,12 @@ var (
 	// member who reaches the retailer without a recorded click buys and is
 	// never credited.
 	ErrNoRedirect = errors.New("clickout: no redirect could be built, so no click was recorded")
+	// ErrNotOptedIn reports a member who has not accepted the cashback terms
+	// (FR-110). Nothing is minted and nothing is recorded: a click they
+	// could take would be a credit that precedes the consent it rests on,
+	// and FR-002's opt-in is not one if that can happen. The handler maps
+	// it to 403 and names the remedy.
+	ErrNotOptedIn = errors.New("clickout: this member has not opted into cashback")
 )
 
 // Offers is the catalogue read this module needs, named here per the
@@ -39,6 +45,16 @@ var (
 // band's edge.
 type Offers interface {
 	LiveOffer(ctx context.Context, id uuid.UUID, at time.Time) (catalogue.Offer, error)
+}
+
+// Enrolment answers whether a member is in cashback right now: opted in,
+// and not since left (FR-110). Named here per the boundary rules - the
+// consumer names its dependency - and the wallet's participation service
+// satisfies it directly. It is a required part of the service rather than
+// an option, because the whole of FR-110 is that nothing checked this; a
+// root that could leave it out would be the same root again.
+type Enrolment interface {
+	Participating(ctx context.Context, member uuid.UUID) (bool, error)
 }
 
 // Recorder is the write this service needs: one click, recorded and read
@@ -97,6 +113,7 @@ type Issued struct {
 // ClickOuts issues tracked redirects. Build it with [NewClickOuts].
 type ClickOuts struct {
 	offers    Offers
+	enrolment Enrolment
 	clicks    Recorder
 	minter    *Minter
 	deeplinks Deeplinks
@@ -122,12 +139,13 @@ func WithLimiter(l *Limiter) Option {
 }
 
 // NewClickOuts builds the service, refusing one that is missing a part.
-func NewClickOuts(offers Offers, clicks Recorder, deeplinks Deeplinks, opts ...Option) (*ClickOuts, error) {
-	if offers == nil || clicks == nil || deeplinks == nil {
+func NewClickOuts(offers Offers, enrolment Enrolment, clicks Recorder, deeplinks Deeplinks, opts ...Option) (*ClickOuts, error) {
+	if offers == nil || enrolment == nil || clicks == nil || deeplinks == nil {
 		return nil, ErrNoClickOuts
 	}
 	c := &ClickOuts{
 		offers:    offers,
+		enrolment: enrolment,
 		clicks:    clicks,
 		minter:    NewMinter(),
 		deeplinks: deeplinks,
@@ -176,6 +194,19 @@ func (c *ClickOuts) Issue(ctx context.Context, req Request) (Issued, error) {
 		if err := c.limiter.Allow(ctx, req.Member, req.Context, at); err != nil {
 			return Issued{}, err
 		}
+	}
+
+	// Then the opt-in (FR-110), before the catalogue is read: a member who
+	// never accepted the terms has no click to take, whatever the band says.
+	// A read that failed is reported as a failure and not as a refusal - a
+	// member told to accept terms they already accepted, because a database
+	// was down, would be the wrong lesson taught at the wrong moment.
+	in, err := c.enrolment.Participating(ctx, req.Member)
+	if err != nil {
+		return Issued{}, fmt.Errorf("clickout: reading %s's participation: %w", req.Member, err)
+	}
+	if !in {
+		return Issued{}, fmt.Errorf("%w: %s", ErrNotOptedIn, req.Member)
 	}
 
 	offer, err := c.offers.LiveOffer(ctx, req.OfferID, at)

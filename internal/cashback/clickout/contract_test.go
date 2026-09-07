@@ -117,6 +117,17 @@ func clickOutCases(offer func() catalogue.Offer) []clickOutCase {
 			},
 		},
 		{
+			name: "the member has not opted in", status: http.StatusForbidden,
+			build: func(t *testing.T) (http.Handler, string, string) {
+				o := offer()
+				h := clickout.NewHandler(discardLogger(),
+					issuerFor(t, &fakeEnrolment{in: false}, &fakeOffers{offer: o}, &fakeStore{echo: true},
+						&fakeDeeplinks{url: "https://x.test/go"}),
+					stubMemberAuth{member: aMember})
+				return h, body(o.ID), "Bearer t"
+			},
+		},
+		{
 			name: "the band is not published now", status: http.StatusConflict,
 			build: func(t *testing.T) (http.Handler, string, string) {
 				h := clickout.NewHandler(discardLogger(),

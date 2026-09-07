@@ -312,17 +312,18 @@ Two things follow, and both are wanted:
 
 Joining through `participation` makes crediting **require** an opt-in. That
 is correct — an entry for a member who never accepted terms was always
-wrong, and nothing said so — but today **nothing stops it**: the click-out
-path has no participation check anywhere
-(`internal/cashback/clickout/` contains no reference to it), so a signed-in
-member who never opted in can click out and be credited.
+wrong, and nothing said so — but until T254 **nothing stopped it**: the
+click-out path had no participation check anywhere, so a signed-in member
+who never opted in could click out and be credited.
 
-Left alone, this constraint would turn that into the wrong failure: the
-member clicks, buys, and their report is refused at crediting. So the
-click-out gate (FR-110) lands **before** this migration, not after. It is a
-widening of this feature, forced by the choice above, and it is a small one:
-FR-002 already says participation is an explicit opt-in, and an opt-in that
-a credit can precede is not one.
+Left alone, this constraint would have turned that into the wrong failure:
+the member clicks, buys, and their report is refused at crediting. So the
+click-out gate (FR-110) landed **before** this migration (T254, #568):
+`clickout.ClickOuts` takes an enrolment read as a required part and refuses
+a member without an active participation with 403, before anything is
+minted or recorded. It was a widening of this feature, forced by the choice
+above, and a small one: FR-002 already says participation is an explicit
+opt-in, and an opt-in that a credit can precede is not one.
 
 ### And the earlier refusal
 

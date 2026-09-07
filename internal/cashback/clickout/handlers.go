@@ -162,6 +162,14 @@ func (h *Handler) createClickOut(w http.ResponseWriter, r *http.Request) {
 		platformhttp.Problem(w, http.StatusTooManyRequests,
 			"you have made a lot of click-outs recently; please wait a moment and try again")
 		return
+	// FR-110: a member who has not accepted the terms is told what to do,
+	// not redirected. 403 rather than 401 - they are who they say they are;
+	// what is missing is a consent - and the remedy is named, because the
+	// screen that shows this band should also show where to give it.
+	case errors.Is(err, ErrNotOptedIn):
+		platformhttp.Problem(w, http.StatusForbidden,
+			"you have not opted into cashback; accept the terms at POST /api/v1/cashback/participation and try again")
+		return
 	// The band is not published at this moment - expired, not yet started,
 	// or with an inactive leg in its chain. A member looking at a stale page
 	// gets told, rather than being redirected to a rate nobody honours.

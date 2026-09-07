@@ -32,6 +32,7 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/postgres"
+	walletstore "github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/store"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/db"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
@@ -192,8 +193,12 @@ func (w *world) clickOut(t *testing.T) clickout.Click {
 	if err != nil {
 		t.Fatalf("NewAnnouncedClicks(): %v", err)
 	}
+	enrolment, err := wallet.NewParticipations(w.tx, walletstore.New(w.tx), wallet.Terms{})
+	if err != nil {
+		t.Fatalf("NewParticipations(): %v", err)
+	}
 	clickouts, err := clickout.NewClickOuts(
-		catalogue.NewOfferReader(cataloguestore.New(w.tx)), clicks, staticDeeplinks{})
+		catalogue.NewOfferReader(cataloguestore.New(w.tx)), enrolment, clicks, staticDeeplinks{})
 	if err != nil {
 		t.Fatalf("NewClickOuts(): %v", err)
 	}

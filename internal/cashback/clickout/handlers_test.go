@@ -245,6 +245,35 @@ func TestABodyThatNamesNoOfferIsRefusedBeforeAnythingHappens(t *testing.T) {
 	}
 }
 
+// TestAMemberWhoHasNotOptedInIsA403ThatNamesTheRemedy is FR-110 at the
+// boundary. 403 rather than 401: the member is who they say they are, and
+// what is missing is a consent, so the answer says where to give it - and
+// the store assertion is the half that matters, because a refusal that had
+// already written a row would be a click a non-member can be credited for.
+func TestAMemberWhoHasNotOptedInIsA403ThatNamesTheRemedy(t *testing.T) {
+	t.Parallel()
+	offer := anOffer()
+	clicks := &fakeStore{echo: true}
+	h := clickout.NewHandler(discardLogger(),
+		issuerFor(t, &fakeEnrolment{in: false}, &fakeOffers{offer: offer}, clicks, &fakeDeeplinks{url: "https://x.test/go"}),
+		stubMemberAuth{member: aMember})
+
+	rec := post(t, h, `{"offer_id":"`+offer.ID.String()+`"}`, "Bearer t")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (body %q)", rec.Code, rec.Body.String())
+	}
+	status, detail := problemOf(t, rec)
+	if status != http.StatusForbidden {
+		t.Errorf("the problem body says %d, want 403", status)
+	}
+	if !strings.Contains(detail, "/api/v1/cashback/participation") {
+		t.Errorf("detail = %q, want it to name where the terms are accepted", detail)
+	}
+	if clicks.inserts != 0 {
+		t.Error("a 403 was answered after a click had been written")
+	}
+}
+
 func TestAnOfferNobodyPublishesRightNowIsAConflict(t *testing.T) {
 	t.Parallel()
 

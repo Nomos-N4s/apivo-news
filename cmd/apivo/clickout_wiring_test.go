@@ -47,8 +47,9 @@ func clickOutRoutes(ctx context.Context, t *testing.T, pool *pgxpool.Pool, jwksU
 }
 
 // TestClickOutWiringAgainstSchema walks the chain for the two answers the
-// gate has. There is no third: this surface requires an account and nothing
-// beyond one, so a reader reaches the handler exactly as anybody else would.
+// auth gate has, then the two the opt-in gate has (FR-110). This surface
+// requires an account and a participation and nothing beyond those, so a
+// reader reaches the handler exactly as anybody else would.
 func TestClickOutWiringAgainstSchema(t *testing.T) {
 	t.Parallel()
 	ctx, pool := opsWiringPool(t)
@@ -84,10 +85,34 @@ func TestClickOutWiringAgainstSchema(t *testing.T) {
 		}
 	})
 
-	// A signed-in member reaches the handler, which then answers about the
+	// The gate behind the gate (FR-110): a member who is who they say they
+	// are but never accepted the terms is refused with the remedy named, and
+	// the answer is about the consent, not about the offer.
+	t.Run("a signed-in member who has not opted in is refused", func(t *testing.T) {
+		rec := post(t, mintBearer(t, key, memberID.String()))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusForbidden, rec.Body.String())
+		}
+		var problem struct {
+			Detail string `json:"detail"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+			t.Fatalf("answer is not problem+json: %v (body %q)", err, rec.Body.String())
+		}
+		if !strings.Contains(problem.Detail, "/api/v1/cashback/participation") {
+			t.Errorf("detail = %q, want it to name where the terms are accepted", problem.Detail)
+		}
+	})
+
+	// Opted in, the member reaches the handler, which then answers about the
 	// offer rather than about the caller. 409 because the id names no live
-	// band - which is the point: the gate is behind us.
-	t.Run("a signed-in member reaches the handler", func(t *testing.T) {
+	// band - which is the point: both gates are behind us.
+	t.Run("a signed-in member who has opted in reaches the handler", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `
+			insert into cashback.participation (account_id, brand_id, terms_version, default_currency)
+			values ($1, 'apivo-de', '1.0.0', 'EUR')`, memberID); err != nil {
+			t.Fatalf("opting the member in: %v", err)
+		}
 		rec := post(t, mintBearer(t, key, memberID.String()))
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusConflict, rec.Body.String())
