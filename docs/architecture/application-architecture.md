@@ -73,7 +73,7 @@ flowchart TD
   NEWS["content, editorial,<br>ingestion, translation"]
   ACC["account"]
   ID["identity"]
-  PLAT["platform<br>db, http, events, money,<br>scheduler, config, logging, brand"]
+  PLAT["platform<br>db, http, events, money,<br>scheduler, config, logging,<br>brand, text"]
 
   CMD --> OPS
   CMD --> PAY
@@ -166,7 +166,7 @@ The scheduled jobs, all registered here:
 | Payout settlement sweep | `cashback-payout-settlement` | 5 minutes | [payout/settle.go](../../internal/cashback/payout/settle.go) |
 | Earnings lifecycle | `cashback-earnings-lifecycle` | 5 minutes | [earnings/lifecycle.go](../../internal/cashback/earnings/lifecycle.go) |
 | Forward network sweep | `network-poll:<network>:<account>` | 15 minutes | [networks/sweeps.go](../../internal/cashback/networks/sweeps.go) |
-| Trailing network sweep | named after the account | 6 hours | [networks/sweeps.go](../../internal/cashback/networks/sweeps.go) |
+| Trailing network sweep | `network-trailing-poll:<network>:<account>` | 6 hours | [networks/sweeps.go](../../internal/cashback/networks/sweeps.go) |
 | Catalogue import | `cashback-catalogue-import` | 6 hours | [catalogue/schedule.go](../../internal/cashback/catalogue/schedule.go) |
 
 Beside `main.go`, the root holds eight files: [registry.go](../../cmd/apivo/registry.go) (the network driver map), [networks.go](../../cmd/apivo/networks.go), [earnings.go](../../cmd/apivo/earnings.go), [catalogue.go](../../cmd/apivo/catalogue.go) (assembly helpers), and four operator subcommands — [connect_network.go](../../cmd/apivo/connect_network.go), [import_catalogue.go](../../cmd/apivo/import_catalogue.go), [publish_offer.go](../../cmd/apivo/publish_offer.go), [seed_cashback.go](../../cmd/apivo/seed_cashback.go).
@@ -185,7 +185,7 @@ Eight packages under [internal/cashback/](../../internal/cashback). Seven are th
 | [earnings](../../internal/cashback/earnings) | Attribution, the entry state machine, hold rules, confirm and reverse, the operator review | `Lifecycle.Run`, `Entries.Open`, `Holds.Evaluate`, `Reviews.Release` | Built |
 | [wallet](../../internal/cashback/wallet) | The `Ledger` port and its three drivers, balance projection, participation, export, the C-1 watchdog | `Wallets.Of`, `Ledger.Post`, `ZeroSumCheck.Run` | Built |
 | [payout](../../internal/cashback/payout) | Withdrawal request and reservation, approval, rejection, the `Rail` port, retry, settlement | `Withdrawals.Request`, `Approvals.Approve`, `Settlements.Sweep` | Partial — the ledger leg of settlement is missing |
-| [ops](../../internal/cashback/ops) | The four operator queues, statement import, difference derivation, accounting exports | `NewHandler`, `Derive`, `Exports` | Partial — three endpoints the frontend calls are unbuilt |
+| [ops](../../internal/cashback/ops) | The four operator queues, statement import, difference derivation, accounting exports | `NewHandler`, `Derive`, `PGStore.ExportLedger` | Partial — three endpoints the frontend calls are unbuilt |
 | [scenarios](../../internal/cashback/scenarios) | The quickstart's six acceptance gates, run as tests | `make cashback-scenario NAME=…` | Built |
 
 ```mermaid
@@ -235,18 +235,21 @@ flowchart LR
 
   DOM --> MON
   DOM --> EVT
-  DOM --> DB
+  DOM -. pool handed in by cmd .-> DB
+  CAT --> SCH
   NET --> SCH
   EAR --> SCH
   PAY --> SCH
   WAL --> SCH
 ```
 
+The three edges leaving the domain box are aggregates, and two of them are weaker than they look. `money` is imported by all seven packages. `events` by six — `catalogue` publishes nothing. And the link to `db` is dotted because it is **not** an import at all: nothing under `internal/cashback/` imports `internal/platform/db`. The pool is built in the composition root and handed to each package as a `pgx` handle, which is what lets the same constructors be driven by a transaction in a test. The `scheduler` edges are drawn per package rather than from the box because only five of the seven register a job; `clickout` and `ops` are driven by requests alone.
+
 ---
 
 ## Ports and adapters
 
-Every external dependency sits behind an interface **the consumer defines**, with a second working implementation in the repository as the proof it is swappable (constitution, technology standards). Four ports carry the cashback domain.
+Every external dependency sits behind an interface **the consumer defines**, with a second working implementation in the repository as the proof it is swappable (constitution, technology standards). Three ports carry the cashback domain's external dependencies — the affiliate network, the money substrate and the payment rail — and a family of narrow authenticators carries its identity.
 
 ### `networks.Network` — the affiliate network port
 
@@ -271,7 +274,7 @@ type Network interface {
 
 `shippedNetworks` in [registry.go](../../cmd/apivo/registry.go) is one map from driver name to `{documented, construct}`, so a driver is **seedable and servable together or neither**. It exists because two lists once disagreed: `connect-network --driver awin` seeded a `cashback.network` row the binary then refused to poll. The map lives in the composition root and not in the domain precisely because rule A above forbids a domain package naming an adapter.
 
-The port's contract is nine rules asserted by a shared suite every adapter runs — [conformance_test.go](../../internal/cashback/networks/conformance_test.go) and [conformance_linkwise_test.go](../../internal/cashback/networks/conformance_linkwise_test.go). Two are structural rather than behavioural: an adapter never writes to the database (the package **withholds the means** — no signature speaks a database type, and a test refuses such an import), and iteration that ends early says so by yielding `AbandonedIteration`, which is what lets a cursor advance and a catalogue import mark absentees `left_network`.
+The port's contract is nine numbered rules in [network.go](../../internal/cashback/networks/network.go)'s own doc comment, and eleven in the contract documents behind it: rule 10 (one adapter serves one publisher account) is in [contracts/ports.md](../../specs/002-apivo-cashback-alpha/contracts/ports.md) and rule 11 (a catalogue entry states whether its route can carry a click reference) was added by [the Linkwise spec](../../specs/004-multi-network-linkwise/contracts/ports.md). The shared suite every adapter runs is [conformance_test.go](../../internal/cashback/networks/conformance_test.go) — seventeen `TestConformance…` cases — with [conformance_linkwise_test.go](../../internal/cashback/networks/conformance_linkwise_test.go) supplying Linkwise's row in the same table, driven through a local TLS server answering its recordings. Two of the nine rules are structural rather than behavioural: an adapter never writes to the database (the package **withholds the means** — no signature speaks a database type, and a test refuses such an import), and iteration that ends early says so by yielding `AbandonedIteration`, which is what lets a cursor advance and a catalogue import mark absentees `left_network`.
 
 ### `wallet.Ledger` — the money substrate port
 
@@ -307,7 +310,7 @@ make sqlc     # docker run sqlc/sqlc:<pinned> generate
 
 Three gates keep generated code honest:
 
-- **`sqlc-drift`** in [.github/workflows/ci.yml](../../.github/workflows/ci.yml) regenerates from the migrations and fails on any difference, over the whole tree with **no paths named** — *"sqlc.yaml tomorrow is inside this check on the day it is added."* Before comparing, it counts files carrying sqlc's own banner and fails if that count is zero, so an empty regeneration cannot pass the drift check.
+- **`sqlc-drift`** in [.github/workflows/ci.yml](../../.github/workflows/ci.yml) regenerates from the migrations and fails on any difference, over the whole tree with **no paths named** — *"sqlc.yaml tomorrow is inside this check on the day it is added."* Before comparing, it finds every file carrying sqlc's own banner and fails if there are none, so an empty regeneration cannot pass the drift check; it then fails on any of those files that git is told to ignore, because `git add -A` stages nothing ignored and generated output under an ignored path would drift in silence.
 - **`ts-types-drift`** does the same for TypeScript: migrations applied to a service Postgres, types regenerated into [web/src/lib/database.types.ts](../../web/src/lib/database.types.ts), `git diff --exit-code`. The generation writes to a temporary file and renames, so a failed run cannot truncate the committed types and report drift that does not exist.
 - **Coverage excludes generated packages.** [scripts/coverage_gate.sh](../../scripts/coverage_gate.sh) filters `internal/(content|editorial)/store/` and `internal/cashback/*/store/` out of the profile: *"coverage there measures the generator, not our tests."*
 
@@ -319,10 +322,10 @@ Cross-domain integration is asynchronous and goes through one append-only stream
 
 - **The envelope.** [0018_domain_event_envelope](../../internal/platform/db/migrations/0018_domain_event_envelope.up.sql) adds `version`, `producer`, `subject` and `idempotency_key` to a table that has been append-only since `0001` — with **no backfill and no UPDATE statement anywhere in the migration**, so append-only holds continuously before, during and after.
 - **The writer.** [outbox.go](../../internal/platform/events/outbox.go) enforces the type grammar `<producer>.<entity>.<past-tense-verb>`, refuses a type whose first segment is not the writer's own producer, and refuses the eight envelope field names at the payload's top level.
-- **Atomicity is placement, not machinery.** `Append` takes a `RowQuerier`, and every cashback announcer is handed the *same* `pgx.Tx` as the state change it describes — [clickout/events.go](../../internal/cashback/clickout/events.go), [networks/events.go](../../internal/cashback/networks/events.go), [earnings/events.go](../../internal/cashback/earnings/events.go), [payout/events.go](../../internal/cashback/payout/events.go), [wallet/events.go](../../internal/cashback/wallet/events.go), [ops/events.go](../../internal/cashback/ops/events.go). The announcers hold no database handle at all. *"There is no code path that publishes an event without its state change, or commits a state change without its event."*
+- **Atomicity is placement, not machinery.** `Append` takes a `RowQuerier`, and every cashback announcer is handed the *same* `pgx.Tx` as the state change it describes — [clickout/events.go](../../internal/cashback/clickout/events.go), [networks/events.go](../../internal/cashback/networks/events.go), [earnings/events.go](../../internal/cashback/earnings/events.go), [payout/events.go](../../internal/cashback/payout/events.go), [wallet/events.go](../../internal/cashback/wallet/events.go). Those five `Announcer` types hold one field between them, an `*events.Writer`, and no database handle at all. `ops` is the exception and is worth naming: its four types live in [ops/events.go](../../internal/cashback/ops/events.go) but the writer sits on [PGStore](../../internal/cashback/ops/pgstore.go) beside the pool, so the placement argument rests there on the `Append` call taking the same `tx` rather than on the type being unable to hold a handle. *"There is no code path that publishes an event without its state change, or commits a state change without its event."*
 - **Delivery.** [0021_event_deliveries](../../internal/platform/db/migrations/0021_event_deliveries.up.sql) adds `subscriber_checkpoint`, `event_delivery` and `event_dead_letter`; the dispatcher in [dispatcher.go](../../internal/platform/events/dispatcher.go) preserves order per `(type, subject)` lane and only saves a checkpoint at a position no in-flight append can land in front of.
 
-**Status: Partial, and the gap is the important half.** `grep -rn NewDispatcher --include=*.go . | grep -v _test` matches only the definition. [cmd/apivo/main.go](../../cmd/apivo/main.go) registers no dispatcher and no subscriber. The outbox is **write-only in the running binary**: nineteen event types are appended and nothing consumes them. The machinery is built and unit-tested; the wiring line does not exist. Nothing in the cashback money path depends on delivery today — every stage is driven by a scheduled job reading a table — but any future cross-product reaction begins with wiring a dispatcher here.
+**Status: Partial, and the gap is the important half.** `grep -rn NewDispatcher --include=*.go . | grep -v _test` matches only the definition. [cmd/apivo/main.go](../../cmd/apivo/main.go) registers no dispatcher and no subscriber. The outbox is **write-only in the running binary**: eighteen distinct event types are appended and nothing consumes them. (Nineteen constants declare them — `cashback.transaction.unattributed` is spelled in both [networks](../../internal/cashback/networks/events.go) and [earnings](../../internal/cashback/earnings/events.go), which is one type published from two places.) The machinery is built and unit-tested; the wiring line does not exist. Nothing in the cashback money path depends on delivery today — every stage is driven by a scheduled job reading a table — but any future cross-product reaction begins with wiring a dispatcher here.
 
 ---
 
@@ -333,14 +336,14 @@ Cross-domain integration is asynchronous and goes through one append-only stream
 Three steps, in this order, and each one is a place drift is refused:
 
 1. A module builds a private `routes() map[string]http.HandlerFunc` keyed by ServeMux patterns (`"GET /api/v1/cashback/wallet"`). `NewHandler` registers exactly that map, derives its 405 `AllowTable` from the same map, and registers a catch-all on the module's prefix so every error under it is `problem+json` rather than ServeMux's `text/plain`.
-2. `Patterns()` returns exactly that map's keys, sorted. Every module exports one — [wallet](../../internal/cashback/wallet/handlers.go), [payout](../../internal/cashback/payout/handlers.go), [clickout](../../internal/cashback/clickout/handlers.go), [catalogue](../../internal/cashback/catalogue/handlers.go), [ops](../../internal/cashback/ops/handler.go), and the platform itself in [server.go](../../internal/platform/http/server.go). *"A route cannot exist without being listed."*
+2. `Patterns()` returns exactly that map's keys, sorted. All nine route-owning packages export one — [wallet](../../internal/cashback/wallet/handlers.go), [payout](../../internal/cashback/payout/handlers.go), [clickout](../../internal/cashback/clickout/handlers.go), [catalogue](../../internal/cashback/catalogue/handlers.go), [ops](../../internal/cashback/ops/handler.go), [content](../../internal/content/http.go), [editorial](../../internal/editorial/handler.go), [account](../../internal/account/tours.go), and the platform itself in [server.go](../../internal/platform/http/server.go). *"A route cannot exist without being listed."* `account` is the one that keeps two maps rather than one — `routes()` and `openRoutes()`, the latter holding `POST /api/v1/account`, which a verified person calls before this deployment has agreed they are anybody — and its `Patterns()` returns the union, so the rule holds across both.
 3. The composition root mounts the handler at a `platformhttp.Route{Pattern, Handler}` ([server.go](../../internal/platform/http/server.go)). The module owns the prefix string and exports it; naming it a second time in `cmd` would be one deployment away from a subtree whose catch-all nothing reaches.
 
 Two mount rules recur. A path is mounted **both bare and as a subtree** (`/withdrawals` and `/withdrawals/`), so a stray sub-path is answered by the module rather than redirected by ServeMux — and a POST turned into a GET by a 308 is a request that never happened. And no module is mounted on the bare `/api/v1/cashback/`: there is deliberately no `cashbackPrefix` constant, because a catch-all there would swallow every other module's 404s.
 
 ### The two-way conformance test
 
-[cmd/apivo/openapi_routes_test.go](../../cmd/apivo/openapi_routes_test.go) lives in the composition root *because that is the only place every module's route table is in scope* — the arch test forbids the modules importing each other. It fetches the document over HTTP from a real server, so it reads what a client would read rather than the file on disk, and asserts in both directions:
+[cmd/apivo/openapi_routes_test.go](../../cmd/apivo/openapi_routes_test.go) lives in the composition root *because that is the only place every module's route table is in scope* — the arch test forbids the modules importing each other. It drives a server built the ordinary way and reads the document out of the response to `GET /api/v1/openapi.json` (`servedDocument`), so it reads what a client would read — not the file on disk and not the embedded bytes — and asserts in both directions:
 
 - `TestOpenAPIDocumentDescribesEveryRegisteredRoute` — a served route the document omits fails.
 - `TestOpenAPIDocumentDescribesNothingUnserved` — a documented operation nothing serves fails.
@@ -358,7 +361,7 @@ At `0461ad7` the document describes **44 operations over 37 paths, 26 of them ca
 | platform | [http/server.go](../../internal/platform/http/server.go) | 3 — `/healthz`, `/readyz`, `/api/v1/openapi.json` | open |
 | content | [content](../../internal/content) | 2 — front page, article | open |
 | editorial | [editorial](../../internal/editorial) | 9 — queue, sources, approvals, publication, withdrawal, provenance | bearer + `editor` |
-| account | [account](../../internal/account) | 2 — product tours | bearer |
+| account | [account](../../internal/account) | 4 — self-registration, the caller's own account, product tours ×2 | bearer |
 | cashback / catalogue | [catalogue/handlers.go](../../internal/cashback/catalogue/handlers.go) | 1 — `GET /cashback/merchants/{slug}` | bearer |
 | cashback / clickout | [clickout/handlers.go](../../internal/cashback/clickout/handlers.go) | 1 — `POST /cashback/clickouts` | bearer |
 | cashback / wallet | [wallet/handlers.go](../../internal/cashback/wallet/handlers.go) | 6 — wallet, entries, participation ×3, export | bearer |
@@ -383,7 +386,7 @@ sequenceDiagram
   participant P as Postgres
 
   B->>A: GET /el/munich/cashback/wallet
-  A->>C: createCashbackApi(API_BASE_URL, token, appEnv)
+  A->>C: createCashbackApi(API_BASE_URL, options)
   C->>M: GET /api/v1/cashback/wallet<br>Authorization Bearer
   M->>H: pattern match on the route table
   H->>H: requireMember - verify JWT, resolve account
@@ -396,10 +399,12 @@ sequenceDiagram
   D-->>H: five figures, integer minor units
   H-->>C: 200 application/json
   C-->>A: WalletTotals
-  A-->>B: rendered HTML, no client JavaScript needed
+  A-->>B: rendered HTML, no JavaScript needed to read it
 ```
 
-Two things this path pins. The Astro server is the **only** public HTTP surface — the Go API is not publicly routable, and every call carries the member's own bearer token server-side. And no balance is read from a stored number anywhere on it: four of the five wallet figures are summed from ledger postings through the port, the fifth from settled payout rows.
+Two things this path pins. The member's bearer token is used **server-side only** — the Astro page builds its client in frontmatter and renders the result, so the credential is never in the document and never in a page script. It is worth being exact about what that does and does not mean: the Go API is *not* private. The Hetzner Caddy configuration routes `/api/*`, `/healthz` and `/readyz` straight to the Go container and everything else to Astro ([the `apivo-routes` snippet](../../deploy/hetzner/caddy/snippets.caddy)), so the API is reachable from the internet and every guard on it is enforced in Go. What the path above rules out is a browser holding the token, not a browser reaching the API.
+
+And no balance is read from a stored number anywhere on it: four of the five figures a wallet reports are summed from ledger postings through the port, the fifth — lifetime paid out — from settled payout rows. The withdrawal threshold returned beside them is neither; it is configuration, returned by the server so a client cannot show one figure while the server enforces another.
 
 ---
 
@@ -412,7 +417,9 @@ web/src/pages/
 ├── index.astro, 404, 500, 503
 ├── go.ts                              # the setup form's destination, sets the preference cookie
 ├── api/cashback/clickout.ts           # POST-only, same-origin, 303 to the deeplink
-├── [lang]/                            # signin, register, setup, about, legal, faq, editor/*
+├── api/tour/[tour].ts                 # POST-only, keeps the editorial token off the page
+├── [lang]/                            # signin, register, setup, about, contact, faq,
+│                                      #   legal, privacy, impressum, editor/*
 │   └── [place]/
 │       ├── index.astro, a/[id].astro  # the news surface
 │       └── cashback/
@@ -442,7 +449,7 @@ Four things keep fixture mode from ever being mistaken for real: no visitor-cont
 
 [ops-guard.ts](../../web/src/lib/cashback/ops-guard.ts) keeps two questions apart that would otherwise collapse: *may they act* (only an authenticated operator — and this is the third of three checks, behind the API and behind migration `0019`'s trigger, and the only one that can explain itself to the person at the screen) and *may they look* (with a real API, no; with fixtures, yes, because there is nothing to leak and no deployment with auth to sign into).
 
-The one write path the frontend owns is [api/cashback/clickout.ts](../../web/src/pages/api/cashback/clickout.ts): a POST because it creates a row, same-origin-checked, answering `303` to the target the API returned and only to that — the member never supplies a URL, so there is no open redirect to close.
+The one write path the cashback surface owns is [api/cashback/clickout.ts](../../web/src/pages/api/cashback/clickout.ts): a POST because it creates a row, same-origin-checked, answering `303` to the target the API returned and only to that — the member never supplies a URL, so there is no open redirect to close. It is not the frontend's only server endpoint: [api/tour/\[tour\].ts](../../web/src/pages/api/tour/%5Btour%5D.ts) is a second POST, and it exists for the same class of reason — a tour step must record progress without the editorial bearer token being put in a data attribute where any script on the page could read a credential that approves articles.
 
 ---
 
@@ -458,11 +465,11 @@ Five layers, each answering a different question.
 | **Architecture** | [internal/arch/](../../internal/arch) | The import rules, and that the rules themselves fire | no |
 | **Scenarios** | [internal/cashback/scenarios](../../internal/cashback/scenarios) | The quickstart's six acceptance gates, driven through the same constructors the composition root uses | yes |
 
-Integration tests skip with a named instruction when `DATABASE_URL` is unset (*"run `docker compose up -d postgres` and set it to exercise this test"*) — the no-Docker loop stays green — but **CI always sets it**, so nothing in the invariant suite is ever silently skipped on the path to `main`.
+Integration tests skip with a named instruction when `DATABASE_URL` is unset — each says `run docker compose up -d postgres and set it to exercise` the particular thing that test proves, naming it, rather than skipping mutely — so the no-Docker loop stays green. But **CI always sets it** (`DATABASE_URL` is job-level `env` on the `go` job), so nothing in the invariant suite is ever silently skipped on the path to `main`.
 
 The scenarios package is deliberately thin: *"It is not more unit coverage… This package holds no logic of its own to be wrong."* Five of the six gates run inside a transaction against the real database and roll it back; the withdrawal gate cannot, because approval commits twice by design so a slow rail cannot hold a transaction open across a network call, so it gets a scratch database of its own — `cashback.payout` is append-only, which is exactly what makes tidying impossible and remaking cheap.
 
-Gates in [.github/workflows/ci.yml](../../.github/workflows/ci.yml): `go test -race -shuffle=on` against a service Postgres, then **90% statement coverage** ([coverage_gate.sh](../../scripts/coverage_gate.sh), generated stores excluded); a second job runs the whole suite with cashback enabled against a **real ledger container**; a third proves the repository is green with no Docker at all; `sqlc-drift`, `ts-types-drift`, `openapi`, `migration-lint`, `k8s-topology`, `make-targets`, `brand-lint`; and the frontend at **80%** statements, branches, functions and lines ([web/vitest.config.ts](../../web/vitest.config.ts)).
+Gates in [.github/workflows/ci.yml](../../.github/workflows/ci.yml): the `go` job runs `go test -race -shuffle=on` against a service Postgres, then **90% statement coverage** ([coverage_gate.sh](../../scripts/coverage_gate.sh), generated stores excluded); `cashback` runs the whole suite with the product enabled against a **real ledger container**; `cashback-no-docker` proves the repository is green with no Docker at all; and beside them `commit-hygiene`, `lint`, `sqlc-drift`, `ts-types-drift`, `openapi`, `kubeconform`, `hetzner`, `docker`, `wrangler`, `web-image`, and `frontend` at **80%** statements, branches, functions and lines ([web/vitest.config.ts](../../web/vitest.config.ts)). Four further gates are workflows of their own rather than jobs in that file: [migration-lint.yml](../../.github/workflows/migration-lint.yml), [k8s-topology.yml](../../.github/workflows/k8s-topology.yml), [make-targets.yml](../../.github/workflows/make-targets.yml) and [brand-lint.yml](../../.github/workflows/brand-lint.yml).
 
 ```sh
 make vet && make test-unit    # the fast pass
@@ -475,11 +482,11 @@ make arch-test                # boundaries only, no database
 
 ## Open questions and known gaps
 
-- **The outbox has no reader.** Dispatcher, checkpoints, dead-letter table and requeue are implemented and unit-tested; nothing in [cmd/apivo/main.go](../../cmd/apivo/main.go) registers a handler. Nineteen event types are written and never consumed. This is the single largest built-but-unwired component in the tree, and it is the prerequisite for anything cross-product.
+- **The outbox has no reader.** Dispatcher, checkpoints, dead-letter table and requeue are implemented and unit-tested; nothing in [cmd/apivo/main.go](../../cmd/apivo/main.go) registers a handler. Eighteen distinct event types are written and never consumed. This is the single largest built-but-unwired component in the tree, and it is the prerequisite for anything cross-product.
 - **Three endpoints the frontend calls do not exist.** [api.ts](../../web/src/lib/cashback/api.ts) calls `GET /ops/withdrawals?state=awaiting_approval`, `GET /ops/reconciliation/runs` and `POST /ops/unattributed/{id}/attribute`; none is in [ops/handler.go](../../internal/cashback/ops/handler.go)'s `routes()`. Unattributed work can be **dismissed but not attributed**. The two-way OpenAPI test cannot catch this — it compares the document with the router, and the frontend client is in neither.
 - **The catalogue listing has no route.** `Browser.Browse` in [catalogue/browse.go](../../internal/cashback/catalogue/browse.go) is implemented and integration-tested, and `catalogue/handlers.go`'s route table has exactly one entry. The client calls `GET /catalogue` regardless.
 - **`declaresThePort` finds one adapter, not two.** Only [fixture/port.go](../../internal/cashback/networks/fixture/port.go) carries `var _ networks.Network`; the Linkwise adapter's proof is `newLinkwiseAdapter`'s return type in the registry. Both are real compile-time proofs, but the reachability test's stricter half therefore governs one adapter. Adding the assertion to Linkwise would cost one line.
 - **Only one payout rail, hard-coded.** `newPayoutRail` returns `manual.New()` and is not configurable; `payout_destination.kind` admits `sepa` and no SEPA rail exists.
 - **The settlement leg does not close in the ledger.** `reserved → paid` is a legal transition in [state.go](../../internal/cashback/earnings/state.go), but [postings.go](../../internal/cashback/earnings/postings.go) returns `ErrNotThisPackagesToPost` for it and no production caller supplies the posting. This is a data-architecture fault with an application-layer cause; it is stated in full in [data-architecture.md](data-architecture.md).
-- **Route counts in prose go stale quickly.** Self-registration added two paths between `0461ad7` and `0461ad7`, moving the total from 36 to 37 while this set was being written. The two-way conformance test keeps the *document* and the *router* honest with each other; nothing keeps prose honest with either, which is why the count above cites the document rather than another paragraph.
+- **Route counts in prose go stale quickly.** Self-registration added one path — `POST` and `GET` on `/api/v1/account`, two operations — between `c35e3d1` and its merge at `0461ad7`, moving the total from 36 paths to 37 while this set was being written. The two-way conformance test keeps the *document* and the *router* honest with each other; nothing keeps prose honest with either, which is why the count above cites the document rather than another paragraph. The account row in that table had already drifted once by the time this document was checked.
 - **No component view exists for the news product.** The modules [content](../../internal/content), [editorial](../../internal/editorial), [ingestion](../../internal/ingestion) and [translation](../../internal/translation) appear here only as peers in the dependency rules.

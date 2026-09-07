@@ -68,10 +68,13 @@ not the application is required to enforce.
    ([internal/cashback/clickout/clickout.go](../../internal/cashback/clickout/clickout.go)).
 4. **The member buys.** Apivo sees none of this. The retailer pays the
    network; the network is the only party that knows a sale happened.
-5. **Apivo polls the network.** Every fifteen minutes forward, every six hours
-   back over a hundred-day trailing window, because a network changes its mind
-   about a transaction long after it first reports it
-   ([internal/cashback/networks/sweeps.go](../../internal/cashback/networks/sweeps.go)).
+5. **Apivo polls the network.** Every fifteen minutes a forward sweep reads the
+   next period nobody has read; every six hours a trailing sweep re-reads the
+   ground the forward sweep passed about a hundred days earlier, because a
+   network changes its mind about a transaction long after it first reports it
+   ([sweeps.go](../../internal/cashback/networks/sweeps.go) for the two
+   cadences, [poller.go](../../internal/cashback/networks/poller.go) for the
+   hundred-day lag).
    Each report is stored as evidence; a changed report is a **new row
    superseding the old one**, never an edit
    ([internal/cashback/networks/supersede.go](../../internal/cashback/networks/supersede.go)).
@@ -170,8 +173,12 @@ deployment endpoint exists to be called.
 
 ## 5. Level 2 — containers
 
-Five processes run in a cashback-enabled deployment, plus the edge proxy. The
-Go binary is one deployable that serves both products; splitting it was
+Five long-running application processes run in a cashback-enabled deployment —
+web, api, blnk, blnk-worker and redis — plus the database and the edge proxy,
+and a one-shot ledger migration container that runs once and exits. The
+database is drawn inside the host below because on QA it is a container there;
+on staging and production it is Supabase, reached across the public internet.
+The Go binary is one deployable that serves both products; splitting it was
 considered and rejected in [ADR-0001](../adr/0001-super-app-architecture.md).
 
 ```mermaid
@@ -181,7 +188,7 @@ flowchart LR
 
     subgraph host["One host, one environment"]
         caddy["Caddy 2.10<br>edge proxy<br>:80 :443"]
-        web["web — Astro SSR<br>@astrojs/node standalone<br>Node 22, :4321"]
+        web["web — Astro SSR<br>@astrojs/node standalone<br>Node 24, :4321"]
         api["api — apivo<br>Go modular monolith<br>distroless static, :8080"]
         pg[("Postgres 17<br>schemas: public, cashback, blnk<br>:5432")]
         blnk["blnk — ledger API<br>Apache-2.0, :5001"]
@@ -445,9 +452,9 @@ Blunt, because this goes in front of founders.
 
 | Container | Built | Deployed | Honest status |
 |---|---|---|---|
-| **web** (Astro) | yes | QA serving on the pre-production host | Reader pages, member cashback surfaces and the four operator queues all exist. With `API_BASE_URL` unset the pages answer from built-in fixtures and every one of them says so in a band at the top. Three endpoints it calls are not served by anything — see below |
+| **web** (Astro) | yes | QA serving on the pre-production host | Reader pages, member cashback surfaces and the four operator queues all exist. With `API_BASE_URL` unset the client is **refused** under `APP_ENV=prod`, which every deployed environment is, and the page fails rather than rendering: a deployment that cannot reach its API knows nothing about anybody's money. Fixtures answer only in development and on per-pull-request previews, and every surface showing them carries a band at the top saying the figures are invented ([web/src/lib/reader/api.ts](../../web/src/lib/reader/api.ts), [web/src/lib/cashback/api.ts](../../web/src/lib/cashback/api.ts)). Three endpoints it calls are not served by anything — see below |
 | **api** (Go `apivo`) | yes | QA serving; staging host ready, no release yet; production not provisioned | 44 operations over 37 paths, contract-tested against the route table in both directions. Migrates on start. Cashback is mounted only when the overlay is loaded, which no environment does |
-| **postgres** | yes | QA: a container on the host. Staging: Supabase nonprod. Production: its own Supabase project, **not yet created** | Migrations `0001`–`0033`, all invariant tests run against a real Postgres in CI and are never skipped |
+| **postgres** | yes | QA: a container on the host. Staging: Supabase nonprod. Production: its own Supabase project, **not yet created** | Migrations `0001`–`0033`. The invariant tests run against a real Postgres in CI, which sets `DATABASE_URL` for the job ([.github/workflows/ci.yml](../../.github/workflows/ci.yml)); run locally without it they skip themselves rather than pass vacuously |
 | **blnk** (ledger) | yes | **nowhere** | Runs locally and in CI. Digest-pinned, `BLNK_SERVER_SECURE=true`, split owner/runtime roles. Off on every deployed environment until the ADR-0002 spikes have passed there |
 | **blnk-worker** | yes | **nowhere** | Same as above. Its own health route on 5004 is probed, because a dead worker with a live server means every transaction sits queued with nothing saying so |
 | **redis** | yes | **nowhere** | No persistence by design; `noeviction` so a full instance refuses a write rather than dropping a transfer |
@@ -493,11 +500,14 @@ production caller. Since the database refuses a withdrawal naming an
 unverified destination, a member cannot complete a withdrawal through the API
 alone.
 
-**The outbox has no reader.** Nineteen event types are appended
-transactionally with the state changes that cause them; the dispatcher,
-checkpoints, dead-letter table and requeue are implemented and unit-tested,
-and nothing in the composition root registers a subscriber. The outbox is
-write-only in the running binary
+**The outbox has no reader.** Eighteen event types are appended
+transactionally with the state changes that cause them — nineteen constants,
+because `cashback.transaction.unattributed` is declared in both the networks
+and the earnings modules deliberately: a report that carried no reference and
+one whose reference matched no click are the same fact downstream. The
+dispatcher, checkpoints, dead-letter table and requeue are implemented and
+unit-tested, and nothing in the composition root registers a subscriber. The
+outbox is write-only in the running binary
 ([internal/platform/events/dispatcher.go](../../internal/platform/events/dispatcher.go)).
 
 **Two of the three house accounts are required in production and used by

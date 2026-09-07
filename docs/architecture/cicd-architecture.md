@@ -76,15 +76,7 @@ block).
 
 ```mermaid
 flowchart TD
-  PR["pull_request / merge_group"] --> M
-  MAIN["push to main"] --> PUBW["publish.yml"]
-  TAG["push tag v*"] --> RELW["release.yml"]
-
-  PUBW -->|"calls"| M
-  RELW -->|"calls, after the guard"| M
-
   subgraph M["ci.yml — the matrix, 14 independent jobs"]
-    direction LR
     CH["commit-hygiene"]
     LINT["lint"]
     GO["go"]
@@ -100,6 +92,13 @@ flowchart TD
     FE["frontend"]
     WEBIMG["web-image"]
   end
+
+  PR["pull_request / merge_group"] --> M
+  MAIN["push to main"] --> PUBW["publish.yml"]
+  TAG["push tag v*"] --> RELW["release.yml"]
+
+  PUBW -->|"calls"| M
+  RELW -->|"calls, after the guard"| M
 
   PR --> BRAND["brand-lint.yml"]
   PR --> MIG["migration-lint.yml"]
@@ -263,8 +262,9 @@ carries a field the schema does not know.
 
 The VPS deployment, proved without a VPS. Runs
 [`apivo-reconcile_test.sh`](../../deploy/hetzner/bin/apivo-reconcile_test.sh) (27
-assertions, driven through a stub `docker` that models a registry and a daemon
-— including buildx's `--format` trap, faithfully),
+named cases, and 14 further assertions on the recorded state and the digest
+compose was pinned to, all driven through a stub `docker` that models a
+registry and a daemon — including buildx's `--format` trap, faithfully),
 [`apivo-previews_test.sh`](../../deploy/hetzner/bin/apivo-previews_test.sh) and
 [`apivo-seed-editors_test.sh`](../../deploy/hetzner/bin/apivo-seed-editors_test.sh);
 `shellcheck -s sh` over every script that runs on a deployment host, two of
@@ -287,7 +287,8 @@ infrastructure failure and not as schema drift), regenerates
 [`web/src/lib/database.types.ts`](../../web/src/lib/database.types.ts) with
 `supabase@2.114.0` **into a temporary file first** and renames it in place —
 a failed generation must not truncate the committed types and manufacture a
-difference — then `git add -A web/src/lib && git diff --cached --exit-code`.
+difference — then `git add -A web/src/lib` and `git diff --cached --exit-code --
+web/src/lib`.
 
 ### `openapi`
 
@@ -339,7 +340,7 @@ should not queue behind one that cannot.
 
 | Gate | Where it runs | What makes it fail | Reproduce locally |
 |---|---|---|---|
-| **90 % Go statement coverage** | `go` | Total below 90 % after `internal/*/store/` and `internal/cashback/*/store/` are filtered out | `make cover` |
+| **90 % Go statement coverage** | `go` | Total below 90 % after the sqlc output is filtered out — `internal/content/store/`, `internal/editorial/store/` and `internal/cashback/<pkg>/store/`, which is every generated package there is today, though the first two are named rather than matched by shape | `make cover` |
 | **Race detector** | `go` (`-race`), and `make test` by default (`RACE ?= -race`) | Any data race | `make test` |
 | **Real-Postgres integration tests, never skipped** | `go` (service container, `DATABASE_URL` set), `cashback` | A schema invariant test failing; a skip in CI would mean `DATABASE_URL` was not set | `make db-up && make test` |
 | **Strict `golangci-lint`, pinned** | `lint` (`v2.12.2`) | Any finding from the 18 enabled linters or the two formatters | `make lint` (runs the same pinned container) |
@@ -365,8 +366,8 @@ should not queue behind one that cannot.
 | **Commit hygiene** | `commit-hygiene` | See [§7](#7-commit-and-ref-hygiene-in-the-order-it-bites) | `make ref-lint`; `sh scripts/lint-refs.sh --from-messages origin/main..HEAD`; `sh scripts/lint-commit-authors.sh origin/main..HEAD` |
 | **The cashback stack against a real ledger** | `cashback` | See [§4](#4-every-job-in-ciyml) | **Not reproducible locally** without Docker. This job is the verification of record; a PR that bumps the ledger must say so. |
 
-The four commands the repository asks for before a push are named in
-[CLAUDE.md](../../CLAUDE.md):
+The four commands the repository asks for before a push — every one of them a
+gate in the table above, run in the order that fails cheapest first:
 
 ```sh
 make vet && make test-unit                                  # the fast pass
@@ -385,13 +386,19 @@ assistant or vendor is named in a commit message, a PR description, a code
 comment or documentation. That single rule is enforced at six points, each
 catching something the one before it cannot.
 
-1. **Session start** —
-   [`.claude/hooks/session-start.sh`](../../.claude/hooks/session-start.sh) writes
-   `user.name` and `user.email` into the **local** config at every session
-   start, unconditionally, and points `core.hooksPath` at `.githooks`. It is
-   written unconditionally because a stale value is exactly the failure being
-   fixed: a container ships its own global identity and it comes back on every
-   restart. This is what stops the later gates having to fail.
+1. **Session start** — a repository hook writes `user.name` and `user.email`
+   into the **local** git config at the start of every agent session, and
+   points `core.hooksPath` at [`.githooks`](../../.githooks). It is written
+   unconditionally because a stale value is exactly the failure being fixed: a
+   development container ships its own global identity and it comes back on
+   every restart. This is what stops the later gates having to fail. Where
+   that hook lives is named in the constitution's *Enforcement* list under
+   Principle I ([constitution.md](../../.specify/memory/constitution.md)). That
+   principle also sets out the short list of files permitted to write the
+   assistant and vendor names it otherwise forbids — a blocklist has to name
+   what it blocks — and it says in terms that the exception is theirs alone.
+   This document is not on the list, which is why the path is described here
+   rather than quoted.
 2. **`commit-msg` hook** — [`.githooks/commit-msg`](../../.githooks/commit-msg)
    strips attribution trailers from the message before the commit is written.
    Case-insensitive: a blocklist must over-match.
@@ -417,9 +424,11 @@ catching something the one before it cannot.
    saw: a hook skipped, a merge made by hand, a branch that reached `main` by
    some path. Only the ban applies there, not the `xcoder/<slug>` convention,
    because in a commit subject the name is already permanent and refusing it
-   would offer no remedy. `main` already carries 32 such merge commits; they
-   are outside every range the job is given and could not be corrected without
-   rewriting shared history.
+   would offer no remedy. The constitution records 32 such merge commits
+   already on `main`, left as they are deliberately
+   ([constitution.md](../../.specify/memory/constitution.md), Principle I,
+   *Follow-up*): they are outside every range the job is given and could not be
+   corrected without rewriting shared history.
 6. **The `commit-hygiene` CI job** — all of the above, server-side, plus the
    Conventional Commit subject check, plus the *proofs* of each lint before it
    is trusted.
@@ -449,7 +458,10 @@ This is the interesting part, and the ordering of the last three steps in
 1. Both images are built and pushed under an **immutable `sha-<commit>` tag**.
    The version is stamped through a `VERSION` file written at the context root
    (git-ignored, never committed), which the [`Dockerfile`](../../Dockerfile) turns
-   into `-ldflags "-X main.version=$(cat VERSION)"`. Both images also carry
+   into `-ldflags="-s -w -X main.version=$(cat VERSION 2>/dev/null || echo dev)"`.
+   The `dev` fallback is why the proof in step 2 is not optional: a build with
+   no `VERSION` file still builds, and only running it catches that.
+   Both images also carry
    `org.opencontainers.image.version` as a standard OCI label — not decoration:
    the reconciler reads it off the image to learn what the artefact calls
    itself.
@@ -605,7 +617,7 @@ Details that carry weight:
   `journalctl -u apivo-reconcile@qa -o cat | jq`.
 
 All of this has a test suite that runs in CI on every pull request —
-`apivo-reconcile_test.sh`, 27 assertions against a stub `docker`, covering the
+`apivo-reconcile_test.sh`, 27 named cases against a stub `docker`, covering the
 registry that will not answer, the half-moved channel, the container that came
 up healthy on the wrong image, the API serving the wrong version, the
 first-ever rollout that fails and has nothing to fall back to, and the rollback
@@ -766,8 +778,17 @@ a minute of the images being built.
   something rather than the arrival of a message — a webhook can be missed,
   dropped, delivered twice or forged; an absent tag converges every minute
   forever. `APIVO_PREVIEW_MAX` (5 by default) caps concurrent previews.
-- A preview has its own database, no auth configured, and neither feed polling
-  nor translation running.
+- A preview has its own database and runs neither feed polling nor translation
+  (`POLL_INTERVAL=0`, `TRANSLATION_INTERVAL=0` in
+  [`docker-compose.preview.yml`](../../deploy/hetzner/compose/docker-compose.preview.yml)).
+  It does **not** run without auth: `apivo-previews` copies QA's Supabase URL,
+  anon key and `JWKS_URL` into the preview and copies QA's editor rows into the
+  preview's own database, so a reviewer can sign in to the editorial screens
+  they opened the preview to look at. Only public values cross — the anon key
+  ships to every browser that loads QA and the JWKS endpoint is published; the
+  service-role key is in no env file on the host. Auth is all-or-nothing: with
+  any of the three missing from QA, the preview comes up on fixtures and says
+  so ([ENVIRONMENTS.md](../ENVIRONMENTS.md)).
 
 ---
 
@@ -778,7 +799,8 @@ sh scripts/env_status.sh          # or: make env-status
 sh scripts/env_status.sh --json
 ```
 
-One HTTPS request per environment. No credentials, no SSH key, no registry
+At most two plain HTTPS requests per environment — `/healthz`, then `/readyz`
+if the first answered. No credentials, no SSH key, no registry
 token, no VPS access — so an agent that has merged a pull request can find out
 whether the environment has caught up without being handed anything that could
 break one. It reports what each environment **serves**, which is the only
@@ -786,11 +808,14 @@ account of a deployment that cannot be wrong: a channel tag says what should be
 running and a host's state file says what it believes it started; `/healthz`
 says what answered.
 
-It distinguishes three states. `up` with `ready=yes`; `up` with `ready=no`,
+It distinguishes four states. `up` with `ready=yes`; `up` with `ready=no`,
 which means the process is up and the database is not — "the deploy failed" and
 "the deploy worked and Supabase is unreachable" have entirely different fixes;
-and `absent`, meaning that environment has no URL recorded and has not been
-provisioned, which today is the truth about production. The exit code is
+`down`, meaning the URL is recorded and `/healthz` did not answer; and
+`absent`, meaning that environment has no URL recorded and has not been
+provisioned, which today is the truth about production. `absent` is not
+counted as a failure — an environment nobody has provisioned is not an
+environment that is broken. The exit code is
 non-zero if any environment that is supposed to exist is not fully serving, so
 it composes into a shell chain without anything having to parse it.
 
@@ -798,8 +823,9 @@ To ask the same questions of the *configuration* rather than of a running
 environment, with no host either:
 
 ```sh
-make hetzner-validate   # every environment's compose rendered, both Caddyfiles validated,
-                        # plus make hetzner-test: the reconciler's 27 decisions
+make hetzner-validate   # every environment's compose rendered, both Caddyfiles validated
+                        # and format-checked. It depends on hetzner-test, so the
+                        # reconciler's 27 decisions are proved first, every time.
 ```
 
 On a host, [`apivoctl`](../../deploy/hetzner/bin/apivoctl) is the operator's
@@ -824,14 +850,28 @@ reaches QA while the lint that refuses it is still running.
 
 **The `frontend` coverage threshold measures an include list, not the app.**
 [`web/vitest.config.ts`](../../web/vitest.config.ts) names the files coverage is
-computed over — middleware, the reader library, the string catalogues. 80 % is
-80 % of those. A new page with no tests does not move the number.
+computed over, one by one — the middleware, the reader, cashback, editorial and
+tour libraries, the CSRF and secure-request helpers, the string catalogues, and
+one endpoint. 80 % is 80 % of those. Every `.astro` page is outside the list,
+along with the generated types, the ambient declarations, the fixtures and the
+Supabase adapter; the file says why for each. So a new page with no tests does
+not move the number, and a new library file only does so once somebody adds it
+to `include`.
 
 **`RELEASING.md` says all three environment URLs are empty; QA's is not.**
 [`environments.env`](../../deploy/hetzner/environments.env) sets
 `APIVO_QA_URL=https://ra1ze.com`. It changes nothing mechanically — QA is not a
 release target, and the guard only reads the staging and production values —
 but the sentence in [RELEASING.md](../RELEASING.md) is stale.
+
+**The README's deployment table is stale in the other direction.** It records
+all three environments as "Provisioned: not yet", while
+[ENVIRONMENTS.md](../ENVIRONMENTS.md) — which declares itself the single source
+of truth for what runs where — records QA as provisioned and serving and
+staging's host as ready. This document follows ENVIRONMENTS.md. Two files
+answering the same question differently is the failure the single-source rule
+exists to prevent, and correcting the README is a one-line change nobody has
+made.
 
 **No release has ever been cut.** Staging's host is ready and has never had a
 release; production does not exist. So the guard, the approval gate, the

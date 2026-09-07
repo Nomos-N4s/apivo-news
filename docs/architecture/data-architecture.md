@@ -210,7 +210,7 @@ erDiagram
     ledger_link {
         uuid transition_id PK
         uuid entry_id FK
-        text ledger_transfer_ref UK
+        text ledger_transfer_ref UK "unique per entry, not outright (0027)"
     }
     ledger_account {
         text id PK
@@ -480,11 +480,15 @@ is stored: `Balance` sums postings, every time.
 
 The port's contract is asserted by one suite,
 [wallet/conformance_test.go](../../internal/cashback/wallet/conformance_test.go),
-run against all three implementations — `memory` (the reference, one mutex,
-nothing cached), `blnk` (production, the only package permitted to import the
-vendor SDK), and `postgres` (the documented exit route). Its eight clauses
-include: `Post` is atomic; replay under the same key returns the original
-reference and records nothing, while replay with a *different* transfer under
+written against the port and run against all three implementations — `memory`
+(the reference, one mutex, nothing cached), `blnk` (production, the only
+package permitted to import the vendor SDK), and `postgres` (the documented
+exit route). Not all three run everywhere: the in-memory ledger always does,
+Postgres when `DATABASE_URL` is set and Blnk when `BLNK_URL` is, and a skip is
+reported per implementation rather than for the file, "so a run that exercised
+one of the three cannot read as a run that exercised them all". Its eleven
+scenarios include: `Post` is atomic; replay under the same key returns the
+original reference and records nothing, while replay with a *different* transfer under
 the same key is `ErrIdempotencyConflict`; no currency conversion anywhere;
 balances are always summed, never stored; and **a member stage account may
 never go negative** — `ErrInsufficientFunds` — while house accounts are exempt,
@@ -527,9 +531,12 @@ layer over `money.Split`:
 const MemberFavour = money.RoundCeil
 ```
 
-Q4 leaves the percentages open and fixes the direction: the share is
-configuration, "the direction is a product promise". Applied to a credit,
-ceiling rounds up; applied to a debit it rounds toward zero, so a reversal takes
+`MemberFavour` is the half of Q4 the plan never left open — in `share.go`'s own
+words, "the percentages are configuration, the direction is a product promise".
+The founder has since settled the percentage as well, at 60 % on 2026-09-06,
+and it is still a constant rather than a setting because a share is part of the
+band and is snapshotted with it at click. Applied to a credit, ceiling rounds
+up; applied to a debit it rounds toward zero, so a reversal takes
 back no more than exact arithmetic says. `ShareOf` reads the rate from the
 **click**, never from the offer as it stands now, and applies it to the
 commission the network **actually reported**, not the one the band predicted.
@@ -994,14 +1001,28 @@ the document against OpenAPI 3.1.
 ### Residency
 
 The database is Supabase (Postgres), EU region
-([README.md](../../README.md)); production gets its own EU project and the
-nonprod environments share one
-([docs/ENVIRONMENTS.md](../../docs/ENVIRONMENTS.md)). The application runs as
-containers on a Hetzner VPS in the EU, "so GDPR residency is a property of the
-host rather than a setting". **Neither the Hetzner hosts nor the Supabase
-projects are provisioned yet** — the README's own table says "not yet" for all
-three environments — so residency today is a decided design rather than a
-running fact.
+([README.md](../../README.md)). There are two Supabase projects rather than
+three: production gets its own EU project, staging uses the *nonprod* EU
+project, and QA keeps a Postgres container on its own host
+([docs/ENVIRONMENTS.md](../../docs/ENVIRONMENTS.md)). QA and staging
+deliberately do not share a database — the api migrates on boot, so a shared
+schema would have QA migrating the database staging is running against. The
+application runs as containers on a Hetzner VPS in the EU, "so GDPR residency
+is a property of the host rather than a setting".
+
+How much of that is running is worth stating exactly, because two documents in
+this tree disagree and the newer one is the one that governs.
+[docs/ENVIRONMENTS.md](../../docs/ENVIRONMENTS.md) declares itself the single
+source of truth for what runs where, and it says: **QA is provisioned and
+serving**; **staging's host is ready and has never had a release**, because
+`APIVO_STAGING_URL` is still empty and the release workflow refuses a channel
+with no URL; and **production is not provisioned**, needing a second VPS, its
+own Supabase project and a DNS record, none of which exist. The README's
+deployment table still reads "not yet" against all three environments and puts
+staging's database on a host container; that table is stale, and correcting it
+is a README change rather than an architecture one. So EU residency is a
+running property of QA, a configured but not yet exercised one for staging, and
+a decided design for production.
 
 ### What the schema deliberately does not store
 
@@ -1082,23 +1103,29 @@ stated in the code that has it or is recorded as an open founder question.
    from ledger postings that were never debited, and in `PaidOut`, summed from
    `cashback.payout`. No test covers it —
    [payout/settle_integration_test.go](../../internal/cashback/payout/settle_integration_test.go)
-   asserts only that the withdrawal request reads `paid`. This is the single
-   largest correctness gap in the money model.
+   checks the payout's state, its settlement instant, its rail reference, that
+   the operator's decision is left exactly as they made it, and that
+   `cashback.payout.settled` is announced once; it asserts nothing at all about
+   the entries or the ledger. This is the single largest correctness gap in the
+   money model.
 2. **Two of the three house accounts are configured and unused.**
    `HOUSE_ACCOUNT_ROUNDING` and `HOUSE_ACCOUNT_CLAWBACK` are required under
    `APP_ENV=prod` and no posting path names either. The D6 remainder is computed
    and left in the receivable, so `.env.example`'s description of it moving to
-   its own account does not describe running code. Zero-sum is unaffected; the
-   loss is attribution, not solvency.
+   its own account does not describe running code — and neither does the Q4
+   founder decision, which routes the remainder to `HOUSE_ACCOUNT_ROUNDING` by
+   name. Zero-sum is unaffected; the loss is attribution, not solvency.
 3. **Payout destinations cannot be created or verified through the API.**
-   `POST /payout-destinations` returns 503 in every deployment, because
+   `POST /api/v1/cashback/payout-destinations` returns 503 in every deployment,
+   because
    [cmd/apivo/main.go](../../cmd/apivo/main.go) passes `nil` for the details
    vault and no implementation of it exists anywhere in the tree.
    `Destinations.Verify` has no route and no production caller. Since
    `withdrawal_request_guard()` refuses an unverified destination, the withdrawal
    path cannot be completed through the API alone.
-4. **The outbox has no reader.** Nineteen cashback event types are appended
-   transactionally with the state changes that cause them, and
+4. **The outbox has no reader.** Eighteen cashback event types are declared
+   across the modules' own `events.go` files and appended transactionally with
+   the state changes that cause them, and
    [events/dispatcher.go](../../internal/platform/events/dispatcher.go),
    `subscriber_checkpoint`, `event_delivery` and `event_dead_letter` are all
    implemented and unit-tested — but nothing calls `NewDispatcher` outside
@@ -1115,14 +1142,34 @@ stated in the code that has it or is recorded as an open founder question.
 
 ### Recorded founder questions this document does not answer
 
-Q1 (which networks), Q3 (clawback posture after payout — default: absorb the
-loss), Q4 (revenue share; only the *direction*, `MemberFavour`, is settled), Q5
-(payout rails and threshold), Q6 (KYC and sanctions), Q7 (tax treatment and
-member reporting), **Q8 (click-log retention)**, Q9 (naming), Q10 (goodwill
-budget and cap), **Q11 (claim evidence retention)**, Q12 (the five-day answer),
-Q13 (whether a payment above some amount needs a second named person). Q2, the
-regulatory posture on member balances, is **decided** — the rebate-claim posture,
-founder decision of 2026-08-24, for the alpha.
+Seven are open, and this document answers none of them: **Q3** (clawback
+posture after payout — default: absorb the loss), **Q8** (click-log retention),
+**Q9** (repository and brand naming), **Q10** (goodwill budget and cap),
+**Q11** (claim evidence retention), **Q12** (whether the five-day answer is a
+public commitment or an internal target) and **Q13** (whether a goodwill
+payment above some amount needs a second named person).
+
+Six are decided, each with a date and a recorded founder wording in
+[specs/002-apivo-cashback-alpha/spec.md](../../specs/002-apivo-cashback-alpha/spec.md):
+**Q1** — Awin, and only Awin for the alpha (2026-08-31); **Q2** — the
+rebate-claim posture on member balances (2026-08-24); **Q4** — 60 % of the
+commission to the member, rounding in their favour (2026-09-06); **Q5** — SEPA
+credit transfer on the manual rail, a €20 threshold, paid in a monthly batch
+(2026-09-06); **Q6** — name and IBAN at payout, screening against the EU
+consolidated sanctions list, and a second named person above €200 in one
+payment or €1,000 lifetime, for the alpha only (2026-09-06); **Q7** — cashback
+on a member's own purchase is a rebate rather than income, so no member tax
+statements (2026-09-06).
+
+Two things about that list are worth saying plainly. **The constitution has not
+caught up.** Its Governance section still carries Q1, Q4, Q5, Q6 and Q7 among
+the founder-level open questions and names only Q2 as decided; the spec is the
+later document and records the decisions, and closing the gap is a constitution
+amendment nobody has raised. This document reports the disagreement rather than
+resolving it. **And a decided question is not a built one.** Q6's screening
+step and review thresholds are marked unbuilt in the spec itself — nothing in
+this repository names a sanctions list — and Q4's remainder routing is gap 2
+above.
 
 ### Invariants with nothing yet to enforce
 

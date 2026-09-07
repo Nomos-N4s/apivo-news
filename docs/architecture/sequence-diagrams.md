@@ -1223,9 +1223,18 @@ sequenceDiagram
    `rememberEditorSession`
    ([session.ts](../../web/src/lib/editorial/session.ts)) stores the result for
    the request ([web/src/middleware.ts](../../web/src/middleware.ts)).
-2. **The Astro server is the only public surface** — the Go API is not publicly
-   routable, and every cashback call is made server-side with the member's own
-   token ([api.ts](../../web/src/lib/cashback/api.ts)).
+2. **The token is used server-side only, which is not the same as a private
+   API** — every cashback call is made from Astro's frontmatter with the
+   member's own token, so the credential is never in the document and never in
+   a page script ([api.ts](../../web/src/lib/cashback/api.ts)). Be exact about
+   what that does and does not buy: the Go API is **not** private. The Hetzner
+   Caddy configuration routes `/api/*`, `/healthz` and `/readyz` straight to
+   the Go container and everything else to Astro
+   ([the `apivo-routes` snippet](../../deploy/hetzner/caddy/snippets.caddy)),
+   so every guard on the API is enforced in Go rather than by the API being
+   unreachable. What this path rules out is a browser holding the token, not a
+   browser reaching the API — and nothing is publicly reachable today only
+   because no host is provisioned ([ENVIRONMENTS.md](../ENVIRONMENTS.md)).
 3. **Verification** — [internal/identity/verifier.go](../../internal/identity/verifier.go)
    holds a cached, auto-refreshing JWKS, refuses `none` and symmetric algorithms,
    and applies `DefaultAcceptableSkew = 30s` bounded by `MaxAcceptableSkew = 2m`.
@@ -1541,15 +1550,23 @@ Ordered by how much they cost if left as they are.
    the cashback pages carry an editorial session token.
    `POST /api/v1/account` registers a caller from a verified token, which is the
    first half of the path.
-4. **The outbox has no reader.** Nineteen cashback event types are written; the
-   dispatcher, checkpoints, dead-letter table and requeue are implemented and
-   unit-tested, and nothing in [cmd/apivo/main.go](../../cmd/apivo/main.go)
-   registers one. `NewDispatcher` appears outside tests only where it is defined.
-5. **Three surfaces the frontend calls that nothing serves.**
-   `GET /api/v1/cashback/catalogue`, `GET /ops/withdrawals?state=…` and
-   `GET /ops/reconciliation/runs`, plus
-   `POST /ops/unattributed/{id}/attribute` — so unattributed work can be dismissed
-   but never attributed.
+4. **The outbox has no reader.** Eighteen distinct cashback event types are
+   written — nineteen constants declare them, because
+   `cashback.transaction.unattributed` is spelled in both
+   [networks](../../internal/cashback/networks/events.go) and
+   [earnings](../../internal/cashback/earnings/events.go), one type published
+   from two places. The dispatcher, checkpoints, dead-letter table and requeue
+   are implemented and unit-tested, and nothing in
+   [cmd/apivo/main.go](../../cmd/apivo/main.go) registers one. `NewDispatcher`
+   appears outside tests only where it is defined.
+5. **Four surfaces the frontend calls that nothing serves.**
+   [web/src/lib/cashback/api.ts](../../web/src/lib/cashback/api.ts) calls
+   `GET /api/v1/cashback/catalogue`, `GET /ops/withdrawals?state=…`,
+   `GET /ops/reconciliation/runs` and
+   `POST /ops/unattributed/{id}/attribute`; none is in a `routes()` map — so
+   unattributed work can be dismissed but never attributed. The two-way
+   OpenAPI test cannot catch any of them: it compares the served document with
+   the router, and the frontend client is in neither.
 6. **Two house accounts are required in production and used by nothing.**
    `HOUSE_ACCOUNT_ROUNDING` and `HOUSE_ACCOUNT_CLAWBACK` are referenced by no
    posting path; the D6 rounding remainder is computed and stays in the receivable.
@@ -1574,8 +1591,11 @@ Ordered by how much they cost if left as they are.
 12. **A second-approver rule above an amount does not exist** (constitution Q13),
     and neither does a goodwill budget or cap (Q10). Both are open founder
     questions carrying safe defaults rather than decisions.
-13. **Counts to be careful with.** [README.md](../../README.md) says "34 routes; 22
-    are cashback"; the document in this checkout declares **26 cashback operations
-    over 22 cashback paths**, out of 44 operations over 37 paths in total. Likewise
-    `specs/002-apivo-cashback-alpha/tasks.md` is not a status board — many unticked
-    items are demonstrably present in the tree.
+13. **Counts to be careful with.** No prose anywhere in this repository quotes a
+    route total, and that is deliberate: the only trustworthy count is the one
+    taken from [api/openapi.json](../../api/openapi.json) itself. At `0461ad7`
+    that document declares **26 cashback operations over 22 cashback paths**,
+    out of 44 operations over 37 paths in total, and every figure in this
+    document is counted from it rather than quoted from another document.
+    Likewise `specs/002-apivo-cashback-alpha/tasks.md` is not a status board —
+    many unticked items are demonstrably present in the tree.

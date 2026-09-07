@@ -232,27 +232,27 @@ sequenceDiagram
   participant P as Postgres
   participant R as Payout rail
 
-  M->>W: "POST /cashback/withdrawals (bearer)"
-  W->>W: "requireMember: verify JWT, map sub to account"
+  M->>W: POST /cashback/withdrawals (bearer)
+  W->>W: requireMember: verify JWT, map sub to account
   Note over W: member comes from the token, never the body
-  W->>D: "destination belongs to this member?"
-  D-->>W: "404-shaped refusal if not theirs or absent"
-  W->>D: "RequireVerified"
-  D-->>W: "409 if nobody proved it"
-  W->>E: "confirmed balance, threshold, covering set"
-  E-->>W: "refuse below threshold or uncovered"
-  W->>L: "post confirmed to reserved (idempotency key)"
-  L-->>W: "ErrInsufficientFunds if double spent"
-  W->>P: "insert withdrawal_request awaiting_approval"
+  W->>D: destination belongs to this member?
+  D-->>W: 404-shaped refusal if not theirs or absent
+  W->>D: RequireVerified
+  D-->>W: 409 if nobody proved it
+  W->>E: confirmed balance, threshold, covering set
+  E-->>W: refuse below threshold or uncovered
+  W->>L: post confirmed to reserved (idempotency key)
+  L-->>W: ErrInsufficientFunds if double spent
+  W->>P: insert withdrawal_request awaiting_approval
   Note over P: withdrawal_request_guard refuses an unverified destination
-  O->>W: "POST /ops/withdrawals/{id}/approve (bearer)"
-  W->>W: "requireOperator: JWT then account.role"
-  W->>P: "lock request, record decided_by, insert payout"
-  Note over P: "payout_insert_guard: approver must be operator"
-  Note over P: "idempotency_key generated always as payout:request_id"
-  P-->>W: "commit"
-  W->>R: "Submit with the key read back from the row"
-  R-->>W: "rail reference"
+  O->>W: POST /ops/withdrawals/{id}/approve (bearer)
+  W->>W: requireOperator: JWT then account.role
+  W->>P: lock request, record decided_by, insert payout
+  Note over P: payout_insert_guard: approver must be operator
+  Note over P: idempotency_key generated always as payout:request_id
+  P-->>W: commit
+  W->>R: Submit with the key read back from the row
+  R-->>W: rail reference
 ```
 
 Three details in that flow are the whole defence, and each is stated where it is enforced:
@@ -313,7 +313,9 @@ It can put details in and get a reference back; it **cannot read them out**. Not
 
 ### Residency
 
-EU residency is a property of the host, not a setting. The application runs as containers on a Hetzner VPS in the EU, behind Caddy, behind Cloudflare for DNS, edge TLS, CDN and WAF; production's database is its own Supabase **EU** project ([README.md](../../README.md), [docs/ENVIRONMENTS.md](../ENVIRONMENTS.md)). There is no configuration flag that moves data out of the EU, and equally none that would keep it in if the host changed. **All three hosts are listed as not yet provisioned.**
+EU residency is a property of the host, not a setting. The application runs as containers on a Hetzner VPS in the EU, behind Caddy, behind Cloudflare for DNS, edge TLS, CDN and WAF; production's database is its own Supabase **EU** project ([README.md](../../README.md), [docs/ENVIRONMENTS.md](../ENVIRONMENTS.md)). There is no configuration flag that moves data out of the EU, and equally none that would keep it in if the host changed.
+
+The provisioning state is uneven, and the two sources disagree: [docs/ENVIRONMENTS.md](../ENVIRONMENTS.md) records **QA as provisioned and serving** on the pre-production VPS, **staging's host as ready but never released to**, and **production as not provisioned** — it still needs a second VPS, its own Supabase project and a DNS record. The summary table in [README.md](../../README.md) still marks all three *not yet* and is behind on the first two. Residency is therefore a real property of one running environment today, and a written intention for the other two.
 
 ### What personal data the system holds
 
@@ -327,7 +329,7 @@ Read from the migrations, not from a data map:
 | `cashback.entry`, `withdrawal_request`, `payout` | `account_id` and amounts — a financial history | [0013](../../internal/platform/db/migrations/0013_cashback_earnings.up.sql), [0014](../../internal/platform/db/migrations/0014_cashback_payout.up.sql) |
 | `cashback.participation` | opt-in, `terms_version`, `left_at` | [0017](../../internal/platform/db/migrations/0017_participation.up.sql) |
 | `cashback.network_transaction` | `raw_payload` — the network's verbatim report, which may name a purchase | [0012](../../internal/platform/db/migrations/0012_cashback_clicks_evidence.up.sql) |
-| `public.domain_event` | `subject` and payloads across 19 cashback event types | [0018](../../internal/platform/db/migrations/0018_domain_event_envelope.up.sql) |
+| `public.domain_event` | `subject` and payloads across 18 distinct cashback event types | [0018](../../internal/platform/db/migrations/0018_domain_event_envelope.up.sql) |
 
 The click context is the one place where an address could have been stored, and it is not. [clickout/context.go](../../internal/cashback/clickout/context.go) digests exactly two parts — the client address as the deployment can best determine it, and the user agent — and stores only the digest: "Enough for an abuse rule to tell one device's flood from a busy afternoon, and nothing that reconstructs who or where somebody is." The header it reads is never a default: `CLICK_CONTEXT_HEADER` is a deployment's statement of trust in its own edge, because "a header a client can set is a context a client can choose". Left unset, the per-context half of the click rule stays off rather than throttling every member behind one proxy address.
 
@@ -354,8 +356,8 @@ STRIDE, scoped to the cashback product. Every row names the mitigation with its 
 | T3 | **Tampering** — duplicate or forged network reports | A network re-reports the same transaction, or an attacker inserts a report to manufacture a credit | Polling is the **only** credit-creating path — there is no inbound webhook to forge. `content_digest` is computed **by the database** in `cashback.network_transaction_guard()`, so application code cannot get it wrong; `network_transaction_unique_report`, `network_transaction_superseded_once` and `network_transaction_one_root` make a duplicate a no-op and give each transaction exactly one current row; `network_transaction_immutable` and `_no_truncate` refuse edits ([0012](../../internal/platform/db/migrations/0012_cashback_clicks_evidence.up.sql)). `entry_one_per_report` allows one credit per report ([0032](../../internal/platform/db/migrations/0032_entry_one_credit_per_report.up.sql)) and `entry_evidence_guard` refuses an entry that does not cite the click the network named | **Built** |
 | T4 | **Elevation** — withdrawal to an unverified or someone else's destination | A member withdraws to an account they never proved is theirs, or names another member's destination id | `withdrawal_request.destination_id` is composite-FK'd to `(id, account_id)` of `payout_destination`, so it **must** be the caller's own; `withdrawal_request_guard` refuses a request naming an unverified destination ([0014](../../internal/platform/db/migrations/0014_cashback_payout.up.sql)); `RequireVerified` refuses in the application first ([verification.go](../../internal/cashback/payout/verification.go)); a destination belonging to someone else and one that does not exist are deliberately the **same** error, so the endpoint cannot confirm another member's id is real ([destination.go](../../internal/cashback/payout/destination.go)) | **Built** — but see T4b |
 | T4b | **Availability of the control** | Nobody can verify a destination through the API at all | `Destinations.Verify` exists and is tested, and has **no HTTP route and no production caller**; `POST /payout-destinations` answers 503 because no `DetailsVault` is wired | **No mitigation yet** — a member cannot complete a withdrawal through the API alone, and any destination that does exist was verified out of band |
-| T5 | **Elevation / repudiation** — operator privilege abuse | An operator approves their own withdrawal, releases held credits for a confederate, or is demoted to hide a decision | Every decision records the operator taken from the **token** ([ops/auth.go](../../internal/cashback/ops/auth.go)); `payout.approved_by` is `NOT NULL` and `payout_insert_guard()` requires the role; `account_role_guard()` **freezes an operator's role while any payout references them**; migration 0019 refuses to apply against history that violates the rule; `payout_guard()` freezes the approver, amount, currency, rail and request, and `settled` is terminal; the full chain is queryable through `cashback.provenance` ([0016](../../internal/platform/db/migrations/0016_cashback_provenance_view.up.sql)). Race covered by `TestOperatorDemotionRaceIsSerialized` ([cashback_operator_role_test.go](../../internal/platform/db/cashback_operator_role_test.go)) | **Partial** — everything is *attributable*, nothing is *prevented*. There is **no second-approver rule at any amount** (constitution Q13, open) and **no separation between requester and approver**: an operator with a member account can approve their own withdrawal, and only the audit trail would show it |
-| T6 | **Tampering** — replay of a payout | A retry, a crash between transactions, or a deliberate second submit pays twice | `payout.idempotency_key` is `GENERATED ALWAYS AS ('payout:' || request_id) STORED` with a unique constraint, and is read back from the column rather than recomputed; `payout_one_per_request UNIQUE(request_id)`; `payout_pays_the_requested_amount` composite FK on `(request_id, amount_minor, currency)` so a payout cannot restate the approved amount ([0014](../../internal/platform/db/migrations/0014_cashback_payout.up.sql)). The ledger is idempotent on the transfer key, with `ErrIdempotencyConflict` when a replay differs by content ([wallet/ledger.go](../../internal/cashback/wallet/ledger.go)). Proved by [payout/exactly_once_test.go](../../internal/cashback/payout/exactly_once_test.go) and `TestConcurrentDoubleSubmitProducesOnePayout` | **Built** |
+| T5 | **Elevation / repudiation** — operator privilege abuse | An operator approves their own withdrawal, releases held credits for a confederate, or is demoted to hide a decision | Every decision records the operator taken from the **token** ([ops/auth.go](../../internal/cashback/ops/auth.go)); `payout.approved_by` is `NOT NULL` and `payout_insert_guard()` requires the role; `account_role_guard()` **freezes an operator's role while any payout references them**; migration 0019 refuses to apply against history that violates the rule; `payout_guard()` freezes the approver, amount, currency, rail and request, and `settled` is terminal; the full chain is queryable through `cashback.provenance` ([0016](../../internal/platform/db/migrations/0016_cashback_provenance_view.up.sql)). Race covered by `TestOperatorDemotionRaceIsSerialized` ([cashback_operator_role_test.go](../../internal/platform/db/cashback_operator_role_test.go)) | **Partial** — everything is *attributable*, nothing is *prevented*. There is **no second-approver rule at any amount** and **no separation between requester and approver**: an operator with a member account can approve their own withdrawal, and only the audit trail would show it. Constitution Q13 is open, but it is narrower than this gap — it asks whether a *goodwill payment* above some amount needs a second named person, and says nothing about a withdrawal |
+| T6 | **Tampering** — replay of a payout | A retry, a crash between transactions, or a deliberate second submit pays twice | `payout.idempotency_key` is `GENERATED ALWAYS AS ('payout:' || request_id) STORED` with a unique constraint, and is read back from the column rather than recomputed; `payout_one_per_request UNIQUE(request_id)`; `payout_pays_the_requested_amount` composite FK on `(request_id, amount_minor, currency)` so a payout cannot restate the approved amount ([0014](../../internal/platform/db/migrations/0014_cashback_payout.up.sql)). The ledger is idempotent on the transfer key, with `ErrIdempotencyConflict` when a replay differs by content ([wallet/ledger.go](../../internal/cashback/wallet/ledger.go)). Proved at two levels: eight scenarios in [payout/exactly_once_test.go](../../internal/cashback/payout/exactly_once_test.go) — two operators approving at once, a repeated approval, a timeout then a retry, a lost answer — and `TestConcurrentDoubleSubmitProducesOnePayout` against a real Postgres in [cashback_payout_test.go](../../internal/platform/db/cashback_payout_test.go) | **Built** |
 | T7 | **Spoofing** — JWT forgery, downgrade or leakage | `alg: none`, an HS256 downgrade using the public key as an HMAC secret, a stolen token, or a token for an account that does not exist | Algorithm allowlist enforced **on the protected header before any key is consulted** ([verifier.go](../../internal/identity/verifier.go)); keys from the provider's JWKS, cached and auto-refreshing, with an unreachable endpoint failing construction at wiring time; `exp`/`iat`/`nbf` with skew hard-bounded at 2 minutes; the subject must resolve to an account row; cookies are `HttpOnly` and `Secure` ([session.ts](../../web/src/lib/editorial/session.ts), [secure-request.ts](../../web/src/lib/secure-request.ts)); HSTS at the edge; **no role is ever read from a claim** | **Partial** — a stolen bearer token is bearer authority for its lifetime. There is **no revocation list, no token binding and no re-authentication step in front of a withdrawal**; token lifetime is the auth provider's default |
 | T8 | **Tampering / information disclosure** — malicious deeplink, open redirect, SSRF | An operator-edited `deeplink_template` carries `javascript:`, a relative path, or a URL pointing at an internal host | The URL is **returned to the client as `redirect_url` in JSON**, never fetched by the server and never emitted as a `Location` header by this binary ([clickout/handlers.go](../../internal/cashback/clickout/handlers.go)), so the class here is open redirect rather than SSRF. `validateDeeplinkTemplate` requires an absolute `http`/`https` URL with a host, unpadded — the column only requires non-blank and the value is operator-edited, so this is the only check between an `UPDATE` and a member's browser ([networks/deeplink.go](../../internal/cashback/networks/deeplink.go)). `Publisher.tryTemplate` builds a probe deeplink through the real adapter **at publish time** ([catalogue/publish.go](../../internal/cashback/catalogue/publish.go)). Linkwise additionally refuses an unescaped nested destination ([linkwise/deeplink.go](../../internal/cashback/networks/linkwise/deeplink.go)). Outbound network base URLs come from constants and config, never from row data ([linkwise/client.go](../../internal/cashback/networks/linkwise/client.go)) | **Partial** — the destination **host** is not constrained to the merchant's own domain, so an operator (or anyone who can write `offer.deeplink_template`) can point an authenticated member's browser at any `https` host. There is no allowlist |
 | T9 | **Information disclosure** — PII exposure through exports | An export leaks member data, or a CSV cell executes in a spreadsheet | `/ops/exports/*` sits behind `requireOperator` on the whole mux; `spreadsheetCell` prefixes any value starting with `= + - @ \t \r`, the CSV formula-injection defence ([ops/exports_http.go](../../internal/cashback/ops/exports_http.go)); windows are validated and bounded at `MaxExportRows = 50_000` — a window holding more is refused rather than truncated, "because a truncated journal is one an accountant sums"; the member's own export is scoped by the token ([wallet/export.go](../../internal/cashback/wallet/export.go)) | **Partial** — the ops exports legitimately carry member account ids, amounts and network references; there is no field-level redaction, no export audit log, and nothing rate-limits an operator pulling every window |
@@ -407,12 +409,12 @@ Stated bluntly, because this is the section a launch decision rests on.
 2. **One payout rail, hard-coded, and it settles by hand.** [main.go](../../cmd/apivo/main.go) returns `manual.New()`; it is not configurable. `payout_destination.kind` admits `sepa` and no SEPA rail exists. The manual rail's `Status` always answers `submitted` — a person must record that the money landed.
 3. **The money loop does not close in the ledger.** Settlement writes `payout.state='settled'` and `withdrawal_request.state='paid'` and touches no entry; `postingsFor` returns `ErrNotThisPackagesToPost` for `to == StatePaid` ([earnings/postings.go](../../internal/cashback/earnings/postings.go)) and no production caller supplies that posting. **After settlement a member's wallet shows the same money twice** — still in `Reserved` in the ledger, and again in `PaidOut` summed from `cashback.payout`. C-1 still holds; the member-facing figure does not.
 4. **No per-caller rate limit anywhere on the Go API.** The retired Cloudflare Worker was the only implementation; the Hetzner deployment has none, and [README.md](../../README.md) already names porting one to Go middleware as required before anything is publicly reachable. The click rule is the single exception, and it protects one route.
-5. **No second approver at any amount, and no requester/approver separation.** Constitution Q13 is open. An operator who also holds a member account can approve their own withdrawal; only the audit trail would show it.
+5. **No second approver at any amount, and no requester/approver separation.** An operator who also holds a member account can approve their own withdrawal; only the audit trail would show it. Constitution Q13 is open, but it asks a narrower question — a second named person on a *goodwill payment* above some amount — so a second approver on a withdrawal is not a founder question left open, it is a control nobody has yet asked for.
 6. **No KYC or sanctions posture.** Constitution Q6, open. Nothing screens a destination or a member.
 
 ### Gaps in the security machinery itself
 
-7. **The outbox has no reader.** The dispatcher, checkpoints, dead-letter table and requeue are implemented and unit-tested; nothing registers a handler in [main.go](../../cmd/apivo/main.go). Nineteen event types are written and never consumed — so there is **no alerting, no anomaly detection and no security monitoring built on the event stream**, and `identity.account.deleted` handling (close participation, flag in-flight withdrawals, never delete financial rows) does not exist because there is nothing to register it with.
+7. **The outbox has no reader.** The dispatcher, checkpoints, dead-letter table and requeue are implemented and unit-tested; nothing registers a handler in [main.go](../../cmd/apivo/main.go). Nineteen type constants across the six cashback packages name eighteen distinct event types — `cashback.transaction.unattributed` is declared twice, in [earnings/events.go](../../internal/cashback/earnings/events.go) and [networks/events.go](../../internal/cashback/networks/events.go) — and every one of them is written and never consumed. So there is **no alerting, no anomaly detection and no security monitoring built on the event stream**, and `identity.account.deleted` handling (close participation, flag in-flight withdrawals, never delete financial rows) does not exist because there is nothing to register it with.
 8. **No dependency update automation and no secret scanning in CI.**
 9. **No revocation, token binding or step-up authentication.** A stolen bearer token is authority for its remaining lifetime, on every surface including withdrawals.
 10. **The deeplink host is unconstrained.** An `https` URL is required; the merchant's own domain is not. Anyone who can write `offer.deeplink_template` can point an authenticated member's browser anywhere.
@@ -434,7 +436,7 @@ Recorded open in the [constitution](../../.specify/memory/constitution.md), Gove
 | **Q8** click-log retention | Clicks accumulate indefinitely; there is no automated deletion anywhere in the tree |
 | **Q10** goodwill budget and cap | The goodwill house account C-10 names does not exist |
 | **Q11** claim evidence retention | Moot until claims are built |
-| **Q13** second approver above an amount | See gap 6 |
+| **Q13** a second named person on a goodwill payment above an amount | Moot until goodwill exists — and narrower than the gap beside it: no withdrawal has a second approver at any amount either, which no founder question asks about. See gap 5 |
 
 ### Whole features that do not exist
 
@@ -444,4 +446,10 @@ Recorded open in the [constitution](../../.specify/memory/constitution.md), Gove
 
 ### Finally
 
-**No environment is provisioned.** QA, staging and production are all listed as *not yet* in [README.md](../../README.md). Every control above that depends on a host — TLS termination, HSTS, the Caddy crawler fence, `sslmode=verify-full`, file modes on `api.env` — is asserted by configuration that has never been applied. The database-level controls are the ones that have actually been proved, against a real Postgres, in CI, on every pull request.
+**Cashback is off in every environment**, and one environment is running. Both halves matter.
+
+QA is provisioned and serving on the pre-production VPS; staging's host is up and has never had a release; production is not provisioned at all ([docs/ENVIRONMENTS.md](../ENVIRONMENTS.md); the table in [README.md](../../README.md) still says *not yet* for all three and is behind). So the host-dependent controls are in three different states rather than one. TLS termination, HSTS, the Caddy crawler fence and the file modes on `api.env` have been applied at least once, by the provisioning that brought QA up, and are the only ones that can be checked against a running host rather than only against the files that describe them. `sslmode=verify-full` against a managed database is **not** exercised anywhere, because QA runs a Postgres container on the host and staging has never served. Everything production-specific remains configuration that has never been applied.
+
+The larger caveat is the switch. `CASHBACK_ENABLED` is `false` on QA, staging and production alike ([docs/ENVIRONMENTS.md](../ENVIRONMENTS.md)), so **every control in this document that guards money has run only in tests** — no click rule, no hold rule, no operator gate and no ledger check has yet refused anything outside CI. That is the right order to build in, and it is also the reason none of the *Built* labels above should be read as *proved in production*.
+
+What has actually been proved is the layer that does not depend on a host or a switch: the database-level controls run against a real Postgres, in CI, on every pull request.

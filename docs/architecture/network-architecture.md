@@ -102,9 +102,15 @@ A pull request additionally gets `pr-<n>.ra1ze.com` a couple of minutes after
 it opens, and loses it within a minute of closing —
 [apivo-previews](../../deploy/hetzner/bin/apivo-previews) lists `pr-*` tags in
 the registry every minute and converges. Previews share a network with each
-other and reach neither QA, staging, nor either database, and their ingestion
-is off (`POLL_INTERVAL=0`, `TRANSLATION_INTERVAL=0` in
+other and reach neither QA, staging, nor either of their databases, and their
+ingestion is off (`POLL_INTERVAL=0`, `TRANSLATION_INTERVAL=0` in
 [docker-compose.preview.yml](../../deploy/hetzner/compose/docker-compose.preview.yml)).
+What they do share is one Postgres of their own, `apivo-preview-postgres` on
+`apivo-preview-data`
+([docker-compose.preview-db.yml](../../deploy/hetzner/compose/docker-compose.preview-db.yml)),
+on a tmpfs, so a reboot leaves no orphaned volume behind. Previews are all
+equally unreviewed code from open branches, so one network and one database
+between them costs nothing. What matters is the boundary they do not cross.
 
 One environment per host role, one compose file for all of them:
 [deploy/hetzner/compose/docker-compose.yml](../../deploy/hetzner/compose/docker-compose.yml)
@@ -140,12 +146,12 @@ flowchart LR
     FW["ufw + DOCKER-USER<br>443 from Cloudflare ranges only"]
     CAD["Caddy 2.10<br>:80 abort · :443 sites"]
 
-    subgraph ENVNET["apivo-&lt;env&gt;-edge — per environment"]
+    subgraph ENVNET["apivo-ENV-edge — one network per environment"]
       WEB["web container<br>:4321 HTTPS, self-signed"]
       API["api container<br>:8080 HTTP"]
     end
 
-    subgraph DATANET["apivo-&lt;env&gt;-data — internal: true"]
+    subgraph DATANET["apivo-ENV-data — internal: true"]
       PG["postgres :5432 TLS<br>QA only"]
     end
   end
@@ -256,8 +262,8 @@ inside a Docker network.
 | `apivo-<env>-blnk-worker` | 5004 | no | nothing; probed by its own healthcheck |
 | `apivo-<env>-redis` | 6379 | no — `data` only | Blnk and its worker |
 
-`deploy/hetzner/validate.sh` asserts the first two properties of that table on
-every pull request, by rendering each environment's compose configuration and
+`deploy/hetzner/validate.sh` asserts two of that table's properties on every
+pull request, by rendering each environment's compose configuration and
 refusing any `published:` key outside the edge stack, and refusing a `data`
 network that is not `internal: true`.
 
@@ -372,7 +378,7 @@ a Hetzner host they arrive as an overlay,
 [deploy/hetzner/compose/docker-compose.cashback.yml](../../deploy/hetzner/compose/docker-compose.cashback.yml);
 in Kubernetes as a subdirectory,
 [deploy/k8s/cashback/](../../deploy/k8s/cashback/). **Listing the overlay is
-the whole decision** — the eight keys that follow from it are set there, not in
+the whole decision** — the nine keys that follow from it are set there, not in
 `/etc/apivo/<env>/api.env`, because two answers to "does this environment run
 cashback" disagree the first time one of them is edited in a hurry, and the
 disagreement is silent.
@@ -539,7 +545,7 @@ named origin.
 | Called | From | When | Configured by |
 |---|---|---|---|
 | Feed sources (arbitrary publisher HTTP/S) | **api** container | the poll loop, `POLL_INTERVAL` (15m default; `0` disables) | source rows; [internal/ingestion/fetch.go](../../internal/ingestion/fetch.go) |
-| The model provider, OpenAI-compatible | **api** container | the translation pipeline, `TRANSLATION_INTERVAL` | `TRANSLATION_BASE_URL`, `TRANSLATION_MODEL`, `TRANSLATION_API_KEY`; [openaicompat/client.go](../../internal/translation/providers/openaicompat/client.go) |
+| The model provider — any host speaking the chat-completions request shape | **api** container | the translation pipeline, `TRANSLATION_INTERVAL` | `TRANSLATION_BASE_URL`, `TRANSLATION_MODEL`, `TRANSLATION_API_KEY`; [openaicompat/client.go](../../internal/translation/providers/openaicompat/client.go) |
 | Affiliate network APIs — Linkwise `https://affiliate.linkwi.se` | **api** container | forward sweep every 15m, trailing sweep every 6h, catalogue import | `NETWORKS` + `NETWORK_<DRIVER>_*`; [linkwise/client.go](../../internal/cashback/networks/linkwise/client.go) |
 | Awin `https://api.awin.com` | — | **never today**: the adapter does not implement the port and is not a shipped driver | [awin/client.go](../../internal/cashback/networks/awin/client.go), [cmd/apivo/registry.go](../../cmd/apivo/registry.go) |
 | Supabase **JWKS** endpoint | **api** container | **at startup**, and cached in-process thereafter | `JWKS_URL`; [internal/identity/verifier.go](../../internal/identity/verifier.go) |
@@ -622,7 +628,11 @@ subject, and only a tokenless request fell back to the address — because
 so the address on that hop buckets all editors together. The binding is
 declared in [wrangler.jsonc](../../wrangler.jsonc) as
 `EDITORIAL_RATE_LIMIT`, 60 requests per 60 seconds, and a **missing binding
-refuses rather than passes**.
+refuses rather than passes** — that last property lives in
+[worker.js](../../deploy/cloudflare/worker.js), which answers the editorial
+paths 429 when the binding is absent rather than serving them unlimited while
+believing them limited. The reader paths are untouched by that refusal, the
+same trade a missing `JWKS_URL` already makes.
 
 None of that is deployed. Caddy does not carry it and does not pretend to —
 [snippets.caddy](../../deploy/hetzner/caddy/snippets.caddy) says so in the

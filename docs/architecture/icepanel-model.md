@@ -105,7 +105,7 @@ The exception is an actor, which has no path: `Reader`, `Member`, `Editor`, `Ope
 | A process that is separately deployable and separately restartable | `app` | `cmd/apivo`, `web/`, `blnk`, `blnk-worker`, `caddy`, and the two host-side shell tools. |
 | A Postgres **schema** | `store` | One database, four schemas. The schema is the boundary migration [0010](../../internal/platform/db/migrations/0010_cashback_schema.up.sql) grants against, so it is the boundary worth drawing. Modelling the database as a single store would erase the product boundary the grants create. |
 | Redis | `store` | It holds no source of truth, and the description says so. |
-| A third party we call over the network | `system`, tagged `external` | Linkwise, Awin, Supabase Auth, the translation provider, the retailer, the payout rail, Cloudflare, GitHub Actions, GHCR. |
+| A third party we call over the network | `system`, tagged `external` | Ten of them: Linkwise, Awin, Supabase Auth, the RSS and Atom publishers, the chat-completions model provider, the retailer, the payout rail, Cloudflare, GitHub Actions, GHCR. |
 | A third party we **run** | `app` or `store`, tagged `third-party` | Blnk and Redis are ours to operate and are inside the Apivo system; that is the honest place for them, and it is why the C-1 check can be a plain SQL query (ADR-0002). |
 | A human role | `actor` | |
 | A directory or grouping with no runtime identity | `group` | See 1.3. |
@@ -116,7 +116,7 @@ Files inside a package are **not** objects. That is C4 level 4, and it is answer
 
 IcePanel's hierarchy is system → app/store → component; components do not nest. `internal/cashback/networks/linkwise` is a child of `internal/cashback/networks` in the tree and a sibling of it in the model. Rather than invent sub-components, the **name carries the nesting**: `internal/cashback/networks/linkwise` is unambiguous wherever it appears.
 
-Three groups exist, and each is a real directory: `internal/cashback`, `internal/platform`, and `Postgres` — the last being the only group whose name is not a path, because one database holding four schemas has no path. `internal/identity`, `internal/account` and the four epiloYES modules hang directly off `cmd/apivo`, because they are not under a common directory and a group invented to hold them would be a fifth name nobody could check.
+Three groups exist, and each is a real directory: `internal/cashback`, `internal/platform`, and `Postgres` — the last being the only group whose name is not a path, because one database holding four schemas has no path. `internal/identity`, `internal/account`, `internal/arch` and the five epiloYES components hang directly off `cmd/apivo`, because they are not under a common directory and a group invented to hold them would be a fourth name nobody could check.
 
 ### 1.4 Every object carries its source path
 
@@ -139,6 +139,8 @@ The four maturity labels are the same four [README.md](README.md) defines for th
 
 **Deployment is a tag, never a parent.** An object has exactly one parent and that parent is the product hierarchy; which host a container runs on is a `host:` tag, so a container that moves hosts does not move in the model.
 
+No object in section 2 carries one yet. One provisioned host runs every environment that exists, so the tag would distinguish nothing a reader could not read off a one-line host list. The rule is written down for the day a second host arrives, and section 5's deployment view assumes it rather than reports it.
+
 ### 1.6 What is deliberately not drawn
 
 - **Imports of `internal/platform/*`.** Every module imports `money`, most import `http` and `events`. An edge from every component to `internal/platform/money` would carry no information, and the [arch test](../../internal/arch/arch_test.go) is already the authority on that layer. The connections that ARE drawn to platform components are the ones with runtime consequence: the outbox append, the scheduler's advisory lock, the migration run.
@@ -159,13 +161,13 @@ The substrate both products stand on.
 | `Supabase Auth` | system | — | OIDC, JWKS, RS256 | Issues the tokens the API verifies. With JWKS_URL unset the binary mounts no authenticated route at all rather than mounting one unguarded. | [internal/identity/verifier.go](../../internal/identity/verifier.go) |
 | `cmd/apivo` | app | `Apivo` | Go 1.26.5, net/http ServeMux, pgx v5 | The modular monolith. Serves the reader, editorial, account and — when CASHBACK_ENABLED — every cashback route, and runs the poll loops and the scheduled jobs beside the HTTP server. Publishes no host port in any environment. | [cmd/apivo/main.go](../../cmd/apivo/main.go) |
 | `web/` | app | `Apivo` | Astro SSR, @astrojs/node, TypeScript strict | The only published HTTP surface. Renders every page server-side from the API by service name, and holds the click-out BFF. | [web/](../../web/) |
-| `Postgres` | group | `Apivo` | Postgres 17 | One database, four schemas. Supabase EU in staging and production; a container in QA and locally. Schema isolation is the product boundary: migration 0010 grants cashback_domain SELECT on exactly public.account, public.place and public.language. | [internal/platform/db/migrations](../../internal/platform/db/migrations) |
+| `Postgres` | group | `Apivo` | Postgres 17 | One database, four schemas. Supabase EU in staging and production; a container in QA and locally. Schema isolation is the product boundary: migration 0010 grants cashback_domain exactly four things across it — SELECT on public.account, public.place and public.language, and SELECT, INSERT on public.domain_event, which is the only channel between the two products. | [internal/platform/db/migrations](../../internal/platform/db/migrations) |
 | `public` | store | `Postgres` | Postgres schema | account, place, language, source, source_item, article, translation, translation_spend, domain_event, event_delivery, event_dead_letter, subscriber_checkpoint. | [internal/platform/db/migrations/0001_init.up.sql](../../internal/platform/db/migrations/0001_init.up.sql) |
 | `internal/platform` | group | `cmd/apivo` | Go packages | The bottom layer. Importable by anyone, importing no sibling domain — rule 1 of the module boundaries. | [internal/platform](../../internal/platform) |
 | `cmd/apivo/main.go` | component | `cmd/apivo` | Go | The composition root. Wiring flows one way: cmd knows every domain and no domain knows cmd. Chooses the ledger driver, the network adapter and the payout rail, and registers every scheduled job. | [cmd/apivo/main.go](../../cmd/apivo/main.go) |
 | `internal/platform/config` | component | `internal/platform` | Go | One place that reads the environment. Under APP_ENV=prod every money key is required: cashback moves members' money, so it starts fully configured or not at all. The retired flat NETWORK_* keys are refused, not ignored. | [internal/platform/config](../../internal/platform/config) |
 | `internal/platform/db` | component | `internal/platform` | Go, golang-migrate v4, pgx v5 | Embedded migrations and the pool. The migrations are the single source of truth for the schema, and both generators read them. | [internal/platform/db](../../internal/platform/db) |
-| `internal/platform/events` | component | `internal/platform` | Go, pgx | The outbox writer and envelope, the dispatcher, checkpoints and the dead-letter lane. The WRITER is wired; NOTHING registers a dispatcher, so nineteen event types are appended and none consumed. | [internal/platform/events](../../internal/platform/events) |
+| `internal/platform/events` | component | `internal/platform` | Go, pgx | The outbox writer and envelope, the dispatcher, checkpoints and the dead-letter lane. The WRITER is wired; NOTHING registers a dispatcher, so eighteen distinct event types are appended and none consumed — nineteen constants declare them, because cashback.transaction.unattributed is spelled in both networks and earnings. | [internal/platform/events](../../internal/platform/events) |
 | `internal/platform/http` | component | `internal/platform` | Go, net/http | The server, the problem+json convention and the 405 allow-table every module derives from its own route map. | [internal/platform/http](../../internal/platform/http) |
 | `internal/platform/logging` | component | `internal/platform` | Go, log/slog | Structured logging; JSON under APP_ENV=prod. | [internal/platform/logging](../../internal/platform/logging) |
 | `internal/platform/money` | component | `internal/platform` | Go | money.Amount: integer minor units beside an explicit ISO-4217 code, explicit rounding modes, and JSON as {minor, currency}. No float path anywhere (C-6). | [internal/platform/money](../../internal/platform/money) |
@@ -180,6 +182,8 @@ The substrate both products stand on.
 ### 2.2 Domain: Cashback
 
 The money product. This is the domain the model exists for.
+
+**Cashback is off in every environment** ([ENVIRONMENTS.md](../ENVIRONMENTS.md)). Every object below describes what the binary contains and what CI exercises, not what is serving traffic: no click rule, no hold rule, no operator gate and no ledger check has yet refused anything outside a test. A `built` tag in this table means implemented, wired in the composition root and covered in CI — it does not mean proved in production, and on this domain none of them is.
 
 | Name | Type | Parent | Technology | Description | Source path |
 |---|---|---|---|---|---|
@@ -239,6 +243,8 @@ epiloYES appears here only as far as it shares substrate — the binary, the dat
 ### 2.4 Domain: Delivery
 
 How a change reaches a host. Nothing pushes to a host; the host converges itself every minute.
+
+One host carries this today. The pre-production VPS is provisioned and serving QA; staging's site answers on the same host and has never had a release; production is not provisioned at all ([ENVIRONMENTS.md](../ENVIRONMENTS.md)). The objects below are the mechanism, which exists and runs — not a fleet, which does not.
 
 | Name | Type | Parent | Technology | Description | Source path |
 |---|---|---|---|---|---|
@@ -711,7 +717,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "domainId": "platform",
       "parentId": "apivo",
       "technology": "Postgres 17",
-      "description": "One database, four schemas. Supabase EU in staging and production; a container in QA and locally. Schema isolation is the product boundary: migration 0010 grants cashback_domain SELECT on exactly public.account, public.place and public.language.",
+      "description": "One database, four schemas. Supabase EU in staging and production; a container in QA and locally. Schema isolation is the product boundary: migration 0010 grants cashback_domain exactly four things across it — SELECT on public.account, public.place and public.language, and SELECT, INSERT on public.domain_event, which is the only channel between the two products.",
       "tags": [
         "built",
         "src:internal/platform/db/migrations"
@@ -1091,7 +1097,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "domainId": "platform",
       "parentId": "grp-platform",
       "technology": "Go, pgx",
-      "description": "The outbox writer and envelope, the dispatcher, checkpoints and the dead-letter lane. The WRITER is wired; NOTHING registers a dispatcher, so nineteen event types are appended and none consumed.",
+      "description": "The outbox writer and envelope, the dispatcher, checkpoints and the dead-letter lane. The WRITER is wired; NOTHING registers a dispatcher, so eighteen distinct event types are appended and none consumed — nineteen constants declare them, because cashback.transaction.unattributed is spelled in both networks and earnings.",
       "tags": [
         "partial",
         "src:internal/platform/events"
@@ -1970,12 +1976,12 @@ Seven views over the one model above, each answering one question. IcePanel draw
 
 | View | Level | The question it answers | What it shows |
 |---|---|---|---|
-| **Landscape** | C1 | Who uses Apivo, and what does it depend on? | The four actors, the `Apivo` system, and the nine external systems. Nothing inside. |
+| **Landscape** | C1 | Who uses Apivo, and what does it depend on? | The four actors, the `Apivo` system, and the ten external systems. Nothing inside. The two Delivery systems are top-level objects as well, and are filtered out here: the question is what the product depends on, not how it is shipped. |
 | **Cashback context** | C1 | What does the money product touch that the news product does not? | `Member`, `Operator`, `Apivo`, Linkwise, Awin, the retailer and the payout rail — with the rail drawn as unintegrated, because that is the fact a founder most needs. |
 | **Cashback app diagram** | C2 | What runs, and which store does it write? | `cmd/apivo`, `web/`, `blnk`, `redis` and the four schema stores, with the ledger driver in the middle. |
 | **`internal/cashback/earnings` component diagram** | C3 | Where does a credit come from and what does it touch? | `earnings` and its six neighbours — `networks`, `clickout`, `wallet`, `payout`, `ops` and the `cashback` schema. This is the view that shows the money loop, and the one where the missing `reserved → paid` posting is visible as an absent arrow. |
 | **Integration / network boundary** | C3 | What crosses the process boundary, and under what contract? | `internal/cashback/networks` with its three adapters, the two networks, the retailer, and the nine contract rules as the connection descriptions. Also the one place Awin's absence from `shippedNetworks` is legible. |
-| **Deployment** | C2 | Where does traffic go, and how does a change arrive? | Cloudflare, `caddy`, the two apps, the ledger, the database, and the reconciler's minute-long loop against GHCR. Hosts are `host:` tags, filtered rather than nested. |
+| **Deployment** | C2 | Where does traffic go, and how does a change arrive? | Cloudflare, `caddy`, the two apps, the ledger, the database, and the reconciler's minute-long loop against GHCR. Hosts would be `host:` tags, filtered rather than nested — no object carries one today, per 1.5, because one host runs everything. |
 | **Flow views** | C4-adjacent | What happens, step by step? | One flow per workflow: click-out to credit; poll to evidence; attribution to hold; hold review; withdrawal to settlement; catalogue import; reconciliation import to resolved difference. IcePanel flows are ordered steps over existing connections, so a flow that needs a connection the model lacks is telling you the model is wrong. |
 
 The last row is the reason to build flows at all. A flow cannot invent an edge: drawing "withdrawal to settlement" is what makes it obvious that the model has `internal/cashback/payout → internal/cashback/wallet` for the reservation and nothing for the release at settlement — because [postings.go](../../internal/cashback/earnings/postings.go) returns `ErrNotThisPackagesToPost` for `paid` and no production caller supplies that posting.
@@ -2000,6 +2006,8 @@ A check named `icepanel-drift`, in the same shape as the two above:
 1. **Parse the JSON block out of this document.** One fenced ```json block in `docs/architecture/icepanel-model.md`; the parser fails if there is not exactly one, so the payload cannot be duplicated or lost in an edit.
 2. **Every `sourcePath` must exist.** A stat, nothing cleverer. This alone catches the rename that breaks a citation, and it catches it in the same pull request that does the renaming.
 3. **Every Go package must be an object, in both directions.** Walk `internal/` and `cmd/`, skip `queries/`, `store/` and `testdata/`, and compare the set of package directories with the set of `component` objects whose `sourcePath` names one. A package with no object is an unmodelled module; an object with no package is a module that has been deleted. Both fail. This is the sqlc job's "name no package" property: a package added tomorrow is inside the check on the day it is added.
+
+   One exception has to be written into the check rather than discovered by it. `cmd/apivo` is modelled as an `app`, and the component beneath it is its composition root, `cmd/apivo/main.go` — so the comparison is against every object's `sourcePath` and not only a `component`'s, or the check fails on the one package it should be surest about. On the tree as it stands the comparison holds: thirty-four package directories, thirty-three of them component objects and the thirty-fourth the `cmd/apivo` app. The remaining nine components sit under `web/`, which no Go walk sees and which this step therefore says nothing about.
 4. **Every declared connection must be structurally possible.** `sourceId` and `targetId` must both exist, and `parentId` must resolve or be null. A cycle in `parentId` fails.
 5. **Prove the check is not vacuous.** As [`TestBoundaryScanRefusesToPassVacuously`](../../internal/arch/arch_test.go) does: assert the walk found a non-zero number of packages and that the JSON parsed a non-zero number of objects, so a check that silently found nothing cannot report success.
 
@@ -2029,6 +2037,7 @@ Three ways in, in increasing order of how much has to exist first.
 - **The drift check in section 6 does not exist.** Until it does, this file drifts exactly as any other hand-written document does, and its `sourcePath` fields carry no more force than a markdown link.
 - **The commit-ish is behind the tree.** This document is written against `0461ad7`, matching its siblings. Since then `internal/account` has grown `GET` and `POST /api/v1/account`, taking the served surface from 42 operations over 36 paths to 44 over 37; 26 cashback operations are unchanged. No object or connection here changes as a result, but the counts quoted in this set are the counts at `0461ad7`.
 - **The `Payout rail` object models an absence.** It is the only external system with no implementation behind it, and it is in the model precisely so the absence is visible in a view rather than buried in a status column. If a reader mistakes it for an integration, the object has done harm and should be retyped or retagged.
-- **Deployment as a tag is untested at scale.** With one production shape and two hosts, `host:` tags are enough. A third environment shape, or a service that exists on one host and not another, may need IcePanel's own deployment features rather than this convention.
-- **The news domain is thin on purpose.** Five components and two external systems describe epiloYES; the cashback domain has sixteen. That asymmetry reflects this document set's audience, not the products' relative complexity, and a reader planning news work should treat the News domain as a stub.
+- **Deployment as a tag is untested, not merely untested at scale.** One host is provisioned and it carries two environment shapes, so no object carries a `host:` tag at all and the convention in 1.5 has never had to distinguish anything. A second host, or a service present on one and absent on another, is the first occasion it will be exercised — and may turn out to need IcePanel's own deployment features instead.
+- **Nothing in the Cashback domain has run outside a test.** `CASHBACK_ENABLED` is false on QA, staging and production alike ([ENVIRONMENTS.md](../ENVIRONMENTS.md)), so twenty components, four stores and two affiliate networks are modelled `built` on the strength of CI and the composition root, not of traffic. That is the right order to build in, and it is also the caveat a founder reading the money loop most needs attached to it.
+- **The news domain is thin on purpose.** Eight components and two external systems describe epiloYES — five Go packages and three Astro surfaces; the cashback domain has twenty. That asymmetry reflects this document set's audience, not the products' relative complexity, and a reader planning news work should treat the News domain as a stub.
 - **`blnk-worker` exists in one deployment only.** It is in the Hetzner cashback overlay and not in [docker-compose.yml](../../docker-compose.yml) or [deploy/k8s/cashback](../../deploy/k8s/cashback). It is modelled once, tagged `partial`; a `host:` tag alone does not express "present in one topology and absent in two".
