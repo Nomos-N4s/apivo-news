@@ -249,6 +249,7 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 	// or no cashback.
 	var settlements *payout.Settlements
 	var lifecycle *earnings.Lifecycle
+	var closures *wallet.AccountClosures
 	if cfg.JWKSURL == "" {
 		// Without a verification endpoint no bearer token can be checked, so
 		// the authenticated routes are not mounted at all: a misconfigured
@@ -286,7 +287,7 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// Held for the scheduler below, which is built after the routes.
 		// Nil when cashback is off, and the registration there skips them.
 		if built != nil {
-			settlements, lifecycle = built.settlements, built.lifecycle
+			settlements, lifecycle, closures = built.settlements, built.lifecycle, built.closures
 		}
 	}
 
@@ -423,6 +424,12 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// confirmed and reversed (#435). Built with the routes because it
 		// posts in their ledger; nil where the house account is unnamed,
 		// which was said at ERROR where it was found.
+		subscribing, err := registerSubscribers(ctx, log, jobs, pool, closures)
+		if err != nil {
+			return err
+		}
+		registered += subscribing
+
 		crediting, err := registerLifecycle(ctx, log, jobs, lifecycle)
 		if err != nil {
 			return err
@@ -490,13 +497,14 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// a job registered above cannot be forgotten here.
 		//
 		// Two connections per job plus two reserved is the locker's
-		// arithmetic. Three of the jobs are global - the zero-sum check,
-		// the settlement sweep, the earnings lifecycle - and THREE MORE
-		// ARRIVE WITH EVERY CONFIGURED NETWORK: its forward sweep, its
-		// trailing sweep and its catalogue import. So the floor is 14 for
-		// one network, 20 for two and 26 for three, and a deployment that
-		// adds a network without raising its pool discovers it at the next
-		// restart rather than at the next poll.
+		// arithmetic. Four of the jobs are global - the zero-sum check,
+		// the settlement sweep, the earnings lifecycle and the event
+		// subscribers' delivery pass - and THREE MORE ARRIVE WITH EVERY
+		// CONFIGURED NETWORK: its forward sweep, its trailing sweep and
+		// its catalogue import. So the floor is 16 for one network, 22 for
+		// two and 28 for three, and a deployment that adds a network
+		// without raising its pool discovers it at the next restart rather
+		// than at the next poll.
 		//
 		// pgx defaults MaxConns to max(4, NumCPU), which is why a
 		// deployment with cashback on may have to raise pool_max_conns in
@@ -715,6 +723,16 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, nil, err
 	}
+	// What happens in cashback when an account stops existing upstream
+	// (T126). Built here because it closes participations through the same
+	// service the member surface does, and driven by the scheduler rather
+	// than by a request - a deletion is a fact this process is told, not
+	// one anybody asks it for.
+	closures, err := wallet.NewAccountClosures(log, pool, participations, walletstore.New(pool))
+	if err != nil {
+		stop()
+		return nil, nil, nil, err
+	}
 	// The click-out takes the participation service as its enrolment read
 	// (FR-110): a member who has not opted in is refused before anything is
 	// minted. Built after it for that reason, and required rather than
@@ -819,7 +837,7 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		platformhttp.Route{Pattern: withdrawalPrefix + "/", Handler: withdrawalSurface},
 		platformhttp.Route{Pattern: destinationsPrefix, Handler: withdrawalSurface},
 		platformhttp.Route{Pattern: destinationsPrefix + "/", Handler: withdrawalSurface},
-	), &cashbackJobs{settlements: settlements, lifecycle: lifecycle}, stop, nil
+	), &cashbackJobs{settlements: settlements, lifecycle: lifecycle, closures: closures}, stop, nil
 }
 
 // cashbackJobs is what the authenticated surface builds for the scheduler:
@@ -829,6 +847,11 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 type cashbackJobs struct {
 	settlements *payout.Settlements
 	lifecycle   *earnings.Lifecycle
+	// closures reacts to an account deleted upstream (T126). Built with
+	// the routes because it shares their participation service, and
+	// registered with the scheduler because it is driven by a tick rather
+	// than by a request.
+	closures *wallet.AccountClosures
 }
 
 // brandTerms reads the brand definition BRAND_DIR names and reduces it to
