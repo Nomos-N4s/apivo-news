@@ -261,10 +261,10 @@ const el: CashbackStrings = {
   entryStates: {
     pending: 'Σε εκκρεμότητα',
     confirmed: 'Επιβεβαιωμένη',
+    reserved: 'Δεσμευμένη',
     paid: 'Πληρωμένη',
     held: 'Σε έλεγχο',
     reversed: 'Ακυρωμένη',
-    declined: 'Απορρίφθηκε',
   },
   expectedConfirmation: 'Αναμένεται επιβεβαίωση',
   sale: 'Αγορά',
@@ -488,10 +488,10 @@ const de: CashbackStrings = {
   entryStates: {
     pending: 'Offen',
     confirmed: 'Bestätigt',
+    reserved: 'Reserviert',
     paid: 'Ausgezahlt',
     held: 'In Prüfung',
     reversed: 'Storniert',
-    declined: 'Abgelehnt',
   },
   expectedConfirmation: 'Bestätigung erwartet',
   sale: 'Einkauf',

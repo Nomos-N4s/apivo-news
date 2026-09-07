@@ -152,10 +152,12 @@ const tagClass = (state: EntryState): string =>
   ({
     pending: 'tag-outline',
     confirmed: 'tag-accent',
+    // Reserved money is spoken for and has not left: in flight, like
+    // pending, rather than settled like paid.
+    reserved: 'tag-outline',
     paid: 'tag-neutral',
     held: 'tag-outline',
     reversed: 'tag-neutral',
-    declined: 'tag-neutral',
   })[state];
 
 /** The tag text: the state, and for a pending entry the day it should clear. */
@@ -164,8 +166,10 @@ const tagText = (entry: WalletEntry): string =>
     ? `${t.entryStates.pending} · ${shortDate(entry.expected_confirmation_at)}`
     : t.entryStates[entry.state];
 
-const SETTLED: readonly EntryState[] = ['confirmed', 'paid'];
-const VOID: readonly EntryState[] = ['reversed', 'declined'];
+const SETTLED: readonly EntryState[] = ['confirmed', 'reserved', 'paid'];
+// Reversal is the only end state that pays nothing. There is no `declined`:
+// the state machine has never had one.
+const VOID: readonly EntryState[] = ['reversed'];
 
 interface Step {
   readonly title: string;
@@ -675,7 +679,6 @@ const stepsFor = (entry: WalletEntry): readonly Step[] => {
     border-left: 3px solid var(--color-accent);
     background: var(--color-accent-100);
   }
-  .row.declined,
   .row.reversed {
     opacity: 0.55;
   }

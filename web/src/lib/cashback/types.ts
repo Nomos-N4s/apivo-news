@@ -101,8 +101,17 @@ export interface WalletTotals {
   readonly payout_threshold: Money;
 }
 
-/** The lifecycle states an entry is published in. */
-export type EntryState = 'pending' | 'confirmed' | 'paid' | 'held' | 'reversed' | 'declined';
+/**
+ * The lifecycle states an entry is published in — the six the state machine
+ * allows (`internal/cashback/earnings/state.go`) and the six the database's
+ * `entry_state_known` check admits.
+ *
+ * `reserved` is one of them and was missing here: money a withdrawal request
+ * has claimed and that has not yet left. `declined` was here and is not one of
+ * them — nothing in the schema, the state machine or the API ever produces it,
+ * so a page branching on it was branching on a state that cannot arrive.
+ */
+export type EntryState = 'held' | 'pending' | 'confirmed' | 'reserved' | 'paid' | 'reversed';
 
 /** One `GET /wallet/entries` item. */
 export interface WalletEntry {
