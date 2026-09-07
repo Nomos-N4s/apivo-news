@@ -468,3 +468,65 @@ func TestNewVerifierFailsFastOnUnreachableJWKS(t *testing.T) {
 		t.Fatal("NewVerifier succeeded against an unreachable JWKS endpoint")
 	}
 }
+
+// TestVerifyNeedsNoAccount pins the one difference between Verify and
+// Authenticate: a valid token whose subject has no row is refused by the
+// second and answered by the first, which is what lets self-registration
+// serve a person before they exist here.
+func TestVerifyNeedsNoAccount(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	subject := uuid.New()
+	now := time.Now()
+	rsaRaw, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generating rsa key: %v", err)
+	}
+	rsaKey := signingKey(t, rsaRaw, jwa.RS256(), "verify-rsa")
+	srv := jwksServer(t, rsaKey)
+	v, err := identity.NewVerifier(ctx, identity.VerifierConfig{JWKSURL: srv.URL, HTTPClient: srv.Client()})
+	if err != nil {
+		t.Fatalf("NewVerifier: %v", err)
+	}
+	t.Cleanup(func() { _ = v.Close(context.Background()) })
+	// No row for anybody.
+	svc := identity.New(v, fakeDB{err: pgx.ErrNoRows})
+
+	fresh := tokenSpec{sub: subject.String(), iat: now.Add(-time.Minute), exp: now.Add(time.Hour)}
+	withEmail := fresh
+	withEmail.email = " Member@Example.test "
+	token := mintToken(t, rsaKey, jwa.RS256(), withEmail)
+
+	if _, err := svc.Authenticate(ctx, token); !errors.Is(err, identity.ErrUnknownAccount) {
+		t.Fatalf("Authenticate with no row = %v, want ErrUnknownAccount", err)
+	}
+	claims, err := svc.Verify(ctx, token)
+	if err != nil {
+		t.Fatalf("Verify with no row: %v", err)
+	}
+	if want := (identity.Claims{Subject: subject, Email: "Member@Example.test"}); claims != want {
+		t.Errorf("Verify = %+v, want %+v (the email trimmed, the case kept)", claims, want)
+	}
+
+	// A token with no email claim is still a verified subject: the email
+	// is reported empty and the caller decides what that is worth.
+	claims, err = svc.Verify(ctx, mintToken(t, rsaKey, jwa.RS256(), fresh))
+	if err != nil || claims.Subject != subject || claims.Email != "" {
+		t.Errorf("Verify without an email claim = %+v, %v; want the subject and an empty email", claims, err)
+	}
+
+	// What is wrong with the token itself is still refused as such.
+	for name, spec := range map[string]tokenSpec{
+		"no subject":         {iat: now.Add(-time.Minute), exp: now.Add(time.Hour)},
+		"subject not a uuid": {sub: "member-1", iat: now.Add(-time.Minute), exp: now.Add(time.Hour)},
+		"expired":            {sub: subject.String(), iat: now.Add(-2 * time.Hour), exp: now.Add(-time.Hour)},
+	} {
+		if _, err := svc.Verify(ctx, mintToken(t, rsaKey, jwa.RS256(), spec)); !errors.Is(err, identity.ErrInvalidToken) {
+			t.Errorf("Verify(%s) = %v, want ErrInvalidToken", name, err)
+		}
+	}
+	if _, err := svc.Verify(ctx, "not-a-token"); !errors.Is(err, identity.ErrInvalidToken) {
+		t.Errorf("Verify(garbage) = %v, want ErrInvalidToken", err)
+	}
+}

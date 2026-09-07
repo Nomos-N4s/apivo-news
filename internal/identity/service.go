@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -53,40 +54,70 @@ func New(verifier *Verifier, db Querier) *Service {
 	return &Service{verifier: verifier, db: db}
 }
 
+// Claims is what a verified token says about its bearer before any
+// account row is consulted: the id the auth provider issued and the email
+// it verified, trimmed, or "" when the token carries none.
+type Claims struct {
+	Subject uuid.UUID
+	Email   string
+}
+
+// Verify checks the compact JWT in token and returns its claims, resolving
+// nothing against the database. It returns ErrInvalidToken for anything
+// wrong with the token itself, a missing or malformed subject included.
+//
+// Its one consumer is self-registration (#544), which by definition serves
+// a person who is not provisioned here yet. Every other consumer goes
+// through Authenticate and never sees a subject without a row; a consumer
+// that reached for this instead would be one that stopped checking the
+// account exists, which is why the two are separate methods rather than a
+// flag.
+func (s *Service) Verify(ctx context.Context, token string) (Claims, error) {
+	tok, err := s.verifier.verify(ctx, token)
+	if err != nil {
+		return Claims{}, err
+	}
+	sub, ok := tok.Subject()
+	if !ok || sub == "" {
+		return Claims{}, fmt.Errorf("%w: token carries no subject", ErrInvalidToken)
+	}
+	subject, err := uuid.Parse(sub)
+	if err != nil {
+		return Claims{}, fmt.Errorf("%w: subject is not a uuid: %w", ErrInvalidToken, err)
+	}
+	claims := Claims{Subject: subject}
+	var email string
+	if err := tok.Get("email", &email); err == nil {
+		claims.Email = strings.TrimSpace(email)
+	}
+	return claims, nil
+}
+
 // Authenticate verifies the compact JWT in token and resolves its subject
 // to an account row. It returns ErrInvalidToken for anything wrong with
 // the token itself and ErrUnknownAccount for a valid token whose subject
 // is not provisioned; both map to 401. Any other error is a database
 // failure, not a verdict about the caller.
 func (s *Service) Authenticate(ctx context.Context, token string) (Identity, error) {
-	tok, err := s.verifier.verify(ctx, token)
+	claims, err := s.Verify(ctx, token)
 	if err != nil {
 		return Identity{}, err
-	}
-	sub, ok := tok.Subject()
-	if !ok || sub == "" {
-		return Identity{}, fmt.Errorf("%w: token carries no subject", ErrInvalidToken)
-	}
-	subject, err := uuid.Parse(sub)
-	if err != nil {
-		return Identity{}, fmt.Errorf("%w: subject is not a uuid: %w", ErrInvalidToken, err)
 	}
 
 	var email, displayName string
 	err = s.db.QueryRow(ctx,
 		`select email, display_name from account where id = $1`,
-		subject.String()).Scan(&email, &displayName)
+		claims.Subject.String()).Scan(&email, &displayName)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Identity{}, fmt.Errorf("%w: subject %s", ErrUnknownAccount, subject)
+		return Identity{}, fmt.Errorf("%w: subject %s", ErrUnknownAccount, claims.Subject)
 	}
 	if err != nil {
 		return Identity{}, fmt.Errorf("identity: account lookup: %w", err)
 	}
 
-	ident := Identity{Subject: subject, Email: email, DisplayName: displayName}
-	var claimEmail string
-	if err := tok.Get("email", &claimEmail); err == nil && claimEmail != "" {
-		ident.Email = claimEmail
+	ident := Identity{Subject: claims.Subject, Email: email, DisplayName: displayName}
+	if claims.Email != "" {
+		ident.Email = claims.Email
 	}
 	return ident, nil
 }

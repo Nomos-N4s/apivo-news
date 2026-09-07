@@ -31,6 +31,35 @@ type fakeStore struct {
 	gotTour   string
 	gotCursor string
 	writes    int
+
+	profile    account.Profile
+	created    bool
+	emailTaken bool
+	registered int
+	gotID      uuid.UUID
+	gotEmail   string
+}
+
+func (s *fakeStore) Register(_ context.Context, id uuid.UUID, email string) (account.Profile, bool, error) {
+	s.registered++
+	s.gotID, s.gotEmail = id, email
+	if s.emailTaken {
+		return account.Profile{}, false, account.ErrEmailTaken
+	}
+	if s.failWith != nil {
+		return account.Profile{}, false, s.failWith
+	}
+	return s.profile, s.created, nil
+}
+
+func (s *fakeStore) Profile(_ context.Context, _ uuid.UUID) (account.Profile, error) {
+	if s.missing {
+		return account.Profile{}, account.ErrNoAccount
+	}
+	if s.failWith != nil {
+		return account.Profile{}, s.failWith
+	}
+	return s.profile, nil
 }
 
 func (s *fakeStore) Tours(_ context.Context, _ uuid.UUID) (map[string]string, error) {
@@ -58,6 +87,9 @@ func (s *fakeStore) SetTour(_ context.Context, _ uuid.UUID, tourID, cursor strin
 type fakeAuth struct {
 	id  uuid.UUID
 	err error
+
+	claims    account.Claims
+	verifyErr error
 }
 
 func (a fakeAuth) Authenticate(context.Context, string) (account.Account, error) {
@@ -67,10 +99,17 @@ func (a fakeAuth) Authenticate(context.Context, string) (account.Account, error)
 	return account.Account{ID: a.id}, nil
 }
 
-func serve(t *testing.T, store account.TourStore, auth account.Authenticator, req *http.Request) *httptest.ResponseRecorder {
+func (a fakeAuth) Verify(context.Context, string) (account.Claims, error) {
+	if a.verifyErr != nil {
+		return account.Claims{}, a.verifyErr
+	}
+	return a.claims, nil
+}
+
+func serve(t *testing.T, store *fakeStore, auth fakeAuth, req *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	account.NewHandler(discardLogger(), store, auth).ServeHTTP(rec, req)
+	account.NewHandler(discardLogger(), store, auth, auth).ServeHTTP(rec, req)
 	return rec
 }
 
@@ -342,7 +381,7 @@ func TestAnUnservedPathStillRequiresAToken(t *testing.T) {
 func TestPatternsListsEveryRouteSorted(t *testing.T) {
 	t.Parallel()
 	got := account.Patterns()
-	want := []string{"GET /api/v1/account/tours", "PUT /api/v1/account/tours/{tour}"}
+	want := []string{"GET /api/v1/account", "GET /api/v1/account/tours", "POST /api/v1/account", "PUT /api/v1/account/tours/{tour}"}
 	if len(got) != len(want) {
 		t.Fatalf("Patterns() = %v, want %v", got, want)
 	}

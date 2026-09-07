@@ -185,9 +185,24 @@ func TestTheOperatorSurfaceIsUnmountedWithoutTheFlag(t *testing.T) {
 		}
 	}
 	// The authenticated routes that do not depend on the flag are still
-	// there: turning cashback off must not take editorial down with it.
-	if len(routes) != 2 {
-		t.Errorf("%d authenticated route(s), want the two that need no feature flag", len(routes))
+	// there: turning cashback off must not take editorial or the account
+	// down with it. Three patterns, not two modules: the account handler
+	// is mounted at its prefix and at the bare path, because the bare path
+	// carries the registration a person reaches before they have a row.
+	if len(routes) != 3 {
+		t.Errorf("%d authenticated route(s), want the three that need no feature flag", len(routes))
+	}
+	want := map[string]bool{editorialPrefix: false, accountPrefix: false, strings.TrimSuffix(accountPrefix, "/"): false}
+	for _, route := range routes {
+		if _, ok := want[route.Pattern]; !ok {
+			t.Errorf("%q is mounted without the flag; only editorial and the account should be", route.Pattern)
+		}
+		want[route.Pattern] = true
+	}
+	for pattern, mounted := range want {
+		if !mounted {
+			t.Errorf("%q is not mounted, and it needs no feature flag", pattern)
+		}
 	}
 }
 

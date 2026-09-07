@@ -44,6 +44,138 @@
     }
   ],
   "paths": {
+    "/api/v1/account": {
+      "post": {
+        "tags": [
+          "account"
+        ],
+        "operationId": "registerAccount",
+        "summary": "Become an account here, on the strength of a verified token",
+        "description": "The one route under this prefix a person reaches BEFORE they have an account. The auth provider has verified who they are; this creates the row that lets every other route recognise them - with the reader role, from the token's subject and email - or answers the row already there, unchanged. It never changes a role, so a sign-in that finds no row can call it safely and a second call is harmless.\n\nThe subject is the identity and the email is unique here, so an email already held by a different account is refused rather than merged. A token with no email claim is refused too: the row could not be written, and inventing an address to write it with would be worse than saying so.\n\nThis is the only route under /api/v1/account/ in front of the auth gate. It checks the token itself; nothing under the prefix is reachable without one.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The account was created, as a reader.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "The account already existed; this is it, unchanged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The token verifies but carries no email.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No bearer token, or one that does not verify.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The token's email already belongs to a different account.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The account could not be created or read.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "account"
+        ],
+        "operationId": "readAccount",
+        "summary": "The caller's own account",
+        "description": "Id, email, display name and role, as this api knows them. The role in particular: the api reads it from this row and never from the token, so a client that wants to know what a person may do here asks this and not the claim.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No bearer token, or one that verifies for nobody provisioned here.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The token verifies but the account behind it no longer exists.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The account could not be read.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/account/tours": {
       "get": {
         "tags": [
@@ -4093,6 +4225,48 @@
             "uniqueItems": true,
             "description": "Place slugs the article publishes to - the front page is scoped by place, so an article tagged to no place can never appear on any of them, and the database refuses such an article at commit. An unknown or repeated slug is a 400 naming it, and so is a blank slug - empty or whitespace-only; minLength catches only the former, the server refuses both."
           }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "role"
+        ],
+        "additionalProperties": false,
+        "description": "One person's own account row, as the api reports it to them.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The auth provider's user id, which is the account id here."
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "The address the auth provider verified, as recorded at registration. Unique across accounts, case-insensitively."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Starts as the local part of the email at registration; nothing changes it yet."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "reader",
+              "editor",
+              "operator"
+            ],
+            "description": "What this person may do here, read from the row. A registration always produces a reader; the other two are assigned by an operator, never through this API."
+          }
+        },
+        "example": {
+          "id": "7dd4bd88-511b-4f82-82b5-640f95c1f2fc",
+          "email": "member1@example.com",
+          "display_name": "member1",
+          "role": "reader"
         }
       },
       "Approval": {

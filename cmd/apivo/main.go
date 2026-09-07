@@ -593,14 +593,23 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	ids := identity.New(verifier, pool)
 	roles := identity.NewAccountRoles(pool)
 	stop := func() { _ = verifier.Close(context.Background()) }
+	accounts := account.NewHandler(log, account.NewPGStore(pool), accountAuth{ids: ids}, accountAuth{ids: ids})
 	routes := []platformhttp.Route{
 		{
 			Pattern: editorialPrefix,
 			Handler: editorial.NewHandler(log, editorial.NewPGStore(pool), newEditorAuth(ids, roles)),
 		},
+		// Both the prefix and the bare path. The bare path carries the one
+		// route a person reaches before they have an account, POST
+		// /api/v1/account (#544), and a subtree pattern alone would answer
+		// it with a redirect that turns the POST into a GET.
 		{
 			Pattern: accountPrefix,
-			Handler: account.NewHandler(log, account.NewPGStore(pool), accountAuth{ids: ids}),
+			Handler: accounts,
+		},
+		{
+			Pattern: strings.TrimSuffix(accountPrefix, "/"),
+			Handler: accounts,
 		},
 	}
 
@@ -1124,6 +1133,21 @@ func (a accountAuth) Authenticate(ctx context.Context, token string) (account.Ac
 		return account.Account{}, err
 	}
 	return account.Account{ID: id.Subject}, nil
+}
+
+// Verify is the same adapter's other half: the token checked and its
+// claims handed over with no account behind them, for self-registration
+// and nothing else. A token that does not verify is ErrUnauthenticated,
+// exactly as it is above; a database failure stays a failure.
+func (a accountAuth) Verify(ctx context.Context, token string) (account.Claims, error) {
+	claims, err := a.ids.Verify(ctx, token)
+	switch {
+	case errors.Is(err, identity.ErrInvalidToken):
+		return account.Claims{}, fmt.Errorf("%w: %w", account.ErrUnauthenticated, err)
+	case err != nil:
+		return account.Claims{}, err
+	}
+	return account.Claims{ID: claims.Subject, Email: claims.Email}, nil
 }
 
 // newEditorAuth builds the identity-to-editorial adapter. It is the single
