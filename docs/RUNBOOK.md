@@ -774,7 +774,38 @@ The command reports the route it published on and the click-out to try;
 is the one `make cashback-demo` runs locally, against QA's Supabase tokens
 instead of the demo's stand-in.
 
-### Moving QA to a real network
+### The payout details vault
+
+OpenBao holds one secret per payout destination, because
+`cashback.payout_destination` stores a reference and never an IBAN
+(ADR-0006). Three things follow, and the first is the one that matters.
+
+**Its backup is not optional, and losing it is not recoverable.** The
+database keeps every row that references a secret; the secrets are what tell
+an operator where to send the money. Lose the vault and every member's
+destination becomes a reference to nothing, with no way to reconstruct it
+except asking each member for their details again. Back it up with the
+database, restore it with the database, and test that restore.
+
+**Reading a destination is a human act, in OpenBao's own interface.** There
+is no read path in the api and there is not meant to be one: the port stores
+and never fetches, so the only way an IBAN leaves the vault is a person
+opening it. That person is the payout rail today. The secret is at
+`<mount>/cashback/payout-destinations/<id>`, and the `<id>` is the part of
+`details_ref` after the last slash:
+
+```sh
+docker exec apivo-qa-api sh -c 'echo "$PAYOUT_VAULT_URL"'
+psql -c "select id, details_ref from cashback.payout_destination where account_id = '<member>'"
+```
+
+**An unconfigured vault is a working deployment, minus one endpoint.** With
+`PAYOUT_VAULT_URL` unset the api starts and logs an ERROR naming the key;
+`POST /api/v1/cashback/payout-destinations` answers 503 and every other
+payout route works, including withdrawing to a destination recorded earlier.
+With it set to something unusable the api refuses to start.
+
+## Moving QA to a real network
 
 Swap `NETWORKS=fixture` for the driver and add its block —
 `NETWORK_LINKWISE_ACCOUNT_ID`, `NETWORK_LINKWISE_API_KEY`,

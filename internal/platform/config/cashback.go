@@ -95,6 +95,29 @@ type CashbackConfig struct {
 	// required in APP_ENV=prod, because a production ledger reachable
 	// without a credential is a production ledger anybody can post to.
 	BlnkSecretKey Secret
+	// PayoutVaultURL (PAYOUT_VAULT_URL) is the OpenBao API root that holds
+	// members' payout details, e.g. http://openbao:8200 (ADR-0006).
+	//
+	// Optional, and the one key here whose absence is not a defect. A
+	// deployment without it starts, mounts the whole cashback surface, and
+	// answers 503 on the single endpoint that records a destination - the
+	// same stance the wallet takes on a missing payout threshold. Reading
+	// destinations that already exist, and withdrawing to them, keep
+	// working.
+	//
+	// Named for the job rather than the vendor, unlike BLNK_URL above.
+	// That key names Blnk because LEDGER_DRIVER chooses between drivers;
+	// there is one vault and no selector, so a deployment that swapped it
+	// should not have to rename its configuration to say so.
+	PayoutVaultURL string
+	// PayoutVaultToken (PAYOUT_VAULT_TOKEN) authenticates to the vault.
+	// Optional here and required by the vault itself: an OpenBao with
+	// authentication on refuses an unauthenticated write, which is the
+	// right way for a misconfigured deployment to find out.
+	PayoutVaultToken Secret
+	// PayoutVaultMount (PAYOUT_VAULT_MOUNT) names the KV v2 mount when it
+	// is not the conventional `secret`.
+	PayoutVaultMount string
 	// RedisURL (REDIS_URL) locates the Redis that Blnk queues and caches
 	// through. Optional: Redis is Blnk's dependency, not Apivo's, and it
 	// holds no source of truth (ADR-0002) - losing it loses throughput,
@@ -345,6 +368,9 @@ func (c CashbackConfig) LogValue() slog.Value {
 		slog.String("ledger_driver", c.LedgerDriver),
 		slog.String("blnk_url", redactedURL(c.BlnkURL)),
 		slog.Bool("blnk_secret_key_set", !c.BlnkSecretKey.IsZero()),
+		slog.String("payout_vault_url", redactedURL(c.PayoutVaultURL)),
+		slog.Bool("payout_vault_token_set", !c.PayoutVaultToken.IsZero()),
+		slog.String("payout_vault_mount", c.PayoutVaultMount),
 		slog.String("redis_url", redactedURL(c.RedisURL)),
 		slog.String("house_account_rounding", c.HouseAccounts.Rounding),
 		slog.String("house_account_clawback", c.HouseAccounts.Clawback),
@@ -381,6 +407,9 @@ func parseCashback(getenv func(string) string) (CashbackConfig, error) {
 		LedgerDriver:       strings.TrimSpace(getenv("LEDGER_DRIVER")),
 		BlnkURL:            strings.TrimSpace(getenv("BLNK_URL")),
 		BlnkSecretKey:      NewSecret(getenv("BLNK_SECRET_KEY")),
+		PayoutVaultURL:     strings.TrimSpace(getenv("PAYOUT_VAULT_URL")),
+		PayoutVaultToken:   NewSecret(getenv("PAYOUT_VAULT_TOKEN")),
+		PayoutVaultMount:   strings.TrimSpace(getenv("PAYOUT_VAULT_MOUNT")),
 		RedisURL:           strings.TrimSpace(getenv("REDIS_URL")),
 		ClickContextHeader: strings.TrimSpace(getenv("CLICK_CONTEXT_HEADER")),
 		HouseAccounts: HouseAccountsConfig{
