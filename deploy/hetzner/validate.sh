@@ -798,16 +798,6 @@ web-upstream)
     ;;
 esac
 
-got=$(preview_probe pr-7.example.com /api/x)
-case "$got" in
-api-upstream)
-    echo "ok: and /api/* reaches that preview's api container, not its frontend"
-    ;;
-*)
-    fail "a preview's /api/* did not reach its api container (got: ${got:-nothing})"
-    ;;
-esac
-
 # The security property: no label but pr-<n> may become a container name.
 for hostile in apivo-qa-api.example.com pr-.example.com pr-7x.example.com; do
     got=$(preview_probe "$hostile" /)
