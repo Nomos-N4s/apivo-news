@@ -1,0 +1,28 @@
+we're having issues with the deployment topology, tags, semver, preview environments and everything related to it. the only thing working is QA and sometimes it serves 2 versions at th same time, it cannot be! root cause and propose fixes!
+
+---
+
+more intel in case you needed it 
+Your app isn't broken — it's degrading on purpose
+
+The front page returns 503, but look at what came back with it:
+
+HTTP/1.1 503 Service Unavailable
+retry-after: 60
+via: 1.1 Caddy
+<!DOCTYPE html><html lang="el"><head>…<title>epiloYES — München</title>
+
+That's a complete, rendered page. The web container is alive and doing its job. The 503 and Retry-After: 60 are set by our own code — the apiUnavailable branch — because its upstream isn't answering. A member gets a real page with "try again shortly" instead of a stack trace. That's the design working under a genuine outage, which is the one thing I did get to verify today.
+
+The api is down
+
+/healthz, /readyz and every /api/v1/* route: 502, through Caddy. Caddy is up, so 502 means it has no upstream to talk to. The api container isn't running, or isn't accepting connections.
+
+It's not a broken build — publish on main succeeded at 21:36. The image exists. It's a container that won't run.
+
+The likely reason, and I want to be honest that it's inference
+
+Someone is mid-flight replacing how QA delivers secrets. Branch xcoder/openbao-on-qa, CI green at 21:54 — sixty seconds before I probed:
+
+deploy/hetzner/compose/docker-compose.vault.yml | 193 ++++++
+deploy/hetzner/env/api.env.example              |  29 ++++
