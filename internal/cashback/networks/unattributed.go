@@ -128,7 +128,58 @@ type OpenReport struct {
 	// from immutable evidence rather than stored, because a column would be
 	// a second copy to fall out of step.
 	Attributable bool
+	// Reason is why this report could not be credited, as the statement
+	// that queued it decided. It is what tells five causes apart that all
+	// read Attributable = false, and it is stored rather than derived for
+	// the reason 0038 gives.
+	Reason QueueReason
 }
+
+// QueueReason is why a report reached the unattributed queue: the cause the
+// statement that queued it decided on (FR-098, 0038).
+//
+// A type rather than a string because the six are an operator's whole
+// vocabulary here, and they carry six different right answers - for
+// ReasonForeignNetwork the right answer is to do nothing at all, which is
+// the one a free-form string would let a surface quietly get wrong.
+type QueueReason string
+
+// The six causes a report reaches the queue by, in the order the crediting
+// path can reach them. ReasonRouteCannotAttribute has no writer yet; it
+// arrives with the importer learning can_attribute (T233/T241).
+const (
+	// ReasonNoReference: the network reported no click reference at all, so
+	// an operator may still attribute the report by hand.
+	ReasonNoReference QueueReason = "no_reference"
+	// ReasonUnknownReference: a reference matching no click we ever issued.
+	ReasonUnknownReference QueueReason = "unknown_reference"
+	// ReasonForeignNetwork: a reference matching a click ANOTHER network
+	// issued (FR-096). Two networks reporting one purchase is the correct
+	// outcome, and attributing it by hand would be a second credit.
+	ReasonForeignNetwork QueueReason = "foreign_network"
+	// ReasonClickAlreadyCredited: the click it names already earned its one
+	// credit (entry_click_id_idx).
+	ReasonClickAlreadyCredited QueueReason = "click_already_credited"
+	// ReasonForeignCurrency: the report is in a currency its member cannot
+	// be paid in (entry_currency_is_the_members).
+	ReasonForeignCurrency QueueReason = "foreign_currency"
+	// ReasonRouteCannotAttribute: the route carries no click reference by
+	// design (contract rule 11).
+	ReasonRouteCannotAttribute QueueReason = "route_cannot_attribute"
+)
+
+// Valid reports whether r is one of the six causes the schema admits.
+func (r QueueReason) Valid() bool {
+	switch r {
+	case ReasonNoReference, ReasonUnknownReference, ReasonForeignNetwork,
+		ReasonClickAlreadyCredited, ReasonForeignCurrency, ReasonRouteCannotAttribute:
+		return true
+	}
+	return false
+}
+
+// String returns the cause as the schema and the contract spell it.
+func (r QueueReason) String() string { return string(r) }
 
 // After is a position in the open queue: everything ordered after this row.
 // The zero value starts at the beginning.
@@ -265,6 +316,14 @@ func openReport(row store.GetOpenUnattributedReportRow) (OpenReport, error) {
 	if err != nil {
 		return OpenReport{}, fmt.Errorf("networks: unattributed work %v: commission: %w", row.ID, err)
 	}
+	// Checked here for the reason the amounts are: this is the last place a
+	// value the schema should have refused can be caught before an operator
+	// decides money on it, and a cause nothing can render is worse on this
+	// queue than an error somebody investigates.
+	reason := QueueReason(row.Reason)
+	if !reason.Valid() {
+		return OpenReport{}, fmt.Errorf("networks: unattributed work %v: %q is not a cause a report is queued by", row.ID, row.Reason)
+	}
 	return OpenReport{
 		ID:           uuid.UUID(row.ID.Bytes),
 		DetectedAt:   row.DetectedAt.Time,
@@ -278,5 +337,6 @@ func openReport(row store.GetOpenUnattributedReportRow) (OpenReport, error) {
 		TransactedAt: row.TransactedAt.Time,
 		RetrievedAt:  row.RetrievedAt.Time,
 		Attributable: row.Attributable,
+		Reason:       reason,
 	}, nil
 }

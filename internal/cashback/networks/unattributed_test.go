@@ -79,6 +79,7 @@ func unattributedTestRow(t *testing.T, detectedAt time.Time, attributable bool) 
 		TransactedAt:         pgtype.Timestamptz{Time: detectedAt.Add(-72 * time.Hour), Valid: true},
 		RetrievedAt:          pgtype.Timestamptz{Time: detectedAt, Valid: true},
 		Attributable:         attributable,
+		Reason:               string(networks.ReasonUnknownReference),
 	}
 }
 
@@ -230,6 +231,9 @@ func TestOpenReadsTheRowAsMoneyAndAPosition(t *testing.T) {
 	if !open[0].Attributable {
 		t.Error("an attributable row came back as one an operator may only dismiss")
 	}
+	if open[0].Reason != networks.ReasonUnknownReference {
+		t.Errorf("the row reads %q, want the cause the statement stored", open[0].Reason)
+	}
 
 	after := open[0].After()
 	if !after.DetectedAt.Equal(at) || after.ID != open[0].ID {
@@ -289,6 +293,26 @@ func TestOpenByIDSaysTheAnswerChangedRatherThanNotFound(t *testing.T) {
 	}
 	if len(still.asked) != 1 || uuid.UUID(still.asked[0].Bytes) != id {
 		t.Errorf("the store was asked about %v, want %s", still.asked, id)
+	}
+}
+
+// TestOpenRefusesACauseThatIsNotOne is the same gate for the reason. Five of
+// the six causes read attributable = false, so this string is what an
+// operator surface branches on; a value it cannot render is worse on this
+// queue than an error somebody investigates, because the branch it would
+// fall through to is "attribute it by hand".
+func TestOpenRefusesACauseThatIsNotOne(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, time.August, 30, 9, 0, 0, 0, time.UTC)
+	row := unattributedTestRow(t, at, false)
+	row.Reason = "seemed_odd"
+	queue, err := networks.NewUnattributedQueue(&unattributedTestStore{one: row})
+	if err != nil {
+		t.Fatalf("NewUnattributedQueue(): %v", err)
+	}
+	if _, err := queue.OpenByID(t.Context(), uuid.New()); err == nil {
+		t.Fatal("a row citing a cause nothing can act on was handed to an operator")
 	}
 }
 

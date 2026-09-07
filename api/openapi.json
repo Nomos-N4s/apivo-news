@@ -4838,7 +4838,8 @@
           "commission",
           "transacted_at",
           "retrieved_at",
-          "attributable"
+          "attributable",
+          "reason"
         ],
         "additionalProperties": false,
         "properties": {
@@ -4900,6 +4901,18 @@
           "attributable": {
             "type": "boolean",
             "description": "Whether an entry could lawfully be created for this report at all. False where the network named a click reference that matched no click: a credit must cite the click the network named, and there is none - so dismissing is the only outcome the database will accept."
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "no_reference",
+              "unknown_reference",
+              "foreign_network",
+              "click_already_credited",
+              "foreign_currency",
+              "route_cannot_attribute"
+            ],
+            "description": "Why this report could not be credited, as the statement that queued it decided (FR-098). Five of the six read `attributable: false`, so this - not that flag - is what separates causes needing opposite responses. `no_reference`: the network reported no click reference at all; attribute by hand, or dismiss. `unknown_reference`: a reference matching no click we ever issued; suspect the network, or an expired click. `foreign_network`: a reference matching a click another network issued - do NOTHING, because two networks reporting one purchase is the correct outcome and the sibling report on the issuing network carries the credit. `click_already_credited`: the click it names already earned its one credit; dismiss. `foreign_currency`: the report is in a currency this member cannot be paid in; the fix is the deployment's, not this row's. `route_cannot_attribute`: the route carries no click reference by design. The value is stable and frozen once written: a row records why it was queued, never why it would be queued now."
           }
         }
       },
