@@ -46,6 +46,28 @@ type Authenticator interface {
 	Authenticate(ctx context.Context, token string) (Account, error)
 }
 
+// Claims is what a verified token says about a person who may not have an
+// account here yet: the id the auth provider issued, and the email it
+// verified — "" when the token carries none. Defined here per the boundary
+// rules and wired in cmd to the identity module's claim verification.
+type Claims struct {
+	ID    uuid.UUID
+	Email string
+}
+
+// Verifier checks a bearer token WITHOUT requiring an account behind it.
+//
+// Its one consumer is self-registration (#544): the door a person walks
+// through before they have a row, which Authenticator refuses by design.
+// Two interfaces rather than one with a flag, so that neither mistake is
+// a one-line change — a verifier that also resolved the account would
+// make the door unusable, and an authenticator that stopped resolving it
+// would open every other route to the unprovisioned. A token that does
+// not verify reports ErrUnauthenticated.
+type Verifier interface {
+	Verify(ctx context.Context, token string) (Claims, error)
+}
+
 // ctxKey keys the authenticated Account in a request context.
 type ctxKey struct{}
 

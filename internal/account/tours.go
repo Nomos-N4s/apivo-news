@@ -60,31 +60,57 @@ var ErrNoAccount = errors.New("account: no such account")
 
 // Handler is this module's route table.
 type Handler struct {
-	log   *slog.Logger
-	store TourStore
-	auth  Authenticator
+	log      *slog.Logger
+	store    Store
+	auth     Authenticator
+	verifier Verifier
 }
 
 // NewHandler builds the account route table. The composition root mounts
-// it under the prefix every pattern below shares.
-func NewHandler(log *slog.Logger, store TourStore, auth Authenticator) http.Handler {
-	h := &Handler{log: log, store: store, auth: auth}
-	mux := http.NewServeMux()
+// it under the prefix every pattern below shares, and at the bare prefix
+// too, because the one open route lives there.
+//
+// Two muxes, one gate. Everything in routes() sits behind requireAccount;
+// the registration in openRoutes() sits in front of it, on a mux of its
+// own, because the gate refuses exactly the person registration serves.
+// The open route checks its own token with the Verifier, so nothing under
+// this prefix is ever reachable without one.
+func NewHandler(log *slog.Logger, store Store, auth Authenticator, verifier Verifier) http.Handler {
+	h := &Handler{log: log, store: store, auth: auth, verifier: verifier}
+	gated := http.NewServeMux()
 	for pattern, handler := range h.routes() {
-		mux.HandleFunc(pattern, handler)
+		gated.HandleFunc(pattern, handler)
 	}
 	// Every error under this prefix is problem+json, including paths
 	// nobody wrote a handler for — the same convention the reader and
 	// editorial modules hold, so the API has one error shape rather than
 	// one per module plus ServeMux's text/plain in the corners.
-	mux.HandleFunc("/api/v1/account/", h.handleUnrouted)
-	return h.requireAccount(mux)
+	gated.HandleFunc("/api/v1/account/", h.handleUnrouted)
+
+	mux := http.NewServeMux()
+	for pattern, handler := range h.openRoutes() {
+		mux.HandleFunc(pattern, handler)
+	}
+	mux.Handle("/", h.requireAccount(gated))
+	return mux
 }
 
+// routes is every route behind the gate: the caller's own state, readable
+// and writable by them once they exist here.
 func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
+		"GET /api/v1/account":              h.readProfile,
 		"GET /api/v1/account/tours":        h.readTours,
 		"PUT /api/v1/account/tours/{tour}": h.writeTour,
+	}
+}
+
+// openRoutes is every route in FRONT of the gate. One, and it should stay
+// one: a route added here is a route reachable by anybody who can mint a
+// token, before this deployment has agreed they are somebody.
+func (h *Handler) openRoutes() map[string]http.HandlerFunc {
+	return map[string]http.HandlerFunc{
+		"POST /api/v1/account": h.register,
 	}
 }
 
@@ -93,8 +119,11 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 // is the error convention for paths nobody serves, not an endpoint.
 func Patterns() []string {
 	h := &Handler{}
-	patterns := make([]string, 0, len(h.routes()))
+	patterns := make([]string, 0, len(h.routes())+len(h.openRoutes()))
 	for pattern := range h.routes() {
+		patterns = append(patterns, pattern)
+	}
+	for pattern := range h.openRoutes() {
 		patterns = append(patterns, pattern)
 	}
 	slices.Sort(patterns)

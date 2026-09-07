@@ -163,7 +163,7 @@ func TestOpenAPISecurityMatchesTheAuthGate(t *testing.T) {
 	for pattern, op := range documentedOperations(t, doc) {
 		_, path, _ := strings.Cut(pattern, " ")
 		gated := strings.HasPrefix(path, editorialPrefix) ||
-			strings.HasPrefix(path, accountPrefix) ||
+			strings.HasPrefix(path, strings.TrimSuffix(accountPrefix, "/")) ||
 			strings.HasPrefix(path, opsPrefix) ||
 			strings.HasPrefix(path, clickoutPrefix) ||
 			strings.HasPrefix(path, merchantPrefix) ||

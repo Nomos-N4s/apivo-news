@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Querier is the database seam, satisfied by the platform pool. Named here
@@ -79,4 +81,70 @@ func (s PGStore) SetTour(ctx context.Context, accountID uuid.UUID, tourID, curso
 		return false, fmt.Errorf("account: recording tour progress for %s: %w", accountID, err)
 	}
 	return stored, nil
+}
+
+// Register creates the caller's row as a reader, or hands back the row
+// already there.
+//
+// One INSERT with ON CONFLICT (id) DO NOTHING, so two sign-ins racing on
+// the same first visit cannot both create and neither can fail: the loser
+// reads the winner's row. The conflict clause names the id and not the
+// email on purpose — the id is the identity, the email is a fact about it —
+// so an email already held by a DIFFERENT id is a unique violation, which
+// is reported as ErrEmailTaken rather than absorbed. The role is written
+// here as a literal and never taken from the caller: a registration
+// produces a reader, and every other role is somebody else's decision.
+func (s PGStore) Register(ctx context.Context, id uuid.UUID, email string) (Profile, bool, error) {
+	email = strings.TrimSpace(email)
+	var p Profile
+	err := s.db.QueryRow(ctx,
+		`insert into account (id, email, display_name, role)
+		 values ($1, $2, $3, 'reader')
+		 on conflict (id) do nothing
+		 returning id, email, display_name, role`,
+		id.String(), email, displayNameFor(email)).Scan(&p.ID, &p.Email, &p.DisplayName, &p.Role)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		existing, err := s.Profile(ctx, id)
+		return existing, false, err
+	case isUniqueViolation(err):
+		return Profile{}, false, fmt.Errorf("%w: %s", ErrEmailTaken, email)
+	case err != nil:
+		return Profile{}, false, fmt.Errorf("account: registering %s: %w", id, err)
+	}
+	return p, true, nil
+}
+
+// Profile reads the caller's own row.
+func (s PGStore) Profile(ctx context.Context, id uuid.UUID) (Profile, error) {
+	var p Profile
+	err := s.db.QueryRow(ctx,
+		`select id, email, display_name, role from account where id = $1`,
+		id.String()).Scan(&p.ID, &p.Email, &p.DisplayName, &p.Role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Profile{}, fmt.Errorf("%w: %s", ErrNoAccount, id)
+	}
+	if err != nil {
+		return Profile{}, fmt.Errorf("account: reading account %s: %w", id, err)
+	}
+	return p, nil
+}
+
+// displayNameFor is the name a registration starts with: the local part of
+// the email, because the column may not be blank and nothing else about
+// the person is known yet. Not the whole address — a display name is
+// printed wherever a name is, and an email in a name slot is an address
+// leaked everywhere a name appears.
+func displayNameFor(email string) string {
+	if local, _, ok := strings.Cut(email, "@"); ok && strings.TrimSpace(local) != "" {
+		return strings.TrimSpace(local)
+	}
+	return email
+}
+
+// isUniqueViolation reports SQLSTATE 23505, the one error Register expects
+// from the schema rather than from a fault.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

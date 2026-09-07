@@ -130,3 +130,50 @@ func TestADocumentThatIsNotFlatIsReportedNotHalved(t *testing.T) {
 		t.Errorf("Tours() = %v, %v; want a refusal naming the shape", tours, err)
 	}
 }
+
+// TestRegisterWritesAReaderOnce is the registration against the real
+// schema: the row it creates, what a second call answers, and the two
+// refusals the schema hands back — an email another id holds, and an id
+// nobody has.
+func TestRegisterWritesAReaderOnce(t *testing.T) {
+	t.Parallel()
+	ctx, tx, seeded := storeTx(t)
+	store := account.NewPGStore(tx)
+
+	// The seeded account reads back as the row says.
+	existing, err := store.Profile(ctx, seeded)
+	if err != nil {
+		t.Fatalf("Profile(seeded): %v", err)
+	}
+	if existing.ID != seeded || existing.DisplayName != "Tour Taker" || existing.Role != "reader" {
+		t.Errorf("Profile(seeded) = %+v, want the seeded row", existing)
+	}
+	if _, err := store.Profile(ctx, uuid.New()); !errors.Is(err, account.ErrNoAccount) {
+		t.Errorf("Profile(nobody) = %v, want ErrNoAccount", err)
+	}
+
+	// A first registration creates a reader named after the email's local
+	// part; a second returns that row and reports nothing created.
+	id := uuid.New()
+	email := "  Register-" + uuid.NewString() + "@Example.test "
+	created, wasNew, err := store.Register(ctx, id, email)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if !wasNew || created.ID != id || created.Email != strings.TrimSpace(email) || created.Role != "reader" || !strings.HasPrefix(created.DisplayName, "Register-") {
+		t.Errorf("Register = %+v, new %v; want a new reader named after the email", created, wasNew)
+	}
+	again, wasNew, err := store.Register(ctx, id, "changed-"+email)
+	if err != nil {
+		t.Fatalf("Register again: %v", err)
+	}
+	if wasNew || again != created {
+		t.Errorf("Register again = %+v, new %v; want the first row unchanged", again, wasNew)
+	}
+
+	// The email is unique across ids, case-insensitively, and the schema's
+	// refusal is named. Last, because the violation aborts the transaction.
+	if _, _, err := store.Register(ctx, uuid.New(), strings.ToUpper(strings.TrimSpace(email))); !errors.Is(err, account.ErrEmailTaken) {
+		t.Errorf("Register with another id's email = %v, want ErrEmailTaken", err)
+	}
+}
