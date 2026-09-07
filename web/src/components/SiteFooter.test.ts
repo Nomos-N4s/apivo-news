@@ -37,8 +37,8 @@ async function renderFooter(
   // fail-closed answer a plain reader page gets.
   const request = new Request('https://example.invalid/de/munich');
   if (role !== undefined) {
-    const { rememberEditorSession } = await import('../lib/editorial/session');
-    rememberEditorSession(request, {
+    const { rememberSession } = await import('../lib/editorial/session');
+    rememberSession(request, {
       displayName: 'A. Operator',
       email: 'op@example.invalid',
       role,

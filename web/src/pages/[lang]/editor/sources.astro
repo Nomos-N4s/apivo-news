@@ -39,7 +39,7 @@ import {
   type SourceEditFields,
 } from '../../../lib/editorial/sourceForm';
 import { isSameOrigin } from '../../../lib/csrf';
-import { editorSession } from '../../../lib/editorial/session';
+import { sessionOf } from '../../../lib/editorial/session';
 import { editorialStrings } from '../../../lib/editorial/strings';
 import { authConfigured } from '../../../lib/editorial/supabase';
 import { isReadingLanguage } from '../../../lib/reader/axes';
@@ -68,7 +68,7 @@ if (langSegment === undefined || !isReadingLanguage(langSegment)) {
 const lang = langSegment;
 const t = editorialStrings(lang);
 const reader = uiStrings(lang);
-const session = editorSession(Astro.request);
+const session = sessionOf(Astro.request);
 
 // Configuring a source is a licensing decision on the record, so it needs
 // a named editor's own token when there is an auth provider to get one

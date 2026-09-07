@@ -3,7 +3,7 @@
  *
  * The editorial screens submit plain HTML forms, and the server handler
  * calls the editorial API with the editor's own credentials. Once
- * `editorSession()` reads a cookie-backed Supabase session, a cross-site
+ * `sessionOf()` reads a cookie-backed Supabase session, a cross-site
  * form could otherwise drive a privileged action — approving or
  * withdrawing an article — using a logged-in editor's browser. That is
  * the classic CSRF shape, and this product's whole claim is that an

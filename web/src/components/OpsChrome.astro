@@ -4,7 +4,7 @@ import type { ReadingLanguage } from '../lib/reader/axes';
 import { READING_LANGUAGES } from '../lib/reader/axes';
 import { OPS_PATHS } from '../lib/cashback/paths';
 import { cashbackStrings } from '../i18n/cashback';
-import type { EditorSession } from '../lib/editorial/session';
+import type { Session } from '../lib/editorial/session';
 
 // The operator shell — mockup 4f: one top bar and one left rail around
 // every queue, with the queue itself in the slot.
@@ -26,7 +26,7 @@ export type OpsQueueCounts = Readonly<Record<OpsQueueKey, number | undefined>>;
 
 interface Props {
   lang: ReadingLanguage;
-  session: EditorSession;
+  session: Session;
   current: OpsQueueKey;
   counts: OpsQueueCounts;
 }

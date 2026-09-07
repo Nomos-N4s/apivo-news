@@ -1,6 +1,6 @@
 ---
 import { formatSpend, spendPercent, type SpendLedger } from '../lib/editorial/api';
-import type { EditorSession } from '../lib/editorial/session';
+import type { Session } from '../lib/editorial/session';
 import { editorialStrings } from '../lib/editorial/strings';
 import type { ReadingLanguage } from '../lib/reader/axes';
 import ProductTour from './ProductTour.astro';
@@ -13,7 +13,7 @@ type Section = 'queue' | 'sources' | 'published' | 'audit';
 
 interface Props {
   lang: ReadingLanguage;
-  session: EditorSession;
+  session: Session;
   active: Section;
   /** Shown beside the queue entry when the caller knows it. */
   queueCount?: number | undefined;

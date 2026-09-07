@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { opsAccess } from './ops-guard';
-import type { EditorSession } from '../editorial/session';
+import type { Session } from '../editorial/session';
 
 const session = (
-  role: EditorSession['role'],
+  role: Session['role'],
   authenticated = true,
-): EditorSession => ({
+): Session => ({
   displayName: 'N. Alexiou',
   email: 'ops@example.invalid',
   role,

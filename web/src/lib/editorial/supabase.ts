@@ -7,17 +7,17 @@ import type { Database } from '../database.types';
 import { isSecureRequest } from '../secure-request';
 import {
   astroCookieOptions,
-  editorSessionFrom,
-  NO_EDITOR_SESSION,
+  sessionFrom,
+  NO_SESSION,
   parseCookieHeader,
   supabaseConfig,
-  type EditorSession,
+  type Session,
 } from './session';
 
 /**
  * The Supabase Auth glue: everything in this module is a thin wrapper over
  * the SDK, kept in one file so the rest of the editorial code deals in
- * `EditorSession` and never in auth vendor types.
+ * `Session` and never in auth vendor types.
  *
  * The session lives in cookies, read and written through Astro's own
  * cookie store, which is why every entry point here takes the request and
@@ -79,7 +79,7 @@ const EXPECTED_AUTH_STATUSES: ReadonlySet<number> = new Set([400, 401, 403]);
  * traffic.
  */
 function logAuthFailure(detail: string): void {
-  console.error(`editorial auth: session resolution failed (${detail}); resolving to nobody`);
+  console.error(`auth: session resolution failed (${detail}); resolving to nobody`);
 }
 
 /**
@@ -97,13 +97,13 @@ function logAuthFailure(detail: string): void {
  * provider or network failure is an outage the operator must be able to
  * see.
  */
-export async function resolveEditorSession(
+export async function resolveSession(
   request: Request,
   cookies: AstroCookies,
-): Promise<EditorSession> {
+): Promise<Session> {
   const client = authClient(request, cookies);
   if (client === null) {
-    return NO_EDITOR_SESSION;
+    return NO_SESSION;
   }
   try {
     const { data: userData, error } = await client.auth.getUser();
@@ -111,19 +111,19 @@ export async function resolveEditorSession(
       if (!EXPECTED_AUTH_STATUSES.has(error.status ?? 0)) {
         logAuthFailure(`${error.name}: status ${String(error.status)}`);
       }
-      return NO_EDITOR_SESSION;
+      return NO_SESSION;
     }
     if (userData.user === null) {
-      return NO_EDITOR_SESSION;
+      return NO_SESSION;
     }
     // The token the editorial API is called with. Read after getUser so
     // any refresh has already happened and this is the live one.
     const { data: sessionData } = await client.auth.getSession();
-    return editorSessionFrom(userData.user, sessionData.session?.access_token ?? null);
+    return sessionFrom(userData.user, sessionData.session?.access_token ?? null);
   } catch (error) {
     // Thrown, not returned: a network failure or an SDK bug, never a
     // routine signed-out visitor.
     logAuthFailure(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
-    return NO_EDITOR_SESSION;
+    return NO_SESSION;
   }
 }

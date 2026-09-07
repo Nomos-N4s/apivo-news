@@ -11,7 +11,7 @@ import {
 } from '../../../../lib/cashback/api';
 import { cataloguePath, merchantPath } from '../../../../lib/cashback/paths';
 import type { CatalogueItem } from '../../../../lib/cashback/types';
-import { editorSession } from '../../../../lib/editorial/session';
+import { sessionOf } from '../../../../lib/editorial/session';
 import { frontPagePath, parseAxes } from '../../../../lib/reader/axes';
 import { cashbackStrings, languageName } from '../../../../i18n/cashback';
 
@@ -50,7 +50,7 @@ const t = cashbackStrings(lang);
 // member links to, and the API takes `q` as a parameter for the same reason.
 const query = Astro.url.searchParams.get('q')?.trim() ?? '';
 
-const session = editorSession(Astro.request);
+const session = sessionOf(Astro.request);
 
 let api: CashbackApi | null = null;
 let items: readonly CatalogueItem[] = [];

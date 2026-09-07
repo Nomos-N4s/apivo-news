@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { isSecureRequest } from '../secure-request';
 import {
   astroCookieOptions,
-  editorSession,
-  editorSessionFrom,
-  NO_EDITOR_SESSION,
+  sessionOf,
+  sessionFrom,
+  NO_SESSION,
   parseCookieHeader,
-  rememberEditorSession,
+  rememberSession,
   supabaseConfig,
   type SupabaseUserClaims,
 } from './session';
@@ -18,9 +18,9 @@ const EDITOR: SupabaseUserClaims = {
   app_metadata: { role: 'editor' },
 };
 
-describe('editorSession', () => {
+describe('sessionOf', () => {
   it('reports nobody signed in for a request the middleware never resolved', () => {
-    const session = editorSession(new Request('http://localhost/el/editor'));
+    const session = sessionOf(new Request('http://localhost/el/editor'));
     expect(session.authenticated).toBe(false);
     expect(session.token).toBeNull();
     // No placeholder name: the chrome prints who is at the keyboard, and
@@ -31,21 +31,21 @@ describe('editorSession', () => {
 
   it('gives a resolved request back the identity that was filed for it', () => {
     const request = new Request('http://localhost/el/editor');
-    rememberEditorSession(request, editorSessionFrom(EDITOR, 'access-token'));
-    expect(editorSession(request).displayName).toBe('Eleni Papadaki');
-    expect(editorSession(request).token).toBe('access-token');
+    rememberSession(request, sessionFrom(EDITOR, 'access-token'));
+    expect(sessionOf(request).displayName).toBe('Eleni Papadaki');
+    expect(sessionOf(request).token).toBe('access-token');
   });
 
   it('keeps the identity of one request out of the next one', () => {
     const mine = new Request('http://localhost/el/editor');
-    rememberEditorSession(mine, editorSessionFrom(EDITOR, 'access-token'));
-    expect(editorSession(new Request('http://localhost/el/editor')).authenticated).toBe(false);
+    rememberSession(mine, sessionFrom(EDITOR, 'access-token'));
+    expect(sessionOf(new Request('http://localhost/el/editor')).authenticated).toBe(false);
   });
 });
 
-describe('editorSessionFrom', () => {
+describe('sessionFrom', () => {
   it('names the account, its email and the token it will call the API with', () => {
-    const session = editorSessionFrom(EDITOR, 'access-token');
+    const session = sessionFrom(EDITOR, 'access-token');
     expect(session.displayName).toBe('Eleni Papadaki');
     expect(session.email).toBe('eleni@epiloyes.example');
     expect(session.token).toBe('access-token');
@@ -57,7 +57,7 @@ describe('editorSessionFrom', () => {
     // A name without a token would put a person on screen while every
     // call to the editorial API went out unauthenticated.
     for (const token of [null, undefined, '']) {
-      const session = editorSessionFrom(EDITOR, token);
+      const session = sessionFrom(EDITOR, token);
       expect(session.authenticated).toBe(false);
       expect(session.token).toBeNull();
       expect(session.displayName).toBe('');
@@ -65,22 +65,22 @@ describe('editorSessionFrom', () => {
   });
 
   it('reports nobody signed in when there is no user, token or not', () => {
-    expect(editorSessionFrom(null, 'access-token')).toEqual(NO_EDITOR_SESSION);
-    expect(editorSessionFrom(undefined, 'access-token')).toEqual(NO_EDITOR_SESSION);
+    expect(sessionFrom(null, 'access-token')).toEqual(NO_SESSION);
+    expect(sessionFrom(undefined, 'access-token')).toEqual(NO_SESSION);
   });
 
   it('falls back through the display-name spellings, then to the email', () => {
     const email = 'markus@epiloyes.example';
     expect(
-      editorSessionFrom({ email, user_metadata: { full_name: 'Markus Bauer' } }, 't').displayName,
+      sessionFrom({ email, user_metadata: { full_name: 'Markus Bauer' } }, 't').displayName,
     ).toBe('Markus Bauer');
-    expect(editorSessionFrom({ email, user_metadata: { name: 'Markus B.' } }, 't').displayName).toBe(
+    expect(sessionFrom({ email, user_metadata: { name: 'Markus B.' } }, 't').displayName).toBe(
       'Markus B.',
     );
-    expect(editorSessionFrom({ email, user_metadata: {} }, 't').displayName).toBe(email);
-    expect(editorSessionFrom({ email }, 't').displayName).toBe(email);
+    expect(sessionFrom({ email, user_metadata: {} }, 't').displayName).toBe(email);
+    expect(sessionFrom({ email }, 't').displayName).toBe(email);
     // A blank metadata name is not a name.
-    expect(editorSessionFrom({ email, user_metadata: { display_name: '  ' } }, 't').displayName).toBe(
+    expect(sessionFrom({ email, user_metadata: { display_name: '  ' } }, 't').displayName).toBe(
       email,
     );
   });
@@ -89,16 +89,16 @@ describe('editorSessionFrom', () => {
     // The database is the authority on account.role; anything the token
     // does not plainly assert reads as reader, because under-claiming
     // costs a sign-in and over-claiming names an approver nobody made.
-    expect(editorSessionFrom({ app_metadata: { role: 'editor' } }, 't').role).toBe('editor');
-    expect(editorSessionFrom({ app_metadata: { role: 'reader' } }, 't').role).toBe('reader');
-    expect(editorSessionFrom({ app_metadata: { role: 'admin' } }, 't').role).toBe('reader');
-    expect(editorSessionFrom({ app_metadata: {} }, 't').role).toBe('reader');
-    expect(editorSessionFrom({}, 't').role).toBe('reader');
+    expect(sessionFrom({ app_metadata: { role: 'editor' } }, 't').role).toBe('editor');
+    expect(sessionFrom({ app_metadata: { role: 'reader' } }, 't').role).toBe('reader');
+    expect(sessionFrom({ app_metadata: { role: 'admin' } }, 't').role).toBe('reader');
+    expect(sessionFrom({ app_metadata: {} }, 't').role).toBe('reader');
+    expect(sessionFrom({}, 't').role).toBe('reader');
   });
 
   it('leaves the email empty rather than inventing one', () => {
-    expect(editorSessionFrom({ email: null }, 't').email).toBe('');
-    expect(editorSessionFrom({}, 't').email).toBe('');
+    expect(sessionFrom({ email: null }, 't').email).toBe('');
+    expect(sessionFrom({}, 't').email).toBe('');
   });
 });
 
@@ -201,7 +201,7 @@ describe('parseCookieHeader', () => {
 
 describe('the operator role', () => {
   it('maps an operator claim to operator, not to reader', () => {
-    const session = editorSessionFrom(
+    const session = sessionFrom(
       { app_metadata: { role: 'operator' }, email: 'ops@example.invalid' },
       'jwt',
     );
@@ -209,7 +209,7 @@ describe('the operator role', () => {
   });
 
   it('still maps an editor claim to editor', () => {
-    const session = editorSessionFrom(
+    const session = sessionFrom(
       { app_metadata: { role: 'editor' }, email: 'ed@example.invalid' },
       'jwt',
     );
@@ -218,7 +218,7 @@ describe('the operator role', () => {
 
   it('maps anything it does not recognise to reader', () => {
     for (const claimed of ['admin', 'Operator', '', 'superuser']) {
-      const session = editorSessionFrom(
+      const session = sessionFrom(
         { app_metadata: { role: claimed }, email: 'x@example.invalid' },
         'jwt',
       );

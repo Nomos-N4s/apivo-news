@@ -1,7 +1,7 @@
 import { defineMiddleware, sequence } from 'astro:middleware';
 
-import { rememberEditorSession } from './lib/editorial/session';
-import { resolveEditorSession } from './lib/editorial/supabase';
+import { rememberSession } from './lib/editorial/session';
+import { resolveSession } from './lib/editorial/supabase';
 import { createUsageCounter } from './lib/usage';
 
 // The single crawler enforcement point (FR-013, research D6). Three fences,
@@ -168,7 +168,7 @@ export function isAuthenticatedPath(pathname: string): boolean {
 /**
  * Resolves the signed-in identity once per request, before anything renders.
  *
- * The screens read it back through `editorSession()`. It happens here
+ * The screens read it back through `sessionOf()`. It happens here
  * rather than in each page because resolving a session can refresh the
  * access token, and only middleware can write the new one back to the
  * browser — a page that cannot persist a refresh signs the editor out
@@ -184,9 +184,9 @@ const resolveEditorIdentity = defineMiddleware(async (context, next) => {
   if (!isAuthenticatedPath(context.url.pathname)) {
     return next();
   }
-  rememberEditorSession(
+  rememberSession(
     context.request,
-    await resolveEditorSession(context.request, context.cookies),
+    await resolveSession(context.request, context.cookies),
   );
   const response = await next();
   response.headers.set('Cache-Control', 'private, no-store');

@@ -2,7 +2,7 @@
 import { API_BASE_URL } from 'astro:env/server';
 
 import { readTourProgress } from '../lib/account/tours';
-import type { EditorSession } from '../lib/editorial/session';
+import type { Session } from '../lib/editorial/session';
 import type { ReadingLanguage } from '../lib/reader/axes';
 import { tourStrings } from '../lib/tour/strings';
 import type { TourId } from '../lib/tour/tours';
@@ -56,7 +56,7 @@ interface Props {
    * their progress lives in the browser. Passing nothing is that state,
    * not a caller forgetting.
    */
-  session?: EditorSession | undefined;
+  session?: Session | undefined;
 }
 
 const { lang, tour, session } = Astro.props;
