@@ -245,38 +245,42 @@ export const CATALOGUE_LIST_FIXTURES: readonly CatalogueItem[] = CATALOGUE_FIXTU
 /** One verified destination and one that is not — the 409 path has a subject. */
 export const DESTINATION_FIXTURES: readonly PayoutDestination[] = [
   {
-    id: 'fx-destination-1',
+    destination_id: 'fx-destination-1',
     kind: 'sepa',
-    details: '•••• 3000',
     verified_at: '2026-07-02T10:00:00Z',
+    verified_method: 'micro_deposit',
+    created_at: '2026-06-28T09:12:00Z',
   },
   {
-    id: 'fx-destination-2',
+    // Added later and never proved. The withdrawal offers it and refuses to
+    // let it be chosen, which is the state a member most needs drawn.
+    destination_id: 'fx-destination-2',
     kind: 'sepa',
-    details: '•••• 8841',
     verified_at: null,
+    verified_method: null,
+    created_at: '2026-08-14T17:41:00Z',
   },
 ];
 
 /** A withdrawal in the state every withdrawal starts in. */
 export const WITHDRAWAL_FIXTURES: readonly Withdrawal[] = [
   {
-    id: 'fx-withdrawal-1',
+    request_id: 'fx-withdrawal-1',
+    destination_id: 'fx-destination-1',
     state: 'awaiting_approval',
     amount: { minor: 1500, currency: EUR },
-    reserved_amount: { minor: 1840, currency: EUR },
-    destination: DESTINATION_FIXTURES[0] as PayoutDestination,
     requested_at: '2026-08-24T09:46:00Z',
+    decided_at: null,
     decision_reason: null,
     payout_reference: null,
   },
   {
-    id: 'fx-withdrawal-2',
+    request_id: 'fx-withdrawal-2',
+    destination_id: 'fx-destination-1',
     state: 'rejected',
     amount: { minor: 2000, currency: EUR },
-    reserved_amount: { minor: 2000, currency: EUR },
-    destination: DESTINATION_FIXTURES[0] as PayoutDestination,
     requested_at: '2026-07-30T12:00:00Z',
+    decided_at: '2026-08-01T08:20:00Z',
     decision_reason: 'The destination name did not match the account holder.',
     payout_reference: null,
   },

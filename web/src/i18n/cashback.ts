@@ -1,5 +1,5 @@
 import type { ReadingLanguage } from '../lib/reader/axes';
-import type { EntryState, WithdrawalState } from '../lib/cashback/types';
+import type { DestinationKind, EntryState, WithdrawalState } from '../lib/cashback/types';
 
 /**
  * Member-facing cashback copy, keyed by BCP-47 primary language subtag.
@@ -91,6 +91,19 @@ export interface CashbackStrings {
   readonly withdrawIntro: string;
   readonly amountLabel: string;
   readonly destinationLabel: string;
+  /**
+   * How a destination is named on screen.
+   *
+   * The api sends the rail and the date it was added and nothing else: the
+   * account itself lives where this service cannot read it (ADR-0003), so
+   * there is no masked IBAN to print and there is not going to be one. A
+   * member tells two destinations apart by which rail and when, which is
+   * enough for the one or two anybody has.
+   */
+  readonly destinationKinds: Readonly<Record<DestinationKind, string>>;
+  readonly addedOn: (date: string) => string;
+  /** A withdrawal citing a destination that is no longer in the list. */
+  readonly destinationNotOnFile: string;
   readonly destinationUnverified: string;
   readonly noVerifiedDestination: string;
   readonly whatHappensNext: string;
@@ -315,6 +328,13 @@ const el: CashbackStrings = {
     'Μόνο επιβεβαιωμένα ποσά. Οι εκκρεμείς καταχωρίσεις παραμένουν μέχρι να τις επιβεβαιώσει ο συνεργάτης.',
   amountLabel: 'Ποσό',
   destinationLabel: 'Προορισμός',
+  destinationKinds: {
+    sepa: 'Τραπεζικός λογαριασμός',
+    manual: 'Πληρωμή με το χέρι',
+    stub: 'Δοκιμαστικός προορισμός',
+  },
+  addedOn: (date) => `προστέθηκε ${date}`,
+  destinationNotOnFile: 'Ο προορισμός δεν είναι πια στη λίστα σου.',
   destinationUnverified: 'Δεν έχει επαληθευτεί ακόμη',
   noVerifiedDestination:
     'Δεν υπάρχει επαληθευμένος προορισμός. Η πληρωμή γίνεται μόνο σε λογαριασμό που σου ανήκει και έχει επαληθευτεί.',
@@ -545,6 +565,13 @@ const de: CashbackStrings = {
     'Nur bestätigte Beträge. Offene Buchungen bleiben liegen, bis der Partner sie bestätigt.',
   amountLabel: 'Betrag',
   destinationLabel: 'Ziel',
+  destinationKinds: {
+    sepa: 'Bankkonto',
+    manual: 'Auszahlung von Hand',
+    stub: 'Testziel',
+  },
+  addedOn: (date) => `hinzugefügt am ${date}`,
+  destinationNotOnFile: 'Dieses Ziel steht nicht mehr in deiner Liste.',
   destinationUnverified: 'Noch nicht verifiziert',
   noVerifiedDestination:
     'Kein verifiziertes Ziel vorhanden. Ausgezahlt wird nur auf ein Konto, das dir gehört und verifiziert ist.',

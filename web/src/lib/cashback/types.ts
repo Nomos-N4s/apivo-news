@@ -176,13 +176,30 @@ export interface EntryPage {
   readonly next_cursor: string | null;
 }
 
-/** A destination a member owns. An unverified one is refused at withdrawal. */
+/** The rails a destination can be for. */
+export type DestinationKind = 'sepa' | 'manual' | 'stub';
+
+/**
+ * A destination a member owns. An unverified one is refused at withdrawal.
+ *
+ * **There is no `details` field, and there is not going to be one.** This
+ * file used to declare one, described as a masked IBAN; the api has never
+ * sent it. What a member reads back is which rail it is for and whether it
+ * has been proved theirs. The account itself lives somewhere this service
+ * cannot read it from (ADR-0003), and an endpoint that echoed it would be
+ * the leak the whole arrangement exists to prevent.
+ *
+ * So a screen naming a destination has `kind` and `created_at` and nothing
+ * else, and that is deliberate rather than a gap to fill.
+ */
 export interface PayoutDestination {
-  readonly id: string;
-  readonly kind: string;
-  /** Masked by the API — the last group of an IBAN, never the whole one. */
-  readonly details: string;
+  readonly destination_id: string;
+  readonly kind: DestinationKind;
+  /** Null until the member has proved this destination is theirs (FR-051). */
   readonly verified_at: string | null;
+  /** How it was proved, beside when. Null while `verified_at` is. */
+  readonly verified_method: string | null;
+  readonly created_at: string;
 }
 
 /**
@@ -210,17 +227,30 @@ export type WithdrawalState =
   | 'settled'
   | 'failed';
 
-/** `GET /withdrawals` · `GET /withdrawals/{id}`. */
+/**
+ * `GET /withdrawals` · `GET /withdrawals/{id}`.
+ *
+ * The destination arrives as an id, not as a nested resource. A member's own
+ * destinations are one call away, and repeating the record on every row would
+ * publish the same thing many times over; a screen that wants to name the
+ * destination joins the two lists itself.
+ *
+ * `reserved_amount` is NOT here, and its absence is the point. It belongs to
+ * the 201 from `POST /withdrawals` — `WithdrawalRequest` above — where it is
+ * the figure a member has just committed to and has to be told. On a
+ * historical row the amount is the amount.
+ */
 export interface Withdrawal {
-  readonly id: string;
+  readonly request_id: string;
+  readonly destination_id: string;
   readonly state: WithdrawalState;
   readonly amount: Money;
-  readonly reserved_amount: Money;
-  readonly destination: PayoutDestination;
   readonly requested_at: string;
-  /** Present where an operator refused it — the member reads this. */
+  /** When an operator decided; null while it waits for one (C-4). */
+  readonly decided_at: string | null;
+  /** Present where an operator refused it — the member reads this (FR-061). */
   readonly decision_reason: string | null;
-  /** Present once settled. */
+  /** What the rail called the payment: the string a member quotes to a bank. */
   readonly payout_reference: string | null;
 }
 
@@ -303,6 +333,14 @@ export interface WithdrawalForApproval {
   readonly destination: PayoutDestination;
   readonly requested_at: string;
 }
+
+/*
+ * A note on the shape above: no endpoint serves it. The operator queue calls
+ * `GET /ops/withdrawals?state=awaiting_approval` and the api registers only
+ * the three decisions on that prefix, so this is the shape the screen was
+ * written to and not one the api has ever sent. Tracked as its own issue;
+ * the queue is a fixture-only screen until it lands.
+ */
 
 /** The three kinds of disagreement detection derives from a statement. */
 export type DifferenceKind = 'reported_not_paid' | 'amount_mismatch' | 'paid_not_reported';
