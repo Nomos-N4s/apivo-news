@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01M1Z3MVEECN9XQG9TFJGZEANE",
+  "strategy": "manual-commit",
+  "branch": "xcoder/610-member-profile",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "web/src/pages/[lang]/profile.astro",
+    "web/src/pages/[lang]/profile.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 1399,
+    "cache_creation_tokens": 3737498,
+    "cache_read_tokens": 358846023,
+    "output_tokens": 603488,
+    "api_call_count": 700
+  }
+}
