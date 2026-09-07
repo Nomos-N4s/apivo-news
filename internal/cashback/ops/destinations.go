@@ -99,11 +99,6 @@ type DestinationAfter struct {
 	ID        uuid.UUID
 }
 
-// After answers the position that continues after this row.
-func (d UnverifiedDestination) After() DestinationAfter {
-	return DestinationAfter{CreatedAt: d.CreatedAt, ID: d.ID}
-}
-
 // destinationItem is one queue row on the wire.
 type destinationItem struct {
 	DestinationID string `json:"destination_id"`

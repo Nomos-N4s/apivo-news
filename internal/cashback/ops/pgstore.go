@@ -234,14 +234,7 @@ func (s *PGStore) Verify(ctx context.Context, v Verification) (Verified, error) 
 	if existing.VerifiedAt.Valid {
 		// Nothing to write and nothing to announce: the fact is already in
 		// the stream, put there by whoever performed it.
-		return Verified{
-			ID:         uuid.UUID(existing.ID.Bytes),
-			AccountID:  uuid.UUID(existing.AccountID.Bytes),
-			Kind:       existing.Kind,
-			Method:     existing.VerifiedMethod.String,
-			VerifiedBy: uuid.UUID(existing.VerifiedBy.Bytes),
-			VerifiedAt: existing.VerifiedAt.Time,
-		}, nil
+		return verifiedFrom(existing), nil
 	}
 
 	row, err := queries.VerifyDestinationAsOperator(ctx, store.VerifyDestinationAsOperatorParams{
@@ -297,6 +290,13 @@ func (s *PGStore) verifiedAlready(ctx context.Context, queries *store.Queries, i
 	if err != nil {
 		return Verified{}, fmt.Errorf("%w: %s: %w", ErrNotVerified, id, err)
 	}
+	return verifiedFrom(row), nil
+}
+
+// verifiedFrom maps one stored destination to the verification it carries.
+// One spelling, because the read-first branch and the lost-race branch
+// answer the same question and a second copy is where they would diverge.
+func verifiedFrom(row store.GetDestinationForVerificationRow) Verified {
 	return Verified{
 		ID:         uuid.UUID(row.ID.Bytes),
 		AccountID:  uuid.UUID(row.AccountID.Bytes),
@@ -304,7 +304,7 @@ func (s *PGStore) verifiedAlready(ctx context.Context, queries *store.Queries, i
 		Method:     row.VerifiedMethod.String,
 		VerifiedBy: uuid.UUID(row.VerifiedBy.Bytes),
 		VerifiedAt: row.VerifiedAt.Time,
-	}, nil
+	}
 }
 
 // verifiedEvent renders the contract's payload for one verification.
