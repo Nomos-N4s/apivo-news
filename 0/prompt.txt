@@ -1,0 +1,103 @@
+ok, next steps... See https://github.com/Nomos-N4s/apivo-news/blob/main/docs/master-prompts/cashback-frontend.md and follow it thoroughly so we can have a complete working app in the frontend (again you own the designs and exprience) we have approved those artifacts a while ago. In terms of the gaps, th backend team is working on them as we speak so consider them a to-be-solved issue and not something to be stalled. If you reckon there's ork you can do in the meantime go ahead and do it
+
+---
+
+where are we? what do i need to merge? in what order? also the backend team has addressed the gaps
+
+---
+
+everything is merged, what's next?
+
+---
+
+In terms of F3 I'll follow your lead, for F1.4 and F4/F5/F6 let's plan and act accordingly. Prioritise the housekeeping detail, i want them both to be available please. create a small pr for that. In fact on housekeeping, do you mind also cleaning up the stale gh issues? I reckon there are many that have been alread implemented but where never referenced therefore never closed.
+
+---
+
+is graft enabled in the repo/session? if so how many tokens have we saved?
+
+---
+
+the other thing is that I just clicked the signin button in our qa box ra1ze.com and it doesn't do anything... are you using claude for chrome to test what you're building? or the sign in is not complete yet?
+
+---
+
+you don't have to wait until the code hits main (which is QA) that's why we have ephemeral preview environments. And we get pr-*.ra1ze so you must use it to test there.
+
+---
+
+i think 584 preview is up, right?
+
+---
+
+<task-notification>
+<task-id>bi4ot62h0</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>C:\Users\madym\AppData\Local\Temp\claude\C--Users-madym-repos-apivo-news\5224ef45-f1db-43d0-83d0-6bee986d1aee\tasks\bi4ot62h0.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for the pr-584 preview to come up" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+it's okay I just merged 584, wait until it hits main and just test in QA... the preview bug is something someone else must fix. Where are we in terms of our frontend journey?
+
+---
+
+<task-notification>
+<task-id>buv2cttkc</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>C:\Users\madym\AppData\Local\Temp\claude\C--Users-madym-repos-apivo-news\5224ef45-f1db-43d0-83d0-6bee986d1aee\tasks\buv2cttkc.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for QA to deploy the fix" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+so where are we?
+
+---
+
+start F3, someone is already working on fixing the preview environments failure. don't you worry about it
+
+---
+
+carry on, and you have full authority to merge your Prs
+
+---
+
+<task-notification>
+<task-id>bywbg91k0</task-id>
+<tool-use-id>toolu_01UK5kHR6FFFn3uxqoPEPD34</tool-use-id>
+<output-file>C:\Users\madym\AppData\Local\Temp\claude\C--Users-madym-repos-apivo-news\5224ef45-f1db-43d0-83d0-6bee986d1aee\tasks\bywbg91k0.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for the terms page to appear on QA" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+sure, carry on and also tell me how many tokens did graft saved us on this one?
+
+---
+
+in the meantime I have 2 questions... WE only have one git tag (from 3 weeks ago) and we've built and generated a ton! worth having a check because it seems to me like we're missing semvers. And the second question is architetural... I get the modular monolith concept but seems to me like we might need to think or consider a monorepo with microservices? like news and cashback but also shared boudaries like auth, telemetry and so forth or am I too soon?
+
+---
+
+i'll tackle the deployment topology issues on a separate session, for now go back to the qa testing using laude for chrome you're supposed to do
+
+---
+
+wait, what? what is wrong with qa?
+
+---
+
+can we work in other new screens? whilst the whole deployment topology thing is being solved? Like I went to the mockups again and I'm mising the launcher screen! it's so cool in both desktop and mobile, why haven't we built it? isn't the logical "entrypoint"? or does it belong to EverOS? the same for the home screen.
+
+---
+
+can I see the profile screen?
+
+---
+
+the mobile view doesn't work... at leas when i tried via developer tools
