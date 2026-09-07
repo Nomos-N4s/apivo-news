@@ -1,4 +1,4 @@
-import type { EditorSession } from '../editorial/session';
+import type { Session } from '../editorial/session';
 import type { CashbackSource } from './api';
 
 /**
@@ -30,7 +30,7 @@ export interface OpsAccess {
   readonly blocked: boolean;
 }
 
-export function opsAccess(session: EditorSession, source: CashbackSource): OpsAccess {
+export function opsAccess(session: Session, source: CashbackSource): OpsAccess {
   const mayAct = session.authenticated && session.role === 'operator';
   const preview = source === 'fixture';
   return {

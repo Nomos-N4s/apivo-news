@@ -1,5 +1,11 @@
 /**
- * The editor identity behind the editorial screens.
+ * The identity behind every screen that is not anonymous.
+ *
+ * It began as the editor's and is no longer only that: the cashback pages
+ * take `session.token` from here to call the api as the member, and the
+ * operator queues read `session.role` from here to decide what may be
+ * pressed. Every name in this module was `editorSession…` until that had
+ * been true for long enough to mislead somebody.
  *
  * The approver is never anonymous: `article.approved_by` is NOT NULL and
  * migration 0002 additionally requires that account to hold the editor
@@ -8,7 +14,7 @@
  * cookie-backed session once per request, against the auth server, and
  * this module maps what it answered onto the shape the screens read.
  *
- * `editorSession()` is unchanged for its callers — still synchronous,
+ * `sessionOf()` is unchanged for its callers — still synchronous,
  * still taking the request — because the request object is the key the
  * middleware filed the resolved identity under. Resolution needs to write
  * cookies (a refreshed token has to land back in the browser) and a page
@@ -26,8 +32,8 @@
  */
 export type AccountRole = 'reader' | 'editor' | 'operator';
 
-/** The signed-in person, as the editorial screens need them. */
-export interface EditorSession {
+/** The signed-in person: an editor, an operator or a member. */
+export interface Session {
   readonly displayName: string;
   readonly email: string;
   /**
@@ -58,7 +64,7 @@ export interface EditorSession {
  * name is stating who is at the keyboard, and this value is what it says
  * when it does not know.
  */
-export const NO_EDITOR_SESSION: EditorSession = {
+export const NO_SESSION: Session = {
   displayName: '',
   email: '',
   role: 'reader',
@@ -123,10 +129,10 @@ function roleOf(user: SupabaseUserClaims): AccountRole {
  * person while every call to the editorial API went out unauthenticated
  * and came back 401. Either both are present or nobody is signed in.
  */
-export function editorSessionFrom(
+export function sessionFrom(
   user: SupabaseUserClaims | null | undefined,
   accessToken: string | null | undefined,
-): EditorSession {
+): Session {
   if (
     user === null ||
     user === undefined ||
@@ -134,7 +140,7 @@ export function editorSessionFrom(
     accessToken === undefined ||
     accessToken === ''
   ) {
-    return NO_EDITOR_SESSION;
+    return NO_SESSION;
   }
   const email = typeof user.email === 'string' ? user.email : '';
   return {
@@ -267,20 +273,20 @@ export function parseCookieHeader(header: string | null): { name: string; value:
  * Weak so an entry lives exactly as long as the request does; nothing has
  * to remember to clear it, and no session can outlive its exchange.
  */
-const RESOLVED = new WeakMap<Request, EditorSession>();
+const RESOLVED = new WeakMap<Request, Session>();
 
 /** Files the identity the middleware resolved, for this request only. */
-export function rememberEditorSession(request: Request, session: EditorSession): void {
+export function rememberSession(request: Request, session: Session): void {
   RESOLVED.set(request, session);
 }
 
 /**
- * The current editor session.
+ * The current session.
  *
  * An unresolved request answers "nobody is signed in" rather than
  * throwing: failing closed keeps a missing middleware from becoming a
  * screen that names an approver it cannot vouch for.
  */
-export function editorSession(request: Request): EditorSession {
-  return RESOLVED.get(request) ?? NO_EDITOR_SESSION;
+export function sessionOf(request: Request): Session {
+  return RESOLVED.get(request) ?? NO_SESSION;
 }

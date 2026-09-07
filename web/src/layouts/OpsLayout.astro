@@ -3,7 +3,7 @@ import '../styles/modernist.css';
 import OpsChrome, { type OpsQueueCounts, type OpsQueueKey } from '../components/OpsChrome.astro';
 import FixtureNotice from '../components/FixtureNotice.astro';
 import type { ReadingLanguage } from '../lib/reader/axes';
-import type { EditorSession } from '../lib/editorial/session';
+import type { Session } from '../lib/editorial/session';
 import type { CashbackApi } from '../lib/cashback/api';
 import { formatMoney } from '../lib/cashback/money';
 import { OPS_PATHS } from '../lib/cashback/paths';
@@ -25,7 +25,7 @@ import { cashbackStrings } from '../i18n/cashback';
 // apart.
 interface Props {
   lang: ReadingLanguage;
-  session: EditorSession;
+  session: Session;
   current: OpsQueueKey;
   title: string;
   fixtures: boolean;

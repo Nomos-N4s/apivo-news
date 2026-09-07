@@ -2,7 +2,7 @@ import { API_BASE_URL } from 'astro:env/server';
 import type { APIRoute } from 'astro';
 
 import { isCursor, isTourId, writeTourProgress } from '../../../lib/account/tours';
-import { resolveEditorSession } from '../../../lib/editorial/supabase';
+import { resolveSession } from '../../../lib/editorial/supabase';
 
 /**
  * Records tour progress on behalf of the page script.
@@ -45,7 +45,7 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   // first two steps of the editorial tour are on the sign-in screen, where
   // there is no account yet and localStorage is the only place progress
   // can live.
-  const session = await resolveEditorSession(request, cookies);
+  const session = await resolveSession(request, cookies);
   if (!session.authenticated || session.token === null) {
     return new Response(null, { status: 204 });
   }

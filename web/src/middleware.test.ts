@@ -1,16 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { APIContext, MiddlewareNext } from 'astro';
 import {
-  editorSession,
-  NO_EDITOR_SESSION,
-  rememberEditorSession,
-  type EditorSession,
+  sessionOf,
+  NO_SESSION,
+  rememberSession,
+  type Session,
 } from './lib/editorial/session';
-import { resolveEditorSession } from './lib/editorial/supabase';
+import { resolveSession } from './lib/editorial/supabase';
 import {
   CRAWLER_SIGNATURES,
   ROBOTS_TXT_BODY,
   X_ROBOTS_TAG_VALUE,
+  isAccessPath,
   isAuthenticatedPath,
   isCashbackPath,
   isEditorialPath,
@@ -22,9 +23,9 @@ import {
 // server, file the answer under the request — and a test of wiring must
 // see the resolver's answer arrive somewhere observable. The real
 // resolver is mocked so each test states what it answers; the WeakMap
-// and `editorSession()` stay real.
+// and `sessionOf()` stay real.
 vi.mock('./lib/editorial/supabase', () => ({
-  resolveEditorSession: vi.fn(),
+  resolveSession: vi.fn(),
 }));
 
 /** Builds the minimal request context the middleware reads. */
@@ -320,7 +321,7 @@ describe('isEditorialPath', () => {
 });
 
 describe('the editor identity', () => {
-  const ELENI: EditorSession = {
+  const ELENI: Session = {
     displayName: 'Eleni Papadaki',
     email: 'eleni@epiloyes.example',
     role: 'editor',
@@ -329,8 +330,8 @@ describe('the editor identity', () => {
   };
 
   beforeEach(() => {
-    vi.mocked(resolveEditorSession).mockReset();
-    vi.mocked(resolveEditorSession).mockResolvedValue(NO_EDITOR_SESSION);
+    vi.mocked(resolveSession).mockReset();
+    vi.mocked(resolveSession).mockResolvedValue(NO_SESSION);
   });
 
   it('marks an editorial response uncacheable — it carries one editor session', async () => {
@@ -343,14 +344,14 @@ describe('the editor identity', () => {
     expect(response.headers.get('cache-control')).toBeNull();
   });
 
-  it('files what the resolver answered, where editorSession() reads it', async () => {
+  it('files what the resolver answered, where sessionOf() reads it', async () => {
     // The assertion is on a real, resolved identity — a value the WeakMap
     // miss default can never equal, so this fails if the middleware never
     // ran, never resolved, or filed the answer under the wrong key.
-    vi.mocked(resolveEditorSession).mockResolvedValue(ELENI);
+    vi.mocked(resolveSession).mockResolvedValue(ELENI);
     const context = makeContext({ path: '/el/editor' });
     await onRequest(context, makeNext().next);
-    expect(editorSession(context.request)).toEqual(ELENI);
+    expect(sessionOf(context.request)).toEqual(ELENI);
   });
 
   it('overwrites a previously filed identity with what resolution answers now', async () => {
@@ -358,21 +359,21 @@ describe('the editor identity', () => {
     // distinguishable from the WeakMap default: only the middleware
     // actually running can replace Eleni with nobody.
     const context = makeContext({ path: '/el/editor' });
-    rememberEditorSession(context.request, ELENI);
+    rememberSession(context.request, ELENI);
     await onRequest(context, makeNext().next);
-    const session = editorSession(context.request);
+    const session = sessionOf(context.request);
     expect(session.authenticated).toBe(false);
     expect(session.token).toBeNull();
   });
 
   it('resolves once per editorial request, before the route renders', async () => {
     await run({ path: '/el/editor' });
-    expect(resolveEditorSession).toHaveBeenCalledTimes(1);
+    expect(resolveSession).toHaveBeenCalledTimes(1);
   });
 
   it('never pays the auth round trip on a reader page', async () => {
     await run({ path: '/el/munich' });
-    expect(resolveEditorSession).not.toHaveBeenCalled();
+    expect(resolveSession).not.toHaveBeenCalled();
   });
 });
 
@@ -455,6 +456,54 @@ describe('isCashbackPath', () => {
   it('still covers the editorial screens', () => {
     expect(isAuthenticatedPath('/el/editor/sources')).toBe(true);
     expect(isCashbackPath('/el/editor/sources')).toBe(false);
+  });
+});
+
+describe('isAccessPath', () => {
+  it.each([
+    '/el/signin',
+    '/de/signin',
+    '/el/register',
+    '/de/register',
+    '/auth',
+    '/auth/confirm',
+    '/auth/shell',
+  ])('recognises %s as needing an identity', (path) => {
+    expect(isAccessPath(path)).toBe(true);
+    expect(isAuthenticatedPath(path)).toBe(true);
+  });
+
+  it.each([
+    '/',
+    '/el/munich',
+    '/el/signinfo',
+    '/el/registered',
+    '/authors',
+    '/el/editor/signin',
+    '/el/munich/cashback/wallet',
+  ])('leaves %s to somebody else', (path) => {
+    expect(isAccessPath(path)).toBe(false);
+  });
+
+  /*
+   * The editorial sign-in is matched by isEditorialPath and always has
+   * been. It is named here so that a later tidy-up which folds the two
+   * sign-ins together has to argue with a test rather than with a comment.
+   */
+  it('leaves the editorial sign-in where it already was', () => {
+    expect(isAccessPath('/el/editor/signin')).toBe(false);
+    expect(isEditorialPath('/el/editor/signin')).toBe(true);
+    expect(isAuthenticatedPath('/el/editor/signin')).toBe(true);
+  });
+
+  it('resolves an identity on a sign-in page, and marks it unshareable', async () => {
+    const { response } = await run({ path: '/el/signin' });
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+  });
+
+  it('still leaves the front page paying for no round trip', async () => {
+    const { response } = await run({ path: '/el/munich' });
+    expect(response.headers.get('cache-control')).not.toBe('private, no-store');
   });
 });
 

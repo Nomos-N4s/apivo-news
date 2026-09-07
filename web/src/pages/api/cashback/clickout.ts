@@ -3,7 +3,7 @@ import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
 
 import { CashbackApiError, createCashbackApi } from '../../../lib/cashback/api';
 import { isSameOrigin } from '../../../lib/csrf';
-import { editorSession } from '../../../lib/editorial/session';
+import { sessionOf } from '../../../lib/editorial/session';
 
 /**
  * The click-out: the one place a member leaves for a shop.
@@ -34,7 +34,7 @@ export const POST: APIRoute = async ({ request, redirect, url }) => {
     return new Response('offer_id is required', { status: 400 });
   }
 
-  const session = editorSession(request);
+  const session = sessionOf(request);
   const api = createCashbackApi(API_BASE_URL, {
     appEnv: APP_ENV,
     token: session.token,

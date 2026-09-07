@@ -15,7 +15,7 @@ import type {
   WalletEntry,
   WalletTotals,
 } from '../../../../lib/cashback/types';
-import { editorSession } from '../../../../lib/editorial/session';
+import { sessionOf } from '../../../../lib/editorial/session';
 import { frontPagePath, parseAxes } from '../../../../lib/reader/axes';
 import { formatDateTime, formatItemDate } from '../../../../lib/reader/format';
 import { cashbackStrings, languageName } from '../../../../i18n/cashback';
@@ -70,7 +70,7 @@ const requested = Astro.url.searchParams.get('state');
 const active = FILTERS.find((filter) => filter.key === requested) ?? FILTERS[0]!;
 const requestedEntry = Astro.url.searchParams.get('entry');
 
-const session = editorSession(Astro.request);
+const session = sessionOf(Astro.request);
 
 let api: CashbackApi | null = null;
 let totals: WalletTotals | null = null;

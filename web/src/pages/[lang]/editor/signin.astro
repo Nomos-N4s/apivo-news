@@ -3,7 +3,7 @@ import Masthead from '../../../components/Masthead.astro';
 import ProductTour from '../../../components/ProductTour.astro';
 import ReaderLayout from '../../../layouts/ReaderLayout.astro';
 import { isSameOrigin } from '../../../lib/csrf';
-import { editorSession } from '../../../lib/editorial/session';
+import { sessionOf } from '../../../lib/editorial/session';
 import { editorialStrings } from '../../../lib/editorial/strings';
 import { authClient, authConfigured } from '../../../lib/editorial/supabase';
 import { DEFAULT_FRONT_PAGE, isReadingLanguage } from '../../../lib/reader/axes';
@@ -64,7 +64,7 @@ if (Astro.request.method === 'POST') {
 }
 
 // Read after the POST branch: signing out above invalidated it.
-const session = editorSession(Astro.request);
+const session = sessionOf(Astro.request);
 const signedOut = Astro.url.searchParams.get('signedout') !== null;
 ---
 

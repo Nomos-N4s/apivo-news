@@ -24,7 +24,7 @@ import type {
   WithdrawalRequest,
 } from '../../../../lib/cashback/types';
 import { isSameOrigin } from '../../../../lib/csrf';
-import { editorSession } from '../../../../lib/editorial/session';
+import { sessionOf } from '../../../../lib/editorial/session';
 import { frontPagePath, parseAxes } from '../../../../lib/reader/axes';
 import { formatItemDate } from '../../../../lib/reader/format';
 import { cashbackStrings } from '../../../../i18n/cashback';
@@ -61,7 +61,7 @@ const { lang, places } = axes;
 const slugs = places.map((place) => place.slug);
 const t = cashbackStrings(lang);
 
-const session = editorSession(Astro.request);
+const session = sessionOf(Astro.request);
 
 let api: CashbackApi | null = null;
 let totals: WalletTotals | null = null;

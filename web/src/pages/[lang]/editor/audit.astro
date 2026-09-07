@@ -11,7 +11,7 @@ import {
 } from '../../../lib/editorial/api';
 import { noticeForSignedOut, noticeForWithdrawal } from '../../../lib/editorial/notices';
 import { isSameOrigin } from '../../../lib/csrf';
-import { editorSession } from '../../../lib/editorial/session';
+import { sessionOf } from '../../../lib/editorial/session';
 import { editorialStrings } from '../../../lib/editorial/strings';
 import { authConfigured } from '../../../lib/editorial/supabase';
 import { findPlace, isReadingLanguage } from '../../../lib/reader/axes';
@@ -35,7 +35,7 @@ if (langSegment === undefined || !isReadingLanguage(langSegment)) {
 const lang = langSegment;
 const t = editorialStrings(lang);
 const reader = uiStrings(lang);
-const session = editorSession(Astro.request);
+const session = sessionOf(Astro.request);
 
 // The audit is read-only but not public: it lays out a named approver
 // beside a source's licence terms. With an auth provider configured, an

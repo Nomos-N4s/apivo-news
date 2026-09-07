@@ -1,7 +1,7 @@
 import { defineMiddleware, sequence } from 'astro:middleware';
 
-import { rememberEditorSession } from './lib/editorial/session';
-import { resolveEditorSession } from './lib/editorial/supabase';
+import { rememberSession } from './lib/editorial/session';
+import { resolveSession } from './lib/editorial/supabase';
 import { createUsageCounter } from './lib/usage';
 
 // The single crawler enforcement point (FR-013, research D6). Three fences,
@@ -160,18 +160,45 @@ export function isCashbackPath(pathname: string): boolean {
   );
 }
 
-/** Every path that needs a signed-in identity resolved before it renders. */
+/**
+ * Whether a path is one where somebody signs in or out, `/{lang}/signin`,
+ * `/{lang}/register`, or a route the auth provider sends them back to.
+ *
+ * These need an identity resolved for the opposite reason to the screens
+ * above. A cashback page resolves one so it can act as the member; these
+ * resolve one so they can tell that there already IS a member — a sign-in
+ * page that cannot see a session cannot send a signed-in person onward,
+ * cannot offer to sign them out, and would invite somebody who is already
+ * signed in to sign in again.
+ *
+ * `/auth/…` carries no language segment, in the company of `/go`, `/ops` and
+ * `/api`: it is a destination an auth provider is configured with rather than
+ * a page anybody reads, and one URL to register beats two.
+ */
+export function isAccessPath(pathname: string): boolean {
+  return (
+    /^\/[^/]+\/(?:signin|register)(?:\/|$)/.test(pathname) || /^\/auth(?:\/|$)/.test(pathname)
+  );
+}
+
+/**
+ * Every path that needs a signed-in identity resolved before it renders.
+ *
+ * Reader pages are deliberately absent and must stay absent. Resolving an
+ * identity is a round trip to the auth server, and the front page is the
+ * overwhelming majority of this site's requests.
+ */
 export function isAuthenticatedPath(pathname: string): boolean {
-  return isEditorialPath(pathname) || isCashbackPath(pathname);
+  return isEditorialPath(pathname) || isCashbackPath(pathname) || isAccessPath(pathname);
 }
 
 /**
  * Resolves the signed-in identity once per request, before anything renders.
  *
- * The screens read it back through `editorSession()`. It happens here
+ * The screens read it back through `sessionOf()`. It happens here
  * rather than in each page because resolving a session can refresh the
  * access token, and only middleware can write the new one back to the
- * browser — a page that cannot persist a refresh signs the editor out
+ * browser — a page that cannot persist a refresh signs the person out
  * roughly every hour.
  *
  * The response is marked uncacheable for the same reason auth cookies
@@ -184,9 +211,9 @@ const resolveEditorIdentity = defineMiddleware(async (context, next) => {
   if (!isAuthenticatedPath(context.url.pathname)) {
     return next();
   }
-  rememberEditorSession(
+  rememberSession(
     context.request,
-    await resolveEditorSession(context.request, context.cookies),
+    await resolveSession(context.request, context.cookies),
   );
   const response = await next();
   response.headers.set('Cache-Control', 'private, no-store');

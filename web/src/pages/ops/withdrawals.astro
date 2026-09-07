@@ -12,7 +12,7 @@ import { opsAccess } from '../../lib/cashback/ops-guard';
 import { opsLanguage } from '../../lib/cashback/ops-language';
 import type { WithdrawalForApproval } from '../../lib/cashback/types';
 import { isSameOrigin } from '../../lib/csrf';
-import { editorSession } from '../../lib/editorial/session';
+import { sessionOf } from '../../lib/editorial/session';
 import { formatItemDate } from '../../lib/reader/format';
 import { cashbackStrings } from '../../i18n/cashback';
 
@@ -31,7 +31,7 @@ import { cashbackStrings } from '../../i18n/cashback';
 // read, because they are the one who does not get their money.
 const lang = opsLanguage(Astro.url);
 const t = cashbackStrings(lang);
-const session = editorSession(Astro.request);
+const session = sessionOf(Astro.request);
 
 let api: CashbackApi | null = null;
 let items: readonly WithdrawalForApproval[] = [];
