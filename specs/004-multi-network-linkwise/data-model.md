@@ -374,7 +374,7 @@ does not belong to; assert refusal by SQLSTATE `23503` naming
 |---|---|
 | `GetClickByRef` | Takes the reporting network; returns the click only if `click.network_id` matches. A reference belonging to another network's click returns **no row**, and the caller queues it as unattributed with a distinguishable reason (FR-098) |
 | `ReportsAwaitingCredit` | Unchanged. It excludes by `(network_id, external_id)` and correctly says nothing about clicks |
-| Unattributed queue | Gains a reason discriminating "no click has this reference" from "that reference belongs to another network" (FR-098), and a network filter (FR-102) |
+| Unattributed queue | Gains a reason discriminating "no click has this reference" from "that reference belongs to another network" (FR-098), and a network filter (FR-102). The reason landed in 0038 (#581) as six causes, not two: `no_reference`, `unknown_reference`, `foreign_network`, `click_already_credited`, `foreign_currency` and `route_cannot_attribute` — stored by the queueing statement and frozen with the rest of the observation. The network filter is T226 |
 | Catalogue read | Unchanged. It already reads through the preferred route |
 
 ## Generated code
