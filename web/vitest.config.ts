@@ -88,6 +88,10 @@ export default getViteConfig({
         // the libs are: it decides where a reader lands and what is
         // remembered of their choice.
         'src/pages/go.ts',
+        // The click-out, for the same reason: it decides where a member
+        // is sent both on the way out and on the way back, and the way
+        // back was an open redirect for as long as nothing measured it.
+        'src/pages/api/cashback/clickout.ts',
       ],
       // Constitution: TypeScript coverage minimum is 80%, enforced in CI —
       // the build fails below these thresholds.
