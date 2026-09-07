@@ -69,12 +69,23 @@ func TestCashbackEarningsRejectIllegalWrites(t *testing.T) {
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
 				// A real click, real evidence, wrong member: the citation is
 				// present but it is evidence of the wrong thing. The report
-				// is a fresh one, so the exactly-once index cannot be what
-				// rejects this - the ownership key has to be.
+				// is a fresh one and so is the click, so neither the
+				// exactly-once index nor the one-credit-per-click index
+				// (0034) can be what rejects this - the ownership key has
+				// to be.
 				var otherAccount string
 				if err := tx.QueryRow(ctx,
 					`insert into account (email, display_name) values ($1, 'Other Member') returning id`,
 					"other-"+f.suffix+"@example.test").Scan(&otherAccount); err != nil {
+					return err
+				}
+				var freshClick string
+				if err := tx.QueryRow(ctx,
+					`insert into cashback.click
+					     (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot, context_digest)
+					 values ($1, $2, $3, '{"rate_kind":"percent","rate_bps":400,"member_share_bps":5000}'::jsonb, 5000, 'ctx-digest')
+					 returning id`,
+					randomSuffix(t)+randomSuffix(t), f.accountID, f.offerID).Scan(&freshClick); err != nil {
 					return err
 				}
 				var otherReport string
@@ -91,7 +102,7 @@ func TestCashbackEarningsRejectIllegalWrites(t *testing.T) {
 				_, err := tx.Exec(ctx,
 					`insert into cashback.entry (brand_id, account_id, network_transaction_id, click_id, state, amount_minor, currency)
 					 values ('fixture', $1, $2, $3, 'pending', 250, 'EUR')`,
-					otherAccount, otherReport, f.clickID)
+					otherAccount, otherReport, freshClick)
 				return err
 			},
 			wantCode: codeForeignKeyViolation,
@@ -876,6 +887,58 @@ func TestOneReportEarnsOneCreditAndMayBeRejectedAgainstIt(t *testing.T) {
 	}); !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.UniqueViolation || pgErr.ConstraintName != "entry_reversed_at_most_once" {
 		t.Fatalf("a second reversal of one credit = %v, want a unique violation on entry_reversed_at_most_once", err)
 	}
+}
+
+// TestOneClickBacksOneCreditAndMayBeReversedAgainstIt is 0034 (spec 004,
+// T200/T201): a second CREDIT citing a credited click through a different
+// report is refused by name, and a reversal citing that click is not.
+func TestOneClickBacksOneCreditAndMayBeReversedAgainstIt(t *testing.T) {
+	t.Parallel()
+	tx := beginTx(t)
+	ctx := context.Background()
+	f := seedCashbackEntry(t, tx)
+
+	// A second report echoing the same reference: what a second network, or
+	// one network reporting one purchase twice, would store.
+	var secondReport string
+	if err := tx.QueryRow(ctx,
+		`insert into cashback.network_transaction
+		     (network_id, network_account_id, external_id, click_ref, status_raw, status,
+		      sale_amount_minor, commission_minor, currency, transacted_at,
+		      query_window_start, query_window_end, raw_payload)
+		 values ($1, $2, $3, $4, 'approved', 'confirmed', 10000, 500, 'EUR', now(),
+		         now() - interval '1 day', now(), '{"id":"txn-again"}'::jsonb)
+		 returning id`,
+		f.networkID, f.networkAccountID, "again-"+f.externalID, f.clickRef,
+	).Scan(&secondReport); err != nil {
+		t.Fatalf("seeding the second report: %v", err)
+	}
+
+	// A second credit on the same click, through the second report:
+	// entry_one_per_report is satisfied, entry_click_id_idx refuses.
+	var pgErr *pgconn.PgError
+	if err := refused(ctx, tx, func(sp pgx.Tx) error {
+		_, err := sp.Exec(ctx,
+			`insert into cashback.entry
+			     (brand_id, account_id, network_transaction_id, click_id, state, amount_minor, currency)
+			 values ('fixture', $1, $2, $3, 'pending', 250, 'EUR')`,
+			f.accountID, secondReport, f.clickID)
+		return err
+	}); !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.UniqueViolation || pgErr.ConstraintName != "entry_click_id_idx" {
+		t.Fatalf("a second credit on one click = %v, want a unique violation on entry_click_id_idx", err)
+	}
+
+	// A reversal citing the credit's own click: accepted, because that is
+	// the click every reversal of this credit has to cite.
+	var reversal string
+	if err := tx.QueryRow(ctx,
+		`insert into cashback.entry
+		     (brand_id, account_id, network_transaction_id, click_id, state, amount_minor, currency, reversal_of_id)
+		 values ('fixture', $1, $2, $3, 'reversed', 250, 'EUR', $4) returning id`,
+		f.accountID, secondReport, f.clickID, f.entryID).Scan(&reversal); err != nil {
+		t.Fatalf("a reversal citing the credit's own click was refused: %v", err)
+	}
+
 }
 
 // refused runs one statement expected to fail under a savepoint, so the
