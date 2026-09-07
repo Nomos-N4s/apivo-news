@@ -261,6 +261,33 @@ func (j *theJourney) reports(t *testing.T, ref string, status networks.Status) u
 // reportsIn is the same in a currency of the case's choosing.
 func (j *theJourney) reportsIn(t *testing.T, ref string, status networks.Status, currency string) uuid.UUID {
 	t.Helper()
+	return j.reportsOn(t, j.networkID, j.publisher, ref, status, currency)
+}
+
+// anotherNetwork seeds a second network with a publisher account on it, and
+// answers both: the network a retailer is also on, whose reports may cite
+// references it did not issue (FR-096).
+func (j *theJourney) anotherNetwork(t *testing.T) (network string, publisher pgtype.UUID) {
+	t.Helper()
+	network = "journey_other_" + tag(t)
+	if _, err := j.tx.Exec(j.ctx, `
+		insert into cashback.network (id, display_name, click_ref_param, max_query_window_days, rate_limit_per_minute, active)
+		values ($1, 'The Other Journey Network', 'ref', 31, 300, true)`, network); err != nil {
+		t.Fatalf("seeding the other network: %v", err)
+	}
+	if err := j.tx.QueryRow(j.ctx, `
+		insert into cashback.network_account (network_id, external_publisher_id, credential_ref, active)
+		values ($1, 'publisher-2', 'config:networks.journey_other.credential', true)
+		returning id`, network).Scan(&publisher); err != nil {
+		t.Fatalf("seeding the other publisher account: %v", err)
+	}
+	return network, publisher
+}
+
+// reportsOn stores what a network of the case's choosing said about a
+// purchase, citing the reference it gives.
+func (j *theJourney) reportsOn(t *testing.T, network string, publisher pgtype.UUID, ref string, status networks.Status, currency string) uuid.UUID {
+	t.Helper()
 	at := time.Now().Add(-time.Hour)
 	var id uuid.UUID
 	if err := j.tx.QueryRow(j.ctx, `
@@ -270,7 +297,7 @@ func (j *theJourney) reportsIn(t *testing.T, ref string, status networks.Status,
 			transacted_at, retrieved_at, query_window_start, query_window_end, raw_payload)
 		values ($1, $2, $3, $4, $5, $5, $6, $7, $12, $8, now(), $9, $10, $11)
 		returning id`,
-		j.networkID, j.publisher, "JOURNEY-"+tag(t), ref, string(status),
+		network, publisher, "JOURNEY-"+tag(t), ref, string(status),
 		reportedSaleMinor, reportedCommission,
 		at, at.Add(-48*time.Hour), at.Add(48*time.Hour), []byte(`{"transaction_id":"JOURNEY"}`), currency,
 	).Scan(&id); err != nil {

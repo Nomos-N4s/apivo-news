@@ -350,6 +350,59 @@ func TestAReportInACurrencyTheMemberCannotBePaidInIsQueued(t *testing.T) {
 	j.wantBalances(t, 0, 0, 0)
 }
 
+// TestAReferenceEchoedByAnotherNetworkIsQueuedAndTheIssuingNetworkStillCredits
+// is FR-096 end to end (spec 004, T206). A retailer on two networks, and a
+// member who clicked out through one of them. The OTHER network's report
+// citing that reference is queued for an operator and credits nothing; the
+// issuing network's report of the same reference credits once, on the
+// click, as it always did. Without the click's network the first report to
+// arrive would have won, whichever network sent it.
+func TestAReferenceEchoedByAnotherNetworkIsQueuedAndTheIssuingNetworkStillCredits(t *testing.T) {
+	t.Parallel()
+	j := begin(t)
+	j.seed(t)
+	click := j.clickOut(t)
+	other, otherPublisher := j.anotherNetwork(t)
+	foreign := j.reportsOn(t, other, otherPublisher, click.Ref.Ref(), networks.StatusPending, "EUR")
+	job := j.lifecycle(t, earnings.HoldRules{})
+
+	queued := func(t *testing.T, report uuid.UUID) int {
+		t.Helper()
+		var n int
+		if err := j.tx.QueryRow(j.ctx, `
+			select count(*) from cashback.unattributed_transaction where network_transaction_id = $1`, report).Scan(&n); err != nil {
+			t.Fatalf("reading the queue: %v", err)
+		}
+		return n
+	}
+
+	if out := j.runs(t, job); out != (earnings.Outcome{Queued: 1}) {
+		t.Fatalf("the run did %+v, want the other network's report queued and nothing credited", out)
+	}
+	if entries := j.entriesCiting(t, foreign); len(entries) != 0 {
+		t.Fatalf("a report from a network that did not issue the click earned %+v", entries)
+	}
+	if n := queued(t, foreign); n != 1 {
+		t.Fatalf("the other network's report is in the unattributed queue %d times, want once", n)
+	}
+
+	// The issuing network's own report of the purchase: the sibling that
+	// must still credit normally, on the click the reference names.
+	own := j.reports(t, click.Ref.Ref(), networks.StatusPending)
+	if out := j.runs(t, job); out != (earnings.Outcome{Credited: 1}) {
+		t.Fatalf("the run did %+v, want the issuing network's report credited", out)
+	}
+	if got := j.theOneEntryCiting(t, own); got.State != string(earnings.StatePending) {
+		t.Errorf("the issuing network's credit is %s, want pending", got.State)
+	}
+	if n := queued(t, own); n != 0 {
+		t.Errorf("the issuing network's report is in the unattributed queue %d time(s), want none", n)
+	}
+	if out := j.runs(t, job); out != (earnings.Outcome{}) {
+		t.Fatalf("a third run did %+v, want nothing", out)
+	}
+}
+
 // TestAReportDeclinedBeforeCreditMovesNoMoney. Crediting it only to reverse
 // it would move money twice to say nothing.
 func TestAReportDeclinedBeforeCreditMovesNoMoney(t *testing.T) {

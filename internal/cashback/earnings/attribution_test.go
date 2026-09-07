@@ -52,6 +52,13 @@ type fakeUnmatched struct {
 	asked  pgtype.UUID
 	writes int
 	row    store.RecordUnmatchedReferenceRow
+	// foreignRow makes the foreign-network statement answer a row; without
+	// it that statement answers no rows, as it does for a reference nobody
+	// minted. Its writes are counted apart from the unmatched statement's,
+	// because which statement wrote the row is the whole of what a case
+	// about it asserts.
+	foreignRow    bool
+	foreignWrites int
 }
 
 func (f *fakeUnmatched) RecordUnmatchedReference(_ context.Context, id pgtype.UUID) (store.RecordUnmatchedReferenceRow, error) {
@@ -88,6 +95,28 @@ func (f *fakeUnmatched) RecordCreditedClickReference(ctx context.Context, id pgt
 func (f *fakeUnmatched) RecordForeignCurrencyReference(ctx context.Context, id pgtype.UUID) (store.RecordForeignCurrencyReferenceRow, error) {
 	row, err := f.RecordUnmatchedReference(ctx, id)
 	return store.RecordForeignCurrencyReferenceRow(row), err
+}
+
+// RecordForeignNetworkReference answers a row only when a case says the
+// reference is another network's click's; otherwise no rows, as the
+// statement answers for a reference nobody minted.
+func (f *fakeUnmatched) RecordForeignNetworkReference(_ context.Context, id pgtype.UUID) (store.RecordForeignNetworkReferenceRow, error) {
+	f.foreignWrites++
+	switch {
+	case f.err != nil:
+		return store.RecordForeignNetworkReferenceRow{}, f.err
+	case !f.foreignRow:
+		return store.RecordForeignNetworkReferenceRow{}, pgx.ErrNoRows
+	}
+	row := f.row
+	row.NetworkTransactionID = id
+	if !row.ID.Valid {
+		row.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	}
+	if !row.DetectedAt.Valid {
+		row.DetectedAt = pgtype.Timestamptz{Time: detectedAt, Valid: true}
+	}
+	return store.RecordForeignNetworkReferenceRow(row), nil
 }
 
 // reported is a reference a network echoed back.
@@ -181,6 +210,42 @@ func TestAReferenceNamingNothingIsQueuedRatherThanRefused(t *testing.T) {
 	}
 	if uuid.UUID(unmatched.asked.Bytes) != reportID {
 		t.Errorf("queued report %v, want %v", uuid.UUID(unmatched.asked.Bytes), reportID)
+	}
+}
+
+// TestAReferenceAnotherNetworkIssuedIsQueuedThroughItsOwnStatement is
+// FR-098's half of FR-096. Under the reporting network the reference names
+// nothing; the unmatched statement, whose predicate is that NO click carries
+// the reference, writes nothing; the foreign-network statement then does.
+// The report is queued and announced exactly once, and the two statements
+// each ran once - which statement wrote the row is, until the queue carries
+// a reason, the only record of why.
+func TestAReferenceAnotherNetworkIssuedIsQueuedThroughItsOwnStatement(t *testing.T) {
+	t.Parallel()
+
+	reportID, rowID := uuid.New(), uuid.New()
+	unmatched := &fakeUnmatched{noRows: true, foreignRow: true,
+		row: store.RecordUnmatchedReferenceRow{ID: pgtype.UUID{Bytes: rowID, Valid: true}}}
+	out := &fakeOutbox{}
+
+	attributed, err := matcherOver(t, &fakeClicks{err: clickoutMiss()}, unmatched).
+		Match(t.Context(), out, earnings.Report{ID: reportID, Ref: reported("a-reference-another-network-issued"), Network: onNetwork})
+	if err != nil {
+		t.Fatalf("Match(): %v", err)
+	}
+
+	if attributed.Matched {
+		t.Error("a reference another network's click carries was reported as matched")
+	}
+	if attributed.Queued != rowID {
+		t.Errorf("Queued = %v, want the queue row %v", attributed.Queued, rowID)
+	}
+	if unmatched.writes != 1 || unmatched.foreignWrites != 1 {
+		t.Errorf("the unmatched statement ran %d time(s) and the foreign-network one %d, want once each",
+			unmatched.writes, unmatched.foreignWrites)
+	}
+	if announced := out.only(t, earnings.TypeTransactionUnattributed); announced.Subject != reportID.String() {
+		t.Errorf("the event is about %q, want the report %s", announced.Subject, reportID)
 	}
 }
 
