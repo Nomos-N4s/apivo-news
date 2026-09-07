@@ -3759,6 +3759,63 @@
           }
         }
       }
+    },
+    "/api/v1/cashback/ops/networks": {
+      "get": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "listConnectedNetworks",
+        "summary": "List the networks this deployment is connected to",
+        "description": "What the deployment is connected to, and why it might be quiet (T228).\n\nA network that reads nothing looks the same in the logs whatever the cause, and there are at least five: the binary ships no adapter for it (`driver_shipped` false), nobody set its credential (`credential_present` false), the network row or the account row is switched off (`active` false), its `backfill_from` is in the future, or it is deliberately behind by `reporting_lag_minutes`. Each of those renders differently here.\n\nNo credential ever appears - not a value, not a prefix, not a length. `credential_ref` is the NAME of a key and `credential_present` is a boolean (ADR-0003).\n\nThis endpoint does not report the last poll or its outcome. Nothing in this deployment stores that today; recording it is tracked separately.\n\nThe whole /api/v1/cashback/ops/ prefix sits behind one auth gate, so a request without a usable token answers 401 whether or not the path exists. The prefix is unmounted entirely when cashback is off, and then answers 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every seeded network, ordered by id, each with its publisher accounts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectedNetworkList"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A query parameter was supplied; this endpoint takes none."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No usable bearer token."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The token's account does not hold the operator role."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -7296,6 +7353,143 @@
               "null"
             ],
             "description": "Pass back as `cursor` for the next page; null on the last."
+          }
+        }
+      },
+      "ConnectedPublisherAccount": {
+        "type": "object",
+        "description": "One publisher account at a network, and how far its sweeps have read.",
+        "required": [
+          "account_id",
+          "external_publisher_id",
+          "credential_ref",
+          "credential_present",
+          "cursor_at",
+          "trailing_cursor_at",
+          "backfill_from",
+          "reports_currency",
+          "active"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "external_publisher_id": {
+            "type": "string",
+            "description": "The identifier the network itself uses for this publisher."
+          },
+          "credential_ref": {
+            "type": "string",
+            "description": "The NAME OF A KEY and never a value (ADR-0003) - the string to grep an env file for. Credentials never enter the database."
+          },
+          "credential_present": {
+            "type": "boolean",
+            "description": "Whether that key has anything in it. A boolean and only ever a boolean: never a prefix, never a length, never a redacted form, each of which is a fact about a secret. It is true when this network's whole configuration block is complete, which is the same check that decides whether cashback mounts at all - so this answer and that decision cannot disagree."
+          },
+          "cursor_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "How far forward transactions have been fully persisted. Null on an account that has never completed a window, which on a freshly connected network is ordinary rather than a fault."
+          },
+          "trailing_cursor_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "How far the slower re-read has walked. It can never run ahead of cursor_at."
+          },
+          "backfill_from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Where the first sweep starts. Set in the future, nothing is read until the clock reaches it - one of the ways a network is correctly configured and completely silent."
+          },
+          "reports_currency": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The currency this account's reports are denominated in, where the network does not say per transaction."
+          },
+          "active": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ConnectedNetwork": {
+        "type": "object",
+        "description": "One seeded network and what this deployment can do with it. A network reading nothing looks identical in the logs whatever the cause; the fields here are what tell those causes apart.",
+        "required": [
+          "network_id",
+          "display_name",
+          "click_ref_param",
+          "max_query_window_days",
+          "rate_limit_per_minute",
+          "reporting_lag_minutes",
+          "active",
+          "driver_shipped",
+          "accounts"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "network_id": {
+            "type": "string",
+            "description": "The stable, human-typed id that appears in NETWORKS and in operator conversation."
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "click_ref_param": {
+            "type": "string",
+            "description": "The query parameter a click reference rides in. A wrong one is the likeliest cause of a report that matches no click, and the remedy is an UPDATE on this column - so it is readable here rather than only through psql."
+          },
+          "max_query_window_days": {
+            "type": "integer"
+          },
+          "rate_limit_per_minute": {
+            "type": "integer"
+          },
+          "reporting_lag_minutes": {
+            "type": "integer",
+            "description": "How far behind now this network's forward sweep deliberately stays. Non-zero is why a sale made minutes ago is not here yet: it is the difference between behind-on-purpose and stuck."
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "driver_shipped": {
+            "type": "boolean",
+            "description": "Whether this binary has an adapter for this network. False is FR-092's defect made visible - a row seeded for a driver the server cannot poll, which it refuses to start against."
+          },
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectedPublisherAccount"
+            },
+            "description": "Empty where the network is seeded and connect-network was never run for a publisher - itself one of the reasons a deployment polls nothing."
+          }
+        }
+      },
+      "ConnectedNetworkList": {
+        "type": "object",
+        "description": "Every network this deployment is connected to. Unpaginated: the set is bounded by what an operator seeded and what NETWORKS names, not by member activity.",
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectedNetwork"
+            }
           }
         }
       }

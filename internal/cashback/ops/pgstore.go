@@ -239,6 +239,56 @@ func (s *PGStore) WithdrawalsAwaitingApproval(ctx context.Context, after Withdra
 	return queue, nil
 }
 
+// ConnectedNetworks returns every seeded network with its publisher
+// accounts, grouped (T228).
+//
+// It fills neither DriverShipped nor CredentialPresent: both are facts about
+// the build and the environment rather than about a row, and this store has
+// no business knowing either. The composition root wraps this and answers
+// them - see cmd/apivo, where the registry and the configuration live.
+//
+// The query LEFT JOINs, so a network with no publisher account arrives as one
+// row with a null account. That is a real state and it is preserved here as
+// a network with an empty Accounts slice rather than dropped.
+func (s *PGStore) ConnectedNetworks(ctx context.Context) ([]ConnectedNetwork, error) {
+	rows, err := store.New(s.db).ListConnectedNetworks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ops: reading the connected networks: %w", err)
+	}
+	// Ordered by network then publisher, so one pass groups them and the
+	// output keeps the order the query chose.
+	networks := make([]ConnectedNetwork, 0, len(rows))
+	for _, row := range rows {
+		if len(networks) == 0 || networks[len(networks)-1].ID != row.NetworkID {
+			networks = append(networks, ConnectedNetwork{
+				ID:                  row.NetworkID,
+				DisplayName:         row.DisplayName,
+				ClickRefParam:       row.ClickRefParam,
+				MaxQueryWindowDays:  int(row.MaxQueryWindowDays),
+				RateLimitPerMinute:  int(row.RateLimitPerMinute),
+				ReportingLagMinutes: int(row.ReportingLagMinutes),
+				Active:              row.NetworkActive,
+			})
+		}
+		if !row.AccountID.Valid {
+			// The LEFT JOIN's null side: seeded, with nobody connected.
+			continue
+		}
+		current := &networks[len(networks)-1]
+		current.Accounts = append(current.Accounts, ConnectedAccount{
+			ID:                  uuid.UUID(row.AccountID.Bytes),
+			ExternalPublisherID: row.ExternalPublisherID.String,
+			CredentialRef:       row.CredentialRef.String,
+			CursorAt:            row.CursorAt.Time,
+			TrailingCursorAt:    row.TrailingCursorAt.Time,
+			BackfillFrom:        row.BackfillFrom.Time,
+			ReportsCurrency:     row.ReportsCurrency.String,
+			Active:              row.AccountActive.Bool,
+		})
+	}
+	return networks, nil
+}
+
 // Verify records that a named operator proved a destination belongs to its
 // member, and announces it, in one transaction (FR-051, FR-061).
 //

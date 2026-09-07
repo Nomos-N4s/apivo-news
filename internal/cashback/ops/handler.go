@@ -58,6 +58,10 @@ type Handler struct {
 	// the payout module's: every statement there is narrowed on the
 	// account, and an operator has no account to narrow on.
 	awaiting WithdrawalLister
+	// networks answers what this deployment is connected to (T228). Not the
+	// store alone: two of its fields are facts about the build and the
+	// environment, which only the composition root may know.
+	networks NetworkInspector
 	auth     OperatorAuthenticator
 	// allow is the 405 classifier, derived from routes() in NewHandler so
 	// it cannot drift from what is actually registered.
@@ -68,11 +72,11 @@ type Handler struct {
 // composition root to mount. Every route sits behind the requireOperator
 // gate - authentication wraps the whole table, so a future route cannot be
 // added unauthenticated by omission.
-func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, refusals WithdrawalRefuser, settlements WithdrawalSettler, reconciliation ReconciliationStore, held HeldReviewer, destinations DestinationVerifier, awaiting WithdrawalLister, auth OperatorAuthenticator) http.Handler {
+func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, refusals WithdrawalRefuser, settlements WithdrawalSettler, reconciliation ReconciliationStore, held HeldReviewer, destinations DestinationVerifier, awaiting WithdrawalLister, networks NetworkInspector, auth OperatorAuthenticator) http.Handler {
 	h := &Handler{
 		log: log, store: store, approvals: approvals, refusals: refusals,
 		settlements: settlements, reconciliation: reconciliation, held: held,
-		destinations: destinations, awaiting: awaiting, auth: auth,
+		destinations: destinations, awaiting: awaiting, networks: networks, auth: auth,
 	}
 	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
@@ -95,6 +99,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		"GET " + Prefix + "unattributed":               h.listUnattributed,
 		"POST " + Prefix + "unattributed/{id}/dismiss": h.dismissUnattributed,
+		"GET " + Prefix + "networks":                   h.listNetworks,
 		"GET " + Prefix + "withdrawals":                h.listWithdrawalsAwaitingApproval,
 		"POST " + Prefix + "withdrawals/{id}/approve":  h.approveWithdrawal,
 		"POST " + Prefix + "withdrawals/{id}/reject":   h.rejectWithdrawal,

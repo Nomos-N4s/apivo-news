@@ -79,7 +79,7 @@ func awaitingRequest(t *testing.T, a ops.WithdrawalLister, path string) *httptes
 	rec := httptest.NewRecorder()
 	ops.NewHandler(discardLogger(), &pageStore{}, unreachableApprover{}, unreachableRefuser{},
 		unreachableSettler{}, unreachableReconciliation{}, unreachableHeld{}, unreachableDestinations{},
-		a, stubAuth{op: anOperator}).ServeHTTP(rec, req)
+		a, unreachableNetworks{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
 	return rec
 }
 
@@ -297,7 +297,7 @@ func TestTheQueueNeedsAnOperator(t *testing.T) {
 	rec := httptest.NewRecorder()
 	ops.NewHandler(discardLogger(), &pageStore{}, unreachableApprover{}, unreachableRefuser{},
 		unreachableSettler{}, unreachableReconciliation{}, unreachableHeld{}, unreachableDestinations{},
-		unreachableAwaiting{}, stubAuth{err: ops.ErrUnauthenticated}).ServeHTTP(rec, req)
+		unreachableAwaiting{}, unreachableNetworks{}, stubAuth{err: ops.ErrUnauthenticated}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
