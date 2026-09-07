@@ -1995,6 +1995,218 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "description": "Brings a per-pull-request preview stack up beneath the preview domain, and tears it down again.",
       "technology": "docker compose"
     }
+  ],
+  "flows": [
+    {
+      "id": "flow-click-to-credit",
+      "name": "A click becomes a credit",
+      "diagramOf": "cmd-apivo",
+      "steps": [
+        {
+          "type": "introduction",
+          "description": "A member opens a merchant page and clicks through to the retailer.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        },
+        {
+          "type": "outgoing",
+          "description": "Reads the published rate band and snapshots the member's share onto the click, so a later change never reaches back.",
+          "originId": "cashback-clickout",
+          "targetId": "cashback-catalogue",
+          "viaId": "clickout-to-catalogue"
+        },
+        {
+          "type": "outgoing",
+          "description": "Builds the network's deeplink and mints the click reference the network will report back.",
+          "originId": "cashback-clickout",
+          "targetId": "cashback-networks",
+          "viaId": "clickout-to-networks"
+        },
+        {
+          "type": "information",
+          "description": "Days or weeks pass. The poller reads each network inside its window, minus that network's reporting lag, and stores the evidence verbatim.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        },
+        {
+          "type": "outgoing",
+          "description": "Takes the reported commission and the evidence row the sweep stored.",
+          "originId": "cashback-earnings",
+          "targetId": "cashback-networks",
+          "viaId": "earnings-to-networks"
+        },
+        {
+          "type": "outgoing",
+          "description": "Matches the report's click reference to exactly one click. No match means the unattributed queue, never a credit.",
+          "originId": "cashback-earnings",
+          "targetId": "cashback-clickout",
+          "viaId": "earnings-to-clickout"
+        },
+        {
+          "type": "outgoing",
+          "description": "Divides the commission at the snapshotted rate and posts the transfer: the member's share to their held account, the remainder to the house.",
+          "originId": "cashback-earnings",
+          "targetId": "cashback-wallet",
+          "viaId": "earnings-to-wallet"
+        },
+        {
+          "type": "conclusion",
+          "description": "The member's balance moved because a network said so and a click proved whose it was. No other path reaches the ledger.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        }
+      ]
+    },
+    {
+      "id": "flow-withdrawal",
+      "name": "A withdrawal leaves the business",
+      "diagramOf": "cmd-apivo",
+      "steps": [
+        {
+          "type": "introduction",
+          "description": "A member asks to be paid, at or above the twenty-euro threshold.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        },
+        {
+          "type": "outgoing",
+          "description": "Selects the confirmed entries that cover the request and moves them to reserved, so the same money cannot be claimed twice.",
+          "originId": "cashback-payout",
+          "targetId": "cashback-earnings",
+          "viaId": "payout-to-earnings"
+        },
+        {
+          "type": "outgoing",
+          "description": "Posts the reservation against the member's stage accounts.",
+          "originId": "cashback-payout",
+          "targetId": "cashback-wallet",
+          "viaId": "payout-to-wallet"
+        },
+        {
+          "type": "outgoing",
+          "description": "A named operator approves it. The approval row IS the approval — there is no path that pays without one (C-4).",
+          "originId": "cashback-ops",
+          "targetId": "cashback-payout",
+          "viaId": "ops-to-payout"
+        },
+        {
+          "type": "outgoing",
+          "description": "The manual SEPA rail makes the transfer under an idempotency key derived from the request, so a retry cannot pay twice (C-5).",
+          "originId": "cashback-payout",
+          "targetId": "payout-manual",
+          "viaId": "payout-to-manual"
+        },
+        {
+          "type": "conclusion",
+          "description": "Money left the business exactly once, against a named human, traceable back to the click that earned it.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        }
+      ]
+    },
+    {
+      "id": "flow-operator-queues",
+      "name": "An operator answers a queue",
+      "diagramOf": "cmd-apivo",
+      "steps": [
+        {
+          "type": "introduction",
+          "description": "Four queues, four questions, and every answer records who gave it.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        },
+        {
+          "type": "outgoing",
+          "description": "Whose click was this report, if anyone's? Resolving it attributes the transaction; dismissing it records why.",
+          "originId": "cashback-ops",
+          "targetId": "cashback-networks",
+          "viaId": "ops-to-networks"
+        },
+        {
+          "type": "outgoing",
+          "description": "Should this held entry be released to the member or rejected? A rejection is a second entry born reversed, never an edit (C-9).",
+          "originId": "cashback-ops",
+          "targetId": "cashback-earnings",
+          "viaId": "ops-to-earnings"
+        },
+        {
+          "type": "outgoing",
+          "description": "Is this payout approved, and has it settled?",
+          "originId": "cashback-ops",
+          "targetId": "cashback-payout",
+          "viaId": "ops-to-payout"
+        },
+        {
+          "type": "conclusion",
+          "description": "No decision that moves or withholds money is anonymous, and none of them can be rewritten afterwards.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        }
+      ]
+    },
+    {
+      "id": "flow-outbox",
+      "name": "Every decision is announced",
+      "diagramOf": "cmd-apivo",
+      "steps": [
+        {
+          "type": "introduction",
+          "description": "Modules never call each other. They write to the append-only event stream in the same transaction as the change itself.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        },
+        {
+          "type": "outgoing",
+          "description": "A click was minted.",
+          "originId": "cashback-clickout",
+          "targetId": "platform-events",
+          "viaId": "clickout-events"
+        },
+        {
+          "type": "outgoing",
+          "description": "A network reported, superseded or reversed a transaction.",
+          "originId": "cashback-networks",
+          "targetId": "platform-events",
+          "viaId": "networks-events"
+        },
+        {
+          "type": "outgoing",
+          "description": "An entry opened, moved stage or was reversed.",
+          "originId": "cashback-earnings",
+          "targetId": "platform-events",
+          "viaId": "earnings-events"
+        },
+        {
+          "type": "outgoing",
+          "description": "A ledger transfer was posted.",
+          "originId": "cashback-wallet",
+          "targetId": "platform-events",
+          "viaId": "wallet-events"
+        },
+        {
+          "type": "outgoing",
+          "description": "A withdrawal was requested, approved, rejected or settled.",
+          "originId": "cashback-payout",
+          "targetId": "platform-events",
+          "viaId": "payout-events"
+        },
+        {
+          "type": "conclusion",
+          "description": "The outbox is the only channel between products, which is what lets a second product be added without modifying the first.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        }
+      ]
+    }
   ]
 }
 ```
