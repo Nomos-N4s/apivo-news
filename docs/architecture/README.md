@@ -35,7 +35,7 @@ C4 reads an architecture at four zoom levels. Every document in this set names t
 | **3 — Component** | What is inside each container, and how does it fit together? | [application-architecture.md](application-architecture.md), [data-architecture.md](data-architecture.md), [integration-architecture.md](integration-architecture.md) |
 | **4 — Code** | What actually happens, call by call? | [sequence-diagrams.md](sequence-diagrams.md) |
 
-Two documents are deliberately off the ladder because they cut across every level: [security-architecture.md](security-architecture.md) and [cicd-architecture.md](cicd-architecture.md).
+Two documents are deliberately off the ladder because they cut across every level: [security-architecture.md](security-architecture.md) and [cicd-architecture.md](cicd-architecture.md). One is the ladder itself in machine-readable form: [icepanel-model.md](icepanel-model.md).
 
 ## The document map
 
@@ -50,6 +50,7 @@ flowchart TD
   SEC["security-architecture.md<br>cross-cutting"]
   CI["cicd-architecture.md<br>cross-cutting delivery"]
   Q["sequence-diagrams.md<br>C4 L4 behaviour"]
+  P["icepanel-model.md<br>the model behind the views"]
   R --> S
   S --> A
   S --> N
@@ -62,9 +63,12 @@ flowchart TD
   A --> SEC
   N --> SEC
   D --> SEC
+  P -.-> S
+  P -.-> A
+  P -.-> N
 ```
 
-Solid arrows read *"refines"*: the target answers, in more detail, a question the source raised. Dotted arrows read *"models"*: the IcePanel model carries the same objects the three structural views describe.
+Every arrow reads *"refines"*: the target answers, in more detail, a question the source raised. Every document in the set is a node on this map, and nothing that is not in the set appears on it.
 
 ## The document set
 
@@ -78,13 +82,14 @@ Solid arrows read *"refines"*: the target answers, in more detail, a question th
 | [security-architecture.md](security-architecture.md) | Who may do what, how is that proved, and which secrets exist? | A reviewer of anything touching auth, roles, money or member data. |
 | [cicd-architecture.md](cicd-architecture.md) | What must pass before a change lands, and how does it reach a host? | Anyone whose build is red, or who wants to add a gate. |
 | [sequence-diagrams.md](sequence-diagrams.md) | What happens, step by step, in the flows that matter — click to credit, credit to payout, poll to evidence? | Anyone who needs the behaviour rather than the structure. |
+| [icepanel-model.md](icepanel-model.md) | What objects and relationships the visual model holds, and how it stays true to the tree. | Whoever maintains the IcePanel workspace ([.mcp.json](../../.mcp.json)). |
 
 ## These documents, ADRs and specs
 
 Three bodies of writing, three different lifetimes. They are not alternatives.
 
 - **[docs/adr/](../adr/)** — decisions that outlive a feature. One question, its context, the decision, its consequences, and the alternatives with the reason each was rejected. An accepted ADR is never edited; it is superseded by a record that names it. Five are accepted today ([index](../adr/README.md)).
-- **[specs/](../../specs/)** — feature-local. Spec Kit's `spec.md`, `plan.md`, `data-model.md`, `contracts/` and `tasks.md` for one feature, in the state that feature is in. Five features exist; two are drafts and one has no plan yet.
+- **[specs/](../../specs/)** — feature-local. Spec Kit's `spec.md`, `plan.md`, `data-model.md`, `contracts/` and `tasks.md` for one feature, in the state that feature is in. Five features exist. One is approved — `002-apivo-cashback-alpha`; the other four are drafts, and one of those, `005-provable-evidence`, has a spec and research but no plan yet.
 - **docs/architecture/** (here) — the standing description of what *is*, across features. It cites both of the above and never re-decides either.
 
 Precedence when they disagree: the [constitution](../../.specify/memory/constitution.md) wins over an ADR, an ADR wins over a spec, and **the code wins over all three as a statement of what is built today**. This set is written from the tree, and says so wherever prose elsewhere has gone stale — `specs/002-apivo-cashback-alpha/tasks.md` in particular is not a status board.
@@ -105,7 +110,7 @@ Used in a **Status** column throughout the set. Defined once, here.
 
 | Label | Meaning | A real example |
 |---|---|---|
-| **Built** | Implemented, wired in the composition root, and covered by tests that run in CI. | The earnings state machine — [state.go](../../internal/cashback/earnings/state.go), enforced by trigger in [0013](../../internal/platform/db/migrations/0013_cashback_earnings.up.sql). |
+| **Built** | Implemented, wired in the composition root, and covered by tests that run in CI. | The earnings state machine — the six states and the transitions between them in [state.go](../../internal/cashback/earnings/state.go), applied by [statemachine.go](../../internal/cashback/earnings/statemachine.go). The schema carries its own half: a check constraint refuses a state name outside the six, and a deferred constraint trigger refuses a state change with no `entry_transition` row recording that hop ([0013](../../internal/platform/db/migrations/0013_cashback_earnings.up.sql)). |
 | **Partial** | Some of it runs; a named piece does not. The gap is stated, not implied. | Settlement records the payout and the request as paid ([settle.go](../../internal/cashback/payout/settle.go)) but nothing moves the entries `reserved → paid`; [postings.go](../../internal/cashback/earnings/postings.go) returns `ErrNotThisPackagesToPost` and no production caller supplies that posting. |
 | **Specified** | Written down in a spec, not built. No table, no package, no route. | Claims and with them C-8, C-9, C-10 — [specs/003-cashback-claims/tasks.md](../../specs/003-cashback-claims/tasks.md), 45 tasks, none done. |
 | **Retired** | Deliberately withdrawn. Kept in the tree only where it still earns its place, and said so. | Cloudflare Containers as a deployment target ([README.md](../../README.md)); the flat `NETWORK_DRIVER` keys, which are now *refused* at startup rather than ignored ([networks.go](../../internal/platform/config/networks.go)). |
@@ -119,12 +124,13 @@ Every document is hand-written from the tree and cited back to it, so there is n
 - A document is refreshed by re-reading the files it cites. A citation that no longer resolves is the signal; the fastest check is `grep -o '](\.\./\.\./[^)]*)' docs/architecture/*.md` piped through a file-existence test.
 - The **Status** line carries a date and a commit-ish. Change both when you change the body. A document whose status line disagrees with its content is worse than an absent document.
 - A new view joins the map above, the table, and the C4 ladder table — in all three, or it is not in the set.
-- The house rules in [CLAUDE.md](../../CLAUDE.md) and the constitution's Principle I apply to these files as they do to code: sole authorship, no vendor names, British spelling, every diagram a parsing Mermaid block.
+- The repository's house rules and the constitution's Principle I apply to these files exactly as they do to code ([constitution](../../.specify/memory/constitution.md)): sole authorship, no vendor names anywhere in the prose, British spelling, and every diagram a Mermaid block that parses.
 - A decision discovered while writing does not belong here. It belongs in a new ADR, and this set then cites it.
 
 ## Open questions and known gaps
 
-- **The commit-ish is a moving target.** This set was written as `main` moved from `0461ad7` to `0461ad7`, which added self-registration in [internal/account](../../internal/account). Nothing in that work changes a claim made here; the HTTP surface counts were re-taken at `0461ad7`.
+- **The commit-ish is a moving target.** This set was written as `main` moved from `c35e3d1` to `0461ad7`, which added self-registration in [internal/account](../../internal/account). Nothing in that work changes a claim made here; the HTTP surface counts were re-taken at `0461ad7`.
 - **No automated link check runs in CI.** [.github/workflows/](../../.github/workflows) gates commits, migrations, brands, k8s topology, make targets and the OpenAPI document — not these files. A moved Go file breaks a citation silently.
-- **The set describes the alpha, not a roadmap.** Anything a founder asks about that is not in the four maturity labels above is genuinely undecided; the constitution's Governance section lists thirteen open cashback questions (Q1, Q3–Q13) still carrying safe defaults rather than decisions.
+- **The set describes the alpha, not a roadmap.** Anything a founder asks about that is not in the four maturity labels above is genuinely undecided; the constitution's Governance section lists twelve open cashback questions — Q1 and Q3 to Q13 — still carrying safe defaults rather than decisions. Q2, the regulatory posture on member balances, is the one recorded as decided.
 - **No view covers the news product in depth.** epiloYES appears only where it shares substrate with cashback — the database, the binary, identity, the outbox, the deployment. Its own component view is not written.
+- **A machine-readable model of this set is proposed, not written.** An IcePanel MCP server is configured at project scope ([.mcp.json](../../.mcp.json), landed after `0461ad7`), which makes a single model carrying the objects and relationships the three structural views describe a reasonable next document. Nothing of the sort exists in the tree today, so no view here is generated from a model, and the C4 ladder above has no machine-readable rung. Treat this as a proposal until a document backs it.
