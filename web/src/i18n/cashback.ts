@@ -55,6 +55,14 @@ export interface CashbackStrings {
   readonly sale: string;
   readonly reversalOf: string;
   readonly reversalReason: string;
+  /**
+   * What stands where a retailer's name would, on an entry an operator
+   * attributed by hand. There was no click, so there is no shop to name, and
+   * an empty space would read as a rendering fault rather than as a fact.
+   */
+  readonly merchantLabel: string;
+  readonly noMerchant: string;
+  readonly noMerchantExplained: string;
   readonly noEntries: string;
   readonly noEntriesInFilter: string;
   readonly rateAtClick: string;
@@ -270,6 +278,10 @@ const el: CashbackStrings = {
   sale: 'Αγορά',
   reversalOf: 'Ακύρωση της καταχώρισης',
   reversalReason: 'Αιτία',
+  merchantLabel: 'Κατάστημα',
+  noMerchant: 'Χωρίς κατάστημα',
+  noMerchantExplained:
+    'Η καταχώριση αποδόθηκε με το χέρι, οπότε δεν υπάρχει κλικ που να οδηγεί σε κατάστημα.',
   noEntries:
     'Καμία καταχώριση ακόμη. Ξεκίνησε από τα καταστήματα — η επιστροφή καταγράφεται μετά την αγορά.',
   noEntriesInFilter: 'Καμία καταχώριση σε αυτή την κατάσταση.',
@@ -497,6 +509,10 @@ const de: CashbackStrings = {
   sale: 'Einkauf',
   reversalOf: 'Storno zu Buchung',
   reversalReason: 'Grund',
+  merchantLabel: 'Händler',
+  noMerchant: 'Ohne Händler',
+  noMerchantExplained:
+    'Diese Buchung wurde von Hand zugeordnet; es gibt keinen Klick, der zu einem Händler führt.',
   noEntries:
     'Noch keine Buchungen. Fang bei den Shops an — gutgeschrieben wird nach dem Einkauf.',
   noEntriesInFilter: 'Keine Buchung in diesem Zustand.',

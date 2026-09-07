@@ -116,12 +116,30 @@ export type EntryState = 'held' | 'pending' | 'confirmed' | 'reserved' | 'paid' 
 /** One `GET /wallet/entries` item. */
 export interface WalletEntry {
   readonly entry_id: string;
-  readonly merchant_name: string;
+  /**
+   * Null for an entry an operator attributed by hand: there was no click, so
+   * there is no route back to a retailer to name (FR-034).
+   */
+  readonly merchant_name: string | null;
+  /**
+   * What `merchant_name` is written in, and whether that is the language the
+   * member asked for. US5 scenario 2 requires a fallback to be LABELLED
+   * rather than passed off as the member's own language, and a page cannot
+   * label what it was never told.
+   */
+  readonly merchant_name_language: string | null;
+  readonly merchant_name_is_fallback: boolean;
   readonly transacted_at: string;
   readonly sale_amount: Money;
   readonly cashback_amount: Money;
   readonly state: EntryState;
   readonly expected_confirmation_at: string | null;
+  /**
+   * Names the rule keeping this entry out of the balance; null unless the
+   * state is held. A member told only "in review" cannot tell whether that
+   * is about them.
+   */
+  readonly hold_rule: string | null;
   /**
    * Set on a reversal, naming the credit it reverses. Both appear in the
    * list; neither is hidden (US3 scenario 2), which is why this is a

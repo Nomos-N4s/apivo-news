@@ -18,7 +18,7 @@ import type {
 import { editorSession } from '../../../../lib/editorial/session';
 import { frontPagePath, parseAxes } from '../../../../lib/reader/axes';
 import { formatDateTime, formatItemDate } from '../../../../lib/reader/format';
-import { cashbackStrings } from '../../../../i18n/cashback';
+import { cashbackStrings, languageName } from '../../../../i18n/cashback';
 
 // The member's wallet and entry list — mockup 4a, composed as the mockup
 // draws it and bound to the contract rather than to the drawing (T082 #229).
@@ -159,6 +159,13 @@ const tagClass = (state: EntryState): string =>
     held: 'tag-outline',
     reversed: 'tag-neutral',
   })[state];
+
+/**
+ * The retailer to print. Null is not a missing value here: an entry an
+ * operator attributed by hand has no click and so no route to a shop
+ * (FR-034), and saying so is more use than an empty space.
+ */
+const merchantOf = (entry: WalletEntry): string => entry.merchant_name ?? t.noMerchant;
 
 /** The tag text: the state, and for a pending entry the day it should clear. */
 const tagText = (entry: WalletEntry): string =>
@@ -349,7 +356,7 @@ const stepsFor = (entry: WalletEntry): readonly Step[] => {
                     }
                   >
                     <span class="who">
-                      <span class="merchant">{entry.merchant_name}</span>
+                      <span class="merchant">{merchantOf(entry)}</span>
                       <span class="meta">
                         {shortDate(entry.transacted_at)} · {t.sale} {formatMoney(lang, entry.sale_amount)}
                         {entry.reversal_of_id !== null && (
@@ -381,7 +388,7 @@ const stepsFor = (entry: WalletEntry): readonly Step[] => {
                     </div>
                     <div class="head">
                       <p class="head-meta">
-                        {selected.merchant_name} · {formatDateTime(lang, new Date(selected.transacted_at))}
+                        {merchantOf(selected)} · {formatDateTime(lang, new Date(selected.transacted_at))}
                       </p>
                       <p class="head-figure">
                         {formatSignedMoney(lang, selected.cashback_amount)}
@@ -393,7 +400,7 @@ const stepsFor = (entry: WalletEntry): readonly Step[] => {
                       {/* Desktop: the rail's own head. */}
                       <span class="card-kicker kicker">{t.selectedEntry}</span>
                       <div class="rail-title">
-                        <h3>{selected.merchant_name}</h3>
+                        <h3>{merchantOf(selected)}</h3>
                         <span class:list={['rail-amount', selected.state]}>
                           {formatSignedMoney(lang, selected.cashback_amount)}
                         </span>
@@ -458,6 +465,35 @@ const stepsFor = (entry: WalletEntry): readonly Step[] => {
                                 <dd>{selected.state === 'paid' ? t.entryStates.paid : t.paysOutBatch}</dd>
                               </div>
                             </>
+                          )
+                        }
+                        {
+                          selected.merchant_name === null && (
+                            <div class="record-row">
+                              <dt>{t.noMerchant}</dt>
+                              <dd>{t.noMerchantExplained}</dd>
+                            </div>
+                          )
+                        }
+                        {
+                          selected.merchant_name_is_fallback &&
+                            selected.merchant_name_language !== null && (
+                              <div class="record-row">
+                                <dt>{t.merchantLabel}</dt>
+                                <dd>
+                                  {t.shownInLanguage(
+                                    languageName(lang, selected.merchant_name_language),
+                                  )}
+                                </dd>
+                              </div>
+                            )
+                        }
+                        {
+                          selected.hold_rule !== null && (
+                            <div class="record-row">
+                              <dt>{t.holdRule}</dt>
+                              <dd class="ref">{selected.hold_rule}</dd>
+                            </div>
                           )
                         }
                         {
