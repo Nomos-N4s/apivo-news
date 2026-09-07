@@ -488,6 +488,34 @@ export interface CashbackApiOptions {
  * and reading `production` as "not prod" would hand a deployed member a
  * wallet full of invented figures.
  */
+/**
+ * Whether this deployment answers cashback from built-in fixtures rather than
+ * from an api.
+ *
+ * The same decision `createCashbackApi` makes, lifted out so that a caller
+ * which is not building a client can ask it — the middleware's sign-in fence
+ * needs to know, because a preview has no api and nobody signed in and its
+ * whole job is to render the screens for review (issue #570).
+ *
+ * A configuration this refuses to read is NOT fixtures. `createCashbackApi`
+ * throws for those, the page answers 503, and a visitor who is signed out is
+ * better sent to sign in than shown a wallet that was never going to load.
+ */
+export function answersFromFixtures(
+  baseUrl: string | undefined,
+  options: Pick<CashbackApiOptions, 'appEnv' | 'appVersion'> = {},
+): boolean {
+  if (isPreviewVersion(options.appVersion)) {
+    return true;
+  }
+  if (parseAppEnv(options.appEnv) === null) {
+    return false;
+  }
+  return (
+    (baseUrl === undefined || baseUrl === '') && parseAppEnv(options.appEnv) === APP_ENV_DEV
+  );
+}
+
 export function createCashbackApi(
   baseUrl: string | undefined,
   options: CashbackApiOptions = {},
