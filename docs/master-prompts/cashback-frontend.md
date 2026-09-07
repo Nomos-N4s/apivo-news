@@ -149,8 +149,8 @@ end-to-end test (Vitest only, no browser tests).
 
 **Two breaks on the deployed host that are not the web's fault:** the
 edge sends `/api/*` to the Go api, so the web's own
-`/api/cashback/clickout` and `/api/tour/*` never reach the web on
-Hetzner (**B4, #546**); and the web container is given no `BRAND_DIR`, so in
+`/api/cashback/clickout` and `/api/tour/*` never reached the web on
+Hetzner until **B4 (#546)** narrowed the edge matcher to `/api/v1/*`; and the web container is given no `BRAND_DIR`, so in
 production mode the legal pages and anything rendering the brand refuse
 rather than print a fixture company (**B5, #547**).
 
@@ -169,10 +169,12 @@ and one pull request each, none of them the frontend's to build:
 - **B3 — FR-110 (spec 004, T254).** The click-out refuses a member who has not opted in
   Until it lands the screens must not offer a click to
   a member without a participation.
-- **B4 — edge routing (#546).** The web's own endpoints must be reachable from
-  the browser on Hetzner. Either the edge matcher narrows to
-  `/api/v1/*`, or the web's routes move off `/api/`. Decide once, apply
-  to previews too.
+- **B4 — edge routing (#546): landed.** The edge now sends `/api/v1/*`,
+  `/healthz` and `/readyz` to the api and everything else to the web, on
+  environments and previews alike, and `validate.sh` proves both halves.
+  The web's own `/api/cashback/clickout` and `/api/tour/*` reach the web.
+  On a host provisioned before this, the Caddy snippets must be copied
+  to `/opt/apivo/caddy/` and the edge reloaded; the runbook says how.
 - **B5 — the web's brand (#547).** Mount `/etc/apivo/<env>/brand` into the web
   container as the overlay now does for the api, and set its `BRAND_DIR`.
 - **B6 — payout destination verification (#548).** FR-051 says a destination is
@@ -209,8 +211,8 @@ and one pull request each, none of them the frontend's to build:
   than pretending.
 - **F5 — click-out, end to end in a browser**: the retailer page's form,
   the web endpoint, the 303 to `redirect_url`, and the failure banner —
-  against B4's decision, and refusing to render the button for a member
-  without a participation until B3 exists.
+  reachable on QA now that B4 has landed, and refusing to render the
+  button for a member without a participation until B3 exists.
 - **F6 — wallet against real entries.** Already wired; verify with the
   first pending entry that the statement, the detail pane and the
   lifecycle read correctly, and that a reversal shows its reason.
