@@ -272,3 +272,16 @@ root@Carlos1:~#
 ---
 
 are you using graft as much as possible? to save tokens!
+
+---
+
+root@Carlos1:~# docker inspect --format '{{.Config.Image}}' apivo-qa-api
+docker exec -e PGPASSWORD="REDACTED" \
+  apivo-qa-postgres psql -U apivo -d apivo -c 'select * from schema_migrations'
+ghcr.io/nomos-n4s/apivo-news/api@sha256:REDACTED
+ version | dirty
+---------+-------
+      39 | f
+(1 row)
+
+root@Carlos1:~# and yes on everything, you have full autonomy to open and merge prs as long as we get a fixed, estable and robust deployment topology again. With real guardrails and everything. And graft is a must for us!
