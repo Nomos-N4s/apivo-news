@@ -94,11 +94,18 @@ token, the catalogue included. Operator routes additionally require
 `differences/{id}/resolve`) and `exports/ledger` ·
 `exports/reconciliation`. All live.
 
-**Accounts.** `/api/v1/account/` today serves only `GET tours`. Nothing
-creates an `account` row for a new Supabase user: editors are seeded by
-`apivo-seed-editors`, and the one QA member was made by hand with the
-service-role key and an `insert`. That is **B1 (#544)**, and until it lands
-every QA member is made that way.
+**Accounts.** `POST /api/v1/account` is the door a person walks through
+before they have a row (#544): a verified token whose subject has no
+account creates one with role `reader` from the token's `sub` and `email`
+and answers 201; a token whose subject already has one gets it back,
+unchanged, with 200. It never changes a role. A token with no email is
+400, an email already held by a different account is 409, and it is the
+only route under the prefix in front of the auth gate.
+`GET /api/v1/account` answers the caller's own row — id, email, display
+name and **the role as the api knows it**, which is the one answer to
+"what may I do here" a client should trust over the token's claim. Both
+are in `api/openapi.json` under the `Account` schema. Editors are still
+seeded by `apivo-seed-editors`.
 
 ## What the web has today
 
@@ -159,12 +166,10 @@ rather than print a fixture company (**B5, #547**).
 **Backend and deployment** — the Go side of this repository, one issue
 and one pull request each, none of them the frontend's to build:
 
-- **B1 — self-registration (#544).** `POST /api/v1/account`: a verified token
-  whose subject has no row creates one with role `reader`, from the
-  token's `sub` and `email`; a second call answers the existing row.
-  This is what a sign-up screen calls after Supabase has created the
-  user, and what makes a member exist to the api. Contract to be written
-  into `http-api.md` and `openapi.json` before the screen is built.
+- **B1 — self-registration (#544): landed.** `POST /api/v1/account` as
+  described under The contract, with `GET /api/v1/account` beside it. A
+  sign-in calls it as its last step, and nothing else is needed for a
+  member to exist to the api.
 - **B2 — `GET /catalogue` (#545).** Documented, called by the web, absent.
 - **B3 — FR-110 (spec 004, T254).** The click-out refuses a member who has not opted in
   Until it lands the screens must not offer a click to
@@ -191,7 +196,8 @@ and one pull request each, none of them the frontend's to build:
   until there is a shell to hand one over. A first link creates the
   Supabase user, so sign-up and sign-in are one flow; the callback lands
   in the same `@supabase/ssr` cookie session the editor sign-in uses and
-  then calls B1, which is what makes the person a member. The front
+  then calls `POST /api/v1/account` (B1, live), which is what makes the
+  person a member. The front
   page's sign-in button comes alive in the same change, because the page
   quotes its state. Sign-out. No password means no reset.
 - **F2 — gating.** An unauthenticated request to any `/{lang}/{place}/cashback/…`
@@ -228,7 +234,7 @@ and one pull request each, none of them the frontend's to build:
 
 ## The finish line: one real transaction
 
-**Preconditions.** B1, B2, B4 and F1–F5 merged. QA switched from the
+**Preconditions.** B2, B4 and F1–F5 merged. QA switched from the
 fixture network to Linkwise: `NETWORKS=linkwise` and its four keys in
 `/etc/apivo/qa/api.env`, `apivoctl deploy qa`, `apivo connect-network`,
 a restart, `apivo import-catalogue`, and `apivo publish-offer` on a
@@ -292,8 +298,8 @@ Work the frontend list in order — F1 sign-in on the design's terms, an
 email link and never a password, F2 gating, F3
 opt-in, F4 catalogue, F5 click-out, F6 wallet, F7 payout destination,
 F8 the end-to-end test, F9 languages and the brand lint — and do not
-build against a backend gap: B1, B2, B4 and B5 are the Go side's to
-land, and the file says which screen waits on which. Develop and test
+build against a backend gap: B2, B4 and B5 are the Go side's to land,
+B1 is live, and the file says which screen waits on which. Develop and test
 against `make cashback-demo`, which runs the whole stack locally and
 mints member tokens; prove integration on QA, not on previews.
 
