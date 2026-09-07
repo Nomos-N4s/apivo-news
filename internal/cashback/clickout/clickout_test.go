@@ -80,8 +80,25 @@ func anOffer() catalogue.Offer {
 	}
 }
 
-// issuer builds the service over the given parts, with the clock pinned and
-// no click rule.
+// fakeEnrolment answers whether the member is in cashback, and counts how
+// often it was asked.
+type fakeEnrolment struct {
+	in  bool
+	err error
+
+	asked int
+}
+
+func (f *fakeEnrolment) Participating(context.Context, uuid.UUID) (bool, error) {
+	f.asked++
+	if f.err != nil {
+		return false, f.err
+	}
+	return f.in, nil
+}
+
+// issuer builds the service over the given parts for a member who has opted
+// in, with the clock pinned and no click rule.
 func issuer(t *testing.T, offers clickout.Offers, clicks clickout.ClickStore, deeplinks clickout.Deeplinks) *clickout.ClickOuts {
 	t.Helper()
 	return issuerWith(t, offers, clicks, deeplinks)
@@ -90,16 +107,74 @@ func issuer(t *testing.T, offers clickout.Offers, clicks clickout.ClickStore, de
 // issuerWith is the same, plus whatever options a case needs.
 func issuerWith(t *testing.T, offers clickout.Offers, clicks clickout.ClickStore, deeplinks clickout.Deeplinks, opts ...clickout.Option) *clickout.ClickOuts {
 	t.Helper()
+	return issuerFor(t, &fakeEnrolment{in: true}, offers, clicks, deeplinks, opts...)
+}
+
+// issuerFor is the same over a given enrolment, for the cases about the
+// member's opt-in rather than their click.
+func issuerFor(t *testing.T, enrolment clickout.Enrolment, offers clickout.Offers, clicks clickout.ClickStore, deeplinks clickout.Deeplinks, opts ...clickout.Option) *clickout.ClickOuts {
+	t.Helper()
 	recorder, err := clickout.NewClicks(clicks)
 	if err != nil {
 		t.Fatalf("NewClicks(): %v", err)
 	}
-	issue, err := clickout.NewClickOuts(offers, recorder, deeplinks,
+	issue, err := clickout.NewClickOuts(offers, enrolment, recorder, deeplinks,
 		append([]clickout.Option{clickout.WithClock(func() time.Time { return clickedAt })}, opts...)...)
 	if err != nil {
 		t.Fatalf("NewClickOuts(): %v", err)
 	}
 	return issue
+}
+
+// TestAMemberWhoHasNotOptedInIsRefusedBeforeAnythingIsRead is FR-110. The
+// refusal comes before the catalogue is read and long before anything is
+// minted or recorded: a click a non-member could take would be a credit that
+// precedes the consent it rests on, and FR-002's opt-in is not one if that
+// can happen.
+func TestAMemberWhoHasNotOptedInIsRefusedBeforeAnythingIsRead(t *testing.T) {
+	t.Parallel()
+	offers := &fakeOffers{offer: anOffer()}
+	deeplinks := &fakeDeeplinks{url: "https://awin.example.test/go?merchant=42&clickref=abc"}
+	clicks := &fakeStore{echo: true}
+	enrolment := &fakeEnrolment{in: false}
+
+	_, err := issuerFor(t, enrolment, offers, clicks, deeplinks).Issue(context.Background(),
+		clickout.Request{Member: uuid.New(), OfferID: offers.offer.ID})
+	if !errors.Is(err, clickout.ErrNotOptedIn) {
+		t.Fatalf("Issue() = %v, want ErrNotOptedIn", err)
+	}
+	if enrolment.asked != 1 {
+		t.Errorf("the enrolment was read %d times, want once", enrolment.asked)
+	}
+	if offers.reads != 0 {
+		t.Error("the catalogue was read for a member who cannot click")
+	}
+	if deeplinks.builds != 0 {
+		t.Error("a redirect was built for a member who cannot click")
+	}
+	if clicks.inserts != 0 {
+		t.Error("a click was recorded for a member who has not opted in")
+	}
+}
+
+// TestAnEnrolmentThatCannotBeReadIsNotARefusal. A participation that could
+// not be read is a failure, not a verdict: answering "not opted in" would
+// tell a member to accept terms they already accepted because a database
+// was down - and either way, nothing is recorded.
+func TestAnEnrolmentThatCannotBeReadIsNotARefusal(t *testing.T) {
+	t.Parallel()
+	offers := &fakeOffers{offer: anOffer()}
+	clicks := &fakeStore{echo: true}
+	enrolment := &fakeEnrolment{err: errors.New("the database is not answering")}
+
+	_, err := issuerFor(t, enrolment, offers, clicks, &fakeDeeplinks{url: "https://x.test/go"}).Issue(context.Background(),
+		clickout.Request{Member: uuid.New(), OfferID: offers.offer.ID})
+	if err == nil || errors.Is(err, clickout.ErrNotOptedIn) {
+		t.Fatalf("Issue() = %v, want a failure that is not ErrNotOptedIn", err)
+	}
+	if clicks.inserts != 0 {
+		t.Error("a click was recorded although the member's opt-in could not be read")
+	}
 }
 
 func TestIssuingARedirectSnapshotsTheBandTheMemberWasShown(t *testing.T) {
@@ -290,20 +365,23 @@ func TestAServiceMissingAPartIsRefused(t *testing.T) {
 	// part would pass. A nil *Clicks boxed into one is a non-nil interface
 	// holding a nil pointer, and would say this test passes while the
 	// service panicked on its first click.
+	enrolled := &fakeEnrolment{in: true}
 	cases := []struct {
 		name      string
 		offers    clickout.Offers
+		enrolment clickout.Enrolment
 		clicks    clickout.Recorder
 		deeplinks clickout.Deeplinks
 	}{
-		{name: "no offer reader", clicks: clicks, deeplinks: &fakeDeeplinks{}},
-		{name: "no recorder", offers: &fakeOffers{}, deeplinks: &fakeDeeplinks{}},
-		{name: "no deeplink builder", offers: &fakeOffers{}, clicks: clicks},
+		{name: "no offer reader", enrolment: enrolled, clicks: clicks, deeplinks: &fakeDeeplinks{}},
+		{name: "no enrolment reader", offers: &fakeOffers{}, clicks: clicks, deeplinks: &fakeDeeplinks{}},
+		{name: "no recorder", offers: &fakeOffers{}, enrolment: enrolled, deeplinks: &fakeDeeplinks{}},
+		{name: "no deeplink builder", offers: &fakeOffers{}, enrolment: enrolled, clicks: clicks},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := clickout.NewClickOuts(tc.offers, tc.clicks, tc.deeplinks); !errors.Is(err, clickout.ErrNoClickOuts) {
+			if _, err := clickout.NewClickOuts(tc.offers, tc.enrolment, tc.clicks, tc.deeplinks); !errors.Is(err, clickout.ErrNoClickOuts) {
 				t.Fatalf("NewClickOuts() error = %v, want one wrapping %v", err, clickout.ErrNoClickOuts)
 			}
 		})

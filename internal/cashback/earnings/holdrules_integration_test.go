@@ -31,7 +31,7 @@ func (j *theJourney) clickFrom(t *testing.T, member uuid.UUID, context clickout.
 		t.Fatalf("NewAnnouncedClicks(): %v", err)
 	}
 	clickouts, err := clickout.NewClickOuts(
-		catalogue.NewOfferReader(cataloguestore.New(j.tx)), clicks, staticDeeplinks{})
+		catalogue.NewOfferReader(cataloguestore.New(j.tx)), j.enrolled(t), clicks, staticDeeplinks{})
 	if err != nil {
 		t.Fatalf("NewClickOuts(): %v", err)
 	}
@@ -52,6 +52,7 @@ func (j *theJourney) anotherMember(t *testing.T) uuid.UUID {
 		"second-"+tag(t)+"@example.test").Scan(&id); err != nil {
 		t.Fatalf("seeding the second member: %v", err)
 	}
+	j.optsIn(t, id)
 	return id
 }
 

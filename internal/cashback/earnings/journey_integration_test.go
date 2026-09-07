@@ -40,6 +40,7 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/postgres"
+	walletstore "github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/store"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/db"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 )
@@ -157,6 +158,7 @@ func (j *theJourney) seed(t *testing.T) {
 		"member-"+id+"@example.test").Scan(&j.member); err != nil {
 		t.Fatalf("seeding the member: %v", err)
 	}
+	j.optsIn(t, j.member)
 	if err := j.tx.QueryRow(j.ctx, `
 		insert into public.account (email, display_name, role)
 		values ($1, 'Journey Operator', 'operator') returning id`,
@@ -185,6 +187,30 @@ func (j *theJourney) seed(t *testing.T) {
 	}
 }
 
+// optsIn records a member's acceptance of the terms, the way the seed does.
+// The click-out refuses a member without one (FR-110), so every member who
+// clicks in a journey has opted in first - as they would have.
+func (j *theJourney) optsIn(t *testing.T, member uuid.UUID) {
+	t.Helper()
+	if _, err := j.tx.Exec(j.ctx, `
+		insert into cashback.participation (account_id, brand_id, terms_version, default_currency)
+		values ($1, 'apivo-de', '1.0.0', 'EUR')`, member); err != nil {
+		t.Fatalf("opting %s in: %v", member, err)
+	}
+}
+
+// enrolled is the click-out's enrolment read over the journey's own
+// transaction: the real participation service, so a member the journey did
+// not opt in is refused exactly as the endpoint would refuse them.
+func (j *theJourney) enrolled(t *testing.T) *wallet.Participations {
+	t.Helper()
+	participations, err := wallet.NewParticipations(j.tx, walletstore.New(j.tx), wallet.Terms{})
+	if err != nil {
+		t.Fatalf("NewParticipations(): %v", err)
+	}
+	return participations
+}
+
 // clickOut issues a tracked redirect the way the endpoint does, through the
 // recorder the composition root wires: the one that opens its own
 // transaction so the click and its event commit together.
@@ -195,7 +221,7 @@ func (j *theJourney) clickOut(t *testing.T) clickout.Click {
 		t.Fatalf("NewAnnouncedClicks(): %v", err)
 	}
 	clickouts, err := clickout.NewClickOuts(
-		catalogue.NewOfferReader(cataloguestore.New(j.tx)), clicks, staticDeeplinks{})
+		catalogue.NewOfferReader(cataloguestore.New(j.tx)), j.enrolled(t), clicks, staticDeeplinks{})
 	if err != nil {
 		t.Fatalf("NewClickOuts(): %v", err)
 	}

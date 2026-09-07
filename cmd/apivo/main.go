@@ -652,15 +652,6 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, nil, err
 	}
-	clickouts, err := newClickOuts(pool, adapter, cfg.Cashback.ClickContextHeader)
-	if err != nil {
-		stop()
-		return nil, nil, nil, err
-	}
-	clickOutOptions := []clickout.HandlerOption{}
-	if cfg.Cashback.ClickContextHeader != "" {
-		clickOutOptions = append(clickOutOptions, clickout.WithContextHeader(cfg.Cashback.ClickContextHeader))
-	}
 	// One ledger for the whole cashback surface. Two would be two ledgers
 	// under the memory driver - a wallet showing balances the withdrawal
 	// path cannot see - and two clients of the same substrate under the
@@ -723,6 +714,19 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	if err != nil {
 		stop()
 		return nil, nil, nil, err
+	}
+	// The click-out takes the participation service as its enrolment read
+	// (FR-110): a member who has not opted in is refused before anything is
+	// minted. Built after it for that reason, and required rather than
+	// optional so a root that skipped it would not start.
+	clickouts, err := newClickOuts(pool, adapter, cfg.Cashback.ClickContextHeader, participations)
+	if err != nil {
+		stop()
+		return nil, nil, nil, err
+	}
+	clickOutOptions := []clickout.HandlerOption{}
+	if cfg.Cashback.ClickContextHeader != "" {
+		clickOutOptions = append(clickOutOptions, clickout.WithContextHeader(cfg.Cashback.ClickContextHeader))
 	}
 	exports, err := wallet.NewExports(history)
 	if err != nil {
@@ -962,7 +966,7 @@ func newLedger(cfg config.Config, pool *pgxpool.Pool) (wallet.Ledger, error) {
 // The endpoint is then served and every request answers 502 naming the
 // network nothing can build a redirect for - which is the truth, and is
 // findable, where a 404 would say the API is not here at all.
-func newClickOuts(pool *pgxpool.Pool, adapter networks.Network, contextHeader string) (*clickout.ClickOuts, error) {
+func newClickOuts(pool *pgxpool.Pool, adapter networks.Network, contextHeader string, enrolment clickout.Enrolment) (*clickout.ClickOuts, error) {
 	// The recorder that opens its own transaction, because the click and the
 	// event announcing it commit together or neither does (T076).
 	clicks, err := clickout.NewAnnouncedClicks(pool)
@@ -990,7 +994,7 @@ func newClickOuts(pool *pgxpool.Pool, adapter networks.Network, contextHeader st
 	if err != nil {
 		return nil, err
 	}
-	return clickout.NewClickOuts(catalogue.NewOfferReader(cataloguestore.New(pool)), clicks, deeplinks,
+	return clickout.NewClickOuts(catalogue.NewOfferReader(cataloguestore.New(pool)), enrolment, clicks, deeplinks,
 		clickout.WithLimiter(limiter))
 }
 

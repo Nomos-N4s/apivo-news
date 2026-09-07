@@ -446,6 +446,16 @@
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
           },
+          "403": {
+            "description": "The member has not opted into cashback (FR-110). Nothing was minted and nothing was recorded; accept the terms at `POST /api/v1/cashback/participation` and try again. 403 rather than 401 because the member is who they say they are - what is missing is a consent.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "409": {
             "content": {
               "application/problem+json": {
