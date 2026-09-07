@@ -154,8 +154,8 @@ gating (no page redirects to a sign-in; unauthenticated calls surface as
 withdrawal only lists verified ones); sign-out for members; any
 end-to-end test (Vitest only, no browser tests).
 
-**Two breaks on the deployed host that are not the web's fault:** the
-edge sends `/api/*` to the Go api, so the web's own
+**Two breaks on the deployed host that were not the web's fault, both
+fixed:** the edge sent `/api/*` to the Go api, so the web's own
 `/api/cashback/clickout` and `/api/tour/*` never reached the web on
 Hetzner until **B4 (#546)** narrowed the edge matcher to `/api/v1/*`; and
 the web container was given no `BRAND_DIR`, so in production mode the
@@ -176,8 +176,8 @@ and one pull request each, none of them the frontend's to build:
   scoped to the places the reader follows, the rates on each card the
   same bands the retailer's page shows. `api/openapi.json` has the exact
   shape under `listCatalogue`.
-- **B3 — FR-110 (spec 004, T254).** The click-out refuses a member who has not opted in
-  Until it lands the screens must not offer a click to
+- **B3 — FR-110 (spec 004, T254).** The click-out refuses a member who
+  has not opted in. Until it lands the screens must not offer a click to
   a member without a participation.
 - **B4 — edge routing (#546): landed.** The edge now sends `/api/v1/*`,
   `/healthz` and `/readyz` to the api and everything else to the web, on
