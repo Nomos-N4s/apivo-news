@@ -17,13 +17,13 @@ its own comment says so:
 > — `0011_cashback_catalogue.up.sql:161`
 
 **No new table. No new entity. No column dropped.** Four migrations,
-`0033`–`0036`, each carrying one rule that was an application-level
-assumption and becomes a database-level fact (Principle VIII). `0032` is the
-current head.
+`0034`–`0037`, each carrying one rule that was an application-level
+assumption and becomes a database-level fact (Principle VIII). `0033`, the
+reporting lag, is the head they follow.
 
 ---
 
-## 0033 — One click backs at most one credit
+## 0034 — One click backs at most one credit
 
 ### The defect
 
@@ -81,7 +81,7 @@ assert the **database** refuses with SQLSTATE `23505` naming
 
 ---
 
-## 0034 — A published route must be alive *and* attributable
+## 0035 — A published route must be alive *and* attributable
 
 ### The defect
 
@@ -161,7 +161,7 @@ afterwards.
 
 ---
 
-## 0035 — A click carries the network that issued it
+## 0036 — A click carries the network that issued it
 
 ### The defect
 
@@ -254,7 +254,7 @@ does not belong to; assert refusal by SQLSTATE `23503` naming
 
 ---
 
-## 0036 — A member's entry is in a currency they can be paid in
+## 0037 — A member's entry is in a currency they can be paid in
 
 ### The defect
 
