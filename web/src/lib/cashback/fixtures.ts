@@ -332,11 +332,17 @@ export const HELD_FIXTURES: readonly HeldEntry[] = [
 
 export const WITHDRAWAL_APPROVAL_FIXTURES: readonly WithdrawalForApproval[] = [
   {
-    id: 'fx-withdrawal-1',
+    request_id: 'fx-withdrawal-1',
     account_id: 'fx-account-1',
-    amount: { minor: 1500, currency: EUR },
+    account_email: 'member@example.test',
+    // More than any round number a member would have typed, because the
+    // real one is: entries are reserved whole, so the figure that leaves
+    // the ledger is rarely the figure that was asked for.
     reserved_amount: { minor: 1840, currency: EUR },
-    destination: DESTINATION_FIXTURES[0] as PayoutDestination,
+    destination: {
+      ...(DESTINATION_FIXTURES[0] as PayoutDestination),
+      details_ref: 'openbao:secret/cashback/payout-destinations/fx01',
+    },
     requested_at: '2026-08-24T09:46:00Z',
   },
 ];
