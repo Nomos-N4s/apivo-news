@@ -190,7 +190,14 @@ describe.each(READING_LANGUAGES)('the profile in %s', (lang) => {
       // a German reader on /de/profile must not be handed Greek links.
       const html = await render(lang, { cookie: 'reader_axes=/el/munich' });
 
-      expect(html).toContain('munich');
+      // The chip names the place the way the place names itself, and says
+      // which language that name is in — "München" is German on a Greek
+      // page, and a screen reader needs to be told (WCAG 3.1.2). The slug
+      // belongs in the path, never on the face of the page.
+      expect(html).toContain('München');
+      expect(html).toContain('lang="de"');
+      expect(html).not.toMatch(/>\s*munich\s*</);
+
       expect(html).toContain(`/${lang}/munich/cashback`);
       expect(html).not.toContain(`/${lang === 'el' ? 'de' : 'el'}/munich/cashback`);
     },

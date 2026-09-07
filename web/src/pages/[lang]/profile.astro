@@ -75,8 +75,14 @@ const { brand } = brandOnHand({ brandDir: BRAND_DIR, appEnv: APP_ENV });
 const home = frontPagePath(lang, ['munich', 'greece']);
 
 // The places this reader last chose, language deliberately discarded.
+//
+// The Place objects are kept, not just their slugs: a chip shows the
+// `endonym` — München, not `munich` — and carries `endonymLang`, because a
+// German name inside a Greek page needs its own `lang` for a screen reader
+// to pronounce it (WCAG 3.1.2). The slugs are only for building paths.
 const preference = readPreference(Astro.cookies.get(PREFERENCE_COOKIE)?.value);
-const slugs = preference?.places.map((place) => place.slug) ?? [];
+const places = preference?.places ?? [];
+const slugs = places.map((place) => place.slug);
 
 // A fixture run has no token and therefore no account to read. Rather than
 // show a preview reviewer an error band where the identity belongs — the
@@ -212,8 +218,12 @@ const payoutText =
           <span class="k">{ui.places}</span>
           <span class="v">
             {
-              slugs.length > 0 ? (
-                slugs.map((place) => <span class="chip">{place}</span>)
+              places.length > 0 ? (
+                places.map((place) => (
+                  <span class="chip" lang={place.endonymLang}>
+                    {place.endonym}
+                  </span>
+                ))
               ) : (
                 <a href={setupPath(lang)}>{t.choosePlaces}</a>
               )
