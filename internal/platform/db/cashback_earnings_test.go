@@ -79,6 +79,13 @@ func TestCashbackEarningsRejectIllegalWrites(t *testing.T) {
 					"other-"+f.suffix+"@example.test").Scan(&otherAccount); err != nil {
 					return err
 				}
+				// In cashback in EUR too, so the currency key (0036) cannot
+				// be what refuses this either.
+				if _, err := tx.Exec(ctx,
+					`insert into cashback.participation (account_id, brand_id, terms_version, default_currency)
+					 values ($1, 'fixture', '1.0.0', 'EUR')`, otherAccount); err != nil {
+					return err
+				}
 				var freshClick string
 				if err := tx.QueryRow(ctx,
 					`insert into cashback.click
@@ -951,4 +958,60 @@ func refused(ctx context.Context, tx pgx.Tx, run func(sp pgx.Tx) error) error {
 	err = run(sp)
 	_ = sp.Rollback(ctx)
 	return err
+}
+
+// TestAnEntryIsInTheMembersCurrency is 0036 (spec 004, T255/T256, SC-027):
+// an entry in a currency other than the member's participation currency is
+// refused by name, and a participating member's currency cannot be restated
+// while an entry references the old one.
+func TestAnEntryIsInTheMembersCurrency(t *testing.T) {
+	t.Parallel()
+	tx := beginTx(t)
+	ctx := context.Background()
+	f := seedCashbackEntry(t, tx)
+
+	// A fresh report in dollars, so neither the report's nor the click's
+	// exactly-once rule can be what refuses the credit below.
+	var dollars string
+	if err := tx.QueryRow(ctx,
+		`insert into cashback.network_transaction
+		     (network_id, network_account_id, external_id, status_raw, status,
+		      sale_amount_minor, commission_minor, currency, transacted_at,
+		      query_window_start, query_window_end, raw_payload)
+		 values ($1, $2, $3, 'approved', 'confirmed', 10000, 500, 'USD', now(),
+		         now() - interval '1 day', now(), '{"id":"txn-usd"}'::jsonb)
+		 returning id`,
+		f.networkID, f.networkAccountID, "usd-"+f.externalID).Scan(&dollars); err != nil {
+		t.Fatalf("seeding the dollar report: %v", err)
+	}
+
+	var pgErr *pgconn.PgError
+	if err := refused(ctx, tx, func(sp pgx.Tx) error {
+		_, err := sp.Exec(ctx,
+			`insert into cashback.entry
+			     (brand_id, account_id, network_transaction_id, state, amount_minor, currency)
+			 values ('fixture', $1, $2, 'pending', 250, 'USD')`,
+			f.accountID, dollars)
+		return err
+	}); !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.ForeignKeyViolation || pgErr.ConstraintName != "entry_currency_is_the_members" {
+		t.Fatalf("a credit in a currency the member is not paid in = %v, want a foreign key violation on entry_currency_is_the_members", err)
+	}
+
+	// The member holds an EUR entry, so their currency is EUR for as long as
+	// it does. The one path that may restate it - leaving and re-joining
+	// under a brand that now pays in something else (0017) - is refused by
+	// the same key from the other side.
+	if _, err := tx.Exec(ctx,
+		`update cashback.participation set status = 'left', left_at = now() where account_id = $1`, f.accountID); err != nil {
+		t.Fatalf("leaving: %v", err)
+	}
+	if err := refused(ctx, tx, func(sp pgx.Tx) error {
+		_, err := sp.Exec(ctx, `
+			update cashback.participation
+			   set status = 'active', left_at = null, opted_in_at = now(), terms_version = 'terms-v2', default_currency = 'SEK'
+			 where account_id = $1`, f.accountID)
+		return err
+	}); !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.ForeignKeyViolation || pgErr.ConstraintName != "entry_currency_is_the_members" {
+		t.Fatalf("re-joining a credited member in another currency = %v, want a foreign key violation on entry_currency_is_the_members", err)
+	}
 }

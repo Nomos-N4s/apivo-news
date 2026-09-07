@@ -85,6 +85,13 @@ func world(ctx context.Context, t *testing.T, tx pgx.Tx) (networkID string, publ
 		"member-"+id+"@example.test").Scan(&member); err != nil {
 		t.Fatalf("seeding the member: %v", err)
 	}
+	// In cashback in EUR, the currency the fixture reports in: an entry is
+	// only ever in the member's own currency (entry_currency_is_the_members).
+	if _, err := tx.Exec(ctx, `
+		insert into cashback.participation (account_id, brand_id, terms_version, default_currency)
+		values ($1, 'fixture', '1.0.0', 'EUR')`, member); err != nil {
+		t.Fatalf("opting the member in: %v", err)
+	}
 	var merchant, route pgtype.UUID
 	if err := tx.QueryRow(ctx, `
 		insert into cashback.merchant (slug, country, source_language_code, status)

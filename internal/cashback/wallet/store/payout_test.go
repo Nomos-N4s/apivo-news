@@ -91,6 +91,11 @@ func member(ctx context.Context, t *testing.T, tx pgx.Tx) (account, destination 
 		"paid-"+id+"@example.test").Scan(&account); err != nil {
 		t.Fatalf("seeding the member: %v", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		insert into cashback.participation (account_id, brand_id, terms_version, default_currency)
+		values ($1, 'fixture', '1.0.0', 'EUR')`, account); err != nil {
+		t.Fatalf("opting the member in: %v", err)
+	}
 	if err := tx.QueryRow(ctx, `
 		insert into cashback.payout_destination (account_id, kind, details_ref, verified_at, verified_method)
 		values ($1, 'manual', $2, now(), 'operator-checked') returning id`,

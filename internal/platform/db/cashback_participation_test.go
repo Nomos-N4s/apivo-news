@@ -167,11 +167,8 @@ func TestParticipationEvidenceIsProtected(t *testing.T) {
 			ctx := context.Background()
 			f := seedCashbackWithdrawal(t, tx)
 
-			if _, err := tx.Exec(ctx,
-				`insert into cashback.participation (account_id, brand_id, terms_version, default_currency)
-				 values ($1, 'fixture', 'terms-v1', 'EUR')`, f.accountID); err != nil {
-				t.Fatalf("a valid opt-in was rejected: %v", err)
-			}
+			// The fixture opted the member in, under terms-v1 (an entry
+			// needs the participation, 0036); the guard is asked about it.
 			_, err := tx.Exec(ctx, tt.stmt, f.accountID)
 			wantPgCode(t, err, codeRaiseException)
 		})
@@ -188,11 +185,8 @@ func TestRejoiningRestatesTheAcceptance(t *testing.T) {
 	ctx := context.Background()
 	f := seedCashbackWithdrawal(t, tx)
 
-	if _, err := tx.Exec(ctx,
-		`insert into cashback.participation (account_id, brand_id, terms_version, default_currency)
-		 values ($1, 'fixture', 'terms-v1', 'EUR')`, f.accountID); err != nil {
-		t.Fatalf("a valid opt-in was rejected: %v", err)
-	}
+	// The fixture opted the member in under terms-v1 (an entry needs the
+	// participation, 0036); the re-join is measured against it.
 	if _, err := tx.Exec(ctx,
 		`update cashback.participation set status = 'left', left_at = now() where account_id = $1`,
 		f.accountID); err != nil {
