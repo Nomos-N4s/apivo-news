@@ -805,6 +805,74 @@ psql -c "select id, details_ref from cashback.payout_destination where account_i
 payout route works, including withdrawing to a destination recorded earlier.
 With it set to something unusable the api refuses to start.
 
+#### Switching it on — QA first
+
+The overlay is `docker-compose.vault.yml`, listed in `COMPOSE_FILE` exactly
+as the cashback one is. It is a separate file because the state above is
+supported: an environment can run cashback and no vault.
+
+```sh
+# 1. Add the overlay. On the host, in /etc/apivo/qa/stack.env, append it to
+#    COMPOSE_FILE after the cashback overlay.
+COMPOSE_FILE=docker-compose.yml:docker-compose.local-db.yml:docker-compose.cashback.yml:docker-compose.vault.yml
+
+apivoctl deploy qa
+```
+
+The vault now runs, **sealed and uninitialised**, and the api answers 503 as
+before — the deploy succeeds, because the rollout gate is written to let it.
+Initialise it once:
+
+```sh
+# 2. Initialise. This prints the unseal shares and the root token ONCE and
+#    they are not recoverable. Put them somewhere that is not this host.
+docker exec -it apivo-qa-openbao bao operator init -key-shares=3 -key-threshold=2
+
+# 3. Unseal. Two of the three shares, one command each.
+docker exec -it apivo-qa-openbao bao operator unseal
+docker exec -it apivo-qa-openbao bao operator unseal
+```
+
+Then give the api somewhere to write and a token that can do nothing else.
+The api only ever writes a destination — the port stores and never fetches —
+so a token that can read is a token wider than the job:
+
+```sh
+export BAO_TOKEN=<the root token from step 2>
+
+# 4. The KV v2 mount. Not enabled by default on a real server, unlike dev
+#    mode. `secret` is the conventional path and what the api assumes when
+#    PAYOUT_VAULT_MOUNT is unset.
+docker exec -e BAO_TOKEN -it apivo-qa-openbao bao secrets enable -path=secret kv-v2
+
+# 5. A policy that permits exactly what the api does, and a token carrying it.
+docker exec -e BAO_TOKEN -i apivo-qa-openbao sh -c \
+  'bao policy write apivo-payout-details - <<POLICY
+path "secret/data/cashback/payout-destinations/*" {
+  capabilities = ["create", "update"]
+}
+POLICY'
+docker exec -e BAO_TOKEN -it apivo-qa-openbao \
+  bao token create -policy=apivo-payout-details -period=768h -field=token
+```
+
+Put that token in `/etc/apivo/qa/api.env` as `PAYOUT_VAULT_TOKEN`, leave
+`PAYOUT_VAULT_MOUNT` empty for the conventional `secret`, and restart the api
+so it reads the file:
+
+```sh
+apivoctl deploy qa
+docker logs apivo-qa-api 2>&1 | grep 'payout details vault configured'
+```
+
+**After any restart the vault is sealed again**, and step 3 is the whole
+remedy. Nothing else breaks while it is sealed: the api starts, the newspaper
+serves, every payout route except recording a NEW destination works, and the
+one that does not answers a 503 rather than an error nobody can read. That is
+why the healthcheck reports a sealed vault as healthy — a probe that called
+it unhealthy would fail the rollout and roll the environment back, front page
+included, every time the box rebooted.
+
 ## Moving QA to a real network
 
 Swap `NETWORKS=fixture` for the driver and add its block —
