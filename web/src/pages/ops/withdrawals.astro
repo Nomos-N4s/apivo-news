@@ -144,7 +144,8 @@ const ageOf = (iso: string): string =>
             {formatMoney(lang, item.amount)} · {item.account_id}
           </div>
           <div class="qrow-sub">
-            {t.reserved} {formatMoney(lang, item.reserved_amount)} · {item.destination.details}
+            {t.reserved} {formatMoney(lang, item.reserved_amount)} ·{' '}
+            {t.destinationKinds[item.destination.kind]}
           </div>
         </a>
       ))
@@ -182,10 +183,10 @@ const ageOf = (iso: string): string =>
                 <dt>{t.reserved}</dt>
                 <dd class="strong">{formatMoney(lang, selected.reserved_amount)}</dd>
                 <dt>{t.destination}</dt>
-                <dd class="mono">{selected.destination.details}</dd>
+                <dd>{t.destinationKinds[selected.destination.kind]}</dd>
               </dl>
               <h6 class="evidence-head">{t.evidence}</h6>
-              <pre class="evidence">{`request_id: ${selected.id}\ndestination_id: ${selected.destination.id}\nkind: ${selected.destination.kind}\nverified_at: ${selected.destination.verified_at ?? '—'}\nrequested_at: ${selected.requested_at}`}</pre>
+              <pre class="evidence">{`request_id: ${selected.id}\ndestination_id: ${selected.destination.destination_id}\nkind: ${selected.destination.kind}\nverified_at: ${selected.destination.verified_at ?? '—'}\nverified_method: ${selected.destination.verified_method ?? '—'}\nrequested_at: ${selected.requested_at}`}</pre>
             </div>
             <div class="d-right">
               <div class="d-say">

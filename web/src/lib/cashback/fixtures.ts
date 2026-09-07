@@ -40,33 +40,42 @@ export const ENTRY_FIXTURES: readonly WalletEntry[] = [
   {
     entry_id: 'fx-entry-1',
     merchant_name: 'Agora',
+    merchant_name_language: 'el',
+    merchant_name_is_fallback: false,
     transacted_at: '2026-08-21T14:12:00Z',
     sale_amount: { minor: 8430, currency: EUR },
     cashback_amount: { minor: 422, currency: EUR },
     state: 'pending',
     expected_confirmation_at: '2026-09-20T00:00:00Z',
+    hold_rule: null,
     reversal_of_id: null,
     reason: null,
   },
   {
     entry_id: 'fx-entry-2',
     merchant_name: 'Efimeria',
+    merchant_name_language: 'de',
+    merchant_name_is_fallback: true,
     transacted_at: '2026-08-18T09:30:00Z',
     sale_amount: { minor: 4600, currency: EUR },
     cashback_amount: { minor: 184, currency: EUR },
     state: 'confirmed',
     expected_confirmation_at: null,
+    hold_rule: null,
     reversal_of_id: null,
     reason: null,
   },
   {
     entry_id: 'fx-entry-3',
     merchant_name: 'Agora',
+    merchant_name_language: 'el',
+    merchant_name_is_fallback: false,
     transacted_at: '2026-07-12T18:04:00Z',
     sale_amount: { minor: 2210, currency: EUR },
     cashback_amount: { minor: 111, currency: EUR },
     state: 'reversed',
     expected_confirmation_at: null,
+    hold_rule: null,
     reversal_of_id: null,
     reason: null,
   },
@@ -77,22 +86,63 @@ export const ENTRY_FIXTURES: readonly WalletEntry[] = [
     // single tidy entry.
     entry_id: 'fx-entry-4',
     merchant_name: 'Agora',
+    merchant_name_language: 'el',
+    merchant_name_is_fallback: false,
     transacted_at: '2026-07-19T11:00:00Z',
     sale_amount: { minor: 2210, currency: EUR },
     cashback_amount: { minor: -111, currency: EUR },
     state: 'reversed',
     expected_confirmation_at: null,
+    hold_rule: null,
     reversal_of_id: 'fx-entry-3',
     reason: 'The shop refunded the order.',
   },
   {
     entry_id: 'fx-entry-5',
     merchant_name: 'Kritikos',
+    merchant_name_language: 'el',
+    merchant_name_is_fallback: false,
     transacted_at: '2026-06-28T08:15:00Z',
     sale_amount: { minor: 1740, currency: EUR },
     cashback_amount: { minor: 87, currency: EUR },
     state: 'paid',
     expected_confirmation_at: null,
+    hold_rule: null,
+    reversal_of_id: null,
+    reason: null,
+  },
+  {
+    // Held, and naming the rule holding it. The totals do not count held
+    // money at all, so a member who sees this row and no matching figure is
+    // reading the truth rather than a rounding error.
+    entry_id: 'fx-entry-6',
+    merchant_name: 'Agora',
+    merchant_name_language: 'el',
+    merchant_name_is_fallback: false,
+    transacted_at: '2026-08-24T16:40:00Z',
+    sale_amount: { minor: 31200, currency: EUR },
+    cashback_amount: { minor: 1560, currency: EUR },
+    state: 'held',
+    expected_confirmation_at: null,
+    hold_rule: 'basket_above_threshold',
+    reversal_of_id: null,
+    reason: null,
+  },
+  {
+    // Attributed by hand, so there is no click and no retailer to name
+    // (FR-034). The contract sends null here and the page has to have
+    // something to say; a preview that never produces the null would let a
+    // blank line reach a member unnoticed.
+    entry_id: 'fx-entry-7',
+    merchant_name: null,
+    merchant_name_language: null,
+    merchant_name_is_fallback: false,
+    transacted_at: '2026-08-02T10:05:00Z',
+    sale_amount: { minor: 5900, currency: EUR },
+    cashback_amount: { minor: 295, currency: EUR },
+    state: 'pending',
+    expected_confirmation_at: null,
+    hold_rule: null,
     reversal_of_id: null,
     reason: null,
   },
@@ -116,6 +166,8 @@ export const CATALOGUE_FIXTURES: readonly MerchantDetail[] = [
     name_language: 'el',
     name_is_fallback: false,
     summary: 'Greek groceries, delivered across Germany and Austria.',
+    country: 'DE',
+    terms: 'Delivery within Germany and Austria only. Marketplace sellers are the seller of record.',
     typical_confirmation_days: null,
     rates: [
       {
@@ -135,6 +187,8 @@ export const CATALOGUE_FIXTURES: readonly MerchantDetail[] = [
     name_language: 'de',
     name_is_fallback: true,
     summary: 'Online pharmacy shipping to Germany.',
+    country: 'DE',
+    terms: 'Prescription medicines are dispensed under German pharmacy law and are never eligible.',
     typical_confirmation_days: null,
     rates: [
       {
@@ -154,6 +208,8 @@ export const CATALOGUE_FIXTURES: readonly MerchantDetail[] = [
     name_language: 'el',
     name_is_fallback: false,
     summary: 'Bakery goods shipped weekly.',
+    country: 'GR',
+    terms: 'Shipped weekly from Crete. Perishable goods are not returnable.',
     typical_confirmation_days: null,
     rates: [
       {
@@ -176,6 +232,8 @@ export const CATALOGUE_FIXTURES: readonly MerchantDetail[] = [
     name_language: 'el',
     name_is_fallback: false,
     summary: 'Deli and traiteur, ships within Bavaria.',
+    country: 'DE',
+    terms: null,
     typical_confirmation_days: null,
     rates: [],
   },
@@ -187,38 +245,42 @@ export const CATALOGUE_LIST_FIXTURES: readonly CatalogueItem[] = CATALOGUE_FIXTU
 /** One verified destination and one that is not — the 409 path has a subject. */
 export const DESTINATION_FIXTURES: readonly PayoutDestination[] = [
   {
-    id: 'fx-destination-1',
+    destination_id: 'fx-destination-1',
     kind: 'sepa',
-    details: '•••• 3000',
     verified_at: '2026-07-02T10:00:00Z',
+    verified_method: 'micro_deposit',
+    created_at: '2026-06-28T09:12:00Z',
   },
   {
-    id: 'fx-destination-2',
+    // Added later and never proved. The withdrawal offers it and refuses to
+    // let it be chosen, which is the state a member most needs drawn.
+    destination_id: 'fx-destination-2',
     kind: 'sepa',
-    details: '•••• 8841',
     verified_at: null,
+    verified_method: null,
+    created_at: '2026-08-14T17:41:00Z',
   },
 ];
 
 /** A withdrawal in the state every withdrawal starts in. */
 export const WITHDRAWAL_FIXTURES: readonly Withdrawal[] = [
   {
-    id: 'fx-withdrawal-1',
+    request_id: 'fx-withdrawal-1',
+    destination_id: 'fx-destination-1',
     state: 'awaiting_approval',
     amount: { minor: 1500, currency: EUR },
-    reserved_amount: { minor: 1840, currency: EUR },
-    destination: DESTINATION_FIXTURES[0] as PayoutDestination,
     requested_at: '2026-08-24T09:46:00Z',
+    decided_at: null,
     decision_reason: null,
     payout_reference: null,
   },
   {
-    id: 'fx-withdrawal-2',
+    request_id: 'fx-withdrawal-2',
+    destination_id: 'fx-destination-1',
     state: 'rejected',
     amount: { minor: 2000, currency: EUR },
-    reserved_amount: { minor: 2000, currency: EUR },
-    destination: DESTINATION_FIXTURES[0] as PayoutDestination,
     requested_at: '2026-07-30T12:00:00Z',
+    decided_at: '2026-08-01T08:20:00Z',
     decision_reason: 'The destination name did not match the account holder.',
     payout_reference: null,
   },

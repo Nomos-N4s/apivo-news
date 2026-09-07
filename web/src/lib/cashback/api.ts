@@ -15,6 +15,7 @@ import {
 import type {
   CatalogueItem,
   Clickout,
+  Collection,
   DifferenceResolution,
   EntryPage,
   EntryState,
@@ -179,6 +180,7 @@ function fixtureApi(): CashbackApi {
         opted_in_at: '2026-06-01T00:00:00Z',
         terms_version: 'fixture-1',
         default_currency: 'EUR',
+        left_at: null,
       }),
     optIn: (termsVersion) =>
       Promise.resolve({
@@ -186,6 +188,7 @@ function fixtureApi(): CashbackApi {
         opted_in_at: new Date(0).toISOString(),
         terms_version: termsVersion,
         default_currency: 'EUR',
+        left_at: null,
       }),
     catalogue: (query) => {
       const needle = query.q?.trim().toLowerCase();
@@ -374,7 +377,7 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
         })}`,
       ),
     destinations: async () =>
-      (await required<OperatorPage<PayoutDestination>>('/payout-destinations')).items,
+      (await required<Collection<PayoutDestination>>('/payout-destinations')).items,
     requestWithdrawal: (destinationId, amountMinor, currency) =>
       required<WithdrawalRequest>('/withdrawals', {
         method: 'POST',
@@ -383,7 +386,7 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
           amount: { minor: amountMinor, currency },
         }),
       }),
-    withdrawals: async () => (await required<OperatorPage<Withdrawal>>('/withdrawals')).items,
+    withdrawals: async () => (await required<Collection<Withdrawal>>('/withdrawals')).items,
     unattributed: () => required<OperatorPage<UnattributedTransaction>>('/ops/unattributed'),
     held: () => required<OperatorPage<HeldEntry>>('/ops/held'),
     withdrawalsAwaitingApproval: () =>

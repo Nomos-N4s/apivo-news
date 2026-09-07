@@ -21,6 +21,12 @@ export interface Participation {
   readonly opted_in_at: string;
   readonly terms_version: string;
   readonly default_currency: string;
+  /**
+   * Null unless they have left. Leaving is a status and a date, never a
+   * deletion (FR-003), and the api sends both so a client can say WHEN
+   * rather than only that.
+   */
+  readonly left_at: string | null;
 }
 
 /**
@@ -69,6 +75,13 @@ export interface CatalogueItem {
 /** `GET /merchants/{slug}`. */
 export interface MerchantDetail extends CatalogueItem {
   /**
+   * Where the retailer trades, or null when they are bound to none. Not
+   * where the reader is: the two are separate axes (constitution VII).
+   */
+  readonly country: string | null;
+  /** The retailer's own conditions, as the catalogue import received them. */
+  readonly terms: string | null;
+  /**
    * Always null today. Nothing in the schema records it — not on the
    * retailer, not on the route, not on the network — and the contract emits
    * null rather than a plausible constant, because a member reads a number
@@ -81,7 +94,15 @@ export interface MerchantDetail extends CatalogueItem {
 export interface Clickout {
   readonly click_ref: string;
   readonly redirect_url: string;
-  readonly expires_at: string;
+  /**
+   * When the rate band this click was issued against stops being published,
+   * or null for a band with no published end.
+   *
+   * It is about the OFFER, not about the redirect: the credit this click
+   * earns is governed by the snapshot already taken (FR-013), and no network
+   * expires a deeplink. Declaring it non-null said the opposite.
+   */
+  readonly expires_at: string | null;
 }
 
 /**
@@ -101,18 +122,45 @@ export interface WalletTotals {
   readonly payout_threshold: Money;
 }
 
-/** The lifecycle states an entry is published in. */
-export type EntryState = 'pending' | 'confirmed' | 'paid' | 'held' | 'reversed' | 'declined';
+/**
+ * The lifecycle states an entry is published in — the six the state machine
+ * allows (`internal/cashback/earnings/state.go`) and the six the database's
+ * `entry_state_known` check admits.
+ *
+ * `reserved` is one of them and was missing here: money a withdrawal request
+ * has claimed and that has not yet left. `declined` was here and is not one of
+ * them — nothing in the schema, the state machine or the API ever produces it,
+ * so a page branching on it was branching on a state that cannot arrive.
+ */
+export type EntryState = 'held' | 'pending' | 'confirmed' | 'reserved' | 'paid' | 'reversed';
 
 /** One `GET /wallet/entries` item. */
 export interface WalletEntry {
   readonly entry_id: string;
-  readonly merchant_name: string;
+  /**
+   * Null for an entry an operator attributed by hand: there was no click, so
+   * there is no route back to a retailer to name (FR-034).
+   */
+  readonly merchant_name: string | null;
+  /**
+   * What `merchant_name` is written in, and whether that is the language the
+   * member asked for. US5 scenario 2 requires a fallback to be LABELLED
+   * rather than passed off as the member's own language, and a page cannot
+   * label what it was never told.
+   */
+  readonly merchant_name_language: string | null;
+  readonly merchant_name_is_fallback: boolean;
   readonly transacted_at: string;
   readonly sale_amount: Money;
   readonly cashback_amount: Money;
   readonly state: EntryState;
   readonly expected_confirmation_at: string | null;
+  /**
+   * Names the rule keeping this entry out of the balance; null unless the
+   * state is held. A member told only "in review" cannot tell whether that
+   * is about them.
+   */
+  readonly hold_rule: string | null;
   /**
    * Set on a reversal, naming the credit it reverses. Both appear in the
    * list; neither is hidden (US3 scenario 2), which is why this is a
@@ -128,13 +176,43 @@ export interface EntryPage {
   readonly next_cursor: string | null;
 }
 
-/** A destination a member owns. An unverified one is refused at withdrawal. */
+/**
+ * A list the api does not page.
+ *
+ * `GET /payout-destinations` and `GET /withdrawals` answer `{ items }` and
+ * nothing else — a member has few enough of either that a cursor would be
+ * ceremony. Distinguished from `OperatorPage` because a client that assumed a
+ * cursor was there would read `undefined`, decide it was not null, and ask
+ * for a page after the last one.
+ */
+export interface Collection<T> {
+  readonly items: readonly T[];
+}
+
+/** The rails a destination can be for. */
+export type DestinationKind = 'sepa' | 'manual' | 'stub';
+
+/**
+ * A destination a member owns. An unverified one is refused at withdrawal.
+ *
+ * **There is no `details` field, and there is not going to be one.** This
+ * file used to declare one, described as a masked IBAN; the api has never
+ * sent it. What a member reads back is which rail it is for and whether it
+ * has been proved theirs. The account itself lives somewhere this service
+ * cannot read it from (ADR-0003), and an endpoint that echoed it would be
+ * the leak the whole arrangement exists to prevent.
+ *
+ * So a screen naming a destination has `kind` and `created_at` and nothing
+ * else, and that is deliberate rather than a gap to fill.
+ */
 export interface PayoutDestination {
-  readonly id: string;
-  readonly kind: string;
-  /** Masked by the API — the last group of an IBAN, never the whole one. */
-  readonly details: string;
+  readonly destination_id: string;
+  readonly kind: DestinationKind;
+  /** Null until the member has proved this destination is theirs (FR-051). */
   readonly verified_at: string | null;
+  /** How it was proved, beside when. Null while `verified_at` is. */
+  readonly verified_method: string | null;
+  readonly created_at: string;
 }
 
 /**
@@ -162,17 +240,30 @@ export type WithdrawalState =
   | 'settled'
   | 'failed';
 
-/** `GET /withdrawals` · `GET /withdrawals/{id}`. */
+/**
+ * `GET /withdrawals` · `GET /withdrawals/{id}`.
+ *
+ * The destination arrives as an id, not as a nested resource. A member's own
+ * destinations are one call away, and repeating the record on every row would
+ * publish the same thing many times over; a screen that wants to name the
+ * destination joins the two lists itself.
+ *
+ * `reserved_amount` is NOT here, and its absence is the point. It belongs to
+ * the 201 from `POST /withdrawals` — `WithdrawalRequest` above — where it is
+ * the figure a member has just committed to and has to be told. On a
+ * historical row the amount is the amount.
+ */
 export interface Withdrawal {
-  readonly id: string;
+  readonly request_id: string;
+  readonly destination_id: string;
   readonly state: WithdrawalState;
   readonly amount: Money;
-  readonly reserved_amount: Money;
-  readonly destination: PayoutDestination;
   readonly requested_at: string;
-  /** Present where an operator refused it — the member reads this. */
+  /** When an operator decided; null while it waits for one (C-4). */
+  readonly decided_at: string | null;
+  /** Present where an operator refused it — the member reads this (FR-061). */
   readonly decision_reason: string | null;
-  /** Present once settled. */
+  /** What the rail called the payment: the string a member quotes to a bank. */
   readonly payout_reference: string | null;
 }
 
@@ -255,6 +346,14 @@ export interface WithdrawalForApproval {
   readonly destination: PayoutDestination;
   readonly requested_at: string;
 }
+
+/*
+ * A note on the shape above: no endpoint serves it. The operator queue calls
+ * `GET /ops/withdrawals?state=awaiting_approval` and the api registers only
+ * the three decisions on that prefix, so this is the shape the screen was
+ * written to and not one the api has ever sent. Tracked as its own issue;
+ * the queue is a fixture-only screen until it lands.
+ */
 
 /** The three kinds of disagreement detection derives from a statement. */
 export type DifferenceKind = 'reported_not_paid' | 'amount_mismatch' | 'paid_not_reported';

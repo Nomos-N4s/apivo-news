@@ -172,7 +172,26 @@ const typeable = (minor: number): string => decimalString(minor, digits).replace
 // first verified one. An unverified destination is refused at withdrawal,
 // so the page never pre-selects one.
 const selectedDestination =
-  verified.find((destination) => destination.id === requestedDestination) ?? verified[0] ?? null;
+  verified.find((destination) => destination.destination_id === requestedDestination) ??
+  verified[0] ??
+  null;
+
+/**
+ * How a destination is named on screen: the rail, and the day it was added.
+ *
+ * There is nothing else to name it with. The api sends `kind`, `verified_at`
+ * and `created_at`, and deliberately never the account - it lives where this
+ * service cannot read it (ADR-0003). The masked IBAN this screen used to
+ * print was a field the api has never sent.
+ */
+const destinationName = (destination: PayoutDestination): string =>
+  `${t.destinationKinds[destination.kind]} · ${t.addedOn(formatItemDate(lang, new Date(destination.created_at)))}`;
+
+/** The destination a past withdrawal went to, looked up in the member's own list. */
+const destinationOf = (id: string): string => {
+  const held = destinations.find((destination) => destination.destination_id === id);
+  return held === undefined ? t.destinationNotOnFile : destinationName(held);
+};
 
 // The amount: what was typed, or the whole confirmed balance — the one
 // quick-pick this page can vouch for.
@@ -202,7 +221,7 @@ const backHref = ((): string => {
   const params = new URLSearchParams();
   params.set('amount', amountText);
   if (selectedDestination !== null) {
-    params.set('destination_id', selectedDestination.id);
+    params.set('destination_id', selectedDestination.destination_id);
   }
   return `${withdrawPath(lang, slugs)}?${params.toString()}`;
 })();
@@ -383,14 +402,17 @@ const progress = step === 'receipt' ? 3 : step === 'review' ? 2 : 1;
                             <input
                               type="radio"
                               name="destination_id"
-                              value={destination.id}
+                              value={destination.destination_id}
                               disabled={destination.verified_at === null}
-                              checked={selectedDestination !== null && destination.id === selectedDestination.id}
-                              data-details={destination.details}
+                              checked={
+                                selectedDestination !== null &&
+                                destination.destination_id === selectedDestination.destination_id
+                              }
+                              data-name={destinationName(destination)}
                             />
                             <span class="mark" aria-hidden="true" />
                             <span class="dest-text">
-                              <span class="dest-title mono">{destination.details}</span>
+                              <span class="dest-title">{destinationName(destination)}</span>
                               <span class="dest-sub">
                                 {destination.verified_at === null ? t.destinationUnverified : t.verifiedPayoutsOn}
                               </span>
@@ -417,7 +439,9 @@ const progress = step === 'receipt' ? 3 : step === 'review' ? 2 : 1;
                       </div>
                       <div class="row">
                         <span class="k">{t.destinationLabel}</span>
-                        <span class="v mono live-dest">{selectedDestination?.details ?? ''}</span>
+                        <span class="v live-dest">
+                          {selectedDestination === null ? '' : destinationName(selectedDestination)}
+                        </span>
                       </div>
                       <div class="row stacked">
                         <span class="k">{t.reserved}</span>
@@ -470,12 +494,8 @@ const progress = step === 'receipt' ? 3 : step === 'review' ? 2 : 1;
                 </div>
                 <div class="rows">
                   <div class="row">
-                    <span class="k">{t.reserved}</span>
-                    <span class="v">{formatMoney(lang, withdrawal.reserved_amount)}</span>
-                  </div>
-                  <div class="row">
                     <span class="k">{t.destinationLabel}</span>
-                    <span class="v mono">{withdrawal.destination.details}</span>
+                    <span class="v">{destinationOf(withdrawal.destination_id)}</span>
                   </div>
                   {
                     withdrawal.decision_reason !== null && (
@@ -549,7 +569,7 @@ const progress = step === 'receipt' ? 3 : step === 'review' ? 2 : 1;
     form.querySelectorAll<HTMLInputElement>('input[name="destination_id"]').forEach((radio) => {
       radio.addEventListener('change', () => {
         if (dest !== null && radio.checked) {
-          dest.textContent = radio.dataset['details'] ?? '';
+          dest.textContent = radio.dataset['name'] ?? '';
         }
       });
     });

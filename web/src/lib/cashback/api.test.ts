@@ -123,6 +123,54 @@ describe('the HTTP client', () => {
     expect(url.searchParams.getAll('place')).toEqual(['munich', 'greece']);
   });
 
+  /*
+   * The two lists the api does not page. Both answer `{ items }` and no
+   * cursor, and both used to be read as an OperatorPage - a shape whose
+   * absent next_cursor is `undefined`, which is not null, which is how a
+   * client comes to ask for the page after the last one (#554).
+   */
+  it('reads the destinations out of a body that carries no cursor', async () => {
+    const stub = stubFetch(() =>
+      json({
+        items: [
+          {
+            destination_id: 'd-1',
+            kind: 'sepa',
+            verified_at: null,
+            verified_method: null,
+            created_at: '2026-08-14T17:41:00Z',
+          },
+        ],
+      }),
+    );
+    const held = await createCashbackApi(BASE, { fetch: stub.fetch }).destinations();
+    expect(held).toHaveLength(1);
+    expect(held[0]?.destination_id).toBe('d-1');
+    expect(new URL(stub.calls[0]?.url ?? '').pathname).toBe('/api/v1/cashback/payout-destinations');
+  });
+
+  it('reads the withdrawals out of a body that carries no cursor', async () => {
+    const stub = stubFetch(() =>
+      json({
+        items: [
+          {
+            request_id: 'w-1',
+            destination_id: 'd-1',
+            state: 'awaiting_approval',
+            amount: { minor: 1500, currency: 'EUR' },
+            requested_at: '2026-08-24T09:46:00Z',
+            decided_at: null,
+            decision_reason: null,
+            payout_reference: null,
+          },
+        ],
+      }),
+    );
+    const asked = await createCashbackApi(BASE, { fetch: stub.fetch }).withdrawals();
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.request_id).toBe('w-1');
+  });
+
   it('reads a never-opted-in member as null rather than an error', async () => {
     const stub = stubFetch(() => json({ title: 'not found' }, 404));
     const participation = await createCashbackApi(BASE, { fetch: stub.fetch }).participation();
