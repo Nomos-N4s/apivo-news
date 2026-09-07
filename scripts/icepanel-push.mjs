@@ -99,6 +99,20 @@ function validate(model) {
   const DIRECTIONS = new Set(['outgoing', 'bidirectional'])
   const problems = []
 
+  // IcePanel enforces a strict C4 ladder and rejects anything else with a
+  // 422 halfway through a load. These pairs were established against the
+  // live API, not read from the documentation, which does not state them:
+  // a group holds systems and nothing else, an app and a store hold
+  // components, and a component holds nothing at all.
+  const OWNS = {
+    root: new Set(['system', 'actor', 'group']),
+    group: new Set(['system']),
+    system: new Set(['app', 'store']),
+    app: new Set(['component']),
+    store: new Set(['component']),
+    component: new Set(),
+  }
+
   const domainIds = new Set(model.domains.map((d) => d.id))
   const objectIds = new Set(model.objects.map((o) => o.id))
 
@@ -110,6 +124,13 @@ function validate(model) {
     if (!TYPES.has(o.type)) problems.push(`object "${o.id}" has type "${o.type}", which IcePanel does not accept`)
     if (o.domainId && !domainIds.has(o.domainId)) problems.push(`object "${o.id}" names an unknown domain "${o.domainId}"`)
     if (o.parentId && !objectIds.has(o.parentId)) problems.push(`object "${o.id}" names an unknown parent "${o.parentId}"`)
+  }
+  const typeOf = new Map(model.objects.map((o) => [o.id, o.type]))
+  for (const o of model.objects) {
+    const parent = o.parentId ? typeOf.get(o.parentId) : 'root'
+    if (parent && OWNS[parent] && !OWNS[parent].has(o.type)) {
+      problems.push(`object "${o.id}" is a ${o.type} under a ${parent}; IcePanel refuses that`)
+    }
   }
   for (const c of model.connections) {
     if (!objectIds.has(c.sourceId)) problems.push(`connection "${c.id}" starts at an unknown object "${c.sourceId}"`)
@@ -249,45 +270,110 @@ async function main() {
   // no parent of their own. Its id is read rather than assumed.
   // In a dry run the root is not fetched, so say so rather than printing a
   // null that the real run would never send.
-  let rootId = apply ? null : '<root, read from the landscape at --apply>'
-  if (apply) {
-    const existing = await call('GET', `${base}/model/objects`)
-    const list = existing.modelObjects ?? existing.objects ?? existing
-    const root = (Array.isArray(list) ? list : Object.values(list ?? {})).find((o) => o?.type === 'root')
-    if (!root) throw new Error('no root object found in this landscape version; cannot place top-level objects')
-    rootId = root.id
-    console.log(`root object: ${rootId}\n`)
+  // Everything below is keyed on handleId, which is the model's own id
+  // carried into IcePanel. Reading what is already there first is what makes
+  // a second run safe: a load that fails on row 30 of 145 has to be finishable
+  // without producing 29 duplicates, and the first one did.
+  // There is no single root. IcePanel gives every domain a root object of
+  // its own, so a top-level object belongs under the root of ITS domain —
+  // parenting them all to the first root that turns up puts every system in
+  // whichever domain happened to be created first, which is what the first
+  // run of this script did before the roots were looked at properly.
+  const rootOfDomain = new Map() // IcePanel domain id -> that domain's root object id
+  const existingDomains = new Map()
+  const existingObjects = new Map()
+  const existingConnections = new Map()
+
+  const rows = (payload, ...keys) => {
+    const list = keys.reduce((acc, k) => acc ?? payload?.[k], undefined) ?? payload
+    return Array.isArray(list) ? list : Object.values(list ?? {})
   }
+
+  /** readRoots refreshes the domain-to-root map; domains created during the
+   *  run bring new roots with them, so it is read again after they exist. */
+  const readRoots = async () => {
+    for (const o of rows(await call('GET', `${base}/model/objects`), 'modelObjects', 'objects')) {
+      if (o?.type === 'root' && o?.domainId) rootOfDomain.set(o.domainId, o.id)
+    }
+  }
+
+  if (apply) {
+    const objects = rows(await call('GET', `${base}/model/objects`), 'modelObjects', 'objects')
+    for (const o of objects) {
+      if (o?.type === 'root' && o?.domainId) rootOfDomain.set(o.domainId, o.id)
+      else if (o.handleId) existingObjects.set(o.handleId, o.id)
+    }
+    for (const d of rows(await call('GET', `${base}/domains`), 'domains')) {
+      if (d.handleId) existingDomains.set(d.handleId, d.id)
+    }
+    for (const c of rows(await call('GET', `${base}/model/connections`), 'modelConnections', 'connections')) {
+      if (c.handleId) existingConnections.set(c.handleId, c.id)
+    }
+    console.log(
+      `${rootOfDomain.size} domain root(s) found\n` +
+        `already present: ${existingDomains.size} domains, ${existingObjects.size} objects, ` +
+        `${existingConnections.size} connections (matched on handleId)\n`
+    )
+  }
+
+  let created = 0
+  let skipped = 0
 
   const domainId = new Map()
   console.log(`domains (${model.domains.length}):`)
   for (const d of model.domains) {
-    const created = await call('POST', `${base}/domains`, {
+    if (existingDomains.has(d.id)) {
+      domainId.set(d.id, existingDomains.get(d.id))
+      skipped++
+      continue
+    }
+    const row = await call('POST', `${base}/domains`, {
       name: d.name,
       handleId: d.id,
       ...(d.description ? { labels: { description: d.description } } : {}),
     })
-    domainId.set(d.id, created.id)
+    domainId.set(d.id, row.id)
+    created++
+  }
+  // Creating a domain creates its root object, so the map is re-read.
+  if (apply) await readRoots()
+
+  /** topLevelParent is the root of the object's own domain. */
+  const topLevelParent = (o) => {
+    if (!apply) return `<root of domain ${o.domainId ?? 'default'}>`
+    const root = rootOfDomain.get(domainId.get(o.domainId))
+    if (!root) throw new Error(`no root object for domain "${o.domainId}"; cannot place "${o.id}"`)
+    return root
   }
 
   const objectId = new Map()
   const ordered = orderObjects(model.objects)
-  console.log(`\nobjects (${ordered.length}, parents first):`)
+  console.log(`objects (${ordered.length}, parents first):`)
   for (const o of ordered) {
-    const created = await call('POST', `${base}/model/objects`, {
+    if (existingObjects.has(o.id)) {
+      objectId.set(o.id, existingObjects.get(o.id))
+      skipped++
+      continue
+    }
+    const row = await call('POST', `${base}/model/objects`, {
       name: o.name,
       type: o.type,
       handleId: o.id,
-      parentId: o.parentId ? objectId.get(o.parentId) : rootId,
+      parentId: o.parentId ? objectId.get(o.parentId) : topLevelParent(o),
       ...(o.domainId ? { domainId: domainId.get(o.domainId) } : {}),
       ...(o.description ? { description: o.description } : {}),
       labels: labelsFor(o),
     })
-    objectId.set(o.id, created.id)
+    objectId.set(o.id, row.id)
+    created++
   }
 
-  console.log(`\nconnections (${model.connections.length}):`)
+  console.log(`connections (${model.connections.length}):`)
   for (const c of model.connections) {
+    if (existingConnections.has(c.id)) {
+      skipped++
+      continue
+    }
     await call('POST', `${base}/model/connections`, {
       name: connectionName(c),
       handleId: c.id,
@@ -298,7 +384,9 @@ async function main() {
       ...(c.description ? { description: c.description } : {}),
       ...(c.technology ? { labels: { technology: c.technology } } : {}),
     })
+    created++
   }
+  if (apply) console.log(`\ncreated ${created}, skipped ${skipped} already present.`)
 
   const verb = apply ? 'wrote' : 'would write'
   console.log(
