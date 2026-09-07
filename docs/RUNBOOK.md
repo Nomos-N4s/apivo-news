@@ -651,7 +651,14 @@ polls as, and the language that network's catalogue arrives in.
 ```sh
 printf 'BRAND_DIR=/etc/apivo/brand\nNETWORKS=fixture\nNETWORK_FIXTURE_ACCOUNT_ID=fixture-publisher\nNETWORK_FIXTURE_SOURCE_LANGUAGE=en\n' \
   >> /etc/apivo/qa/api.env
+printf 'BRAND_DIR=/etc/apivo/brand\n' >> /etc/apivo/qa/web.env
 ```
+
+The second line is the same key for the web, which mounts the same
+directory and prints the legal notices and the terms a member accepts
+out of the same file (#547). Without it the web, running in production
+mode, refuses to print the repository's fixture company and those pages
+answer an error.
 
 And two things already in that file to check rather than add. `JWKS_URL`
 must be set: every cashback route is a member's or an operator's and mounts
@@ -688,6 +695,7 @@ say it worked:
 ```sh
 apivoctl ps qa
 curl -sS -o /dev/null -w '%{http_code}\n' https://ra1ze.com/api/v1/cashback/wallet
+curl -sS -o /dev/null -w '%{http_code}\n' https://ra1ze.com/el/impressum
 docker logs apivo-qa-api 2>&1 | grep -E 'brand definition|BRAND_DIR|NOT MOUNTED|cannot poll|scheduler started'
 ```
 
@@ -695,8 +703,11 @@ The six long-running containers healthy (the migration is a one-shot and
 has already exited). **401 from the wallet**, for the reason 401 was the
 answer for the editorial queue in step 5: mounted, and refusing you for
 having no token. 404 means cashback did not mount, and the log names why —
-a network that cannot poll, or `JWKS_URL` missing. The grep should show
-`brand definition loaded` and neither of the two `BRAND_DIR` ERROR lines.
+a network that cannot poll, or `JWKS_URL` missing. **200 from the
+Impressum**: the web can only print it from the brand, so a 500 there
+means the web's `BRAND_DIR` or its mount did not take. The grep should
+show `brand definition loaded` and neither of the two `BRAND_DIR` ERROR
+lines.
 
 ### 7. Connect the network, restart the api, then publish a rate
 
