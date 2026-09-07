@@ -55,3 +55,7 @@ it's okay I just merged 584, wait until it hits main and just test in QA... the 
 ---
 
 so where are we?
+
+---
+
+start F3, someone is already working on fixing the preview environments failure. don't you worry about it
