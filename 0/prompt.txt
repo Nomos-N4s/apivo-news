@@ -1,0 +1,274 @@
+we're having issues with the deployment topology, tags, semver, preview environments and everything related to it. the only thing working is QA and sometimes it serves 2 versions at th same time, it cannot be! root cause and propose fixes!
+
+---
+
+more intel in case you needed it 
+Your app isn't broken — it's degrading on purpose
+
+The front page returns 503, but look at what came back with it:
+
+HTTP/1.1 503 Service Unavailable
+retry-after: 60
+via: 1.1 Caddy
+<!DOCTYPE html><html lang="el"><head>…<title>epiloYES — München</title>
+
+That's a complete, rendered page. The web container is alive and doing its job. The 503 and Retry-After: 60 are set by our own code — the apiUnavailable branch — because its upstream isn't answering. A member gets a real page with "try again shortly" instead of a stack trace. That's the design working under a genuine outage, which is the one thing I did get to verify today.
+
+The api is down
+
+/healthz, /readyz and every /api/v1/* route: 502, through Caddy. Caddy is up, so 502 means it has no upstream to talk to. The api container isn't running, or isn't accepting connections.
+
+It's not a broken build — publish on main succeeded at 21:36. The image exists. It's a container that won't run.
+
+The likely reason, and I want to be honest that it's inference
+
+Someone is mid-flight replacing how QA delivers secrets. Branch xcoder/openbao-on-qa, CI green at 21:54 — sixty seconds before I probed:
+
+deploy/hetzner/compose/docker-compose.vault.yml | 193 ++++++
+deploy/hetzner/env/api.env.example              |  29 ++++
+
+---
+
+root@Carlos1:~# apivoctl pause qa
+docker inspect --format '{{.State.Health.Status}}' apivo-qa-postgres
+docker logs --tail 100 apivo-qa-postgres
+journalctl -u apivo-reconcile@qa --since '2 hours ago' | tail -60
+cat /var/lib/apivo/qa/current /var/lib/apivo/qa/images.env
+df -h && free -m
+qa will not be reconciled until 'apivoctl resume qa'.
+Containers keep running; nothing restarts them if they stop.
+healthy
+2026-09-07 21:26:41.262 UTC [1984019] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:26:55.988 UTC [1984052] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:27:50.190 UTC [1984135] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:28:04.680 UTC [1984166] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:29:03.770 UTC [1984264] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:29:18.043 UTC [1984296] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:30:10.266 UTC [1984378] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:30:24.649 UTC [1984410] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:31:24.378 UTC [1984500] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:31:38.796 UTC [1984530] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:32:29.161 UTC [1984613] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:32:43.555 UTC [1984644] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:33:31.899 UTC [1984725] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:33:46.354 UTC [1984751] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:34:45.972 UTC [1984848] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:35:00.417 UTC [1984877] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:35:55.171 UTC [1984966] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:35:57.208 UTC [1984972] LOG:  SSL error: decryption failed or bad record mac
+2026-09-07 21:35:57.208 UTC [1984972] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:36:09.454 UTC [1984999] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:37:07.808 UTC [1985090] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:37:22.404 UTC [1985121] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:38:24.280 UTC [1985217] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:38:38.077 UTC [1985248] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:39:37.247 UTC [1985340] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:39:51.357 UTC [1985374] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:40:53.190 UTC [1985471] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:40:56.085 UTC [1985488] LOG:  could not accept SSL connection: EOF detected
+2026-09-07 21:41:07.896 UTC [1985504] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:41:55.095 UTC [1985580] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:41:56.515 UTC [1985590] LOG:  SSL error: decryption failed or bad record mac
+2026-09-07 21:41:56.515 UTC [1985590] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:42:09.441 UTC [1985612] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:43:04.346 UTC [1985700] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:43:07.342 UTC [1985717] LOG:  SSL error: decryption failed or bad record mac
+2026-09-07 21:43:07.343 UTC [1985717] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:43:18.731 UTC [1985732] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:44:01.501 UTC [1985801] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:44:03.551 UTC [1985813] LOG:  SSL error: decryption failed or bad record mac
+2026-09-07 21:44:03.553 UTC [1985813] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:44:15.794 UTC [1985832] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:45:06.156 UTC [1985915] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:45:09.016 UTC [1985932] LOG:  could not accept SSL connection: EOF detected
+2026-09-07 21:45:20.465 UTC [1985947] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:46:12.267 UTC [1986029] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:46:26.076 UTC [1986058] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:47:14.432 UTC [1986136] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:47:28.733 UTC [1986166] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:48:23.289 UTC [1986257] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:48:37.728 UTC [1986288] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:49:27.052 UTC [1986367] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:49:41.286 UTC [1986397] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:50:36.358 UTC [1986486] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:50:50.279 UTC [1986516] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:51:42.358 UTC [1986598] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:51:56.768 UTC [1986630] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:52:48.441 UTC [1986713] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:53:02.775 UTC [1986745] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:53:56.854 UTC [1986827] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:54:11.106 UTC [1986858] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:55:06.953 UTC [1986949] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:55:21.353 UTC [1986980] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:56:18.915 UTC [1987074] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:56:33.153 UTC [1987107] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:57:24.377 UTC [1987190] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:57:39.192 UTC [1987223] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:58:33.121 UTC [1987314] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:58:35.962 UTC [1987323] LOG:  could not accept SSL connection: EOF detected
+2026-09-07 21:58:47.523 UTC [1987338] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 21:59:45.999 UTC [1987435] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:00:00.678 UTC [1987462] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:00:51.393 UTC [1987543] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:00:52.801 UTC [1987547] LOG:  could not accept SSL connection: EOF detected
+2026-09-07 22:01:05.819 UTC [1987575] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:01:53.684 UTC [1987651] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:02:08.051 UTC [1987685] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:03:02.003 UTC [1987768] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:03:16.238 UTC [1987800] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:04:07.941 UTC [1987885] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:04:21.700 UTC [1987913] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:05:09.893 UTC [1987997] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:05:24.240 UTC [1988023] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:06:26.357 UTC [1988127] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:06:40.542 UTC [1988151] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:07:28.299 UTC [1988235] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:07:42.792 UTC [1988266] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:08:37.408 UTC [1988349] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:08:51.790 UTC [1988382] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:09:42.199 UTC [1988463] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:09:45.000 UTC [1988479] LOG:  could not accept SSL connection: EOF detected
+2026-09-07 22:09:56.510 UTC [1988494] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:10:51.762 UTC [1988586] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:10:53.151 UTC [1988589] LOG:  SSL error: decryption failed or bad record mac
+2026-09-07 22:10:53.151 UTC [1988589] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:11:06.099 UTC [1988617] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:12:05.665 UTC [1988709] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:12:08.499 UTC [1988726] LOG:  could not accept SSL connection: EOF detected
+2026-09-07 22:12:19.972 UTC [1988741] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:13:13.704 UTC [1988833] LOG:  could not receive data from client: Connection reset by peer
+2026-09-07 22:13:28.017 UTC [1988859] LOG:  could not receive data from client: Connection reset by peer
+Sep 07 22:13:15 Carlos1 apivo-reconcile[4081568]:  Container apivo-qa-redis Healthy
+Sep 07 22:13:15 Carlos1 apivo-reconcile[4081568]:  Container apivo-qa-blnk Healthy
+Sep 07 22:13:15 Carlos1 apivo-reconcile[4081568]: container apivo-qa-api is unhealthy
+Sep 07 22:13:16 Carlos1 apivo-reconcile[4081257]: {"level":"error","event":"rollout_failed","env":"qa","msg":"rolling back qa to the previous digest"}
+Sep 07 22:13:16 Carlos1 apivo-reconcile[4082446]: time="2026-09-07T22:13:16Z" level=warning msg="a network with name apivo-qa-edge exists but was not created by compose.\nSet `external: true` to use an existing network"
+Sep 07 22:13:16 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-redis Running
+Sep 07 22:13:16 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-postgres Running
+Sep 07 22:13:16 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk Running
+Sep 07 22:13:16 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk-worker Running
+Sep 07 22:13:16 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-api Recreate
+Sep 07 22:13:16 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-web Recreate
+Sep 07 22:13:16 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-api Recreated
+Sep 07 22:13:27 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-web Recreated
+Sep 07 22:13:27 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-redis Waiting
+Sep 07 22:13:27 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-web Starting
+Sep 07 22:13:27 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-web Started
+Sep 07 22:13:27 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-redis Healthy
+Sep 07 22:13:27 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk-migrate Starting
+Sep 07 22:13:27 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk-migrate Started
+Sep 07 22:13:27 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-redis Waiting
+Sep 07 22:13:27 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk-migrate Waiting
+Sep 07 22:13:27 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-redis Waiting
+Sep 07 22:13:27 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk-migrate Waiting
+Sep 07 22:13:28 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-redis Healthy
+Sep 07 22:13:28 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk-migrate Exited
+Sep 07 22:13:28 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-redis Healthy
+Sep 07 22:13:28 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk-migrate Exited
+Sep 07 22:13:28 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-postgres Waiting
+Sep 07 22:13:28 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-postgres Healthy
+Sep 07 22:13:28 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-api Starting
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-api Started
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-web Waiting
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-postgres Waiting
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk Waiting
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk-worker Waiting
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-redis Waiting
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk-migrate Waiting
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-api Waiting
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk-worker Healthy
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk-migrate Exited
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-redis Healthy
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-blnk Healthy
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]:  Container apivo-qa-postgres Healthy
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4082446]: container apivo-qa-api is unhealthy
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4081257]: {"level":"error","event":"rollback_failed","env":"qa","msg":"the rollout failed AND the rollback to main-70ad3ab also failed. qa is DOWN and no automatic path remains: pause with 'touch /etc/apivo/qa/paused', then investigate with 'docker compose ps' and 'docker compose logs'."}
+Sep 07 22:13:29 Carlos1 apivo-reconcile[4081257]: ::error::apivo-reconcile qa: the rollout failed AND the rollback to main-70ad3ab also failed. qa is DOWN and no automatic path remains: pause with 'touch /etc/apivo/qa/paused', then investigate with 'docker compose ps' and 'docker compose logs'.
+Sep 07 22:13:29 Carlos1 systemd[1]: apivo-reconcile@qa.service: Main process exited, code=exited, status=1/FAILURE
+Sep 07 22:13:29 Carlos1 systemd[1]: apivo-reconcile@qa.service: Failed with result 'exit-code'.
+Sep 07 22:13:29 Carlos1 systemd[1]: Failed to start apivo-reconcile@qa.service - Reconcile the apivo qa environment with its release channel.
+Sep 07 22:13:29 Carlos1 systemd[1]: apivo-reconcile@qa.service: Consumed 1.343s CPU time over 35.346s wall clock time, 22.7M memory peak.
+Sep 07 22:14:04 Carlos1 systemd[1]: Starting apivo-reconcile@qa.service - Reconcile the apivo qa environment with its release channel...
+Sep 07 22:14:08 Carlos1 apivo-reconcile[4085312]: {"level":"info","event":"rollout_start","env":"qa","msg":"qa moved: api sha256:REDACTED -> sha256:b036c0ea3726aac0e59be2cc17ac0a410633053242d18ef4b2e57477ea20c300, web sha256:b857450dc84f53eca62e293be1765752dc9e1337abe609308eead09c89318016 -> sha256:d05da1685dc9528caacf4119948962d76d2b91f7e05a99d68861b1c51d2a874d"}
+Sep 07 22:14:12 Carlos1 apivo-reconcile[4085627]: time="2026-09-07T22:14:12Z" level=warning msg="a network with name apivo-qa-edge exists but was not created by compose.\nSet `external: true` to use an existing network"
+Sep 07 22:14:12 Carlos1 apivo-reconcile[4085627]:  Container apivo-qa-blnk Running
+Sep 07 22:14:12 Carlos1 apivo-reconcile[4085627]:  Container apivo-qa-blnk-worker Running
+Sep 07 22:14:12 Carlos1 apivo-reconcile[4085627]:  Container apivo-qa-redis Running
+Sep 07 22:14:12 Carlos1 apivo-reconcile[4085627]:  Container apivo-qa-postgres Running
+Sep 07 22:14:12 Carlos1 apivo-reconcile[4085627]:  Container apivo-qa-api Recreate
+Sep 07 22:14:12 Carlos1 apivo-reconcile[4085627]:  Container apivo-qa-web Recreate
+Sep 07 22:14:12 Carlos1 apivo-reconcile[4085627]:  Container apivo-qa-api Recreated
+API_DIGEST=sha256:REDACTED
+WEB_DIGEST=sha256:b857450dc84f53eca62e293be1765752dc9e1337abe609308eead09c89318016
+VERSION=main-70ad3ab
+AT=2026-09-07T18:42:04Z
+# Written by apivo-reconcile. Hand edits are overwritten on the next tick.
+APIVO_API_IMAGE=ghcr.io/nomos-n4s/apivo-news/api@sha256:b036c0ea3726aac0e59be2cc17ac0a410633053242d18ef4b2e57477ea20c300
+APIVO_WEB_IMAGE=ghcr.io/nomos-n4s/apivo-news/web@sha256:d05da1685dc9528caacf4119948962d76d2b91f7e05a99d68861b1c51d2a874d
+APIVO_VERSION=main-e648b2e
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           1.6G  2.1M  1.6G   1% /run
+/dev/sda1        75G   56G   16G  78% /
+tmpfs           3.8G     0  3.8G   0% /dev/shm
+tmpfs           3.8G     0  3.8G   0% /tmp
+/dev/sda15      253M  154K  252M   1% /boot/efi
+none            1.0M     0  1.0M   0% /run/credentials/serial-getty@ttyS0.service
+none            1.0M     0  1.0M   0% /run/credentials/getty@tty1.service
+overlay          75G   56G   16G  78% /var/lib/docker/rootfs/overlayfs/aba61bb2d76ebf32a2082569367580cb33b1c52b4f7d2dbc496636a2d127e292
+overlay          75G   56G   16G  78% /var/lib/docker/rootfs/overlayfs/633bcfb07e97b62f01b5e0b4fe90a9f4ebee27d108380308aa73d8a54401c6e3
+none            1.0M     0  1.0M   0% /run/credentials/systemd-journald.service
+none            1.0M     0  1.0M   0% /run/credentials/systemd-resolved.service
+none            1.0M     0  1.0M   0% /run/credentials/systemd-networkd.service
+overlay          75G   56G   16G  78% /var/lib/docker/rootfs/overlayfs/ad161958ca0c66029867d81b543bed19aa4a37f253bfc853b15bac9d094ae284
+overlay          75G   56G   16G  78% /var/lib/docker/rootfs/overlayfs/9affed704cefc1d9195f51b6210fa6350cf8d410b138ceb7572792d74698b2c2
+overlay          75G   56G   16G  78% /var/lib/docker/rootfs/overlayfs/e5886763a88d6bfd3edeb1dc9df56d062fac07bf799c02985d536b27e7f6fd68
+overlay          75G   56G   16G  78% /var/lib/docker/rootfs/overlayfs/ddfc2a66d96f2e98164bbaac3198205a37019b2546e1e030f656e2140886932a
+overlay          75G   56G   16G  78% /var/lib/docker/rootfs/overlayfs/316e61f0eab4b923b0ab17ad0cc851daccbdadd17944e41860fad0e861f670ce
+overlay          75G   56G   16G  78% /var/lib/docker/rootfs/overlayfs/f04a0508caf98000e686500b52198d7f3a164a16548a59c63ba01aa5ab959c0f
+overlay          75G   56G   16G  78% /var/lib/docker/rootfs/overlayfs/ba3318e25db563030ce8c29e4ca00af117fd950b18ee446bf62a9720a6747b58
+overlay          75G   56G   16G  78% /var/lib/docker/rootfs/overlayfs/2c9939fe33edcf283ba17424e451064b0455773c9a4d0a3a478252b1822c608e
+overlay          75G   56G   16G  78% /var/lib/docker/rootfs/overlayfs/98a0f293801c6b2d87bfcdb231041492db17fcab8396246db9f88b664823d959
+tmpfs           775M  8.0K  775M   1% /run/user/0
+               total        used        free      shared  buff/cache   available
+Mem:            7746        1318         261         237        6715        6427
+Swap:              0           0           0
+root@Carlos1:~#
+
+---
+
+root@Carlos1:~# docker logs apivo-qa-api 2>&1 | tail -30
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+root@Carlos1:~#
+
+---
+
+are you using graft as much as possible? to save tokens!
