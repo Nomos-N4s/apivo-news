@@ -179,6 +179,9 @@ IMAGES_ENV="$STATE_DIR/images.env"
 # The digest pair whose rollout failed, so that it is attempted ONCE rather
 # than once a minute forever. The refusal below is what that file buys.
 FAILED="$STATE_DIR/failed"
+# How long the two channel tags have disagreed, so that a publish which
+# half-failed stops being indistinguishable from one that is mid-flight.
+SKEW="$STATE_DIR/skew"
 
 # The digests the last successful rollout pinned, loaded before ANY compose
 # invocation.
@@ -405,9 +408,37 @@ fi
 # real problem that should be loud rather than silently deployed.
 # ---------------------------------------------------------------------------
 if [ "$IMAGE_VERSION" != "$WEB_VERSION" ]; then
-    log info version_skew "api is $IMAGE_VERSION but web is $WEB_VERSION; waiting for the channel to settle"
-    exit 0
+    # Transient for a tick or two, and permanent if the publish half-failed -
+    # the api tag moved and the web tag did not. Those two states are
+    # identical from here, and `exit 0` treated them identically, forever.
+    #
+    # So the environment quietly stopped taking merges: once a minute, with a
+    # log line that says "waiting", which is exactly what a healthy mid-move
+    # tick also says. The only symptom was a version that stopped advancing,
+    # and nobody reads a log to discover that nothing is happening.
+    #
+    # Counting the ticks separates the two without guessing: the legitimate
+    # window is the seconds between two `imagetools create` calls, so a
+    # disagreement still standing five minutes later is not a race.
+    _skew_pair="$IMAGE_VERSION/$WEB_VERSION"
+    _skew_seen=$(read_state_field "$SKEW" PAIR)
+    _skew_n=$(read_state_field "$SKEW" TICKS)
+    [ "$_skew_seen" = "$_skew_pair" ] || _skew_n=0
+    _skew_n=$((${_skew_n:-0} + 1))
+    printf 'PAIR=%s
+TICKS=%s
+' "$_skew_pair" "$_skew_n" > "$SKEW.new"
+    mv "$SKEW.new" "$SKEW"
+
+    if [ "$_skew_n" -le "${APIVO_SKEW_TOLERANCE:-5}" ]; then
+        log info version_skew "api is $IMAGE_VERSION but web is $WEB_VERSION; waiting for the channel to settle (tick $_skew_n of ${APIVO_SKEW_TOLERANCE:-5})"
+        exit 0
+    fi
+    die version_skew_stuck "api is $IMAGE_VERSION but web is $WEB_VERSION, and has been for $_skew_n ticks - so the channel is not mid-move and the publish half-failed. $ENV_NAME has silently stopped taking new builds and keeps serving ${RUNNING_VERSION:-what it already had}. Re-run the publish for $IMAGE_VERSION so both tags name the same release." 1
 fi
+
+# The pair agrees, so whatever disagreement was being counted is over.
+rm -f "$SKEW"
 
 write_images_env() {
     # write_images_env <api-digest> <web-digest> <version>

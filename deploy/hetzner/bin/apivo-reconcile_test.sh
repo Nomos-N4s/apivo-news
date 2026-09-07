@@ -335,6 +335,21 @@ printf '%s' 'v0.2.0' > "$STUB_DIR/label_version"
 printf '%s' 'v0.1.0' > "$STUB_DIR/web_label_version"
 run qa
 check "a half-moved channel is not rolled out" 0 '"event":"version_skew"'
+
+# A disagreement that does not end is not a race, and must stop being
+# reported as one. publish.yml moves the two channel tags in two separate
+# registry calls; if the second fails, this state is permanent, and exiting 0
+# on every tick made a broken publish look exactly like a busy one.
+APIVO_SKEW_TOLERANCE=2
+export APIVO_SKEW_TOLERANCE
+run qa
+check "a second skewed tick is still patient" 0 '"event":"version_skew"'
+run qa
+check "a skew past the tolerance is escalated, not waited on forever" 1 '"event":"version_skew_stuck"'
+check "and says the publish half-failed rather than that it is waiting" 1 "the publish half-failed"
+check "and names what the environment is still serving" 1 "keeps serving v0.1.0"
+check_state "and the environment has not moved" API_DIGEST "$DIGEST_A"
+unset APIVO_SKEW_TOLERANCE
 check_state "and the environment stays on the matched pair it had" API_DIGEST "$DIGEST_A"
 if [ -e "$STUB_DIR/up_count" ]; then
     echo "FAIL: a half-moved channel still ran compose up"
