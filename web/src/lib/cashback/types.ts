@@ -176,6 +176,19 @@ export interface EntryPage {
   readonly next_cursor: string | null;
 }
 
+/**
+ * A list the api does not page.
+ *
+ * `GET /payout-destinations` and `GET /withdrawals` answer `{ items }` and
+ * nothing else — a member has few enough of either that a cursor would be
+ * ceremony. Distinguished from `OperatorPage` because a client that assumed a
+ * cursor was there would read `undefined`, decide it was not null, and ask
+ * for a page after the last one.
+ */
+export interface Collection<T> {
+  readonly items: readonly T[];
+}
+
 /** The rails a destination can be for. */
 export type DestinationKind = 'sepa' | 'manual' | 'stub';
 

@@ -15,6 +15,7 @@ import {
 import type {
   CatalogueItem,
   Clickout,
+  Collection,
   DifferenceResolution,
   EntryPage,
   EntryState,
@@ -376,7 +377,7 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
         })}`,
       ),
     destinations: async () =>
-      (await required<OperatorPage<PayoutDestination>>('/payout-destinations')).items,
+      (await required<Collection<PayoutDestination>>('/payout-destinations')).items,
     requestWithdrawal: (destinationId, amountMinor, currency) =>
       required<WithdrawalRequest>('/withdrawals', {
         method: 'POST',
@@ -385,7 +386,7 @@ function httpApi(baseUrl: string, fetchImpl: typeof fetch, token: string | null)
           amount: { minor: amountMinor, currency },
         }),
       }),
-    withdrawals: async () => (await required<OperatorPage<Withdrawal>>('/withdrawals')).items,
+    withdrawals: async () => (await required<Collection<Withdrawal>>('/withdrawals')).items,
     unattributed: () => required<OperatorPage<UnattributedTransaction>>('/ops/unattributed'),
     held: () => required<OperatorPage<HeldEntry>>('/ops/held'),
     withdrawalsAwaitingApproval: () =>
