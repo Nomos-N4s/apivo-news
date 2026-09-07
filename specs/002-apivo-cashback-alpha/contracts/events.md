@@ -73,7 +73,7 @@ there is a defect, and the dispatcher test asserts it.
 | Type | Payload | Notes |
 |---|---|---|
 | `identity.account.created` | `{ account_id, created_at }` | |
-| `identity.account.deleted` | `{ account_id, deleted_at }` | cashback does **not** delete financial rows in response; it closes participation and flags any in-flight withdrawal for operator attention (spec edge case) |
+| `identity.account.deleted` | `{ account_id, deleted_at }` | cashback does **not** delete financial rows in response; it closes participation and flags any in-flight withdrawal for operator attention (spec edge case). **Consumed** by `cashback-account-closures` (T126) — the stream's first subscriber. Deletion can only mean anonymise-and-close: every cashback table naming a member holds a foreign key into `public.account`, so the row cannot go while that member has ever clicked |
 | `identity.account.role_changed` | `{ account_id, roles }` | |
 
 ## Published by `cashback`
@@ -92,6 +92,7 @@ there is a defect, and the dispatcher test asserts it.
 | `cashback.hold.released` | `{ entry_id, account_id, hold_rule, released_by, reason, ledger_transfer_ref, at }` |
 | `cashback.hold.rejected` | `{ entry_id, reversal_entry_id, account_id, hold_rule, amount, rejected_by, reason, at }` |
 | `cashback.withdrawal.requested` / `.approved` / `.rejected` | `{ request_id, account_id, amount, actor?, reason?, at }` |
+| `cashback.withdrawal.flagged` | `{ request_id, account_id, state, reason, at }` — one withdrawal still moving money for somebody who is no longer here (T126). It is not a step in the request's life: the request is untouched and stays exactly where it was. Keyed on the request and the reason, so a redelivered cause never shows an operator the same work twice |
 | `cashback.payout.settled` / `.failed` | `{ payout_id, request_id, rail_reference?, classification?, at }` |
 | `cashback.reconciliation.statement_imported` | `{ run_id, network_account_id, network_id, period_start, period_end, lines, statement_digest, imported_by, at }` |
 | `cashback.reconciliation.difference_found` | `{ run_id, difference_id, kind, delta, at }` |
