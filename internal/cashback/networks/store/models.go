@@ -183,6 +183,8 @@ type CashbackMerchantNetwork struct {
 	Status     string
 	// Whether this is the route the catalogue publishes for this retailer. At most one route per merchant may be preferred, enforced by a partial unique index rather than by whichever code path happens to run first.
 	Preferred bool
+	// Whether a click through this route carries our click reference back to us (contract rule 11). False is not broken: the member clicks, buys, and the network pays the publisher - it just cannot say whose purchase it was. A route that cannot be attributed can never be the published one, because publishing a rate we cannot honour is worse than publishing nothing.
+	CanAttribute bool
 }
 
 // Which places a merchant is available to. Many-to-many, and entirely independent of merchant_copy: a Greek speaker in Munich sees Munich merchants in Greek (constitution VII).

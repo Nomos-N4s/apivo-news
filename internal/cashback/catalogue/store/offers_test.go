@@ -235,7 +235,7 @@ func seedOfferChain(t *testing.T, tx pgx.Tx, at time.Time, c offerChain) (pgtype
 	if err := tx.QueryRow(ctx,
 		`insert into cashback.merchant_network
 		     (brand_id, merchant_id, network_id, external_merchant_id, retrieved_at, raw_payload, status, preferred)
-		 values ('fixture', $1, $2, $3, now(), '{"id":"fixture"}'::jsonb, $4, true) returning id`,
+		 values ('fixture', $1, $2, $3, now(), '{"id":"fixture"}'::jsonb, $4, $4 = 'active') returning id`,
 		merchantID, networkID, "ext-"+suffix, c.routeStatus,
 	).Scan(&routeID); err != nil {
 		t.Fatalf("seed merchant_network: %v", err)

@@ -192,7 +192,9 @@ func TestPublishAgainstTheRealSchema(t *testing.T) {
 			off   func(pgx.Tx)
 			want  string
 		}{
-			{"the route is paused", routeShape{route: "paused", merchant: "active", preferred: true}, nil, "raw_payload"},
+			// A paused route cannot hold the published slot (0035), so it
+			// is seeded the way the importer leaves one: demoted.
+			{"the route is paused", routeShape{route: "paused", merchant: "active", preferred: false}, nil, "raw_payload"},
 			{"the retailer is off", routeShape{route: "active", merchant: "paused", preferred: true}, nil, "the retailer"},
 			{"the network is off", liveRoute, func(tx pgx.Tx) {
 				if _, err := tx.Exec(ctx, `update cashback.network set active = false where id = $1`, network.id.String()); err != nil {

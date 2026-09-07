@@ -115,7 +115,24 @@ func (i *Imports) Refresh(ctx context.Context) error {
 		"seen", result.Seen,
 		"created", result.Created,
 		"departed", result.Departed,
+		"republished", result.Republished,
+		"lost_publication", result.LostPublication,
 		"started_at", result.StartedAt)
+	// A retailer with a publishable route and nothing published is a state
+	// the importer cannot reach on its own - it promotes a survivor whenever
+	// it demotes - so one that exists is a route revived by hand or one on
+	// a network this import does not read, and an operator should look
+	// (T210). Said at WARN, naming them, so it is visible rather than silent.
+	if len(result.PublishingNothing) > 0 {
+		slugs := make([]string, 0, len(result.PublishingNothing))
+		for _, r := range result.PublishingNothing {
+			slugs = append(slugs, r.Slug)
+		}
+		i.log.WarnContext(ctx, "retailers with a publishable route publish nothing",
+			"network", i.adapter.ID().String(),
+			"count", len(slugs),
+			"slugs", slugs)
+	}
 	// A run that withdrew retailers and added none is what an upstream
 	// change looks like from here - a credential that lost its programme
 	// approvals, a filter somebody edited - and it is indistinguishable
