@@ -1,0 +1,22 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01M1XYNHB1DKV1W0QTW23KXFS9",
+  "session_id": "352e46d4-945d-4e7c-9d70-c97d660c799e",
+  "strategy": "manual-commit",
+  "created_at": "2026-09-07T12:49:46.9614637Z",
+  "branch": "xcoder/member-signin-email",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "claude-opus-5",
+  "turn_id": "5f65badd18e1",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 426,
+    "cache_creation_tokens": 462526,
+    "cache_read_tokens": 66766117,
+    "output_tokens": 175189,
+    "api_call_count": 213
+  }
+}
