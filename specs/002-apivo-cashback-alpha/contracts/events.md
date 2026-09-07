@@ -82,6 +82,7 @@ there is a defect, and the dispatcher test asserts it.
 |---|---|
 | `cashback.participation.started` / `.ended` | `{ account_id, terms_version, at }` |
 | `cashback.click.created` | `{ click_id, account_id, offer_id, at }` |
+| `cashback.route.published` / `.unpublished` | `{ merchant_id, route_id?, network_id?, previous_route_id?, reason, at }` — the retailer's published route moved to the one named (FR-100), or was withdrawn with nothing to take its place; the importer's hand-over, later an operator's move (FR-101) |
 | `cashback.transaction.ingested` | `{ network_transaction_id, network_id, status, at }` |
 | `cashback.transaction.unattributed` | `{ network_transaction_id, at }` |
 | `cashback.unattributed.dismissed` | `{ unattributed_id, network_transaction_id, resolved_by, reason, at }` |
