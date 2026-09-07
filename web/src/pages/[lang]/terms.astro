@@ -1,0 +1,281 @@
+---
+import { APP_ENV, BRAND_DIR } from 'astro:env/server';
+
+import Masthead from '../../components/Masthead.astro';
+import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import { BRAND_SOURCE_FIXTURE, brandOnHand } from '../../lib/brand/load';
+import { TERMS_TEXT_VERSION, termsStrings } from '../../lib/legal/terms';
+import { frontPagePath, isReadingLanguage } from '../../lib/reader/axes';
+
+// The cashback terms (issue #589) — what a member accepts when they opt in.
+//
+// Its own rule, and the FAQ's: this page owns headings, not answers. Every
+// clause about how cashback behaves is a sentence some screen already
+// renders, pulled from the catalogue that renders it. Terms that describe the
+// product differently from the product are worse than no terms.
+//
+// NOT a fourth LegalPane. That component is a <dl> of short brand values —
+// entity, address, jurisdiction — laid out for an address, and clauses are
+// prose. Its `pane` union would have to grow, three ternaries with it, and
+// the result would be a component doing two jobs. The FAQ's shape is the
+// right one and its styles are borrowed here wholesale.
+//
+// Reachable signed out, deliberately. `isCashbackPath` in the middleware
+// needs two segments before `cashback`, so this route is outside the member
+// fence — which is what a document somebody reads BEFORE joining has to be.
+const langSegment = Astro.params['lang'];
+if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+  return Astro.rewrite('/404');
+}
+const lang = langSegment;
+const t = termsStrings(lang);
+const { brand, source } = brandOnHand({ brandDir: BRAND_DIR, appEnv: APP_ENV });
+
+// The page has a language axis but no place axis, so the brand falls back to
+// the flagship places under the READER'S language. DEFAULT_FRONT_PAGE is
+// hard-coded to Greek and would flip a German reader's language axis (FR-009).
+const home = frontPagePath(lang, ['munich', 'greece']);
+
+// The deployment's own version, read the careful way LegalPane reads the
+// privacy one: `documents` is a map, and absent means the line is not drawn
+// rather than the page printing "undefined" at a reader.
+const document = brand.legal.documents['terms'];
+const fixture = source === BRAND_SOURCE_FIXTURE;
+
+// Whether this text and the deployment agree about which version this is.
+//
+// Not checked against a fixture brand. A fixture's version is a stand-in
+// picked for a test, not a deployment's claim about the terms it holds
+// people to, so comparing against it would refuse every development run and
+// every preview for no reason. On a real deployment the comparison is the
+// whole point: a member must never accept a version whose text they were not
+// shown, and the opt-in refuses to collect consent while these disagree.
+const drifted = !fixture && document !== undefined && document.version !== TERMS_TEXT_VERSION;
+---
+
+<ReaderLayout
+  lang={lang}
+  title={`${brand.name} — ${t.heading}`}
+  description={t.intro}
+  homeHref={home}
+>
+  <Masthead homeHref={home}>
+    <div class="seg" role="group">
+      {
+        lang === 'el' ? (
+          <span class="seg-opt" aria-current="true" lang="el">
+            Ελληνικά
+          </span>
+        ) : (
+          <a class="seg-opt" href="/el/terms" lang="el">
+            Ελληνικά
+          </a>
+        )
+      }
+      {
+        lang === 'de' ? (
+          <span class="seg-opt" aria-current="true" lang="de">
+            Deutsch
+          </span>
+        ) : (
+          <a class="seg-opt" href="/de/terms" lang="de">
+            Deutsch
+          </a>
+        )
+      }
+    </div>
+  </Masthead>
+
+  <main class="page">
+    <header class="head">
+      <h1>{t.heading}</h1>
+      <p>{t.intro}</p>
+      {document !== undefined && <p class="version">{t.versionLine(TERMS_TEXT_VERSION)}</p>}
+    </header>
+
+    {
+      drifted && document !== undefined && (
+        <aside class="note" role="note">
+          <span class="note-title">{t.driftTitle}</span>
+          <span class="note-body">{t.driftBody(TERMS_TEXT_VERSION, document.version)}</span>
+        </aside>
+      )
+    }
+
+    <div class="groups">
+      {
+        t.clauses.map((clause) => (
+          <section class="grp">
+            {/* A real heading outline: the clauses are what somebody
+                navigates by, and a bold span is not navigable. */}
+            <h2>{clause.heading}</h2>
+            {clause.body.map((paragraph) => (
+              <p>{paragraph}</p>
+            ))}
+            {clause.points.length > 0 && (
+              <ul>
+                {clause.points.map((point) => (
+                  <li>{point}</li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ))
+      }
+    </div>
+
+    {
+      fixture && (
+        <aside class="note" role="note">
+          <span class="note-title">{t.fixtureTitle}</span>
+          <span class="note-body">{t.fixtureBody}</span>
+        </aside>
+      )
+    }
+  </main>
+</ReaderLayout>
+
+<style>
+  .page {
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-8);
+  }
+
+  .head {
+    padding-bottom: var(--space-6);
+    /* The board's double rule: a major break, not a row divider. */
+    border-bottom: 2px solid var(--color-text);
+  }
+
+  .head h1 {
+    margin: 0 0 var(--space-2);
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 28px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+  }
+
+  .head p {
+    margin: 0;
+    max-width: 56ch;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  .version {
+    margin-top: var(--space-2) !important;
+    font-size: 11px !important;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-soft) !important;
+  }
+
+  /* Two columns on a desktop, one on a phone — the same treatment and the
+     same 900px break the FAQ and the legal notices use. Clauses are read in
+     order, so the grid flows down each column rather than across. */
+  .groups {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 var(--space-8);
+    align-items: start;
+  }
+
+  @media (max-width: 900px) {
+    .groups {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .grp {
+    padding: var(--space-4) 0 var(--space-6);
+  }
+
+  .grp h2 {
+    margin: 0 0 var(--space-2);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--color-divider);
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    /* accent-700 is the step contrast.test.ts asserts at 4.5:1; the base
+       accent is a 3:1 non-text colour and fails as a label this size. */
+    color: var(--color-accent-700);
+  }
+
+  .grp p {
+    margin: var(--space-2) 0 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  .grp ul {
+    margin: var(--space-2) 0 0;
+    padding-left: var(--space-4);
+  }
+
+  .grp li {
+    margin-bottom: var(--space-1);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  .note {
+    display: block;
+    margin-top: var(--space-6);
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-accent-100);
+    border-left: 2px solid var(--color-accent-700);
+    max-width: 56ch;
+  }
+
+  .note-title {
+    display: block;
+    margin-bottom: var(--space-2);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-accent-800);
+  }
+
+  .note-body {
+    display: block;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--color-accent-800);
+    text-wrap: pretty;
+  }
+
+  /* modernist.css styles .seg-opt for the radio form; the anchor and
+     aria-current form the language switcher uses needs these locally. */
+  .seg {
+    margin-left: auto;
+  }
+
+  .seg-opt {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: var(--color-text);
+    text-decoration: none;
+  }
+
+  .seg-opt[aria-current='true'] {
+    background: var(--color-accent-700);
+    color: var(--color-bg);
+  }
+
+  a.seg-opt:hover,
+  a.seg-opt:focus-visible {
+    background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  }
+</style>
