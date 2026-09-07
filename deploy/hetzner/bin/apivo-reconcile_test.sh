@@ -335,6 +335,21 @@ printf '%s' 'v0.2.0' > "$STUB_DIR/label_version"
 printf '%s' 'v0.1.0' > "$STUB_DIR/web_label_version"
 run qa
 check "a half-moved channel is not rolled out" 0 '"event":"version_skew"'
+
+# A disagreement that does not end is not a race, and must stop being
+# reported as one. publish.yml moves the two channel tags in two separate
+# registry calls; if the second fails, this state is permanent, and exiting 0
+# on every tick made a broken publish look exactly like a busy one.
+APIVO_SKEW_TOLERANCE=2
+export APIVO_SKEW_TOLERANCE
+run qa
+check "a second skewed tick is still patient" 0 '"event":"version_skew"'
+run qa
+check "a skew past the tolerance is escalated, not waited on forever" 1 '"event":"version_skew_stuck"'
+check "and says the publish half-failed rather than that it is waiting" 1 "the publish half-failed"
+check "and names what the environment is still serving" 1 "keeps serving v0.1.0"
+check_state "and the environment has not moved" API_DIGEST "$DIGEST_A"
+unset APIVO_SKEW_TOLERANCE
 check_state "and the environment stays on the matched pair it had" API_DIGEST "$DIGEST_A"
 if [ -e "$STUB_DIR/up_count" ]; then
     echo "FAIL: a half-moved channel still ran compose up"
@@ -349,6 +364,44 @@ printf '%s' 'v0.2.0' > "$STUB_DIR/web_label_version"
 run qa
 check "and the tick after the channel settles rolls forward" 0 '"event":"rollout_ok"'
 check_state "onto the new pair" API_DIGEST "$DIGEST_B"
+
+# ===========================================================================
+# An image that cannot say what it is.
+#
+# The skew guard above compares two label values for equality, so what the
+# reconciler does when it CANNOT READ a label decides whether that guard
+# works at all. Substituting `dev` for an absent label spelled "I could not
+# find out" the same as "this is what it is", and two unlabelled images
+# therefore compared equal and sailed through the one check standing between
+# a half-moved channel and a mismatched deploy.
+#
+# Nothing downstream would have caught it: `served_version` is asserted
+# against that same value, so an api reporting `dev` would have been proved
+# to serve `dev` and the rollout recorded as sound.
+# ===========================================================================
+
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+: > "$STUB_DIR/label_version"
+run qa
+check "neither image carrying a version label is refused, not called 'dev'" 1 '"event":"unstamped"'
+check "and it says the pipeline did not publish that image" 1 "publish.yml sets that label on both images"
+check_state "and the environment is left on the pair that works" API_DIGEST "$DIGEST_A"
+
+# The half-labelled case, which is what a half-completed publish looks like
+# once one of the two images is rebuilt without the label.
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' 'v0.2.0' > "$STUB_DIR/label_version"
+: > "$STUB_DIR/web_label_version"
+run qa
+check "a web image alone with no label is refused too" 1 '"event":"unstamped"'
+check "and the refusal names web rather than api" 1 "/web carries no org.opencontainers.image.version"
+check_state "and that environment also keeps what it had" API_DIGEST "$DIGEST_A"
 
 # ===========================================================================
 # The registry is unreachable.
@@ -407,7 +460,57 @@ run qa
 check "a failed rollout rolls back" 1 '"event":"rolled_back"'
 check_pinned "and compose is pinned to the digest that was serving" "$REGISTRY/api@$DIGEST_A"
 check_state "and the recorded state still names the good release" API_DIGEST "$DIGEST_A"
-check "and it warns that the channel will be retried" 1 "the next tick will try it again"
+check "and it says the pair will not be tried again" 1 "will NOT be tried again"
+
+# ===========================================================================
+# The pair that already failed is attempted ONCE.
+#
+# Before this, a failed rollout left the channel untouched and `current` still
+# naming the old digests, so the next tick rolled forward into the identical
+# failure - every sixty seconds, recreating BOTH containers twice per cycle.
+# The frontend was never at fault and was restarted onto alternating builds
+# anyway, so the site served two different versions of itself for as long as
+# the api stayed broken. That is the loop these tests close.
+#
+# Three properties, all load-bearing. Refusing without still running `up -d`
+# would trade a churn loop for a host that stops self-healing; refusing
+# without clearing on a moved channel would turn a broken deploy into a latch
+# somebody has to remember to release; and refusing after the pull would keep
+# moving gigabytes for an answer already known.
+# ===========================================================================
+
+# The next tick. Same channel, same broken pair, nothing changed anywhere.
+: > "$STUB_DIR/calls"
+run qa
+check "the tick after a failed rollout refuses the same pair" 1 '"event":"rollout_refused"'
+check "and names the release it is holding instead" 1 "keeps serving v0.1.0"
+check_pinned "and leaves compose on the release that works" "$REGISTRY/api@$DIGEST_A"
+check_state "and the recorded state is still the good one" API_DIGEST "$DIGEST_A"
+
+if grep -q '^pull' "$STUB_DIR/calls"; then
+    echo "FAIL: a refused tick pulled images it was never going to run"
+    FAILS=1
+else
+    echo "ok: a refused tick pulls nothing"
+fi
+
+# The quiet path's whole purpose survives the refusal: a container that died
+# between ticks must still come back while the environment is held.
+if grep -q '^compose up' "$STUB_DIR/calls"; then
+    echo "ok: a refused tick still converges the running stack"
+else
+    echo "FAIL: a refused tick stopped self-healing, so a container that died between ticks would stay dead"
+    FAILS=1
+fi
+
+# Not a latch: a channel naming any other pair is taken on the very next tick,
+# with nothing for an operator to remember.
+printf '%s' "$DIGEST_A" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' 'v0.3.0' > "$STUB_DIR/label_version"
+run qa
+check "a channel that moves on clears the refusal without a manual step" 0 ""
+check_state "and the pair it moved to is recorded" WEB_DIGEST "$WEB_B"
 
 reset
 settle

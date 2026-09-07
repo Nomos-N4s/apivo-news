@@ -176,6 +176,12 @@ mkdir -p "$STATE_DIR"
 CURRENT="$STATE_DIR/current"
 PREVIOUS="$STATE_DIR/previous"
 IMAGES_ENV="$STATE_DIR/images.env"
+# The digest pair whose rollout failed, so that it is attempted ONCE rather
+# than once a minute forever. The refusal below is what that file buys.
+FAILED="$STATE_DIR/failed"
+# How long the two channel tags have disagreed, so that a publish which
+# half-failed stops being indistinguishable from one that is mid-flight.
+SKEW="$STATE_DIR/skew"
 
 # The digests the last successful rollout pinned, loaded before ANY compose
 # invocation.
@@ -280,6 +286,7 @@ fi
 
 RUNNING_API=$(read_state_field "$CURRENT" API_DIGEST)
 RUNNING_WEB=$(read_state_field "$CURRENT" WEB_DIGEST)
+RUNNING_VERSION=$(read_state_field "$CURRENT" VERSION)
 
 # ---------------------------------------------------------------------------
 # The quiet path: the channel has not moved.
@@ -297,6 +304,51 @@ if [ -n "$RUNNING_API" ] && [ "$API_DIGEST" = "$RUNNING_API" ] && [ "$WEB_DIGEST
     die converge "the channel has not moved, but bringing the existing stack up failed; the environment may be degraded. Check: docker compose ps" 1
 fi
 
+# ---------------------------------------------------------------------------
+# The pair that already failed.
+#
+# A failed rollout rolls back and exits, and nothing about the registry
+# changes: the channel still names the build that could not come up. Sixty
+# seconds later this script resolves the same pair, finds `current` still
+# naming the old digests - `record_state` never ran - and rolls forward into
+# the identical failure. Forward, fail, back, fail, forward.
+#
+# Each cycle recreates BOTH containers twice, because the rollback restores
+# the pair rather than the one service that broke. So a frontend that was
+# never at fault is stopped and restarted on alternating builds for as long
+# as the channel points at a broken api, and a reader refreshing the site
+# sees two different versions of the application. That is how this was
+# found. The churn also rotates away the container logs that would have
+# explained the original failure.
+#
+# Attempting it once is a retry. Attempting it every minute forever is a
+# churn loop wearing a retry's clothes.
+#
+# `up -d` still runs, because a refusal must not cost the self-healing
+# property the quiet path above exists for - but nothing is pulled, nothing
+# is recreated, and the environment holds the last version that served.
+#
+# This is not a latch anybody has to remember to release: the record is
+# cleared the moment the channel names a different pair, so a fix pushed to
+# main is taken on the next tick with no manual step. It is a statement about
+# one digest pair, and it expires when that pair does.
+# ---------------------------------------------------------------------------
+FAILED_API=$(read_state_field "$FAILED" API_DIGEST)
+FAILED_WEB=$(read_state_field "$FAILED" WEB_DIGEST)
+
+if [ -n "$FAILED_API" ] && { [ "$FAILED_API" != "$API_DIGEST" ] || [ "$FAILED_WEB" != "$WEB_DIGEST" ]; }; then
+    rm -f "$FAILED"
+    FAILED_API=""
+fi
+
+if [ -n "$FAILED_API" ]; then
+    # Self-healing first, refusal second. images.env still pins whatever last
+    # served, so a container that died between ticks comes back even while
+    # this environment is held.
+    compose up -d --remove-orphans >/dev/null 2>&1 || true
+    die rollout_refused "$APIVO_CHANNEL points at api $API_DIGEST and web $WEB_DIGEST, whose rollout already failed; it is not being retried. $ENV_NAME keeps serving ${RUNNING_VERSION:-the digests in $CURRENT}. Read why it failed with 'docker compose logs', then fix it forward - this refusal clears itself as soon as the channel names a different pair." 1
+fi
+
 log info rollout_start "$APIVO_CHANNEL moved: api ${RUNNING_API:-none} -> $API_DIGEST, web ${RUNNING_WEB:-none} -> $WEB_DIGEST"
 
 # The digests are pulled before anything is torn down, so a registry that
@@ -310,14 +362,34 @@ fi
 # image itself rather than from the tag that led here. This is what the
 # frontend renders in its footer and what the release probe compares against,
 # so it must come from the artefact.
+#
+# EMPTY when the label is absent or the inspect fails, and that is the whole
+# correctness of it. This used to substitute the literal `dev` for both, which
+# spelled "I could not find out" exactly the same as "this is what it is" -
+# and the skew guard below compares the two values for equality. Two images
+# with no label were therefore both called `dev`, compared equal, and passed
+# the one check standing between a half-moved channel and a mismatched
+# deploy: the precise pair that guard exists to refuse.
+#
+# It cannot be caught downstream either. `served_version` is asserted against
+# THIS value, so an api that said `dev` would have been proved to serve `dev`
+# and the rollout would have been recorded as sound.
 image_version() {
-    _v=$($DOCKER image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$1" 2>/dev/null || true)
-    [ -n "$_v" ] || _v=dev
-    printf '%s' "$_v"
+    $DOCKER image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$1" 2>/dev/null || true
 }
 
 IMAGE_VERSION=$(image_version "$API_REPO@$API_DIGEST")
 WEB_VERSION=$(image_version "$WEB_REPO@$WEB_DIGEST")
+
+# Refusing costs one tick and nothing else: the channel has not been consumed,
+# so a publish that lands the labels properly is picked up sixty seconds
+# later. Deploying an artefact that cannot say what it is costs an environment
+# nobody can describe.
+if [ -z "$IMAGE_VERSION" ] || [ -z "$WEB_VERSION" ]; then
+    _unstamped=web
+    [ -n "$IMAGE_VERSION" ] || _unstamped=api
+    die unstamped "$APIVO_REGISTRY/$_unstamped carries no org.opencontainers.image.version label, so this pair cannot be checked for the skew a half-moved channel produces. publish.yml sets that label on both images, so an image without one was not published by the pipeline - or the daemon could not inspect it. Nothing was changed; $ENV_NAME keeps serving whatever it already had." 1
+fi
 
 # ---------------------------------------------------------------------------
 # The two channel tags do not move atomically.
@@ -336,9 +408,37 @@ WEB_VERSION=$(image_version "$WEB_REPO@$WEB_DIGEST")
 # real problem that should be loud rather than silently deployed.
 # ---------------------------------------------------------------------------
 if [ "$IMAGE_VERSION" != "$WEB_VERSION" ]; then
-    log info version_skew "api is $IMAGE_VERSION but web is $WEB_VERSION; waiting for the channel to settle"
-    exit 0
+    # Transient for a tick or two, and permanent if the publish half-failed -
+    # the api tag moved and the web tag did not. Those two states are
+    # identical from here, and `exit 0` treated them identically, forever.
+    #
+    # So the environment quietly stopped taking merges: once a minute, with a
+    # log line that says "waiting", which is exactly what a healthy mid-move
+    # tick also says. The only symptom was a version that stopped advancing,
+    # and nobody reads a log to discover that nothing is happening.
+    #
+    # Counting the ticks separates the two without guessing: the legitimate
+    # window is the seconds between two `imagetools create` calls, so a
+    # disagreement still standing five minutes later is not a race.
+    _skew_pair="$IMAGE_VERSION/$WEB_VERSION"
+    _skew_seen=$(read_state_field "$SKEW" PAIR)
+    _skew_n=$(read_state_field "$SKEW" TICKS)
+    [ "$_skew_seen" = "$_skew_pair" ] || _skew_n=0
+    _skew_n=$((${_skew_n:-0} + 1))
+    printf 'PAIR=%s
+TICKS=%s
+' "$_skew_pair" "$_skew_n" > "$SKEW.new"
+    mv "$SKEW.new" "$SKEW"
+
+    if [ "$_skew_n" -le "${APIVO_SKEW_TOLERANCE:-5}" ]; then
+        log info version_skew "api is $IMAGE_VERSION but web is $WEB_VERSION; waiting for the channel to settle (tick $_skew_n of ${APIVO_SKEW_TOLERANCE:-5})"
+        exit 0
+    fi
+    die version_skew_stuck "api is $IMAGE_VERSION but web is $WEB_VERSION, and has been for $_skew_n ticks - so the channel is not mid-move and the publish half-failed. $ENV_NAME has silently stopped taking new builds and keeps serving ${RUNNING_VERSION:-what it already had}. Re-run the publish for $IMAGE_VERSION so both tags name the same release." 1
 fi
+
+# The pair agrees, so whatever disagreement was being counted is over.
+rm -f "$SKEW"
 
 write_images_env() {
     # write_images_env <api-digest> <web-digest> <version>
@@ -358,6 +458,23 @@ write_images_env() {
     # shellcheck source=/dev/null
     . "$IMAGES_ENV"
     set +a
+}
+
+record_failed() {
+    # record_failed <api-digest> <web-digest>
+    #
+    # Written BEFORE the rollback is attempted, not after it. A rollback can
+    # itself hang and be killed at TimeoutStartSec, and that is precisely the
+    # case where retrying the same broken pair costs the most - so the record
+    # has to survive this process not reaching its own end.
+    _tmp="$FAILED.new"
+    {
+        echo "# Written by apivo-reconcile: this pair failed to roll out."
+        echo "API_DIGEST=$1"
+        echo "WEB_DIGEST=$2"
+        echo "AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "$_tmp"
+    mv "$_tmp" "$FAILED"
 }
 
 record_state() {
@@ -425,6 +542,11 @@ if roll_out "$API_DIGEST" "$WEB_DIGEST" "$IMAGE_VERSION"; then
     # served rather than merely one that was attempted.
     [ -r "$CURRENT" ] && cp "$CURRENT" "$PREVIOUS"
     record_state "$CURRENT" "$API_DIGEST" "$WEB_DIGEST" "$IMAGE_VERSION"
+    # Belt and braces. The refusal above already clears a record naming a
+    # different pair, and one naming THIS pair would have refused before
+    # reaching here - but a state directory nobody can explain is worse than
+    # an unlink that usually does nothing.
+    rm -f "$FAILED"
 
     # Yesterday's images are the other way a small host fills its disk.
     #
@@ -448,6 +570,7 @@ fi
 # ---------------------------------------------------------------------------
 # The rollout failed. Put back what was serving.
 # ---------------------------------------------------------------------------
+record_failed "$API_DIGEST" "$WEB_DIGEST"
 log error rollout_failed "rolling back $ENV_NAME to the previous digest"
 
 PREV_API=$(read_state_field "$CURRENT" API_DIGEST)
@@ -459,7 +582,7 @@ if [ -z "$PREV_API" ]; then
 fi
 
 if roll_out "$PREV_API" "$PREV_WEB" "${PREV_VERSION:-dev}"; then
-    die rolled_back "the rollout failed and $ENV_NAME was rolled back to ${PREV_VERSION:-the previous digest}. The channel still points at the broken build, so the next tick will try it again - fix it forward, or move the channel back." 1
+    die rolled_back "the rollout failed and $ENV_NAME was rolled back to ${PREV_VERSION:-the previous digest}. The channel still points at the broken build, and this pair will NOT be tried again: every tick from now refuses it and holds this release, until the channel names a different pair. Fix it forward, or move the channel back." 1
 fi
 
 die rollback_failed "the rollout failed AND the rollback to ${PREV_VERSION:-the previous digest} also failed. $ENV_NAME is DOWN and no automatic path remains: pause with 'touch $ENV_DIR/paused', then investigate with 'docker compose ps' and 'docker compose logs'." 1
