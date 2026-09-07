@@ -300,11 +300,7 @@ func (l *Lifecycle) creditOne(ctx context.Context, report store.ReportsAwaitingC
 	if err != nil {
 		return crediting{}, err
 	}
-	entries, err := NewEntries(queries, l.ledger, l.receivable)
-	if err != nil {
-		return crediting{}, err
-	}
-	opened, err := entries.Open(ctx, tx, hold.Open(Credit{
+	opened, err := l.openWithin(ctx, tx, hold.Open(Credit{
 		Member: click.AccountID,
 		Brand:  brand,
 		Report: reportID,
@@ -312,13 +308,55 @@ func (l *Lifecycle) creditOne(ctx context.Context, report store.ReportsAwaitingC
 		Amount: share.Member,
 		Reason: "the network reported the purchase",
 	}))
-	if err != nil {
+	switch {
+	case errors.Is(err, ErrClickAlreadyCredited):
+		// One click backs one credit (entry_click_id_idx, spec 004). A
+		// second report citing the same click is a purchase nobody can be
+		// credited for twice, and it is queued for an operator exactly as
+		// a reference that matched nothing is: the money stays visible, the
+		// report leaves the awaiting set, and the window goes on.
+		queued, err := matcher.queueReport(ctx, tx, reportID, queueCreditedClick)
+		if err != nil {
+			return crediting{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return crediting{}, fmt.Errorf("committing the queue row for report %s: %w", queued.Report, err)
+		}
+		return crediting{queued: true}, nil
+	case err != nil:
 		return crediting{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return crediting{}, fmt.Errorf("committing entry %s: %w", opened.ID, err)
 	}
 	return crediting{entry: opened}, nil
+}
+
+// openWithin opens the entry under a savepoint on the report's transaction.
+// Postgres aborts a transaction on any failed statement, and the refusal
+// this exists for - entry_click_id_idx, a second report citing a credited
+// click - is one the same transaction must then record as a queue row. The
+// refusal happens at the insert, before the ledger is posted to, so rolling
+// the savepoint back leaves nothing to undo elsewhere.
+func (l *Lifecycle) openWithin(ctx context.Context, tx pgx.Tx, credit Credit) (Entry, error) {
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return Entry{}, fmt.Errorf("opening a savepoint for the entry: %w", err)
+	}
+	entries, err := NewEntries(store.New(sp), l.ledger, l.receivable)
+	if err != nil {
+		_ = sp.Rollback(ctx)
+		return Entry{}, err
+	}
+	opened, err := entries.Open(ctx, sp, credit)
+	if err != nil {
+		_ = sp.Rollback(ctx)
+		return Entry{}, err
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return Entry{}, fmt.Errorf("releasing the entry's savepoint: %w", err)
+	}
+	return opened, nil
 }
 
 // judge asks the configured rules about a credit, or nothing when none is

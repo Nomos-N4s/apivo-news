@@ -21,14 +21,27 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings/store"
 )
 
-// click records one click carrying the given reference.
-func click(ctx context.Context, t *testing.T, tx pgx.Tx, member, offer pgtype.UUID, ref string) {
+// click records one click carrying the given reference and answers its id.
+func click(ctx context.Context, t *testing.T, tx pgx.Tx, member, offer pgtype.UUID, ref string) pgtype.UUID {
 	t.Helper()
-	if _, err := tx.Exec(ctx, `
+	var id pgtype.UUID
+	if err := tx.QueryRow(ctx, `
 		insert into cashback.click
 		    (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot)
-		values ($1, $2, $3, '{"kind":"fixed"}'::jsonb, 6000)`, ref, member, offer); err != nil {
+		values ($1, $2, $3, '{"kind":"fixed"}'::jsonb, 6000) returning id`, ref, member, offer).Scan(&id); err != nil {
 		t.Fatalf("seeding the click: %v", err)
+	}
+	return id
+}
+
+// credited records one credit resting on the click and the report.
+func credited(ctx context.Context, t *testing.T, tx pgx.Tx, member, report, clicked pgtype.UUID) {
+	t.Helper()
+	if _, err := tx.Exec(ctx, `
+		insert into cashback.entry
+		    (brand_id, account_id, network_transaction_id, click_id, state, amount_minor, currency)
+		values ('fixture', $1, $2, $3, 'pending', 250, 'EUR')`, member, report, clicked); err != nil {
+		t.Fatalf("crediting the click: %v", err)
 	}
 }
 
@@ -137,6 +150,76 @@ func TestTheUnmatchedReferenceStatementAgainstSchema(t *testing.T) {
 		_, err := q.RecordUnmatchedReference(ctx, pgtype.UUID{Bytes: [16]byte{9, 9, 9}, Valid: true})
 		if !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("RecordUnmatchedReference() = %v, want %v", err, pgx.ErrNoRows)
+		}
+	})
+}
+
+// TestTheCreditedClickStatementAgainstSchema is the third way a report can
+// be money nobody can be credited for (spec 004, T202): its reference named
+// a click, and that click already backs its one credit (entry_click_id_idx).
+// The statement decides, as the unmatched one does, and the two halves must
+// not both claim a report.
+func TestTheCreditedClickStatementAgainstSchema(t *testing.T) {
+	t.Parallel()
+	ctx, tx, done := schemaTx(t)
+	defer done()
+
+	each(ctx, t, tx, "a reference naming a credited click is queued", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, member, offer := world(ctx, t, tx)
+		ref := "a-reference-credited-already"
+		clicked := click(ctx, t, tx, member, offer, ref)
+		credited(ctx, t, tx, member, report(ctx, t, tx, networkID, publisher, ref), clicked)
+		again := report(ctx, t, tx, networkID, publisher, ref)
+
+		row, err := q.RecordCreditedClickReference(ctx, again)
+		if err != nil {
+			t.Fatalf("RecordCreditedClickReference(): %v", err)
+		}
+		if row.NetworkTransactionID != again {
+			t.Errorf("the queue row names report %v, want the second report %v", row.NetworkTransactionID, again)
+		}
+		if !row.DetectedAt.Valid {
+			t.Error("the row carries no detection instant")
+		}
+	})
+
+	// A click that backs no credit yet is an attributable click; queueing
+	// its report would take a first purchase away from its member.
+	each(ctx, t, tx, "a reference naming an uncredited click is not queued", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, member, offer := world(ctx, t, tx)
+		ref := "a-reference-not-yet-credited"
+		click(ctx, t, tx, member, offer, ref)
+		stored := report(ctx, t, tx, networkID, publisher, ref)
+
+		if _, err := q.RecordCreditedClickReference(ctx, stored); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("RecordCreditedClickReference() = %v, want %v - an attributable report was queued", err, pgx.ErrNoRows)
+		}
+	})
+
+	// The unmatched half's report: a reference that names no click is that
+	// statement's to queue, and if this one queued it too an operator would
+	// see one report as two.
+	each(ctx, t, tx, "a reference naming nothing is left to the unmatched half", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, _, _ := world(ctx, t, tx)
+		stored := report(ctx, t, tx, networkID, publisher, "ref-that-names-nothing-001")
+
+		if _, err := q.RecordCreditedClickReference(ctx, stored); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("RecordCreditedClickReference() = %v, want %v - this half claimed the unmatched half's report", err, pgx.ErrNoRows)
+		}
+	})
+
+	each(ctx, t, tx, "recording the same observation twice is a no-op", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, member, offer := world(ctx, t, tx)
+		ref := "a-reference-credited-twice-asked"
+		clicked := click(ctx, t, tx, member, offer, ref)
+		credited(ctx, t, tx, member, report(ctx, t, tx, networkID, publisher, ref), clicked)
+		again := report(ctx, t, tx, networkID, publisher, ref)
+
+		if _, err := q.RecordCreditedClickReference(ctx, again); err != nil {
+			t.Fatalf("the first RecordCreditedClickReference(): %v", err)
+		}
+		if _, err := q.RecordCreditedClickReference(ctx, again); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("the second RecordCreditedClickReference() = %v, want %v", err, pgx.ErrNoRows)
 		}
 	})
 }

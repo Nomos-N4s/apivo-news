@@ -43,7 +43,13 @@ var (
 // one commit or none.
 type UnmatchedStore interface {
 	RecordUnmatchedReference(ctx context.Context, networkTransactionID pgtype.UUID) (store.RecordUnmatchedReferenceRow, error)
+	RecordCreditedClickReference(ctx context.Context, networkTransactionID pgtype.UUID) (store.RecordCreditedClickReferenceRow, error)
 }
+
+// queueWrite is one of the statements that put a report in the queue:
+// queueUnmatched for a reference that named no click, queueCreditedClick for
+// one whose click already backs a credit. Each reports whether it wrote.
+type queueWrite func(ctx context.Context, unmatched UnmatchedStore, reportID uuid.UUID) (Unmatched, bool, error)
 
 // Unmatched is what the DATABASE decided about one observation: the queue row
 // it wrote and the report that row names.
@@ -83,6 +89,26 @@ type Unmatched struct {
 // a crash, when a window is re-read.
 func queueUnmatched(ctx context.Context, unmatched UnmatchedStore, reportID uuid.UUID) (Unmatched, bool, error) {
 	row, err := unmatched.RecordUnmatchedReference(ctx, pgtype.UUID{Bytes: reportID, Valid: true})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return Unmatched{}, false, nil
+	case err != nil:
+		return Unmatched{}, false, fmt.Errorf("%w: report %s: %w", ErrNotQueued, reportID, err)
+	}
+	return Unmatched{
+		ID:         uuid.UUID(row.ID.Bytes),
+		ReportID:   uuid.UUID(row.NetworkTransactionID.Bytes),
+		DetectedAt: row.DetectedAt.Time,
+	}, true, nil
+}
+
+// queueCreditedClick records that this report's reference named a click that
+// already backs a credit (entry_click_id_idx, spec 004), reporting whether it
+// wrote a row. The statement decides, as queueUnmatched's does: a report
+// whose click backs no credit is not queued here, whatever the caller was
+// just refused for. False and no error is the same three silences.
+func queueCreditedClick(ctx context.Context, unmatched UnmatchedStore, reportID uuid.UUID) (Unmatched, bool, error) {
+	row, err := unmatched.RecordCreditedClickReference(ctx, pgtype.UUID{Bytes: reportID, Valid: true})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return Unmatched{}, false, nil

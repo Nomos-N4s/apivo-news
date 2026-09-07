@@ -125,19 +125,7 @@ func (m *Matcher) Match(ctx context.Context, db events.RowQuerier, report Report
 	click, err := m.clicks.ByRef(ctx, report.Ref)
 	switch {
 	case errors.Is(err, clickout.ErrNoSuchClick):
-		queued, wrote, err := queueUnmatched(ctx, m.unmatched, report.ID)
-		if err != nil {
-			return Attribution{}, err
-		}
-		// Announced per ROW WRITTEN. A window re-read after a crash resolves
-		// the same references again and writes nothing; announcing anyway
-		// would republish one report's misfortune on every sweep forever.
-		if wrote {
-			if err := m.announcer.Unattributed(ctx, db, queued); err != nil {
-				return Attribution{}, err
-			}
-		}
-		return Attribution{Report: report.ID, Queued: queued.ID}, nil
+		return m.queueReport(ctx, db, report.ID, queueUnmatched)
 	case err != nil:
 		// A read that FAILED is not a read that found nothing. Queueing here
 		// would turn a dropped connection into a permanent record that this
@@ -146,4 +134,26 @@ func (m *Matcher) Match(ctx context.Context, db events.RowQuerier, report Report
 		return Attribution{}, fmt.Errorf("earnings: resolving %s for report %s: %w", report.Ref, report.ID, err)
 	}
 	return Attribution{Report: report.ID, Click: click, Matched: true}, nil
+}
+
+// queueReport records the report as unattributed and answers the
+// attribution that says so. It is the whole of what happens to a report
+// nobody can be credited for - a reference that named no click, or one
+// whose click already backs a credit (entry_click_id_idx) - and the two
+// share this one path so neither can forget the announcement.
+//
+// Announced per ROW WRITTEN. A window re-read after a crash resolves the
+// same references again and writes nothing; announcing anyway would
+// republish one report's misfortune on every sweep forever.
+func (m *Matcher) queueReport(ctx context.Context, db events.RowQuerier, report uuid.UUID, write queueWrite) (Attribution, error) {
+	queued, wrote, err := write(ctx, m.unmatched, report)
+	if err != nil {
+		return Attribution{}, err
+	}
+	if wrote {
+		if err := m.announcer.Unattributed(ctx, db, queued); err != nil {
+			return Attribution{}, err
+		}
+	}
+	return Attribution{Report: report, Queued: queued.ID}, nil
 }

@@ -76,6 +76,14 @@ func (f *fakeUnmatched) RecordUnmatchedReference(_ context.Context, id pgtype.UU
 	return row, nil
 }
 
+// RecordCreditedClickReference answers as the unmatched write does: the
+// matcher's own cases never reach it, and the statement it stands for is
+// proved against the schema in the store's tests.
+func (f *fakeUnmatched) RecordCreditedClickReference(ctx context.Context, id pgtype.UUID) (store.RecordCreditedClickReferenceRow, error) {
+	row, err := f.RecordUnmatchedReference(ctx, id)
+	return store.RecordCreditedClickReferenceRow(row), err
+}
+
 // reported is a reference a network echoed back.
 func reported(ref string) networks.ClickRef { return networks.NewClickRef(ref) }
 

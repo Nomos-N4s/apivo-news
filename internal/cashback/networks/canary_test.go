@@ -327,20 +327,19 @@ func TestTheAttributionCanaryAgainstTheRealSchema(t *testing.T) {
 		// chain of two evidence rows, both carrying the reference.
 		storeThroughPoller(ctx, t, tx, account, withRef(pollerTestReport(t, "CAN-OK", networks.StatusPending, "pending", at, 250), canaryRef))
 		storeThroughPoller(ctx, t, tx, account, withRef(pollerTestReport(t, "CAN-OK", networks.StatusConfirmed, "approved", at, 250), canaryRef))
-		// An entry against EACH row. The schema permits it - entry_one_per_report
-		// is one per report row, an entry may cite a superseded report, and
-		// nothing unique binds a click to a single entry - which is exactly
-		// why the canary counts purchases and not rows.
+		// The entry cites the FIRST row, and the chain grows under it: an
+		// entry may cite a superseded report, and one click backs one
+		// credit (entry_click_id_idx, 0034), so the second row is never
+		// credited again. The canary counts purchases and not rows, and a
+		// two-row chain with one credit is one purchase.
 		chain := chainIDs(ctx, t, tx, account, "CAN-OK")
 		if len(chain) != 2 {
 			t.Fatalf("the chain has %d row(s), want 2", len(chain))
 		}
-		for _, id := range chain {
-			if _, err := tx.Exec(ctx, `
-				insert into cashback.entry (account_id, brand_id, network_transaction_id, click_id, state, amount_minor, currency)
-				values ($1, 'fixture', $2, $3, 'pending', 150, 'EUR')`, member, id, click); err != nil {
-				t.Fatalf("crediting row %s of the chain: %v", id, err)
-			}
+		if _, err := tx.Exec(ctx, `
+			insert into cashback.entry (account_id, brand_id, network_transaction_id, click_id, state, amount_minor, currency)
+			values ($1, 'fixture', $2, $3, 'pending', 150, 'EUR')`, member, chain[0], click); err != nil {
+			t.Fatalf("crediting the first row of the chain: %v", err)
 		}
 
 		verdict, err := canary(t, tx).Check(ctx, account.Network())
@@ -348,7 +347,7 @@ func TestTheAttributionCanaryAgainstTheRealSchema(t *testing.T) {
 			t.Fatalf("Check(): %v", err)
 		}
 		if verdict.Attributed != 1 {
-			t.Errorf("%d attributed, want 1: two entries for one purchase are one purchase", verdict.Attributed)
+			t.Errorf("%d attributed, want 1: a chain of two rows with one credit is one purchase", verdict.Attributed)
 		}
 	})
 
