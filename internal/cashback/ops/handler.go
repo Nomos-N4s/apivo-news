@@ -46,7 +46,14 @@ type Handler struct {
 	// moves money and a rejection posts it back, and only the entry
 	// machine may do either.
 	held HeldReviewer
-	auth OperatorAuthenticator
+	// destinations lists the payout destinations nobody has verified and
+	// records the proof that one belongs to its member (B6, FR-051). The
+	// payout module's, because the destination is its row - and a separate
+	// dependency from the three above for the reason they are separate
+	// from each other: what an operator may decide and what the money does
+	// answer to different modules.
+	destinations DestinationVerifier
+	auth         OperatorAuthenticator
 	// allow is the 405 classifier, derived from routes() in NewHandler so
 	// it cannot drift from what is actually registered.
 	allow platformhttp.AllowTable
@@ -56,10 +63,11 @@ type Handler struct {
 // composition root to mount. Every route sits behind the requireOperator
 // gate - authentication wraps the whole table, so a future route cannot be
 // added unauthenticated by omission.
-func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, refusals WithdrawalRefuser, settlements WithdrawalSettler, reconciliation ReconciliationStore, held HeldReviewer, auth OperatorAuthenticator) http.Handler {
+func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, refusals WithdrawalRefuser, settlements WithdrawalSettler, reconciliation ReconciliationStore, held HeldReviewer, destinations DestinationVerifier, auth OperatorAuthenticator) http.Handler {
 	h := &Handler{
 		log: log, store: store, approvals: approvals, refusals: refusals,
-		settlements: settlements, reconciliation: reconciliation, held: held, auth: auth,
+		settlements: settlements, reconciliation: reconciliation, held: held,
+		destinations: destinations, auth: auth,
 	}
 	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
@@ -85,6 +93,9 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"POST " + Prefix + "withdrawals/{id}/approve":  h.approveWithdrawal,
 		"POST " + Prefix + "withdrawals/{id}/reject":   h.rejectWithdrawal,
 		"POST " + Prefix + "withdrawals/{id}/settle":   h.settleWithdrawal,
+
+		"GET " + Prefix + "payout-destinations":              h.listUnverifiedDestinations,
+		"POST " + Prefix + "payout-destinations/{id}/verify": h.verifyDestination,
 
 		"GET " + Prefix + "held":               h.listHeld,
 		"POST " + Prefix + "held/{id}/release": h.releaseHeld,

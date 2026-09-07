@@ -98,28 +98,6 @@ func WithMount(mount string) Option {
 	return func(v *Vault) { v.mount = strings.Trim(strings.TrimSpace(mount), "/") }
 }
 
-// WithPrefix names the subtree secrets are written under.
-func WithPrefix(prefix string) Option {
-	return func(v *Vault) { v.prefix = strings.Trim(strings.TrimSpace(prefix), "/") }
-}
-
-// WithTimeout bounds one call.
-func WithTimeout(timeout time.Duration) Option {
-	return func(v *Vault) { v.timeout = timeout }
-}
-
-// WithHTTPClient supplies the client, for tests and for a deployment that
-// needs its own transport.
-func WithHTTPClient(client *http.Client) Option {
-	return func(v *Vault) { v.client = client }
-}
-
-// WithIDs supplies the identifier source, so a test can pin the path a
-// reference points at.
-func WithIDs(newID func() (string, error)) Option {
-	return func(v *Vault) { v.newID = newID }
-}
-
 // New builds the vault against an OpenBao endpoint.
 //
 // The endpoint is never repeated in an error. It travels beside a token in

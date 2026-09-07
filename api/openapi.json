@@ -3528,6 +3528,160 @@
           }
         }
       }
+    },
+    "/api/v1/cashback/ops/payout-destinations": {
+      "get": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "listUnverifiedDestinations",
+        "summary": "List payout destinations nobody has verified",
+        "description": "The queue of members who cannot be paid yet (FR-051, B6). A destination is listed from the moment a member records it until somebody proves it belongs to them, and no withdrawal may name it in between - so a row here is a member waiting on an operator.\n\nIt carries a `details_ref` and never the details. The details live in this deployment's vault (ADR-0006) and this API cannot read them back by design; verifying one means opening that reference in the vault's own interface and satisfying yourself out of band.\n\nThe whole /api/v1/cashback/ops/ prefix sits behind one auth gate, so a request without a usable token answers 401 whether or not the path exists. The prefix is unmounted entirely when cashback is off, and then answers 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the queue, oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnverifiedDestinationQueue"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A limit or cursor this endpoint did not issue."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No usable bearer token."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The token's account does not hold the operator role."
+          }
+        }
+      }
+    },
+    "/api/v1/cashback/ops/payout-destinations/{id}/verify": {
+      "post": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "verifyPayoutDestination",
+        "summary": "Record that a destination belongs to its member",
+        "description": "Records the proof FR-051 requires before money may move to a destination, and publishes `cashback.destination.verified` in the same transaction (FR-061).\n\nVerification here is a person's act, not a computation. This API cannot read a destination's details (ADR-0006), so what is recorded is that a named operator satisfied themselves out of band and how they did it. `method` is their own words and is required: \"verified, method unknown\" is not a verification anybody could defend later, and the schema refuses it.\n\nIdempotent. Verification is one-way and final - it is the evidence a withdrawal was allowed to name the destination - so verifying one that is already verified answers the verification that stands, naming whoever performed it, rather than replacing it.\n\nThe acting account is the token subject and is never part of the body (C-4).",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The payout destination, as listed.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinationVerificationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The recorded verification, read back rather than echoed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DestinationVerification"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No method, or an id that is not a UUID."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No usable bearer token."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The token's account does not hold the operator role."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No payout destination has that id."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6818,6 +6972,135 @@
             "type": "string",
             "format": "date-time",
             "description": "Stamped by the database, not supplied by the caller."
+          }
+        }
+      },
+      "UnverifiedDestination": {
+        "type": "object",
+        "description": "One payout destination waiting for somebody to prove it belongs to its member. It carries a reference to the details and never the details: they live in the deployment's vault, and an endpoint that echoed them would be the leak that arrangement exists to prevent (ADR-0006).",
+        "required": [
+          "destination_id",
+          "account_id",
+          "account_email",
+          "kind",
+          "details_ref",
+          "created_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "destination_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The member whose destination it is."
+          },
+          "account_email": {
+            "type": "string",
+            "description": "How an operator reaches that member. Verification is a conversation with a person, so the queue carries the way to have it."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sepa",
+              "manual",
+              "stub"
+            ],
+            "description": "Which rail would carry the money."
+          },
+          "details_ref": {
+            "type": "string",
+            "description": "Where the details are, never what they are. An operator opens this in the vault; nothing in this API can."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UnverifiedDestinationQueue": {
+        "type": "object",
+        "description": "One page of destinations waiting to be verified, oldest first.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnverifiedDestination"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 256,
+            "description": "Null on the last page. Present only when a further page exists, so a cursor never leads to an empty one."
+          }
+        }
+      },
+      "DestinationVerificationRequest": {
+        "type": "object",
+        "description": "How the operator satisfied themselves that the destination belongs to its member. The acting account is the token subject and is never part of this body (C-4).",
+        "required": [
+          "method"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "method": {
+            "type": "string",
+            "minLength": 1,
+            "description": "In the operator's own words, and required: a verification that did not say how it was done is not one anybody could defend later, and the schema refuses it."
+          }
+        }
+      },
+      "DestinationVerification": {
+        "type": "object",
+        "description": "A recorded verification. One-way and final: it is the evidence a withdrawal was allowed to name the destination, so it is never withdrawn, re-dated or re-attributed.",
+        "required": [
+          "destination_id",
+          "account_id",
+          "kind",
+          "verified_method",
+          "verified_by",
+          "verified_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "destination_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sepa",
+              "manual",
+              "stub"
+            ]
+          },
+          "verified_method": {
+            "type": "string",
+            "description": "How it was done, as the operator wrote it."
+          },
+          "verified_by": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The operator who performed it (FR-061). On a repeat this names whoever actually did, which may not be the caller."
+          },
+          "verified_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }

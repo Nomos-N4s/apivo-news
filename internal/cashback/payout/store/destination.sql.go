@@ -19,7 +19,7 @@ values (
     $2,
     $3
 )
-returning id, account_id, kind, details_ref, verified_at, verified_method, created_at
+returning id, account_id, kind, details_ref, verified_at, verified_method, created_at, verified_by
 `
 
 type CreatePayoutDestinationParams struct {
@@ -57,6 +57,7 @@ func (q *Queries) CreatePayoutDestination(ctx context.Context, arg CreatePayoutD
 		&i.VerifiedAt,
 		&i.VerifiedMethod,
 		&i.CreatedAt,
+		&i.VerifiedBy,
 	)
 	return i, err
 }
@@ -69,7 +70,8 @@ select
     details_ref,
     verified_at,
     verified_method,
-    created_at
+    created_at,
+    verified_by
 from cashback.payout_destination
 where id = $1
   and account_id = $2
@@ -99,6 +101,7 @@ func (q *Queries) GetPayoutDestinationForAccount(ctx context.Context, arg GetPay
 		&i.VerifiedAt,
 		&i.VerifiedMethod,
 		&i.CreatedAt,
+		&i.VerifiedBy,
 	)
 	return i, err
 }
@@ -111,7 +114,8 @@ select
     details_ref,
     verified_at,
     verified_method,
-    created_at
+    created_at,
+    verified_by
 from cashback.payout_destination
 where account_id = $1
 order by created_at, id
@@ -140,6 +144,7 @@ func (q *Queries) ListPayoutDestinationsForAccount(ctx context.Context, accountI
 			&i.VerifiedAt,
 			&i.VerifiedMethod,
 			&i.CreatedAt,
+			&i.VerifiedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -158,7 +163,7 @@ update cashback.payout_destination
  where id = $2
    and account_id = $3
    and verified_at is null
-returning id, account_id, kind, details_ref, verified_at, verified_method, created_at
+returning id, account_id, kind, details_ref, verified_at, verified_method, created_at, verified_by
 `
 
 type VerifyPayoutDestinationParams struct {
@@ -193,6 +198,7 @@ func (q *Queries) VerifyPayoutDestination(ctx context.Context, arg VerifyPayoutD
 		&i.VerifiedAt,
 		&i.VerifiedMethod,
 		&i.CreatedAt,
+		&i.VerifiedBy,
 	)
 	return i, err
 }

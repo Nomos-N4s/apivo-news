@@ -2,8 +2,10 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -169,4 +171,161 @@ func (s *PGStore) explain(ctx context.Context, queries *store.Queries, id uuid.U
 			Superseded: row.Superseded,
 		},
 	}
+}
+
+// UnverifiedDestinations returns one page of the destinations waiting for
+// somebody to prove they belong to their member (FR-051).
+func (s *PGStore) UnverifiedDestinations(ctx context.Context, after DestinationAfter, limit int) ([]UnverifiedDestination, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("ops: a page of unverified destinations needs a positive size, got %d", limit)
+	}
+	rows, err := store.New(s.db).ListUnverifiedDestinations(ctx, store.ListUnverifiedDestinationsParams{
+		AfterCreatedAt: pgtype.Timestamptz{Time: after.CreatedAt, Valid: true},
+		AfterID:        pgtype.UUID{Bytes: after.ID, Valid: true},
+		PageSize:       int32(limit), //nolint:gosec // G115: bounded above by the caller's page size, which is small by construction.
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ops: reading the unverified destinations: %w", err)
+	}
+	queue := make([]UnverifiedDestination, 0, len(rows))
+	for _, row := range rows {
+		queue = append(queue, UnverifiedDestination{
+			ID:           uuid.UUID(row.ID.Bytes),
+			AccountID:    uuid.UUID(row.AccountID.Bytes),
+			AccountEmail: row.AccountEmail,
+			Kind:         row.Kind,
+			DetailsRef:   row.DetailsRef,
+			CreatedAt:    row.CreatedAt.Time,
+		})
+	}
+	return queue, nil
+}
+
+// Verify records that a named operator proved a destination belongs to its
+// member, and announces it, in one transaction (FR-051, FR-061).
+//
+// Idempotent by reading first. Verification is one-way - the table's guard
+// refuses to re-date or re-attribute one that stands, because it is the
+// evidence a withdrawal was allowed to name the destination - so a second
+// call answers the verification that already exists rather than replacing
+// it or failing. An operator repeating themselves has done nothing wrong,
+// and the answer names who actually performed it, so they can see it was
+// somebody else.
+func (s *PGStore) Verify(ctx context.Context, v Verification) (Verified, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return Verified{}, fmt.Errorf("%w: %s: %w", ErrNotVerified, v.ID, err)
+	}
+	// Rollback after a successful commit is a no-op; this is what makes
+	// every early return below leave nothing behind.
+	defer func() { _ = tx.Rollback(ctx) }()
+	queries := store.New(tx)
+
+	// Read first, and not only to be friendly about a repeat: the update
+	// cannot tell "no such destination" from "already verified", and those
+	// are a not-found and a success that happened earlier.
+	existing, err := queries.GetDestinationForVerification(ctx, pgtype.UUID{Bytes: v.ID, Valid: true})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return Verified{}, fmt.Errorf("%w: %s", ErrNoSuchDestination, v.ID)
+	case err != nil:
+		return Verified{}, fmt.Errorf("%w: %s: %w", ErrNotVerified, v.ID, err)
+	}
+	if existing.VerifiedAt.Valid {
+		// Nothing to write and nothing to announce: the fact is already in
+		// the stream, put there by whoever performed it.
+		return verifiedFrom(existing), nil
+	}
+
+	row, err := queries.VerifyDestinationAsOperator(ctx, store.VerifyDestinationAsOperatorParams{
+		ID:             pgtype.UUID{Bytes: v.ID, Valid: true},
+		VerifiedMethod: pgtype.Text{String: v.Method, Valid: true},
+		VerifiedBy:     pgtype.UUID{Bytes: v.Operator.ID, Valid: true},
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// Somebody verified it between the read and the write. The
+		// statement waited on that row lock, re-read after it committed and
+		// matched nothing. The destination is verified either way, so it is
+		// read back rather than reported as a failure.
+		return s.verifiedAlready(ctx, queries, v.ID)
+	case err != nil:
+		return Verified{}, fmt.Errorf("%w: %s: %w", ErrNotVerified, v.ID, err)
+	}
+
+	verified := Verified{
+		ID:         uuid.UUID(row.ID.Bytes),
+		AccountID:  uuid.UUID(row.AccountID.Bytes),
+		Kind:       row.Kind,
+		Method:     row.VerifiedMethod.String,
+		VerifiedBy: uuid.UUID(row.VerifiedBy.Bytes),
+		VerifiedAt: row.VerifiedAt.Time,
+	}
+	payload, err := verifiedEvent(verified)
+	if err != nil {
+		return Verified{}, fmt.Errorf("%w: %s: %w", ErrNotVerified, v.ID, err)
+	}
+	// A collision is not swallowed, for the reason the dismissal gives: the
+	// key is the row, the row is verifiable once, and the unique violation
+	// that would report a collision has already aborted this transaction -
+	// so reporting success would report a decision that cannot commit.
+	if _, err := s.events.Append(ctx, tx, events.Message{
+		Type:           TypeDestinationVerified,
+		Subject:        verified.ID,
+		IdempotencyKey: TypeDestinationVerified + ":" + verified.ID.String(),
+		Payload:        payload,
+	}); err != nil {
+		return Verified{}, fmt.Errorf("%w: %s: %w", ErrNotVerified, v.ID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Verified{}, fmt.Errorf("%w: %s: %w", ErrNotVerified, v.ID, err)
+	}
+	return verified, nil
+}
+
+// verifiedAlready reads back a verification another transaction recorded
+// between this one's read and its write.
+func (s *PGStore) verifiedAlready(ctx context.Context, queries *store.Queries, id uuid.UUID) (Verified, error) {
+	row, err := queries.GetDestinationForVerification(ctx, pgtype.UUID{Bytes: id, Valid: true})
+	if err != nil {
+		return Verified{}, fmt.Errorf("%w: %s: %w", ErrNotVerified, id, err)
+	}
+	return verifiedFrom(row), nil
+}
+
+// verifiedFrom maps one stored destination to the verification it carries.
+// One spelling, because the read-first branch and the lost-race branch
+// answer the same question and a second copy is where they would diverge.
+func verifiedFrom(row store.GetDestinationForVerificationRow) Verified {
+	return Verified{
+		ID:         uuid.UUID(row.ID.Bytes),
+		AccountID:  uuid.UUID(row.AccountID.Bytes),
+		Kind:       row.Kind,
+		Method:     row.VerifiedMethod.String,
+		VerifiedBy: uuid.UUID(row.VerifiedBy.Bytes),
+		VerifiedAt: row.VerifiedAt.Time,
+	}
+}
+
+// verifiedEvent renders the contract's payload for one verification.
+//
+// It names the destination, its member, the method and the operator, and
+// nothing about where the money goes: the details are in the vault and an
+// event carrying them would put a bank account into the stream forever.
+func verifiedEvent(v Verified) ([]byte, error) {
+	return json.Marshal(struct {
+		DestinationID  string    `json:"destination_id"`
+		AccountID      string    `json:"account_id"`
+		Kind           string    `json:"kind"`
+		VerifiedMethod string    `json:"verified_method"`
+		VerifiedBy     string    `json:"verified_by"`
+		At             time.Time `json:"at"`
+	}{
+		DestinationID:  v.ID.String(),
+		AccountID:      v.AccountID.String(),
+		Kind:           v.Kind,
+		VerifiedMethod: v.Method,
+		VerifiedBy:     v.VerifiedBy.String(),
+		At:             v.VerifiedAt,
+	})
 }

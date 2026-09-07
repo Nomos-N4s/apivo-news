@@ -24,7 +24,7 @@ values (
     sqlc.arg(kind),
     sqlc.arg(details_ref)
 )
-returning id, account_id, kind, details_ref, verified_at, verified_method, created_at;
+returning id, account_id, kind, details_ref, verified_at, verified_method, created_at, verified_by;
 
 -- name: ListPayoutDestinationsForAccount :many
 -- Every destination this member has, oldest first.
@@ -40,7 +40,8 @@ select
     details_ref,
     verified_at,
     verified_method,
-    created_at
+    created_at,
+    verified_by
 from cashback.payout_destination
 where account_id = sqlc.arg(account_id)
 order by created_at, id;
@@ -61,7 +62,8 @@ select
     details_ref,
     verified_at,
     verified_method,
-    created_at
+    created_at,
+    verified_by
 from cashback.payout_destination
 where id = sqlc.arg(id)
   and account_id = sqlc.arg(account_id);
@@ -88,4 +90,4 @@ update cashback.payout_destination
  where id = sqlc.arg(id)
    and account_id = sqlc.arg(account_id)
    and verified_at is null
-returning id, account_id, kind, details_ref, verified_at, verified_method, created_at;
+returning id, account_id, kind, details_ref, verified_at, verified_method, created_at, verified_by;

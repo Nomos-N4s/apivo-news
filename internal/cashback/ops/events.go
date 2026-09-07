@@ -39,6 +39,16 @@ const TypeDifferenceFound = EventProducer + ".reconciliation.difference_found"
 // once, because a row is resolved once.
 const TypeDifferenceResolved = EventProducer + ".reconciliation.difference_resolved"
 
+// TypeDestinationVerified announces one payout destination an operator
+// proved belongs to its member (FR-051, FR-061, B6).
+//
+// It carries the operator and the method and NOT the destination's details,
+// for the reason nothing else here carries them: the row holds a reference
+// and the details are in the vault (ADR-0006). An event that carried them
+// would put a member's bank account into the stream, where every consumer
+// and every replica of it would hold a copy forever.
+const TypeDestinationVerified = EventProducer + ".destination.verified"
+
 // dismissedPayload is what the event carries: identifiers, the acting
 // account and the recorded reason.
 //
