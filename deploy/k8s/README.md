@@ -296,7 +296,14 @@ api does:
 
 ```sh
 kubectl exec deploy/apivo-api -- apivo connect-network -backfill-from 2026-06-01
+kubectl rollout restart deploy/apivo-api
 ```
+
+**The restart is part of the command.** The api resolves its publisher
+account once, at startup: a pod that started before the row existed logged
+the line above, registered neither sweep and no catalogue import, and will
+stay that way until it starts again — however many rows are written
+underneath it. The rollout is what makes the new pods find the account.
 
 **The network and the account come from the environment, not from flags.**
 They are `NETWORKS` and `NETWORK_<DRIVER>_ACCOUNT_ID` — the same two values the

@@ -692,23 +692,35 @@ having no token. 404 means cashback did not mount, and the log names why —
 a network that cannot poll, or `JWKS_URL` missing. The grep should show
 `brand definition loaded` and neither of the two `BRAND_DIR` ERROR lines.
 
-### 7. Connect the network, then publish a rate
+### 7. Connect the network, restart the api, then publish a rate
 
 The account has to be told where its history starts — nothing invents a
-`backfill_from`, and every sweep refuses by name until it is set — and the
-catalogue has to arrive before there is a route to publish a band on. Both
-are subcommands of the deployed binary, run inside its container so they
-read its environment:
+`backfill_from` — and the catalogue has to arrive before there is a route
+to publish a band on. Both are subcommands of the deployed binary, run
+inside its container so they read its environment:
 
 ```sh
 docker exec apivo-qa-api apivo connect-network -backfill-from 2026-09-01
+docker restart apivo-qa-api
+sleep 15
+docker logs --since 1m apivo-qa-api 2>&1 | grep -E 'scheduler started|registered|NO AFFILIATE'
 ```
 
-The first catalogue import runs within the first half hour after the api
-starts (a tenth of its six-hour interval, jittered) and every six hours
-after. When `docker logs apivo-qa-api` shows it, the routes it wrote are
-what a band is published on, named by the network's own id for the
-retailer:
+**The restart is not optional.** The api resolves its publisher account
+once, at startup: an api that started before the account existed logged
+`NO AFFILIATE NETWORK IS CONNECTED` at ERROR and registered only its three
+global jobs — neither sweep and no catalogue import — and it will stay
+that way until it starts again. The reconciler will not fight a plain
+restart; it only recreates a container whose configuration changed. The
+grep should show `affiliate network sweeps registered`,
+`catalogue import registered` and `scheduler started` with `jobs: 6`, and
+no `NO AFFILIATE` line.
+
+The first catalogue import runs within the first 36 minutes after that
+restart (a tenth of its six-hour interval, jittered) and every six hours
+after. When `docker logs apivo-qa-api` shows `catalogue imported`, the
+routes it wrote are what a band is published on, named by the network's
+own id for the retailer:
 
 ```sh
 apivoctl psql qa
