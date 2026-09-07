@@ -236,6 +236,11 @@ func (c *ClickOuts) Issue(ctx context.Context, req Request) (Issued, error) {
 		Ref:       ref,
 		AccountID: req.Member,
 		OfferID:   offer.ID,
+		// The route and the network the redirect was just built for, from
+		// the same offer: the reference goes out under this network and is
+		// only ever matched against this network's reports (FR-096).
+		RouteID:   offer.RouteID,
+		NetworkID: networks.NetworkID(offer.NetworkID),
 		// The band and the share as published at `at`, snapshotted whole:
 		// this, and not the offer row as it stands when the money is finally
 		// paid, is what governs the credit (FR-013).

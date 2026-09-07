@@ -40,8 +40,10 @@ func tag(t *testing.T) string {
 	return hex.EncodeToString(raw)
 }
 
-// clickable seeds a member and a live offer, and answers both ids.
-func clickable(ctx context.Context, t *testing.T, tx pgx.Tx) (account, offer uuid.UUID) {
+// clickable seeds a member and a live offer, and answers both ids with the
+// route and the network the offer is published on - what a click records
+// beside the offer (0037).
+func clickable(ctx context.Context, t *testing.T, tx pgx.Tx) (account, offer, route uuid.UUID, network networks.NetworkID) {
 	t.Helper()
 	id := tag(t)
 	networkID := "clickfix_" + id
@@ -57,7 +59,7 @@ func clickable(ctx context.Context, t *testing.T, tx pgx.Tx) (account, offer uui
 		values ($1, 'Click Fixture Network', 'clickref', 31, 300, true)`, networkID); err != nil {
 		t.Fatalf("seeding the network: %v", err)
 	}
-	var merchant, route uuid.UUID
+	var merchant uuid.UUID
 	if err := tx.QueryRow(ctx, `
 		insert into cashback.merchant (slug, country, source_language_code, status)
 		values ($1, 'DE', 'de', 'active') returning id`, "click-fixture-"+id).Scan(&merchant); err != nil {
@@ -77,7 +79,7 @@ func clickable(ctx context.Context, t *testing.T, tx pgx.Tx) (account, offer uui
 		returning id`, route).Scan(&offer); err != nil {
 		t.Fatalf("seeding the offer: %v", err)
 	}
-	return account, offer
+	return account, offer, route, networks.NetworkID(networkID)
 }
 
 func TestTheClickRecorderAgainstSchema(t *testing.T) {
@@ -133,14 +135,14 @@ func TestTheClickRecorderAgainstSchema(t *testing.T) {
 	}
 
 	each("a recorded click is found again by the reference it was issued", func(t *testing.T, tx pgx.Tx, clicks *clickout.Clicks) {
-		account, offer := clickable(ctx, t, tx)
+		account, offer, route, network := clickable(ctx, t, tx)
 		ref, err := clickout.NewMinter().Mint()
 		if err != nil {
 			t.Fatalf("Mint(): %v", err)
 		}
 
 		recorded, err := clicks.Record(ctx, clickout.NewClick{
-			Ref: ref, AccountID: account, OfferID: offer, Promised: promised,
+			Ref: ref, AccountID: account, OfferID: offer, RouteID: route, NetworkID: network, Promised: promised,
 			Context: clickout.NewContextDigest("ua/1.0", "203.0.113.7"),
 		})
 		if err != nil {
@@ -157,6 +159,9 @@ func TestTheClickRecorderAgainstSchema(t *testing.T) {
 		if found.ID != recorded.ID || found.AccountID != account || found.OfferID != offer {
 			t.Errorf("ByRef() = %+v, want the click just recorded %+v", found, recorded)
 		}
+		if found.RouteID != route || found.NetworkID != network {
+			t.Errorf("the click reads route %v on %q, want %v on %q", found.RouteID, found.NetworkID, route, network)
+		}
 		// The whole point of the snapshot: what the member was promised
 		// comes back exactly, through jsonb, minor units and currency
 		// intact (FR-013, C-6).
@@ -172,12 +177,12 @@ func TestTheClickRecorderAgainstSchema(t *testing.T) {
 	})
 
 	each("a reference already issued is refused as one", func(t *testing.T, tx pgx.Tx, clicks *clickout.Clicks) {
-		account, offer := clickable(ctx, t, tx)
+		account, offer, route, network := clickable(ctx, t, tx)
 		ref, err := clickout.NewMinter().Mint()
 		if err != nil {
 			t.Fatalf("Mint(): %v", err)
 		}
-		first := clickout.NewClick{Ref: ref, AccountID: account, OfferID: offer, Promised: promised}
+		first := clickout.NewClick{Ref: ref, AccountID: account, OfferID: offer, RouteID: route, NetworkID: network, Promised: promised}
 		if _, err := clicks.Record(ctx, first); err != nil {
 			t.Fatalf("the first click: %v", err)
 		}

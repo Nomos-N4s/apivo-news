@@ -38,6 +38,10 @@ var (
 	// there is no band to snapshot and nothing the credit could be computed
 	// from.
 	ErrUnofferedClick = errors.New("clickout: a click names the offer it was made on")
+	// ErrUnroutedClick reports a click that names no route or no network.
+	// Both come from the offer the member clicked, and a click without them
+	// is one no network's report could ever be matched to (FR-096).
+	ErrUnroutedClick = errors.New("clickout: a click names the route and the network it was issued through")
 	// ErrNotRecorded reports a click that could not be written. FR-020 puts
 	// the record before the redirect, so a caller that swallowed this would
 	// redirect a member whose purchase can never be matched back.
@@ -153,6 +157,13 @@ type NewClick struct {
 	AccountID uuid.UUID
 	// OfferID is the band clicked through.
 	OfferID uuid.UUID
+	// RouteID is the route the band is published on, and NetworkID the
+	// network that route belongs to - the network this click is issued
+	// through, and the only one whose report of its reference is this
+	// click's (FR-096). Both are read from the offer; the schema holds them
+	// to it by key (0037).
+	RouteID   uuid.UUID
+	NetworkID networks.NetworkID
 	// Promised is the rate and share as published at this moment (FR-013).
 	Promised Promise
 	// Context is the optional privacy-minimised digest (FR-022).
@@ -165,6 +176,10 @@ type Click struct {
 	Ref       networks.IssuedClickRef
 	AccountID uuid.UUID
 	OfferID   uuid.UUID
+	// RouteID and NetworkID are the route and the network the click was
+	// issued through, as the row carries them.
+	RouteID   uuid.UUID
+	NetworkID networks.NetworkID
 	// ClickedAt is the instant the row carries.
 	ClickedAt time.Time
 	Promised  Promise
@@ -214,6 +229,12 @@ func (c *Clicks) Record(ctx context.Context, click NewClick) (Click, error) {
 	if click.OfferID == uuid.Nil {
 		return Click{}, ErrUnofferedClick
 	}
+	if click.RouteID == uuid.Nil {
+		return Click{}, fmt.Errorf("%w: no route", ErrUnroutedClick)
+	}
+	if err := click.NetworkID.Validate(); err != nil {
+		return Click{}, fmt.Errorf("%w: %w", ErrUnroutedClick, err)
+	}
 	if err := click.Promised.Validate(); err != nil {
 		return Click{}, fmt.Errorf("%w: %w", ErrNotRecorded, err)
 	}
@@ -227,6 +248,8 @@ func (c *Clicks) Record(ctx context.Context, click NewClick) (Click, error) {
 		ClickRef:               click.Ref.Ref(),
 		AccountID:              pgtype.UUID{Bytes: click.AccountID, Valid: true},
 		OfferID:                pgtype.UUID{Bytes: click.OfferID, Valid: true},
+		MerchantNetworkID:      pgtype.UUID{Bytes: click.RouteID, Valid: true},
+		NetworkID:              click.NetworkID.String(),
 		RateSnapshot:           snapshot,
 		MemberShareBpsSnapshot: int32(click.Promised.MemberShare),
 		ContextDigest:          pgtype.Text{String: click.Context.String(), Valid: click.Context.Recorded()},
@@ -287,11 +310,17 @@ func clickFrom(row store.CashbackClick) (Click, error) {
 		return Click{}, fmt.Errorf("clickout: click %v: a snapshotted member share of %d basis points is outside 0..%d",
 			row.ID, share, money.BasisPointsScale)
 	}
+	network := networks.NetworkID(row.NetworkID)
+	if err := network.Validate(); err != nil {
+		return Click{}, fmt.Errorf("clickout: click %v: %w", row.ID, err)
+	}
 	return Click{
 		ID:        uuid.UUID(row.ID.Bytes),
 		Ref:       ref,
 		AccountID: uuid.UUID(row.AccountID.Bytes),
 		OfferID:   uuid.UUID(row.OfferID.Bytes),
+		RouteID:   uuid.UUID(row.MerchantNetworkID.Bytes),
+		NetworkID: network,
 		ClickedAt: row.ClickedAt.Time,
 		Promised:  Promise{Rate: band, MemberShare: share},
 		// Filled directly rather than through NewContextDigest: this value

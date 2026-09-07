@@ -96,6 +96,10 @@ type CashbackClick struct {
 	MemberShareBpsSnapshot int32
 	// A privacy-minimised device or context digest, sufficient for abuse rules and no more (FR-022). Never a raw fingerprint, never an address.
 	ContextDigest pgtype.Text
+	// The route (retailer through one network) the member clicked - the route the rate snapshot came from. Pinned to the offer by click_route_matches_offer, so it cannot name a route the offer is not on.
+	MerchantNetworkID pgtype.UUID
+	// The network this click was issued through, and the only network whose report of this reference is this click's (FR-096). Pinned to the route by click_network_matches_route, so it cannot name a network the route does not belong to.
+	NetworkID string
 }
 
 // A member's unit of earning. C-2 lives on network_transaction_id: a credit with no evidence cannot be inserted. Reversal never edits an entry - a reversing entry is inserted beside it (SC-010).

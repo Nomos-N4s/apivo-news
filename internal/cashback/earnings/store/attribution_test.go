@@ -22,13 +22,19 @@ import (
 )
 
 // click records one click carrying the given reference and answers its id.
+// The route and the network are the offer's own, derived here exactly as
+// 0037's backfill derived them.
 func click(ctx context.Context, t *testing.T, tx pgx.Tx, member, offer pgtype.UUID, ref string) pgtype.UUID {
 	t.Helper()
 	var id pgtype.UUID
 	if err := tx.QueryRow(ctx, `
 		insert into cashback.click
-		    (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot)
-		values ($1, $2, $3, '{"kind":"fixed"}'::jsonb, 6000) returning id`, ref, member, offer).Scan(&id); err != nil {
+		    (click_ref, account_id, offer_id, merchant_network_id, network_id, rate_snapshot, member_share_bps_snapshot)
+		select $1, $2, o.id, o.merchant_network_id, mn.network_id, '{"kind":"fixed"}'::jsonb, 6000
+		  from cashback.offer o
+		  join cashback.merchant_network mn on mn.id = o.merchant_network_id
+		 where o.id = $3
+		returning id`, ref, member, offer).Scan(&id); err != nil {
 		t.Fatalf("seeding the click: %v", err)
 	}
 	return id

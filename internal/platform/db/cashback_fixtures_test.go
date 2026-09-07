@@ -157,9 +157,10 @@ func seedCashbackEvidence(t *testing.T, tx pgx.Tx) cashbackFixtures {
 	f.clickRef = randomSuffix(t) + randomSuffix(t)
 	err := tx.QueryRow(ctx,
 		`insert into cashback.click
-		     (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot, context_digest)
-		 values ($1, $2, $3, $4::jsonb, 5000, 'ctx-digest') returning id`,
-		f.clickRef, f.accountID, f.offerID,
+		     (click_ref, account_id, offer_id, merchant_network_id, network_id,
+		      rate_snapshot, member_share_bps_snapshot, context_digest)
+		 values ($1, $2, $3, $4, $5, $6::jsonb, 5000, 'ctx-digest') returning id`,
+		f.clickRef, f.accountID, f.offerID, f.merchantNetworkID, f.networkID,
 		`{"rate_kind":"percent","rate_bps":400,"member_share_bps":5000}`,
 	).Scan(&f.clickID)
 	if err != nil {

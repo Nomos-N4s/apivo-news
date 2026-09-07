@@ -25,16 +25,24 @@
 -- either the entropy source is broken or a caller is re-using a reference,
 -- and both are defects that must surface rather than cost a member the
 -- credit whose reference was taken.
+--
+-- merchant_network_id and network_id are the route and the network the
+-- click was issued through (0037, FR-096). Supplied by the caller from the
+-- offer it read rather than looked up here, and pinned by key to that offer
+-- and to that route: a pair that disagrees with the offer is refused, so
+-- the network a reference is later looked up under is never a guess.
 insert into cashback.click (
-    click_ref, account_id, offer_id,
+    click_ref, account_id, offer_id, merchant_network_id, network_id,
     rate_snapshot, member_share_bps_snapshot, context_digest
 )
 values (
     sqlc.arg(click_ref), sqlc.arg(account_id), sqlc.arg(offer_id),
+    sqlc.arg(merchant_network_id), sqlc.arg(network_id),
     sqlc.arg(rate_snapshot), sqlc.arg(member_share_bps_snapshot), sqlc.narg(context_digest)
 )
 returning id, click_ref, account_id, offer_id, clicked_at,
-          rate_snapshot, member_share_bps_snapshot, context_digest;
+          rate_snapshot, member_share_bps_snapshot, context_digest,
+          merchant_network_id, network_id;
 
 -- name: GetClickByRef :one
 -- The click a reported reference names, or no row.
@@ -51,7 +59,8 @@ returning id, click_ref, account_id, offer_id, clicked_at,
 -- whatever it looks like. A reported reference that matches nothing is
 -- ordinary and is the caller's to queue as unattributed (FR-034).
 select id, click_ref, account_id, offer_id, clicked_at,
-       rate_snapshot, member_share_bps_snapshot, context_digest
+       rate_snapshot, member_share_bps_snapshot, context_digest,
+       merchant_network_id, network_id
   from cashback.click
  where click_ref = sqlc.arg(click_ref);
 

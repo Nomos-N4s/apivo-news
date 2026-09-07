@@ -70,8 +70,9 @@ func member(ctx context.Context, t *testing.T, tx pgx.Tx) pgtype.UUID {
 }
 
 // offer seeds a network, merchant, route and one live percent band, and
-// answers the offer's id.
-func offer(ctx context.Context, t *testing.T, tx pgx.Tx) pgtype.UUID {
+// answers the offer's id with the route and the network it is on - the
+// pair a click records beside the offer (0037).
+func offer(ctx context.Context, t *testing.T, tx pgx.Tx) (offer, route pgtype.UUID, network string) {
 	t.Helper()
 	tag := suffix(t)
 	networkID := "clicktest_" + tag
@@ -103,7 +104,7 @@ func offer(ctx context.Context, t *testing.T, tx pgx.Tx) pgtype.UUID {
 		returning id`, routeID).Scan(&offerID); err != nil {
 		t.Fatalf("seeding the offer: %v", err)
 	}
-	return offerID
+	return offerID, routeID, networkID
 }
 
 // aClick is one insert's worth of parameters, already valid. A case states
@@ -111,10 +112,13 @@ func offer(ctx context.Context, t *testing.T, tx pgx.Tx) pgtype.UUID {
 // site rather than buried in a helper.
 func aClick(ctx context.Context, t *testing.T, tx pgx.Tx) store.InsertClickParams {
 	t.Helper()
+	offerID, routeID, networkID := offer(ctx, t, tx)
 	return store.InsertClickParams{
 		ClickRef:               aClickRef(t),
 		AccountID:              member(ctx, t, tx),
-		OfferID:                offer(ctx, t, tx),
+		OfferID:                offerID,
+		MerchantNetworkID:      routeID,
+		NetworkID:              networkID,
 		RateSnapshot:           aRateSnapshot,
 		MemberShareBpsSnapshot: 5000,
 	}

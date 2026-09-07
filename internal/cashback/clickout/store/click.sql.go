@@ -77,7 +77,8 @@ func (q *Queries) CountRecentClicksByContext(ctx context.Context, arg CountRecen
 
 const getClickByRef = `-- name: GetClickByRef :one
 select id, click_ref, account_id, offer_id, clicked_at,
-       rate_snapshot, member_share_bps_snapshot, context_digest
+       rate_snapshot, member_share_bps_snapshot, context_digest,
+       merchant_network_id, network_id
   from cashback.click
  where click_ref = $1
 `
@@ -107,6 +108,8 @@ func (q *Queries) GetClickByRef(ctx context.Context, clickRef string) (CashbackC
 		&i.RateSnapshot,
 		&i.MemberShareBpsSnapshot,
 		&i.ContextDigest,
+		&i.MerchantNetworkID,
+		&i.NetworkID,
 	)
 	return i, err
 }
@@ -114,21 +117,25 @@ func (q *Queries) GetClickByRef(ctx context.Context, clickRef string) (CashbackC
 const insertClick = `-- name: InsertClick :one
 
 insert into cashback.click (
-    click_ref, account_id, offer_id,
+    click_ref, account_id, offer_id, merchant_network_id, network_id,
     rate_snapshot, member_share_bps_snapshot, context_digest
 )
 values (
     $1, $2, $3,
-    $4, $5, $6
+    $4, $5,
+    $6, $7, $8
 )
 returning id, click_ref, account_id, offer_id, clicked_at,
-          rate_snapshot, member_share_bps_snapshot, context_digest
+          rate_snapshot, member_share_bps_snapshot, context_digest,
+          merchant_network_id, network_id
 `
 
 type InsertClickParams struct {
 	ClickRef               string
 	AccountID              pgtype.UUID
 	OfferID                pgtype.UUID
+	MerchantNetworkID      pgtype.UUID
+	NetworkID              string
 	RateSnapshot           []byte
 	MemberShareBpsSnapshot int32
 	ContextDigest          pgtype.Text
@@ -159,11 +166,19 @@ type InsertClickParams struct {
 // either the entropy source is broken or a caller is re-using a reference,
 // and both are defects that must surface rather than cost a member the
 // credit whose reference was taken.
+//
+// merchant_network_id and network_id are the route and the network the
+// click was issued through (0037, FR-096). Supplied by the caller from the
+// offer it read rather than looked up here, and pinned by key to that offer
+// and to that route: a pair that disagrees with the offer is refused, so
+// the network a reference is later looked up under is never a guess.
 func (q *Queries) InsertClick(ctx context.Context, arg InsertClickParams) (CashbackClick, error) {
 	row := q.db.QueryRow(ctx, insertClick,
 		arg.ClickRef,
 		arg.AccountID,
 		arg.OfferID,
+		arg.MerchantNetworkID,
+		arg.NetworkID,
 		arg.RateSnapshot,
 		arg.MemberShareBpsSnapshot,
 		arg.ContextDigest,
@@ -178,6 +193,8 @@ func (q *Queries) InsertClick(ctx context.Context, arg InsertClickParams) (Cashb
 		&i.RateSnapshot,
 		&i.MemberShareBpsSnapshot,
 		&i.ContextDigest,
+		&i.MerchantNetworkID,
+		&i.NetworkID,
 	)
 	return i, err
 }
