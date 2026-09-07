@@ -52,6 +52,15 @@ export default getViteConfig({
         'src/lib/member/access.ts',
         'src/lib/member/gate.ts',
         'src/lib/member/strings.ts',
+        // The profile screen's copy and its one decision (issue #610).
+        // The catalogue is measured for the reason every catalogue here is:
+        // a language it answers in nothing renders is copy nobody has read.
+        // `standing.ts` is measured because it draws a third payout state
+        // the design boards do not — no destination at all, which is every
+        // member today — and an unmeasured branch for the common case is
+        // the one that would rot.
+        'src/lib/profile/standing.ts',
+        'src/lib/profile/strings.ts',
         'src/lib/account/consent.ts',
         'src/lib/account/register.ts',
         'src/lib/account/tours.ts',
