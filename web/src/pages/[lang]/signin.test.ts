@@ -77,6 +77,12 @@ describe.each(READING_LANGUAGES)('member sign-in in %s', (lang) => {
       const m = memberStrings(lang);
 
       expect(html).toContain(m.notWorkingTitle);
+      // As a heading, not a bold span. Every control here is disabled and
+      // so out of the tab order; the heading outline is the only way a
+      // screen-reader user reaches what this page exists to say.
+      expect(html).toMatch(
+        new RegExp(`<h2[^>]*>\s*${m.notWorkingTitle}\s*</h2>`),
+      );
       expect(html).toContain(m.notWorkingBody);
       // Read from the catalogues rather than retyped, so this case cannot
       // disagree with the page about what it promises.

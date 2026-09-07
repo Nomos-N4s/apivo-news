@@ -105,7 +105,10 @@ const home = frontPagePath(lang, ['munich', 'greece']);
       {/* Beside BOTH paths, so it is not read as belonging only to the email
           one. Named as owed, never mocked up as working. */}
       <aside class="owed">
-        <b>{m.notWorkingTitle}</b>
+        {/* A heading, not a bold span: every control on this page is
+            disabled and therefore out of the tab order, so this is the
+            only landmark by which the page's whole point is reachable. */}
+        <h2>{m.notWorkingTitle}</h2>
         <p>{m.notWorkingBody}</p>
         <p>{m.frontPageButtonState(t.signIn)}</p>
       </aside>
@@ -207,9 +210,8 @@ const home = frontPagePath(lang, ['munich', 'greece']);
     border-left: 2px solid var(--color-accent-700);
   }
 
-  .owed b {
-    display: block;
-    margin-bottom: var(--space-2);
+  .owed h2 {
+    margin: 0 0 var(--space-2);
     font-family: var(--font-body);
     font-size: 12px;
     font-weight: 800;
