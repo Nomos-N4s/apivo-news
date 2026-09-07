@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  answersFromFixtures,
   CashbackApiError,
   CashbackConfigurationError,
   createCashbackApi,
@@ -100,6 +101,38 @@ describe('the fixture client', () => {
     const hits = await api.catalogue({ lang: 'el', places: ['munich'], q: 'agora' });
     expect(hits.items).toHaveLength(1);
     expect(hits.items[0]?.slug).toBe('agora');
+  });
+});
+
+describe('answersFromFixtures', () => {
+  /*
+   * The middleware's sign-in fence asks this instead of building a client
+   * (#570), so the two answers have to be the same answer. This case is the
+   * only thing keeping them from drifting apart: a change to one decision
+   * that is not made in the other shows up here rather than as a preview
+   * that redirects reviewers away from the screens they came to see.
+   */
+  it.each([
+    ['a preview stamp', undefined, { appEnv: 'prod', appVersion: 'pr-146' }],
+    ['a preview stamp with no api', '', { appEnv: 'prod', appVersion: 'pr-9' }],
+    ['development with no api', undefined, { appEnv: undefined, appVersion: undefined }],
+    ['development with an api', BASE, { appEnv: 'dev', appVersion: undefined }],
+    ['a deployment with an api', BASE, { appEnv: 'prod', appVersion: 'v0.2.0' }],
+  ])('agrees with the client it is standing in for: %s', (_label, baseUrl, options) => {
+    expect(answersFromFixtures(baseUrl, options)).toBe(
+      createCashbackApi(baseUrl, options).source === 'fixture',
+    );
+  });
+
+  it.each([
+    ['an APP_ENV neither value', BASE, { appEnv: 'production' }],
+    ['a deployment with no api', undefined, { appEnv: 'prod' }],
+  ])('answers false where the client refuses to be built at all: %s', (_label, baseUrl, options) => {
+    // createCashbackApi throws for these, the page answers 503, and a
+    // signed-out visitor is better sent to sign in than shown a wallet that
+    // was never going to load.
+    expect(() => createCashbackApi(baseUrl, options)).toThrow();
+    expect(answersFromFixtures(baseUrl, options)).toBe(false);
   });
 });
 

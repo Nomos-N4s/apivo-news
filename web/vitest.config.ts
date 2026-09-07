@@ -45,6 +45,7 @@ export default getViteConfig({
         // does NOT work: a case there asserts the catalogue promises no
         // mechanism, and an unmeasured catalogue proves nothing.
         'src/lib/member/access.ts',
+        'src/lib/member/gate.ts',
         'src/lib/member/strings.ts',
         'src/lib/account/consent.ts',
         'src/lib/account/register.ts',

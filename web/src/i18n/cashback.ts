@@ -124,6 +124,22 @@ export interface CashbackStrings {
   readonly amountUnreadable: string;
   readonly destinationRequired: string;
 
+  /* When a member surface cannot answer (#570) */
+  /**
+   * The page could not load. A member's sentence, not the operator's
+   * `emptyQueue` — "nothing open in this list" is written for somebody
+   * looking at a work queue and says nothing at all to somebody looking at
+   * their own money.
+   */
+  readonly pageUnavailable: string;
+  /**
+   * Signed in, and the api does not recognise them. Past the fence this is
+   * an account row that was never created, so the page offers signing in
+   * again — which creates it — rather than redirecting into a loop.
+   */
+  readonly notRecognised: string;
+  readonly notRecognisedAction: string;
+
   /* Participation */
   readonly notParticipating: string;
   readonly optIn: string;
@@ -365,6 +381,11 @@ const el: CashbackStrings = {
     'Δεν καταλάβαμε το ποσό. Γράψε το με ψηφία, π.χ. 20,00 — δεν στείλαμε τίποτα.',
   destinationRequired: 'Διάλεξε έναν επαληθευμένο προορισμό.',
 
+  pageUnavailable:
+    'Αυτή η σελίδα δεν μπορεί να φορτώσει αυτή τη στιγμή. Δοκίμασε ξανά σε λίγο.',
+  notRecognised:
+    'Είσαι συνδεδεμένος, αλλά ο λογαριασμός σου δεν έχει ολοκληρωθεί ακόμη εδώ.',
+  notRecognisedAction: 'Σύνδεση ξανά',
   notParticipating: 'Δεν συμμετέχεις ακόμη στην επιστροφή χρημάτων.',
   optIn: 'Συμμετοχή',
 
@@ -602,6 +623,11 @@ const de: CashbackStrings = {
     'Der Betrag war nicht lesbar. Schreib ihn in Ziffern, z. B. 20,00 — abgeschickt wurde nichts.',
   destinationRequired: 'Wähl ein verifiziertes Ziel aus.',
 
+  pageUnavailable:
+    'Diese Seite lässt sich gerade nicht laden. Versuch es gleich noch einmal.',
+  notRecognised:
+    'Du bist angemeldet, aber dein Konto ist hier noch nicht fertig eingerichtet.',
+  notRecognisedAction: 'Erneut anmelden',
   notParticipating: 'Du nimmst noch nicht am Cashback teil.',
   optIn: 'Teilnehmen',
 

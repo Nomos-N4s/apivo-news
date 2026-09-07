@@ -1,7 +1,11 @@
 import { defineMiddleware, sequence } from 'astro:middleware';
+import { API_BASE_URL, APP_ENV, PUBLIC_APP_VERSION } from 'astro:env/server';
 
-import { rememberSession } from './lib/editorial/session';
+import { answersFromFixtures } from './lib/cashback/api';
+import { rememberSession, sessionOf } from './lib/editorial/session';
 import { resolveSession } from './lib/editorial/supabase';
+import { signInPath } from './lib/member/access';
+import { cashbackPageLanguage, needsSignIn } from './lib/member/gate';
 import { createUsageCounter } from './lib/usage';
 
 // The single crawler enforcement point (FR-013, research D6). Three fences,
@@ -221,6 +225,44 @@ const resolveEditorIdentity = defineMiddleware(async (context, next) => {
 });
 
 /**
+ * The sign-in fence in front of the member cashback pages (issue #570).
+ *
+ * There is no anonymous cashback surface (FR-023): every api route answers
+ * 401 without a token, the catalogue included. Before this, each of the four
+ * member pages caught that 401 in the same broad `catch` that catches a dead
+ * container, and answered a signed-out visitor with 503 and "nothing open in
+ * this list" — an operator's sentence, under a status code that says the
+ * deployment is broken.
+ *
+ * It stands here rather than in the pages for the reason the crawler fence
+ * does: it is a property of the product, not of a page, and four pages each
+ * remembering it is four chances to forget. A fifth page is fenced by
+ * existing.
+ *
+ * It runs AFTER the identity is resolved, because it reads the session that
+ * step files, and it fences only the member pages — `/ops` has a role of its
+ * own to check, and `/api/cashback/…` is posted to by a form, where a
+ * redirect to a sign-in page would lose what was posted.
+ */
+const fenceCashback = defineMiddleware((context, next) => {
+  const lang = cashbackPageLanguage(context.url.pathname);
+  if (lang === null) {
+    return next();
+  }
+  const fixtures = answersFromFixtures(API_BASE_URL, {
+    appEnv: APP_ENV,
+    appVersion: PUBLIC_APP_VERSION,
+  });
+  if (!needsSignIn(sessionOf(context.request).authenticated, fixtures)) {
+    return next();
+  }
+  // Query and all: somebody sent away from a filtered wallet wants that
+  // wallet back, not the top of it.
+  const here = `${context.url.pathname}${context.url.search}`;
+  return context.redirect(signInPath(lang, { next: here }), 303);
+});
+
+/**
  * Aggregate usage counting (issue #91): one in-memory counter per server
  * process, flushed as a `usage_rollup` structured log line on the request
  * that finds the interval elapsed. Outermost in the sequence so the
@@ -249,4 +291,5 @@ export const onRequest = sequence(
   denyCrawlers,
   serveRobotsTxt,
   resolveEditorIdentity,
+  fenceCashback,
 );

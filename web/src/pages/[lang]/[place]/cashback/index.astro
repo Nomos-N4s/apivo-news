@@ -12,6 +12,8 @@ import {
 import { cataloguePath, merchantPath } from '../../../../lib/cashback/paths';
 import type { CatalogueItem } from '../../../../lib/cashback/types';
 import { sessionOf } from '../../../../lib/editorial/session';
+import { signInPath } from '../../../../lib/member/access';
+import { isUnauthorized } from '../../../../lib/member/gate';
 import { frontPagePath, parseAxes } from '../../../../lib/reader/axes';
 import { cashbackStrings, languageName } from '../../../../i18n/cashback';
 
@@ -51,6 +53,9 @@ const t = cashbackStrings(lang);
 const query = Astro.url.searchParams.get('q')?.trim() ?? '';
 
 const session = sessionOf(Astro.request);
+// Where signing in again should bring them back to, query and all.
+const here = `${Astro.url.pathname}${Astro.url.search}`;
+let unrecognised = false;
 
 let api: CashbackApi | null = null;
 let items: readonly CatalogueItem[] = [];
@@ -64,12 +69,22 @@ try {
   });
   items = (await api.catalogue({ lang, places: slugs, q: query === '' ? undefined : query })).items;
 } catch (error) {
-  if (error instanceof CashbackConfigurationError) {
-    console.error(`cashback: ${error.message}`);
+  // Past the middleware fence there IS a session, so the api declining the
+  // caller means it does not recognise somebody who is signed in - an
+  // account row that was never created (#567), or a token this deployment's
+  // JWKS will not verify. Redirecting to sign in would come straight back
+  // here and redirect again; the page says so and offers it as a choice.
+  if (isUnauthorized(error)) {
+    unrecognised = true;
+    Astro.response.status = 403;
+  } else {
+    if (error instanceof CashbackConfigurationError) {
+      console.error(`cashback: ${error.message}`);
+    }
+    apiUnavailable = true;
+    Astro.response.status = 503;
+    Astro.response.headers.set('Retry-After', '60');
   }
-  apiUnavailable = true;
-  Astro.response.status = 503;
-  Astro.response.headers.set('Retry-After', '60');
 }
 
 const fixtures = api?.source === 'fixture';
@@ -123,7 +138,14 @@ function shelfLine(item: CatalogueItem): string {
     </div>
 
     <section class="shelf" aria-label={t.catalogue}>
-      {apiUnavailable && <p class="empty" role="alert">{t.emptyQueue}</p>}
+    {
+      unrecognised && (
+        <p class="empty" role="alert">
+          {t.notRecognised} <a href={signInPath(lang, { next: here })}>{t.notRecognisedAction}</a>
+        </p>
+      )
+    }
+    {apiUnavailable && <p class="empty" role="alert">{t.pageUnavailable}</p>}
       {!apiUnavailable && items.length === 0 && <p class="empty">{t.noMerchants}</p>}
       {
         items.map((item) => {
