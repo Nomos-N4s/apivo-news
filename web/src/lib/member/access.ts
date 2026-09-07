@@ -22,7 +22,17 @@ export const DEFAULT_RETURN_PATH = '/';
  * member's own language, and a redirect carrying prose would be a redirect
  * that has to be translated.
  */
-export const ACCESS_OUTCOMES = ['sent', 'expired', 'refused', 'unconfigured'] as const;
+export const ACCESS_OUTCOMES = [
+  'sent',
+  'expired',
+  'refused',
+  'unconfigured',
+  // Both mean the sign-in itself worked and the account behind it did not.
+  // `taken` is about the member's address and they can act on it; `unmade`
+  // is about this deployment and they cannot.
+  'taken',
+  'unmade',
+] as const;
 
 export type AccessOutcome = (typeof ACCESS_OUTCOMES)[number];
 

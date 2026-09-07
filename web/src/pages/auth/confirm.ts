@@ -26,10 +26,19 @@
  * There is no anonymous outcome. Whatever happens, the member ends up on a
  * page that tells them what happened; nothing here answers with a bare error
  * to a person who was only clicking a link in their mail.
+ *
+ * AND IT REGISTERS THEM (issue #567). A session is not an account: every
+ * cashback route looks the caller up in `account` and answers 401 when there
+ * is no row, so a member who got this far and no further would find every
+ * money surface failing while nothing looked broken. This is the one moment
+ * the web holds a fresh token and knows the sign-in just succeeded, which
+ * makes it the only place that call belongs.
  */
 
 import type { APIRoute } from 'astro';
+import { API_BASE_URL } from 'astro:env/server';
 
+import { registerAccount } from '../../lib/account/register';
 import { authClient } from '../../lib/editorial/supabase';
 import { safeReturnPath, signInPath } from '../../lib/member/access';
 import { DEFAULT_FRONT_PAGE, isReadingLanguage } from '../../lib/reader/axes';
@@ -78,21 +87,45 @@ export const GET: APIRoute = async ({ request, cookies, redirect, url }) => {
   // plumbing to somebody who wants to read their wallet.
   const expired = redirect(signInPath(lang, { next, outcome: 'expired' }), 303);
 
+  // The session the exchange produced, or null for every way it can fail to
+  // produce one. Both shapes answer the same thing, so what follows is
+  // written once.
+  let token: string | null = null;
   if (tokenHash !== null && tokenHash !== '') {
     const kind = emailOtpType(type);
     if (kind === null) {
       return expired;
     }
-    const { error } = await client.auth.verifyOtp({ token_hash: tokenHash, type: kind });
-    return error === null ? redirect(next, 303) : expired;
+    const { data, error } = await client.auth.verifyOtp({ token_hash: tokenHash, type: kind });
+    token = error === null ? (data.session?.access_token ?? null) : null;
+  } else if (code !== null && code !== '') {
+    const { data, error } = await client.auth.exchangeCodeForSession(code);
+    token = error === null ? (data.session?.access_token ?? null) : null;
+  } else {
+    // Neither shape arrived: somebody opened this URL by hand, or a link was
+    // truncated on its way through a mail client. Same advice, same sentence.
+    return expired;
+  }
+  if (token === null) {
+    return expired;
   }
 
-  if (code !== null && code !== '') {
-    const { error } = await client.auth.exchangeCodeForSession(code);
-    return error === null ? redirect(next, 303) : expired;
+  // Never throws, whatever the api does. A sign-in that has already
+  // succeeded must not be undone by this call.
+  const { outcome } = await registerAccount(API_BASE_URL, token);
+
+  // The two refusals that leave a valid session behind which can reach
+  // nothing. Dropping it is kinder than keeping it: a member holding a
+  // session that 401s everywhere has no way to tell that from a broken site,
+  // and signing in again is the move they would try anyway.
+  if (outcome === 'email_taken' || outcome === 'no_email') {
+    await client.auth.signOut();
+    const said = outcome === 'email_taken' ? 'taken' : 'unmade';
+    return redirect(signInPath(lang, { next, outcome: said }), 303);
   }
 
-  // Neither shape arrived: somebody opened this URL by hand, or a link was
-  // truncated on its way through a mail client. Same advice, same sentence.
-  return expired;
+  // `unavailable` lands here with the successes, deliberately. The api being
+  // unreachable, or a preview having none at all, is not a reason to refuse
+  // somebody the session they just proved they are entitled to.
+  return redirect(next, 303);
 };

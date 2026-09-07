@@ -55,6 +55,17 @@ export interface MemberStrings {
   readonly notConfigured: string;
   /** The link was too old, or has already been spent. */
   readonly linkExpired: string;
+  /**
+   * Signed in, and the address is already another account's here. The one
+   * refusal on this page a member can actually act on, so it says what to
+   * try instead rather than only what went wrong.
+   */
+  readonly addressTaken: string;
+  /**
+   * Signed in, and no account could be made. About the deployment rather
+   * than about them, so it asks for patience and promises nothing.
+   */
+  readonly accountNotMade: string;
   /** The heading of the panel that states what is owed. */
   readonly notWorkingTitle: string;
   /**
@@ -82,6 +93,10 @@ const EL: MemberStrings = {
   notConfigured:
     'Αυτή η εγκατάσταση δεν έχει ρυθμισμένη σύνδεση, οπότε δεν αποστέλλεται τίποτα.',
   linkExpired: 'Ο σύνδεσμος έληξε ή έχει ήδη χρησιμοποιηθεί. Ζήτησε καινούριο.',
+  addressTaken:
+    'Αυτή η διεύθυνση ανήκει ήδη σε άλλον λογαριασμό εδώ. Δοκίμασε τη διεύθυνση με την οποία συνδέθηκες την πρώτη φορά.',
+  accountNotMade:
+    'Η σύνδεση πέτυχε, αλλά δεν μπόρεσε να δημιουργηθεί λογαριασμός. Δοκίμασε ξανά αργότερα.',
   notWorkingTitle: 'Δεν λειτουργεί ακόμη',
   notWorkingBody:
     'Η διαδρομή μέσω της εφαρμογής δεν είναι συνδεδεμένη ακόμη· το κουμπί της είναι απενεργοποιημένο. Η αποστολή συνδέσμου λειτουργεί.',
@@ -104,6 +119,10 @@ const DE: MemberStrings = {
   notConfigured:
     'Für diese Installation ist keine Anmeldung eingerichtet; es wird nichts verschickt.',
   linkExpired: 'Dieser Link ist abgelaufen oder wurde schon benutzt. Fordere einen neuen an.',
+  addressTaken:
+    'Diese Adresse gehört hier bereits zu einem anderen Konto. Versuch es mit der Adresse, mit der du dich zuerst angemeldet hast.',
+  accountNotMade:
+    'Die Anmeldung hat geklappt, aber es konnte kein Konto angelegt werden. Versuch es später noch einmal.',
   notWorkingTitle: 'Funktioniert noch nicht',
   notWorkingBody:
     'Der Weg über die App ist noch nicht angebunden; seine Schaltfläche ist deaktiviert. Der Link-Versand funktioniert.',

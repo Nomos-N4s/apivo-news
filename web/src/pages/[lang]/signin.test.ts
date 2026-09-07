@@ -123,6 +123,11 @@ describe.each(READING_LANGUAGES)('member sign-in in %s', (lang) => {
   it.each([
     ['expired', (lang: (typeof READING_LANGUAGES)[number]) => memberStrings(lang).linkExpired],
     ['refused', (lang: (typeof READING_LANGUAGES)[number]) => memberStrings(lang).sendRefused],
+    // Both of these mean the sign-in worked and the account behind it did
+    // not (#567). They are separate sentences because one of them is a
+    // thing the member can act on and the other is not.
+    ['taken', (lang: (typeof READING_LANGUAGES)[number]) => memberStrings(lang).addressTaken],
+    ['unmade', (lang: (typeof READING_LANGUAGES)[number]) => memberStrings(lang).accountNotMade],
   ])(
     'renders the %s outcome a redirect handed it',
     async (outcome, sentence) => {

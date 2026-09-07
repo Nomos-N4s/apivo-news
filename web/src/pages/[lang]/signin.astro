@@ -107,14 +107,16 @@ if (session.authenticated && Astro.request.method !== 'POST') {
 }
 
 const canSend = configured && outcome !== 'unconfigured';
-const alert =
-  outcome === 'expired'
-    ? m.linkExpired
-    : outcome === 'refused'
-      ? m.sendRefused
-      : canSend
-        ? null
-        : m.notConfigured;
+// One sentence per outcome, chosen here so the template carries no logic.
+// `sent` has no alert: it is a status, not a refusal, and has its own panel.
+const ALERTS: Readonly<Record<string, string>> = {
+  expired: m.linkExpired,
+  refused: m.sendRefused,
+  taken: m.addressTaken,
+  unmade: m.accountNotMade,
+  unconfigured: m.notConfigured,
+};
+const alert = outcome !== null ? (ALERTS[outcome] ?? null) : canSend ? null : m.notConfigured;
 ---
 
 <ReaderLayout lang={lang} title={`${brand.name} — ${t.signIn}`} description={m.intro} homeHref={home}>
