@@ -121,6 +121,32 @@ func TestJoiningAcceptsTheVersionWithWhitespaceAroundIt(t *testing.T) {
 	}
 }
 
+// Participating is the click-out's question (FR-110): in, or not. A member
+// who never joined and a member who left are the same answer, and neither
+// is an error - "no" is what was asked.
+func TestParticipatingIsJoinedAndNotLeft(t *testing.T) {
+	t.Parallel()
+	ctx, tx := outboxTx(t)
+	member := aMember(ctx, t, tx)
+	service := participations(t, tx, theTerms)
+
+	if in, err := service.Participating(ctx, member); err != nil || in {
+		t.Fatalf("Participating() before joining = %v, %v; want false, nil", in, err)
+	}
+	if _, err := service.Join(ctx, member, "3.1.0"); err != nil {
+		t.Fatalf("Join(): %v", err)
+	}
+	if in, err := service.Participating(ctx, member); err != nil || !in {
+		t.Fatalf("Participating() after joining = %v, %v; want true, nil", in, err)
+	}
+	if _, err := service.Leave(ctx, member); err != nil {
+		t.Fatalf("Leave(): %v", err)
+	}
+	if in, err := service.Participating(ctx, member); err != nil || in {
+		t.Fatalf("Participating() after leaving = %v, %v; want false, nil", in, err)
+	}
+}
+
 func TestJoiningTwiceIsRefusedAndAnnouncesNothingFurther(t *testing.T) {
 	t.Parallel()
 	ctx, tx := outboxTx(t)
