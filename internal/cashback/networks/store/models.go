@@ -323,6 +323,8 @@ type CashbackPayoutDestination struct {
 	VerifiedAt     pgtype.Timestamptz
 	VerifiedMethod pgtype.Text
 	CreatedAt      pgtype.Timestamptz
+	// The operator who verified this destination, when a person did (FR-061). Null where nobody did: a verification performed by a payment provider at tokenisation has a method and an instant and no human, and that is a state this column is deliberately shaped to allow.
+	VerifiedBy pgtype.UUID
 }
 
 // C-7: for any payout - approver, request, reserved entries, ledger postings, network evidence, click and the rate that governed the credit - in a single query. The click that earned it is left-joined because an operator-attributed entry legitimately has none; the network evidence is not, because C-2 makes it mandatory.
