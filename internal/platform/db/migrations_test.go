@@ -510,3 +510,31 @@ func TestMigrationsRoundTrip(t *testing.T) {
 		}
 	})
 }
+
+// LatestMigration is what a deployment host asks an image before it attempts a
+// rollback, so a number that disagreed with the embedded set would be worse
+// than no number at all: it would authorise exactly the rollback that cannot
+// work. Checked against the directory rather than against a constant, so a new
+// migration cannot make this test stale without also making it fail.
+func TestLatestMigrationIsTheHighestEmbeddedOne(t *testing.T) {
+	t.Parallel()
+
+	versions := embeddedMigrationVersions(t)
+	if len(versions) == 0 {
+		t.Fatal("no migrations are embedded, so there is nothing to be the latest")
+	}
+	var want uint64
+	for _, v := range versions {
+		if v > want {
+			want = v
+		}
+	}
+
+	got, err := LatestMigration()
+	if err != nil {
+		t.Fatalf("LatestMigration: %v", err)
+	}
+	if uint64(got) != want {
+		t.Errorf("LatestMigration = %d, want %d - the number an image reports about itself must be the highest migration it actually carries", got, want)
+	}
+}
