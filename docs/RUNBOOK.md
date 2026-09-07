@@ -716,11 +716,19 @@ grep should show `affiliate network sweeps registered`,
 `catalogue import registered` and `scheduler started` with `jobs: 6`, and
 no `NO AFFILIATE` line.
 
-The first catalogue import runs within the first 36 minutes after that
-restart (a tenth of its six-hour interval, jittered) and every six hours
-after. When `docker logs apivo-qa-api` shows `catalogue imported`, the
-routes it wrote are what a band is published on, named by the network's
-own id for the retailer:
+The scheduled import runs every six hours, and its first run lands at a
+random point in the first 36 minutes after the api starts — which on an
+environment that redeploys on every merge is a first run that keeps moving.
+Do not wait for it. The same import runs by hand, under the same lock, and
+reports what it wrote and which routes a band can now be published on,
+named by the network's own id for the retailer:
+
+```sh
+docker exec apivo-qa-api apivo import-catalogue
+```
+
+The report lists up to 25 publishable routes; a real network has more, and
+this lists them all:
 
 ```sh
 apivoctl psql qa

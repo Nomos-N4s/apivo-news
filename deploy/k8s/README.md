@@ -297,6 +297,7 @@ api does:
 ```sh
 kubectl exec deploy/apivo-api -- apivo connect-network -backfill-from 2026-06-01
 kubectl rollout restart deploy/apivo-api
+kubectl exec deploy/apivo-api -- apivo import-catalogue
 ```
 
 **The restart is part of the command.** The api resolves its publisher
@@ -304,6 +305,14 @@ account once, at startup: a pod that started before the row existed logged
 the line above, registered neither sweep and no catalogue import, and will
 stay that way until it starts again — however many rows are written
 underneath it. The rollout is what makes the new pods find the account.
+
+**The import is the third line because the scheduled one is not soon.** It
+runs every six hours, and its first run lands at a random point in the
+first tenth of that after a pod starts — and a rollout starts pods.
+`apivo import-catalogue` is the same import under the same lock, run once,
+now; it reports what it wrote and which routes a band can be published on.
+If the scheduled run is in progress it says so and does nothing, rather
+than importing underneath it.
 
 **The network and the account come from the environment, not from flags.**
 They are `NETWORKS` and `NETWORK_<DRIVER>_ACCOUNT_ID` — the same two values the

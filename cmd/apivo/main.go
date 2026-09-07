@@ -172,6 +172,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 		// on one route of the configured network (#537). Its own arguments
 		// are its own to check.
 		return publishOfferCommand(ctx, args[1:], getenv, stdout)
+	case args[0] == importCatalogueName:
+		// The scheduled catalogue import, run once by hand under the same
+		// lock, for the operator who has just connected a network and
+		// should not be waiting on a timer.
+		return importCatalogueCommand(ctx, args[1:], getenv, stdout)
 	case args[0] != "healthcheck" && args[0] != "version":
 		return fmt.Errorf("unknown command %q", args[0])
 	case len(args) > 1:
