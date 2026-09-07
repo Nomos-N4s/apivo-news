@@ -1,0 +1,13 @@
+#530 merged, what else?
+
+---
+
+531 seems to be stacked on 530 and not main
+
+---
+
+start with 532, not sure about the GET /catalogue... I know for a fact that the backend team is working really hard and I believe the cashback is fully developed, but I will give it a nudge, in the meantime only fix 532
+
+---
+
+shall I merge 531?
