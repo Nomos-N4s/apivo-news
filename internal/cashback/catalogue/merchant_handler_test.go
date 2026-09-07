@@ -58,7 +58,7 @@ func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, ni
 // served builds the handler over a staged store and answers one request.
 func served(t *testing.T, stub *stubDetailStore, auth aReader, method, target string) *httptest.ResponseRecorder {
 	t.Helper()
-	handler := catalogue.NewHandler(discard(), stagedPage(t, stub), auth,
+	handler := catalogue.NewHandler(discard(), stagedPage(t, stub), stagedShelf(t, &stubListStore{}), auth,
 		catalogue.WithPageClock(func() time.Time { return detailAt }))
 	req := httptest.NewRequest(method, target, nil)
 	if auth.token != "" {
@@ -247,7 +247,7 @@ func TestTheCatalogueIsNotAnAnonymousSurface(t *testing.T) {
 		"a token nobody is": {token: "not-the-one"},
 	} {
 		stub := aStagedMerchant()
-		handler := catalogue.NewHandler(discard(), stagedPage(t, stub), aReader{token: goodToken})
+		handler := catalogue.NewHandler(discard(), stagedPage(t, stub), stagedShelf(t, &stubListStore{}), aReader{token: goodToken})
 		req := httptest.NewRequest(http.MethodGet, merchantURL("staged", "de"), nil)
 		if auth.token != "" {
 			req.Header.Set("Authorization", "Bearer "+auth.token)
@@ -325,7 +325,7 @@ func TestAWrongMethodIsRefusedWithAllow(t *testing.T) {
 func TestPatternsMatchTheRoutesRegistered(t *testing.T) {
 	t.Parallel()
 
-	want := []string{"GET " + catalogue.MerchantPrefix + "/{slug}"}
+	want := []string{"GET " + catalogue.CataloguePrefix, "GET " + catalogue.MerchantPrefix + "/{slug}"}
 	if got := catalogue.Patterns(); !slices.Equal(got, want) {
 		t.Errorf("Patterns() = %v, want %v", got, want)
 	}

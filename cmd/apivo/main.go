@@ -105,6 +105,10 @@ const clickoutPrefix = clickout.Prefix
 // the string for the reason clickoutPrefix does.
 const merchantPrefix = catalogue.MerchantPrefix
 
+// cataloguePrefix is where the shelf is mounted (#545): the listing of the
+// same retailers the merchant pages describe, a page at a time.
+const cataloguePrefix = catalogue.CataloguePrefix
+
 // walletPrefix is the member wallet surface, taken from the module that
 // serves it for the reason clickoutPrefix is.
 const walletPrefix = wallet.Prefix
@@ -731,7 +735,12 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, nil, err
 	}
-	catalogueSurface := catalogue.NewHandler(log, merchants, catalogueAuth{ids: ids})
+	listings, err := catalogue.NewLister(cataloguestore.New(pool))
+	if err != nil {
+		stop()
+		return nil, nil, nil, err
+	}
+	catalogueSurface := catalogue.NewHandler(log, merchants, listings, catalogueAuth{ids: ids})
 	destinations, err := payout.NewDestinations(pool)
 	if err != nil {
 		stop()
@@ -786,6 +795,8 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		// reason the click-out is.
 		platformhttp.Route{Pattern: merchantPrefix, Handler: catalogueSurface},
 		platformhttp.Route{Pattern: merchantPrefix + "/", Handler: catalogueSurface},
+		platformhttp.Route{Pattern: cataloguePrefix, Handler: catalogueSurface},
+		platformhttp.Route{Pattern: cataloguePrefix + "/", Handler: catalogueSurface},
 		// One handler at six patterns: the wallet, the participation and
 		// the export trees, each at the path AND its subtree. The module's
 		// own mux matches on the full path, so all three route correctly
