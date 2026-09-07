@@ -118,3 +118,60 @@ async function accountOf(response: Response): Promise<Account | null> {
   }
   return body as Account;
 }
+
+/**
+ * What became of reading the account back.
+ *
+ * `unknown` is its own outcome rather than an error because it is a real
+ * state with a real remedy: the token verifies, and names an account that
+ * is not there any more. Only the api can tell those apart from a member
+ * who was never registered, and it does — 404, in the handler's own words,
+ * "this token authenticates an account that no longer exists".
+ */
+export type AccountReadOutcome = 'read' | 'unknown' | 'unavailable';
+
+export interface AccountRead {
+  readonly outcome: AccountReadOutcome;
+  readonly account: Account | null;
+}
+
+/**
+ * Read the caller's own account. `GET /api/v1/account`.
+ *
+ * **It never throws**, for the reason `registerAccount` never throws: every
+ * caller is a page a signed-in member has already reached, and a page that
+ * renders their address is not worth an error page when the address cannot
+ * be fetched. The honest answer is `unavailable` and a section that says so.
+ */
+export async function readAccount(
+  baseUrl: string | undefined,
+  token: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AccountRead> {
+  if (baseUrl === undefined || baseUrl === '' || token === '') {
+    return { outcome: 'unavailable', account: null };
+  }
+  const url = `${baseUrl.replace(/\/+$/, '')}/api/v1/account`;
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    return { outcome: 'unavailable', account: null };
+  }
+
+  if (response.status === 200) {
+    const account = await accountOf(response);
+    // A 200 whose body is not the promised shape is not a read. Reporting
+    // `read` with a null account would make every caller check twice.
+    return account === null
+      ? { outcome: 'unavailable', account: null }
+      : { outcome: 'read', account };
+  }
+  if (response.status === 404) {
+    return { outcome: 'unknown', account: null };
+  }
+  return { outcome: 'unavailable', account: null };
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { registerAccount } from './register';
+import { readAccount, registerAccount } from './register';
 
 const BASE = 'https://api.invalid';
 const TOKEN = 'a-verified-token';
@@ -152,5 +152,82 @@ describe('registerAccount', () => {
 
     expect(result.outcome).toBe('existing');
     expect(result.account).toBeNull();
+  });
+});
+
+describe('readAccount', () => {
+  it('gets the account route with the bearer token', async () => {
+    const stub = stubFetch(() => json(ROW, 200));
+    const result = await readAccount(BASE, TOKEN, stub.fetch);
+
+    expect(result.outcome).toBe('read');
+    expect(result.account).toEqual(ROW);
+    expect(stub.calls[0]?.url).toBe(`${BASE}/api/v1/account`);
+    expect(stub.calls[0]?.init?.method).toBe('GET');
+    expect(
+      new Headers(stub.calls[0]?.init?.headers).get('authorization'),
+    ).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('trims a trailing slash off the base rather than doubling it', async () => {
+    const stub = stubFetch(() => json(ROW, 200));
+    await readAccount(`${BASE}/`, TOKEN, stub.fetch);
+
+    expect(stub.calls[0]?.url).toBe(`${BASE}/api/v1/account`);
+  });
+
+  it('reports an account the api no longer has as unknown, not unavailable', async () => {
+    // The distinction the 404 exists to draw: the token verified. Collapsing
+    // it into `unavailable` would tell somebody to come back later about a
+    // state that will never resolve itself.
+    const stub = stubFetch(() => json({ title: 'gone' }, 404));
+
+    expect(await readAccount(BASE, TOKEN, stub.fetch)).toEqual({
+      outcome: 'unknown',
+      account: null,
+    });
+  });
+
+  it.each([401, 403, 500, 502, 503])('reports %d as unavailable', async (status) => {
+    const stub = stubFetch(() => json({ title: 'no' }, status));
+
+    expect((await readAccount(BASE, TOKEN, stub.fetch)).outcome).toBe('unavailable');
+  });
+
+  it('never throws when the api cannot be reached at all', async () => {
+    const stub = vi.fn(() => Promise.reject(new Error('ECONNREFUSED')));
+
+    expect(
+      await readAccount(BASE, TOKEN, stub as unknown as typeof fetch),
+    ).toEqual({ outcome: 'unavailable', account: null });
+  });
+
+  it.each([
+    ['no base url', undefined, TOKEN],
+    ['an empty base url', '', TOKEN],
+    ['no token', BASE, ''],
+  ])('answers unavailable with %s, and calls nothing', async (_label, base, token) => {
+    const stub = stubFetch(() => json(ROW, 200));
+
+    expect((await readAccount(base, token, stub.fetch)).outcome).toBe('unavailable');
+    expect(stub.calls).toHaveLength(0);
+  });
+
+  it.each([
+    ['a body that is not an object', '"nope"'],
+    ['null', 'null'],
+    ['a row with no id', JSON.stringify({ email: 'a@b.invalid' })],
+    ['a row with no email', JSON.stringify({ id: 'x' })],
+    ['not json at all', '<html>502</html>'],
+  ])('refuses to call %s a read', async (_label, body) => {
+    // A 200 of the wrong shape is a proxy or an error page, not an account.
+    const stub = stubFetch(
+      () => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+
+    expect(await readAccount(BASE, TOKEN, stub.fetch)).toEqual({
+      outcome: 'unavailable',
+      account: null,
+    });
   });
 });
