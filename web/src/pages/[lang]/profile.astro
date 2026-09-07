@@ -1,0 +1,396 @@
+---
+import { API_BASE_URL, APP_ENV, BRAND_DIR, PUBLIC_APP_VERSION } from 'astro:env/server';
+
+import FixtureNotice from '../../components/FixtureNotice.astro';
+import Masthead from '../../components/Masthead.astro';
+import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import { type Account, readAccount } from '../../lib/account/register';
+import { brandOnHand } from '../../lib/brand/load';
+import { answersFromFixtures, createCashbackApi } from '../../lib/cashback/api';
+import { formatMoney } from '../../lib/cashback/money';
+import { cataloguePath, walletPath } from '../../lib/cashback/paths';
+import type { PayoutDestination, WalletTotals } from '../../lib/cashback/types';
+import { sessionOf } from '../../lib/editorial/session';
+import { signInPath } from '../../lib/member/access';
+import { needsSignIn } from '../../lib/member/gate';
+import { memberStrings } from '../../lib/member/strings';
+import { displayName, payoutStanding } from '../../lib/profile/standing';
+import { profileStrings } from '../../lib/profile/strings';
+import { frontPagePath, isReadingLanguage } from '../../lib/reader/axes';
+import { PREFERENCE_COOKIE, readPreference, setupPath } from '../../lib/reader/preference';
+import { uiStrings } from '../../lib/reader/strings';
+import { cashbackStrings } from '../../i18n/cashback';
+
+// The member profile (issue #610), from `Profile.dc.html` and
+// `ProfileDesktop.dc.html`.
+//
+// Twenty-nine pages, and until this one none of them would tell a signed-in
+// member which address they are signed in as. That is the page's first job;
+// the rest is a read-only muster of what the other surfaces already know.
+//
+// FOUR THINGS THE BOARDS DRAW THAT THIS DOES NOT. Theme and device count are
+// the shell's and no switcher or registry exists here. "Member since July
+// 2026" has no column behind it — `account.Profile` is id, email,
+// display_name, role. "1 active of 3 purposes" has a table and no route:
+// `lib/account/consent.ts` says so in as many words. Each is left out rather
+// than filled with something plausible, because a profile is precisely the
+// screen on which invented facts do the most damage.
+//
+// THE OWNER STAMPS GO WITH THEM. Both boards mark each section as the
+// shell's or ours, which is a good device and currently a lie in one
+// direction: there is no shell, so all three sections are ours. Stamping
+// every one of them identically would be decoration. The device is worth
+// restoring the day a shell exists.
+//
+// NO MemberBar, following `faq.astro`: its links are place-scoped and this
+// route carries a language axis only. What it does instead is read the place
+// preference and offer those links when one has been recorded — the reader's
+// own last place is not an invented one. Only the PLACES are taken from it;
+// the language is this URL's, because the two axes are independent (FR-009)
+// and a German reader on /de/profile must not be handed Greek links.
+const langSegment = Astro.params['lang'];
+if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+  return Astro.rewrite('/404');
+}
+const lang = langSegment;
+const t = profileStrings(lang);
+const ui = uiStrings(lang);
+const c = cashbackStrings(lang);
+const m = memberStrings(lang);
+const session = sessionOf(Astro.request);
+
+// The fence. This route is outside the middleware's, which matches cashback
+// paths by their two leading segments, so it keeps its own — the same
+// decision, from the same helper, so a preview still renders.
+const fixtures = answersFromFixtures(API_BASE_URL, {
+  appEnv: APP_ENV,
+  appVersion: PUBLIC_APP_VERSION,
+});
+const here = `${Astro.url.pathname}${Astro.url.search}`;
+if (needsSignIn(session.authenticated, fixtures)) {
+  return Astro.redirect(signInPath(lang, { next: here }), 303);
+}
+
+const { brand } = brandOnHand({ brandDir: BRAND_DIR, appEnv: APP_ENV });
+const home = frontPagePath(lang, ['munich', 'greece']);
+
+// The places this reader last chose, language deliberately discarded.
+const preference = readPreference(Astro.cookies.get(PREFERENCE_COOKIE)?.value);
+const slugs = preference?.places.map((place) => place.slug) ?? [];
+
+// A fixture run has no token and therefore no account to read. Rather than
+// show a preview reviewer an error band where the identity belongs — the
+// same trap the opt-in screen fell into — it stands in a plainly fake row,
+// under the fixture notice that says nothing on the page is real.
+const FIXTURE_ACCOUNT: Account = {
+  id: 'fx-account-1',
+  email: 'member@example.test',
+  display_name: '',
+  role: 'reader',
+};
+
+let account: Account | null = null;
+let accountUnknown = false;
+let accountUnavailable = false;
+let wallet: WalletTotals | null = null;
+let destinations: readonly PayoutDestination[] = [];
+let entryCount: number | null = null;
+let apiUnavailable = false;
+
+if (fixtures) {
+  account = FIXTURE_ACCOUNT;
+} else {
+  const read = await readAccount(API_BASE_URL, session.token ?? '');
+  account = read.account;
+  accountUnknown = read.outcome === 'unknown';
+  accountUnavailable = read.outcome === 'unavailable';
+}
+
+try {
+  const api = createCashbackApi(API_BASE_URL, {
+    appEnv: APP_ENV,
+    token: session.token,
+    appVersion: PUBLIC_APP_VERSION,
+  });
+  [wallet, destinations, entryCount] = await Promise.all([
+    api.wallet(),
+    api.destinations(),
+    api.entries().then((page) => page.items.length),
+  ]);
+} catch {
+  // Every one of these is a figure. A profile with no figures is still a
+  // profile — it still says who you are — so this degrades to a missing
+  // section rather than to the whole page refusing.
+  apiUnavailable = true;
+}
+
+const standing = payoutStanding(destinations);
+const name = displayName(account?.display_name);
+const payoutText =
+  standing === 'verified'
+    ? c.verifiedPayoutsOn
+    : standing === 'unverified'
+      ? t.payoutNotVerified
+      : t.payoutNone;
+---
+
+<ReaderLayout
+  lang={lang}
+  title={`${brand.name} — ${t.heading}`}
+  description={t.intro}
+  homeHref={home}
+>
+  <Masthead homeHref={home}>
+    <div class="seg" role="group">
+      {
+        lang === 'el' ? (
+          <span class="seg-opt" aria-current="true" lang="el">
+            Ελληνικά
+          </span>
+        ) : (
+          <a class="seg-opt" href="/el/profile" lang="el">
+            Ελληνικά
+          </a>
+        )
+      }
+      {
+        lang === 'de' ? (
+          <span class="seg-opt" aria-current="true" lang="de">
+            Deutsch
+          </span>
+        ) : (
+          <a class="seg-opt" href="/de/profile" lang="de">
+            Deutsch
+          </a>
+        )
+      }
+    </div>
+  </Masthead>
+
+  <main class="page">
+    {fixtures && <FixtureNotice title={t.heading} body={c.fixtureNotice} />}
+
+    <header class="head">
+      <h1>{t.heading}</h1>
+      <p>{t.intro}</p>
+    </header>
+
+    {accountUnknown && <p class="band" role="alert">{t.accountUnknown}</p>}
+    {accountUnavailable && <p class="band" role="alert">{t.accountUnavailable}</p>}
+
+    <div class="cols">
+      <section class="pane">
+        <h2>{t.identityHeading}</h2>
+        {
+          account !== null && (
+            <>
+              <div class="row">
+                <span class="k">{t.nameLabel}</span>
+                <span class="v">{name ?? t.nameUnset}</span>
+              </div>
+              <div class="row">
+                <span class="k">{ui.emailLabel}</span>
+                <span class="v">{account.email}</span>
+              </div>
+            </>
+          )
+        }
+        <p class="hint">{t.identityNote}</p>
+        <form method="post" action={signInPath(lang, { next: here })}>
+          <input type="hidden" name="action" value="signout" />
+          <button class="btn btn-secondary" type="submit">{m.signOut}</button>
+        </form>
+      </section>
+
+      <section class="pane">
+        <h2>{t.readingHeading}</h2>
+        <div class="row">
+          <span class="k">{ui.readingLanguage}</span>
+          <span class="v">{lang === 'el' ? 'Ελληνικά' : 'Deutsch'}</span>
+        </div>
+        <div class="row">
+          <span class="k">{ui.places}</span>
+          <span class="v">
+            {
+              slugs.length > 0 ? (
+                slugs.map((place) => <span class="chip">{place}</span>)
+              ) : (
+                <a href={setupPath(lang)}>{t.choosePlaces}</a>
+              )
+            }
+          </span>
+        </div>
+        <div class="row">
+          <span class="k">{t.payoutLabel}</span>
+          <span class="v"><span class="tag">{payoutText}</span></span>
+        </div>
+        <p class="hint">{t.axesNote}</p>
+        {standing === 'none' && <p class="hint">{t.payoutNoWayYet}</p>}
+      </section>
+    </div>
+
+    {
+      !apiUnavailable && wallet !== null && (
+        <section class="activity">
+          <h2>{t.activityHeading}</h2>
+          <div class="figs">
+            <div>
+              <b>{formatMoney(lang, wallet.confirmed)}</b>
+              <span>{c.available}</span>
+            </div>
+            <div>
+              <b>{entryCount ?? 0}</b>
+              <span>{c.entries}</span>
+            </div>
+          </div>
+          <p class="more">
+            <a href={walletPath(lang, slugs)}>{c.wallet}</a>
+            {' · '}
+            <a href={cataloguePath(lang, slugs)}>{c.catalogue}</a>
+          </p>
+        </section>
+      )
+    }
+    {apiUnavailable && <p class="band" role="alert">{c.pageUnavailable}</p>}
+  </main>
+</ReaderLayout>
+
+<style>
+  .page {
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-8);
+  }
+
+  .head {
+    padding-bottom: var(--space-6);
+    border-bottom: 2px solid var(--color-text);
+  }
+
+  .head h1 {
+    margin: 0 0 var(--space-2);
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 28px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+  }
+
+  .head p {
+    margin: 0;
+    max-width: 56ch;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  .band {
+    margin: var(--space-6) 0 0;
+    padding: var(--space-3) var(--space-4);
+    border-left: 2px solid var(--color-accent-700);
+    background: var(--color-accent-100);
+    max-width: 56ch;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--color-accent-800);
+    text-wrap: pretty;
+  }
+
+  /* Two panes on desktop, stacked on a phone — the boards' own split. */
+  .cols {
+    display: grid;
+    gap: var(--space-6);
+    margin-top: var(--space-6);
+  }
+
+  @media (min-width: 800px) {
+    .cols {
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-8);
+    }
+  }
+
+  .pane h2,
+  .activity h2 {
+    margin: 0 0 var(--space-3);
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .row {
+    display: flex;
+    gap: var(--space-4);
+    align-items: baseline;
+    justify-content: space-between;
+    padding: var(--space-3) 0;
+    border-top: 1px solid var(--color-divider);
+    font-size: 14px;
+  }
+
+  .k {
+    color: var(--ink-muted);
+  }
+
+  .v {
+    text-align: right;
+    color: var(--color-text);
+    overflow-wrap: anywhere;
+  }
+
+  .chip,
+  .tag {
+    display: inline-block;
+    margin-left: var(--space-1);
+    padding: 2px var(--space-2);
+    border: 1px solid var(--color-divider);
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+
+  .hint {
+    margin: var(--space-3) 0 0;
+    max-width: 52ch;
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    text-wrap: pretty;
+  }
+
+  form {
+    margin-top: var(--space-4);
+  }
+
+  .activity {
+    margin-top: var(--space-8);
+    padding-top: var(--space-6);
+    border-top: 2px solid var(--color-text);
+  }
+
+  .figs {
+    display: flex;
+    gap: var(--space-8);
+  }
+
+  .figs b {
+    display: block;
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 22px;
+    letter-spacing: -0.01em;
+  }
+
+  .figs span {
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .more {
+    margin-top: var(--space-6);
+    font-size: 13px;
+  }
+</style>
