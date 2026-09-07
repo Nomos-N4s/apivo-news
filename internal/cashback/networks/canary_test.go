@@ -117,9 +117,10 @@ func canaryClick(ctx context.Context, t *testing.T, tx pgx.Tx, account networks.
 		t.Fatalf("seeding the offer: %v", err)
 	}
 	if err := tx.QueryRow(ctx, `
-		insert into cashback.click (click_ref, account_id, offer_id, clicked_at, rate_snapshot, member_share_bps_snapshot)
-		values ($1, $2, $3, $4, '{"kind":"fixed"}'::jsonb, 6000) returning id`,
-		canaryRef, member, offer, at).Scan(&click); err != nil {
+		insert into cashback.click
+		    (click_ref, account_id, offer_id, merchant_network_id, network_id, clicked_at, rate_snapshot, member_share_bps_snapshot)
+		values ($1, $2, $3, $4, $5, $6, '{"kind":"fixed"}'::jsonb, 6000) returning id`,
+		canaryRef, member, offer, route, account.Network().String(), at).Scan(&click); err != nil {
 		t.Fatalf("seeding the click: %v", err)
 	}
 	return member, click

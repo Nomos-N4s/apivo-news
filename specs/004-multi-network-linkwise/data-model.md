@@ -337,6 +337,17 @@ that can chain the network back to the offer by key. `network_id` is the
 attribution key, and with the second foreign key it cannot name a network
 the route does not belong to.
 
+**As landed (0037, #579).** `cashback.click` is append-only, so the
+backfill runs with `click_immutable` stood down for that one statement and
+stood back up in the same transaction. The click-out writes both columns
+from the offer it read (`catalogue.Offer.RouteID`, `NetworkID`); the
+recorder refuses a click naming neither. The queue side landed as a fifth
+statement beside the four the crediting path already has,
+`RecordForeignNetworkReference` — a report whose reference names a click
+`network_id <> nt.network_id` — which the matcher tries only after
+`RecordUnmatchedReference` wrote nothing; the two predicates are disjoint.
+The reason column that lets the queue *say* `foreign_network` is T225.
+
 `cashback.click` is append-only (C-3), so neither column can drift after the
 insert that set it.
 

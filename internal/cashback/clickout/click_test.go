@@ -42,7 +42,7 @@ type fakeStore struct {
 	echo bool
 
 	inserted store.InsertClickParams
-	askedFor string
+	askedFor store.GetClickByRefParams
 	inserts  int
 	reads    int
 }
@@ -58,6 +58,8 @@ func (f *fakeStore) InsertClick(_ context.Context, arg store.InsertClickParams) 
 			ClickRef:               arg.ClickRef,
 			AccountID:              arg.AccountID,
 			OfferID:                arg.OfferID,
+			MerchantNetworkID:      arg.MerchantNetworkID,
+			NetworkID:              arg.NetworkID,
 			ClickedAt:              pgtype.Timestamptz{Time: echoedClickedAt, Valid: true},
 			RateSnapshot:           arg.RateSnapshot,
 			MemberShareBpsSnapshot: arg.MemberShareBpsSnapshot,
@@ -71,8 +73,8 @@ func (f *fakeStore) InsertClick(_ context.Context, arg store.InsertClickParams) 
 // the column's own default.
 var echoedClickedAt = time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 
-func (f *fakeStore) GetClickByRef(_ context.Context, ref string) (store.CashbackClick, error) {
-	f.askedFor, f.reads = ref, f.reads+1
+func (f *fakeStore) GetClickByRef(_ context.Context, arg store.GetClickByRefParams) (store.CashbackClick, error) {
+	f.askedFor, f.reads = arg, f.reads+1
 	if f.getErr != nil {
 		return store.CashbackClick{}, f.getErr
 	}
@@ -97,6 +99,12 @@ func aPromise() clickout.Promise {
 	}
 }
 
+// The route and the network every click in this file is issued through.
+var (
+	aRoute                      = uuid.MustParse("7c1e2f30-4a5b-4c6d-8e9f-0a1b2c3d4e5f")
+	aNetwork networks.NetworkID = "awin"
+)
+
 // storedRow is the row the database would return for the given click.
 func storedRow(t *testing.T, ref networks.IssuedClickRef, account, offer uuid.UUID, digest string) store.CashbackClick {
 	t.Helper()
@@ -109,6 +117,8 @@ func storedRow(t *testing.T, ref networks.IssuedClickRef, account, offer uuid.UU
 		ClickRef:               ref.Ref(),
 		AccountID:              pgtype.UUID{Bytes: account, Valid: true},
 		OfferID:                pgtype.UUID{Bytes: offer, Valid: true},
+		MerchantNetworkID:      pgtype.UUID{Bytes: aRoute, Valid: true},
+		NetworkID:              aNetwork.String(),
 		ClickedAt:              pgtype.Timestamptz{Time: time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC), Valid: true},
 		RateSnapshot:           snapshot,
 		MemberShareBpsSnapshot: 5000,
@@ -134,7 +144,7 @@ func TestARecordedClickCarriesWhatTheMemberWasPromised(t *testing.T) {
 	fake := &fakeStore{row: storedRow(t, ref, account, offer, digest.String())}
 
 	click, err := recorder(t, fake).Record(t.Context(), clickout.NewClick{
-		Ref: ref, AccountID: account, OfferID: offer,
+		Ref: ref, AccountID: account, OfferID: offer, RouteID: aRoute, NetworkID: aNetwork,
 		Promised: aPromise(), Context: digest,
 	})
 	if err != nil {
@@ -147,6 +157,15 @@ func TestARecordedClickCarriesWhatTheMemberWasPromised(t *testing.T) {
 	}
 	if uuid.UUID(fake.inserted.AccountID.Bytes) != account {
 		t.Errorf("wrote account %v, want %v", uuid.UUID(fake.inserted.AccountID.Bytes), account)
+	}
+	// The route and the network, written as read from the offer: the pair
+	// the schema pins to it, and the network the reference is later looked
+	// up under (FR-096).
+	if uuid.UUID(fake.inserted.MerchantNetworkID.Bytes) != aRoute {
+		t.Errorf("wrote route %v, want %v", uuid.UUID(fake.inserted.MerchantNetworkID.Bytes), aRoute)
+	}
+	if fake.inserted.NetworkID != aNetwork.String() {
+		t.Errorf("wrote network %q, want %q", fake.inserted.NetworkID, aNetwork)
 	}
 	if fake.inserted.MemberShareBpsSnapshot != 5000 {
 		t.Errorf("wrote a share of %d, want 5000", fake.inserted.MemberShareBpsSnapshot)
@@ -167,7 +186,8 @@ func TestARecordedClickCarriesWhatTheMemberWasPromised(t *testing.T) {
 	}
 
 	// What was read back.
-	if click.Ref != ref || click.AccountID != account || click.OfferID != offer {
+	if click.Ref != ref || click.AccountID != account || click.OfferID != offer ||
+		click.RouteID != aRoute || click.NetworkID != aNetwork {
 		t.Errorf("Record() = %+v, want the click that was recorded", click)
 	}
 	if click.Promised != aPromise() {
@@ -188,7 +208,7 @@ func TestAClickWithNoContextRecordsNone(t *testing.T) {
 	fake := &fakeStore{row: storedRow(t, ref, account, offer, "")}
 
 	click, err := recorder(t, fake).Record(t.Context(), clickout.NewClick{
-		Ref: ref, AccountID: account, OfferID: offer, Promised: aPromise(),
+		Ref: ref, AccountID: account, OfferID: offer, RouteID: aRoute, NetworkID: aNetwork, Promised: aPromise(),
 	})
 	if err != nil {
 		t.Fatalf("Record(): %v", err)
@@ -216,24 +236,37 @@ func TestAClickThatCouldNotBeCreditedIsNeverRecorded(t *testing.T) {
 			// reference was minted would send the member out with nothing
 			// to match their purchase back on.
 			name:  "no reference was minted",
-			click: clickout.NewClick{AccountID: account, OfferID: offer, Promised: aPromise()},
+			click: clickout.NewClick{AccountID: account, OfferID: offer, RouteID: aRoute, NetworkID: aNetwork, Promised: aPromise()},
 			want:  clickout.ErrNotRecorded,
 		},
 		{
 			// FR-023: an anonymous click can never later be credited to an
 			// account, and the cheapest guarantee is that it never exists.
 			name:  "the click names no member",
-			click: clickout.NewClick{Ref: ref, OfferID: offer, Promised: aPromise()},
+			click: clickout.NewClick{Ref: ref, OfferID: offer, RouteID: aRoute, NetworkID: aNetwork, Promised: aPromise()},
 			want:  clickout.ErrAnonymousClick,
 		},
 		{
 			name:  "the click names no offer",
-			click: clickout.NewClick{Ref: ref, AccountID: account, Promised: aPromise()},
+			click: clickout.NewClick{Ref: ref, AccountID: account, RouteID: aRoute, NetworkID: aNetwork, Promised: aPromise()},
 			want:  clickout.ErrUnofferedClick,
 		},
 		{
+			// FR-096: a click that names no route, or no network, is one no
+			// network's report could ever be matched to - and the schema
+			// would refuse it anyway (0037).
+			name:  "the click names no route",
+			click: clickout.NewClick{Ref: ref, AccountID: account, OfferID: offer, NetworkID: aNetwork, Promised: aPromise()},
+			want:  clickout.ErrUnroutedClick,
+		},
+		{
+			name:  "the click names no network",
+			click: clickout.NewClick{Ref: ref, AccountID: account, OfferID: offer, RouteID: aRoute, Promised: aPromise()},
+			want:  clickout.ErrUnroutedClick,
+		},
+		{
 			name: "the promised share is not a share",
-			click: clickout.NewClick{Ref: ref, AccountID: account, OfferID: offer,
+			click: clickout.NewClick{Ref: ref, AccountID: account, OfferID: offer, RouteID: aRoute, NetworkID: aNetwork,
 				Promised: clickout.Promise{Rate: aPromise().Rate, MemberShare: money.BasisPointsScale + 1}},
 			want: clickout.ErrNotRecorded,
 		},
@@ -242,7 +275,7 @@ func TestAClickThatCouldNotBeCreditedIsNeverRecorded(t *testing.T) {
 			// encode, and a snapshot silently written with the wrong rate
 			// in it is a credit nobody can reconstruct.
 			name: "the promised band is not one",
-			click: clickout.NewClick{Ref: ref, AccountID: account, OfferID: offer,
+			click: clickout.NewClick{Ref: ref, AccountID: account, OfferID: offer, RouteID: aRoute, NetworkID: aNetwork,
 				Promised: clickout.Promise{Rate: catalogue.RateBand{Kind: "sideways"}, MemberShare: 5000}},
 			want: clickout.ErrNotRecorded,
 		},
@@ -303,7 +336,7 @@ func TestATakenReferenceIsNamedAsItself(t *testing.T) {
 			t.Parallel()
 			fake := &fakeStore{insertErr: tc.err}
 			_, err := recorder(t, fake).Record(t.Context(), clickout.NewClick{
-				Ref: ref, AccountID: account, OfferID: offer, Promised: aPromise(),
+				Ref: ref, AccountID: account, OfferID: offer, RouteID: aRoute, NetworkID: aNetwork, Promised: aPromise(),
 			})
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("Record() error = %v, want one wrapping %v", err, tc.want)
@@ -320,7 +353,7 @@ func TestAReportedReferenceFindsItsClickOrNothing(t *testing.T) {
 	t.Run("a reference that names a click", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeStore{row: storedRow(t, ref, account, offer, "")}
-		click, err := recorder(t, fake).ByRef(t.Context(), networks.NewClickRef(ref.Ref()))
+		click, err := recorder(t, fake).ByRef(t.Context(), aNetwork, networks.NewClickRef(ref.Ref()))
 		if err != nil {
 			t.Fatalf("ByRef(): %v", err)
 		}
@@ -329,15 +362,34 @@ func TestAReportedReferenceFindsItsClickOrNothing(t *testing.T) {
 		}
 		// Asked for verbatim: the lookup is exact, and anything this layer
 		// trimmed or folded would widen the match before the query could.
-		if fake.askedFor != ref.Ref() {
-			t.Errorf("asked the store for %q, want %q", fake.askedFor, ref.Ref())
+		// And asked for under the reporting network (FR-096): the store
+		// answers among that network's clicks and no other's.
+		if fake.askedFor.ClickRef != ref.Ref() {
+			t.Errorf("asked the store for %q, want %q", fake.askedFor.ClickRef, ref.Ref())
+		}
+		if fake.askedFor.NetworkID != aNetwork.String() {
+			t.Errorf("asked the store under network %q, want %q", fake.askedFor.NetworkID, aNetwork)
+		}
+	})
+
+	// A caller that names no network is a defect, not a report nobody
+	// matched: answered as a miss it would queue every report in the window.
+	t.Run("a lookup under no network at all", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeStore{row: storedRow(t, ref, account, offer, "")}
+		_, err := recorder(t, fake).ByRef(t.Context(), "", networks.NewClickRef(ref.Ref()))
+		if err == nil || errors.Is(err, clickout.ErrNoSuchClick) {
+			t.Fatalf("ByRef() under no network = %v, want a failure that is not a miss", err)
+		}
+		if fake.reads != 0 {
+			t.Errorf("the store was read %d time(s) under no network", fake.reads)
 		}
 	})
 
 	t.Run("a reference that names no click", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeStore{getErr: pgx.ErrNoRows}
-		_, err := recorder(t, fake).ByRef(t.Context(), networks.NewClickRef("SomeOtherPublishersRef"))
+		_, err := recorder(t, fake).ByRef(t.Context(), aNetwork, networks.NewClickRef("SomeOtherPublishersRef"))
 		if !errors.Is(err, clickout.ErrNoSuchClick) {
 			t.Fatalf("ByRef() error = %v, want one wrapping %v", err, clickout.ErrNoSuchClick)
 		}
@@ -350,7 +402,7 @@ func TestAReportedReferenceFindsItsClickOrNothing(t *testing.T) {
 	t.Run("a report carrying no reference at all", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeStore{}
-		_, err := recorder(t, fake).ByRef(t.Context(), networks.ClickRef{})
+		_, err := recorder(t, fake).ByRef(t.Context(), aNetwork, networks.ClickRef{})
 		if !errors.Is(err, clickout.ErrNoSuchClick) {
 			t.Fatalf("ByRef() error = %v, want one wrapping %v", err, clickout.ErrNoSuchClick)
 		}
@@ -362,7 +414,7 @@ func TestAReportedReferenceFindsItsClickOrNothing(t *testing.T) {
 	t.Run("the read failed", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeStore{getErr: errors.New("connection reset")}
-		_, err := recorder(t, fake).ByRef(t.Context(), networks.NewClickRef(ref.Ref()))
+		_, err := recorder(t, fake).ByRef(t.Context(), aNetwork, networks.NewClickRef(ref.Ref()))
 		if errors.Is(err, clickout.ErrNoSuchClick) {
 			t.Fatal("a failed read reads as 'no such click', which would queue a matched purchase as unattributed")
 		}
@@ -389,6 +441,7 @@ func TestARowThatCannotBeATrustedClickIsRefused(t *testing.T) {
 		{name: "a snapshot that is not a band", spoil: func(r *store.CashbackClick) { r.RateSnapshot = []byte(`{"kind":"sideways"}`) }},
 		{name: "a snapshot that is not JSON", spoil: func(r *store.CashbackClick) { r.RateSnapshot = []byte(`not json`) }},
 		{name: "a share outside the possible range", spoil: func(r *store.CashbackClick) { r.MemberShareBpsSnapshot = int32(money.BasisPointsScale) + 1 }},
+		{name: "a network that is not one", spoil: func(r *store.CashbackClick) { r.NetworkID = "Not A Network" }},
 	}
 
 	for _, tc := range cases {
@@ -396,7 +449,7 @@ func TestARowThatCannotBeATrustedClickIsRefused(t *testing.T) {
 			t.Parallel()
 			row := storedRow(t, ref, account, offer, "")
 			tc.spoil(&row)
-			if _, err := recorder(t, &fakeStore{row: row}).ByRef(t.Context(), networks.NewClickRef(ref.Ref())); err == nil {
+			if _, err := recorder(t, &fakeStore{row: row}).ByRef(t.Context(), aNetwork, networks.NewClickRef(ref.Ref())); err == nil {
 				t.Fatal("ByRef() returned a click built from a row that cannot be one")
 			}
 		})

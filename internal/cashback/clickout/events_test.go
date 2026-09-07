@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/clickout"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/db"
 )
 
@@ -52,14 +53,15 @@ func clickoutTx(t *testing.T) (context.Context, pgx.Tx) {
 	return ctx, tx
 }
 
-// aClick is one recordable click for the seeded member and offer.
-func aClick(t *testing.T, account, offer uuid.UUID) clickout.NewClick {
+// aClick is one recordable click for the seeded member and offer, on the
+// route and network the offer is published on.
+func aClick(t *testing.T, account, offer, route uuid.UUID, network networks.NetworkID) clickout.NewClick {
 	t.Helper()
 	ref, err := clickout.NewMinter().Mint()
 	if err != nil {
 		t.Fatalf("Mint(): %v", err)
 	}
-	return clickout.NewClick{Ref: ref, AccountID: account, OfferID: offer, Promised: aPromise()}
+	return clickout.NewClick{Ref: ref, AccountID: account, OfferID: offer, RouteID: route, NetworkID: network, Promised: aPromise()}
 }
 
 // countClicks answers how many click rows the given member has, which is the
@@ -78,13 +80,13 @@ func countClicks(ctx context.Context, t *testing.T, tx pgx.Tx, account uuid.UUID
 // contracts/events.md says it says.
 func TestAClickAndItsEventCommitTogether(t *testing.T) {
 	ctx, tx := clickoutTx(t)
-	account, offer := clickable(ctx, t, tx)
+	account, offer, route, network := clickable(ctx, t, tx)
 
 	clicks, err := clickout.NewAnnouncedClicks(tx)
 	if err != nil {
 		t.Fatalf("NewAnnouncedClicks(): %v", err)
 	}
-	recorded, err := clicks.Record(ctx, aClick(t, account, offer))
+	recorded, err := clicks.Record(ctx, aClick(t, account, offer, route, network))
 	if err != nil {
 		t.Fatalf("Record(): %v", err)
 	}
@@ -147,7 +149,7 @@ func TestAClickAndItsEventCommitTogether(t *testing.T) {
 // nobody will hear about - so the click is not there either.
 func TestNoClickSurvivesAnEventThatCouldNotBeAppended(t *testing.T) {
 	ctx, tx := clickoutTx(t)
-	account, offer := clickable(ctx, t, tx)
+	account, offer, route, network := clickable(ctx, t, tx)
 
 	// A constraint no insert can satisfy, added NOT VALID so the rows
 	// already in the stream are left alone. It is the narrowest way to make
@@ -162,7 +164,7 @@ func TestNoClickSurvivesAnEventThatCouldNotBeAppended(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAnnouncedClicks(): %v", err)
 	}
-	_, err = clicks.Record(ctx, aClick(t, account, offer))
+	_, err = clicks.Record(ctx, aClick(t, account, offer, route, network))
 
 	if !errors.Is(err, clickout.ErrNotAnnounced) {
 		t.Fatalf("Record() error = %v, want one wrapping %v", err, clickout.ErrNotAnnounced)
@@ -177,13 +179,13 @@ func TestNoClickSurvivesAnEventThatCouldNotBeAppended(t *testing.T) {
 // event that would have announced it must go with it.
 func TestNoEventSurvivesAClickThatWasNotRecorded(t *testing.T) {
 	ctx, tx := clickoutTx(t)
-	account, offer := clickable(ctx, t, tx)
+	account, offer, route, network := clickable(ctx, t, tx)
 
 	clicks, err := clickout.NewAnnouncedClicks(tx)
 	if err != nil {
 		t.Fatalf("NewAnnouncedClicks(): %v", err)
 	}
-	first := aClick(t, account, offer)
+	first := aClick(t, account, offer, route, network)
 	if _, err := clicks.Record(ctx, first); err != nil {
 		t.Fatalf("the first click: %v", err)
 	}

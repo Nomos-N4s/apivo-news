@@ -22,13 +22,19 @@ import (
 )
 
 // click records one click carrying the given reference and answers its id.
+// The route and the network are the offer's own, derived here exactly as
+// 0037's backfill derived them.
 func click(ctx context.Context, t *testing.T, tx pgx.Tx, member, offer pgtype.UUID, ref string) pgtype.UUID {
 	t.Helper()
 	var id pgtype.UUID
 	if err := tx.QueryRow(ctx, `
 		insert into cashback.click
-		    (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot)
-		values ($1, $2, $3, '{"kind":"fixed"}'::jsonb, 6000) returning id`, ref, member, offer).Scan(&id); err != nil {
+		    (click_ref, account_id, offer_id, merchant_network_id, network_id, rate_snapshot, member_share_bps_snapshot)
+		select $1, $2, o.id, o.merchant_network_id, mn.network_id, '{"kind":"fixed"}'::jsonb, 6000
+		  from cashback.offer o
+		  join cashback.merchant_network mn on mn.id = o.merchant_network_id
+		 where o.id = $3
+		returning id`, ref, member, offer).Scan(&id); err != nil {
 		t.Fatalf("seeding the click: %v", err)
 	}
 	return id
@@ -305,6 +311,73 @@ func TestTheForeignCurrencyStatementAgainstSchema(t *testing.T) {
 
 		if _, err := q.RecordForeignCurrencyReference(ctx, stored); !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("RecordForeignCurrencyReference() = %v, want %v", err, pgx.ErrNoRows)
+		}
+	})
+}
+
+// TestTheForeignNetworkStatementAgainstSchema is FR-096's queue write: a
+// report whose reference names a click ANOTHER network issued is queued, the
+// issuing network's own report of it is not, a reference naming nothing is
+// the unmatched half's, and an observation already recorded is not recorded
+// twice.
+func TestTheForeignNetworkStatementAgainstSchema(t *testing.T) {
+	t.Parallel()
+	ctx, tx, done := schemaTx(t)
+	defer done()
+
+	// Two worlds: the network that issued the click, and the network now
+	// reporting its reference. click() derives the click's network from the
+	// offer, so the click is the issuing network's by construction.
+	echoedElsewhere := func(t *testing.T, tx pgx.Tx, ref string) pgtype.UUID {
+		t.Helper()
+		reporting, publisher, _, _ := world(ctx, t, tx)
+		_, _, member, offer := world(ctx, t, tx)
+		click(ctx, t, tx, member, offer, ref)
+		return report(ctx, t, tx, reporting, publisher, ref)
+	}
+
+	each(ctx, t, tx, "a reference another network's click carries is queued", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		stored := echoedElsewhere(t, tx, "a-reference-issued-elsewhere-00")
+
+		row, err := q.RecordForeignNetworkReference(ctx, stored)
+		if err != nil {
+			t.Fatalf("RecordForeignNetworkReference(): %v", err)
+		}
+		if row.NetworkTransactionID != stored {
+			t.Errorf("the queue row names report %v, want %v", row.NetworkTransactionID, stored)
+		}
+		if !row.DetectedAt.Valid {
+			t.Error("the row carries no detection instant")
+		}
+	})
+
+	each(ctx, t, tx, "the issuing network's own report is not queued", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, member, offer := world(ctx, t, tx)
+		ref := "a-reference-issued-right-here-0"
+		click(ctx, t, tx, member, offer, ref)
+		stored := report(ctx, t, tx, networkID, publisher, ref)
+
+		if _, err := q.RecordForeignNetworkReference(ctx, stored); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("RecordForeignNetworkReference() = %v, want %v - a creditable report was queued", err, pgx.ErrNoRows)
+		}
+	})
+
+	each(ctx, t, tx, "a reference naming nothing is left to the unmatched half", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, _, _ := world(ctx, t, tx)
+		stored := report(ctx, t, tx, networkID, publisher, "ref-that-names-nothing-003")
+
+		if _, err := q.RecordForeignNetworkReference(ctx, stored); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("RecordForeignNetworkReference() = %v, want %v", err, pgx.ErrNoRows)
+		}
+	})
+
+	each(ctx, t, tx, "an observation already recorded is not recorded twice", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		stored := echoedElsewhere(t, tx, "a-reference-issued-elsewhere-01")
+		if _, err := q.RecordForeignNetworkReference(ctx, stored); err != nil {
+			t.Fatalf("the first observation: %v", err)
+		}
+		if _, err := q.RecordForeignNetworkReference(ctx, stored); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("the second observation = %v, want %v", err, pgx.ErrNoRows)
 		}
 	})
 }

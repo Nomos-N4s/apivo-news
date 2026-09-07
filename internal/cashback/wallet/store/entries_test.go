@@ -101,9 +101,9 @@ func earnedCiting(ctx context.Context, t *testing.T, tx pgx.Tx, account, route p
 	if !byHand {
 		if err := tx.QueryRow(ctx, `
 			insert into cashback.click
-			    (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot)
-			values ($1, $2, $3, '{"kind":"percent","bps":500}'::jsonb, 6000) returning id`,
-			ref, account, offer).Scan(&click); err != nil {
+			    (click_ref, account_id, offer_id, merchant_network_id, network_id, rate_snapshot, member_share_bps_snapshot)
+			values ($1, $2, $3, $4, $5, '{"kind":"percent","bps":500}'::jsonb, 6000) returning id`,
+			ref, account, offer, route, networkID).Scan(&click); err != nil {
 			t.Fatalf("seeding the click: %v", err)
 		}
 	}

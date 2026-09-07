@@ -45,11 +45,14 @@ type UnmatchedStore interface {
 	RecordUnmatchedReference(ctx context.Context, networkTransactionID pgtype.UUID) (store.RecordUnmatchedReferenceRow, error)
 	RecordCreditedClickReference(ctx context.Context, networkTransactionID pgtype.UUID) (store.RecordCreditedClickReferenceRow, error)
 	RecordForeignCurrencyReference(ctx context.Context, networkTransactionID pgtype.UUID) (store.RecordForeignCurrencyReferenceRow, error)
+	RecordForeignNetworkReference(ctx context.Context, networkTransactionID pgtype.UUID) (store.RecordForeignNetworkReferenceRow, error)
 }
 
 // queueWrite is one of the statements that put a report in the queue:
-// queueUnmatched for a reference that named no click, queueCreditedClick for
-// one whose click already backs a credit. Each reports whether it wrote.
+// queueUnmatched for a reference that named no click, queueForeignNetwork
+// for one whose click another network issued, queueCreditedClick for one
+// whose click already backs a credit, queueForeignCurrency for one in a
+// currency its member cannot be paid in. Each reports whether it wrote.
 type queueWrite func(ctx context.Context, unmatched UnmatchedStore, reportID uuid.UUID) (Unmatched, bool, error)
 
 // Unmatched is what the DATABASE decided about one observation: the queue row
@@ -128,6 +131,27 @@ func queueCreditedClick(ctx context.Context, unmatched UnmatchedStore, reportID 
 // whether it wrote a row. The statement decides, as its siblings' do.
 func queueForeignCurrency(ctx context.Context, unmatched UnmatchedStore, reportID uuid.UUID) (Unmatched, bool, error) {
 	row, err := unmatched.RecordForeignCurrencyReference(ctx, pgtype.UUID{Bytes: reportID, Valid: true})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return Unmatched{}, false, nil
+	case err != nil:
+		return Unmatched{}, false, fmt.Errorf("%w: report %s: %w", ErrNotQueued, reportID, err)
+	}
+	return Unmatched{
+		ID:         uuid.UUID(row.ID.Bytes),
+		ReportID:   uuid.UUID(row.NetworkTransactionID.Bytes),
+		DetectedAt: row.DetectedAt.Time,
+	}, true, nil
+}
+
+// queueForeignNetwork records that this report's reference names a click
+// another network issued (click.network_id, FR-096), reporting whether it
+// wrote a row. The statement decides, as its siblings' do: a report whose
+// reference names no click at all is not queued by this, and neither is one
+// from the network that issued the click. False and no error is the same
+// three silences.
+func queueForeignNetwork(ctx context.Context, unmatched UnmatchedStore, reportID uuid.UUID) (Unmatched, bool, error) {
+	row, err := unmatched.RecordForeignNetworkReference(ctx, pgtype.UUID{Bytes: reportID, Valid: true})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return Unmatched{}, false, nil

@@ -32,6 +32,12 @@ var (
 	// purchase would take two queue rows and an operator would see the same
 	// money twice.
 	ErrNoReference = errors.New("earnings: the report carries no reference to match")
+	// ErrNoNetwork reports a match asked about a report that names no
+	// network. A reference is only ever looked up among the clicks the
+	// reporting network issued (FR-096); without the network there is no
+	// set to look in, and answering "nothing matched" would queue the
+	// report for a caller's mistake.
+	ErrNoNetwork = errors.New("earnings: the report names no network to look its reference up under")
 )
 
 // Report is the stored report a match is asked about: which evidence row,
@@ -47,6 +53,9 @@ type Report struct {
 	ID uuid.UUID
 	// Ref is the reference the network echoed against it.
 	Ref networks.ClickRef
+	// Network is the network that reported it - the only network whose
+	// clicks the reference is looked up among (FR-096).
+	Network networks.NetworkID
 }
 
 // Attribution is what one report resolved to.
@@ -69,7 +78,7 @@ type Attribution struct {
 // *clickout.Clicks so a caller can supply its own transaction's view, and so
 // this package states what it depends on rather than importing a shape.
 type Clicks interface {
-	ByRef(ctx context.Context, reported networks.ClickRef) (clickout.Click, error)
+	ByRef(ctx context.Context, network networks.NetworkID, reported networks.ClickRef) (clickout.Click, error)
 }
 
 // Matcher resolves a reported reference to the click that earned it, and
@@ -121,11 +130,26 @@ func (m *Matcher) Match(ctx context.Context, db events.RowQuerier, report Report
 	if _, present := report.Ref.Ref(); !present {
 		return Attribution{}, fmt.Errorf("%w: %s", ErrNoReference, report.ID)
 	}
+	if err := report.Network.Validate(); err != nil {
+		return Attribution{}, fmt.Errorf("%w: %s: %w", ErrNoNetwork, report.ID, err)
+	}
 
-	click, err := m.clicks.ByRef(ctx, report.Ref)
+	click, err := m.clicks.ByRef(ctx, report.Network, report.Ref)
 	switch {
 	case errors.Is(err, clickout.ErrNoSuchClick):
-		return m.queueReport(ctx, db, report.ID, queueUnmatched)
+		// No click under the reporting network. Two things look like this
+		// (FR-098): a reference nobody minted, and a reference some OTHER
+		// network's click carries - a second network echoing what the
+		// first sent the member out with. Both are queued, each through
+		// the statement whose predicate names it, and the two predicates
+		// are disjoint: the first writes when no click has the reference,
+		// the second when one does and it is not this network's. A
+		// reference already recorded under either writes nothing twice.
+		queued, err := m.queueReport(ctx, db, report.ID, queueUnmatched)
+		if err != nil || queued.Queued != uuid.Nil {
+			return queued, err
+		}
+		return m.queueReport(ctx, db, report.ID, queueForeignNetwork)
 	case err != nil:
 		// A read that FAILED is not a read that found nothing. Queueing here
 		// would turn a dropped connection into a permanent record that this
@@ -138,9 +162,10 @@ func (m *Matcher) Match(ctx context.Context, db events.RowQuerier, report Report
 
 // queueReport records the report as unattributed and answers the
 // attribution that says so. It is the whole of what happens to a report
-// nobody can be credited for - a reference that named no click, or one
-// whose click already backs a credit (entry_click_id_idx) - and the two
-// share this one path so neither can forget the announcement.
+// nobody can be credited for - a reference that named no click, one whose
+// click another network issued, one whose click already backs a credit
+// (entry_click_id_idx), one in a currency its member cannot be paid in -
+// and they share this one path so none can forget the announcement.
 //
 // Announced per ROW WRITTEN. A window re-read after a crash resolves the
 // same references again and writes nothing; announcing anyway would

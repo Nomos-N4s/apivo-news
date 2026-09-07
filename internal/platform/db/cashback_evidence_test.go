@@ -147,8 +147,9 @@ func TestCashbackEvidenceRejectsIllegalWrites(t *testing.T) {
 			rule: "FR-020",
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
 				_, err := tx.Exec(ctx,
-					`insert into cashback.click (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot)
-					 values ('42', $1, $2, '{}'::jsonb, 5000)`, f.accountID, f.offerID)
+					`insert into cashback.click
+					     (click_ref, account_id, offer_id, merchant_network_id, network_id, rate_snapshot, member_share_bps_snapshot)
+					 values ('42', $1, $2, $3, $4, '{}'::jsonb, 5000)`, f.accountID, f.offerID, f.merchantNetworkID, f.networkID)
 				return err
 			},
 			wantCode: codeCheckViolation,
@@ -160,8 +161,10 @@ func TestCashbackEvidenceRejectsIllegalWrites(t *testing.T) {
 				// A reference that has to be escaped into the network's
 				// click parameter is a reference that comes back mangled.
 				_, err := tx.Exec(ctx,
-					`insert into cashback.click (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot)
-					 values ('this ref/has?separators&in-it', $1, $2, '{}'::jsonb, 5000)`, f.accountID, f.offerID)
+					`insert into cashback.click
+					     (click_ref, account_id, offer_id, merchant_network_id, network_id, rate_snapshot, member_share_bps_snapshot)
+					 values ('this ref/has?separators&in-it', $1, $2, $3, $4, '{}'::jsonb, 5000)`,
+					f.accountID, f.offerID, f.merchantNetworkID, f.networkID)
 				return err
 			},
 			wantCode: codeCheckViolation,
@@ -173,9 +176,10 @@ func TestCashbackEvidenceRejectsIllegalWrites(t *testing.T) {
 				// The whole point of the NOT NULL: an anonymous click can
 				// never be credited later because it can never exist.
 				_, err := tx.Exec(ctx,
-					`insert into cashback.click (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot)
-					 values ($1, null, $2, '{}'::jsonb, 5000)`,
-					randomSuffix(t)+randomSuffix(t), f.offerID)
+					`insert into cashback.click
+					     (click_ref, account_id, offer_id, merchant_network_id, network_id, rate_snapshot, member_share_bps_snapshot)
+					 values ($1, null, $2, $3, $4, '{}'::jsonb, 5000)`,
+					randomSuffix(t)+randomSuffix(t), f.offerID, f.merchantNetworkID, f.networkID)
 				return err
 			},
 			wantCode: codeNotNullViolation,
@@ -185,9 +189,10 @@ func TestCashbackEvidenceRejectsIllegalWrites(t *testing.T) {
 			rule: "FR-013",
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
 				_, err := tx.Exec(ctx,
-					`insert into cashback.click (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot)
-					 values ($1, $2, $3, null, 5000)`,
-					randomSuffix(t)+randomSuffix(t), f.accountID, f.offerID)
+					`insert into cashback.click
+					     (click_ref, account_id, offer_id, merchant_network_id, network_id, rate_snapshot, member_share_bps_snapshot)
+					 values ($1, $2, $3, $4, $5, null, 5000)`,
+					randomSuffix(t)+randomSuffix(t), f.accountID, f.offerID, f.merchantNetworkID, f.networkID)
 				return err
 			},
 			wantCode: codeNotNullViolation,
@@ -198,8 +203,10 @@ func TestCashbackEvidenceRejectsIllegalWrites(t *testing.T) {
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
 				// A reused reference is two members' claim on one report.
 				_, err := tx.Exec(ctx,
-					`insert into cashback.click (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot)
-					 values ($1, $2, $3, '{}'::jsonb, 5000)`, f.clickRef, f.accountID, f.offerID)
+					`insert into cashback.click
+					     (click_ref, account_id, offer_id, merchant_network_id, network_id, rate_snapshot, member_share_bps_snapshot)
+					 values ($1, $2, $3, $4, $5, '{}'::jsonb, 5000)`,
+					f.clickRef, f.accountID, f.offerID, f.merchantNetworkID, f.networkID)
 				return err
 			},
 			wantCode: codeUniqueViolation,

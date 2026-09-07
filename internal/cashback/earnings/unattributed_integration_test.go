@@ -41,7 +41,7 @@ const aReferenceNobodyMinted = "not-a-reference-this-deployment-ever-minted"
 // fail this way without breaking it for the case as well.
 type unreadableClicks struct{}
 
-func (unreadableClicks) ByRef(context.Context, networks.ClickRef) (clickout.Click, error) {
+func (unreadableClicks) ByRef(context.Context, networks.NetworkID, networks.ClickRef) (clickout.Click, error) {
 	return clickout.Click{}, errors.New("connection reset by peer")
 }
 
@@ -95,7 +95,7 @@ func TestAnUnknownReferenceCreditsNobodyAndBecomesOperatorWork(t *testing.T) {
 	}
 
 	attributed, err := matcher.Match(j.ctx, j.tx,
-		earnings.Report{ID: report, Ref: networks.NewClickRef(aReferenceNobodyMinted)})
+		earnings.Report{ID: report, Ref: networks.NewClickRef(aReferenceNobodyMinted), Network: networks.NetworkID(j.networkID)})
 	// A miss is ORDINARY. Reported as a value rather than an error, so a
 	// caller walking a window cannot mistake it for a failure and stop.
 	if err != nil {
@@ -193,7 +193,7 @@ func TestAQueueRowMayNotBeReHomed(t *testing.T) {
 		t.Fatalf("NewMatcher(): %v", err)
 	}
 	if _, err := matcher.Match(j.ctx, j.tx,
-		earnings.Report{ID: report, Ref: networks.NewClickRef(aReferenceNobodyMinted)}); err != nil {
+		earnings.Report{ID: report, Ref: networks.NewClickRef(aReferenceNobodyMinted), Network: networks.NetworkID(j.networkID)}); err != nil {
 		t.Fatalf("Match(): %v", err)
 	}
 	row, _ := j.openQueueRow(t, report)
@@ -227,7 +227,7 @@ func TestAMissIsNotAFailedRead(t *testing.T) {
 	}
 
 	_, err = matcher.Match(j.ctx, j.tx,
-		earnings.Report{ID: report, Ref: networks.NewClickRef(aReferenceNobodyMinted)})
+		earnings.Report{ID: report, Ref: networks.NewClickRef(aReferenceNobodyMinted), Network: networks.NetworkID(j.networkID)})
 
 	if err == nil {
 		t.Fatal("a click store that could not be read reported a miss")

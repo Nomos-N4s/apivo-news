@@ -24,14 +24,15 @@ import (
 // fakeClicks stands in for the one read the matcher makes, recording what it
 // was asked so a case can assert the reference actually looked up.
 type fakeClicks struct {
-	click clickout.Click
-	err   error
-	asked networks.ClickRef
-	reads int
+	click   clickout.Click
+	err     error
+	asked   networks.ClickRef
+	askedOn networks.NetworkID
+	reads   int
 }
 
-func (f *fakeClicks) ByRef(_ context.Context, reported networks.ClickRef) (clickout.Click, error) {
-	f.asked = reported
+func (f *fakeClicks) ByRef(_ context.Context, network networks.NetworkID, reported networks.ClickRef) (clickout.Click, error) {
+	f.asked, f.askedOn = reported, network
 	f.reads++
 	if f.err != nil {
 		return clickout.Click{}, f.err
@@ -51,6 +52,13 @@ type fakeUnmatched struct {
 	asked  pgtype.UUID
 	writes int
 	row    store.RecordUnmatchedReferenceRow
+	// foreignRow makes the foreign-network statement answer a row; without
+	// it that statement answers no rows, as it does for a reference nobody
+	// minted. Its writes are counted apart from the unmatched statement's,
+	// because which statement wrote the row is the whole of what a case
+	// about it asserts.
+	foreignRow    bool
+	foreignWrites int
 }
 
 func (f *fakeUnmatched) RecordUnmatchedReference(_ context.Context, id pgtype.UUID) (store.RecordUnmatchedReferenceRow, error) {
@@ -89,8 +97,33 @@ func (f *fakeUnmatched) RecordForeignCurrencyReference(ctx context.Context, id p
 	return store.RecordForeignCurrencyReferenceRow(row), err
 }
 
+// RecordForeignNetworkReference answers a row only when a case says the
+// reference is another network's click's; otherwise no rows, as the
+// statement answers for a reference nobody minted.
+func (f *fakeUnmatched) RecordForeignNetworkReference(_ context.Context, id pgtype.UUID) (store.RecordForeignNetworkReferenceRow, error) {
+	f.foreignWrites++
+	switch {
+	case f.err != nil:
+		return store.RecordForeignNetworkReferenceRow{}, f.err
+	case !f.foreignRow:
+		return store.RecordForeignNetworkReferenceRow{}, pgx.ErrNoRows
+	}
+	row := f.row
+	row.NetworkTransactionID = id
+	if !row.ID.Valid {
+		row.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	}
+	if !row.DetectedAt.Valid {
+		row.DetectedAt = pgtype.Timestamptz{Time: detectedAt, Valid: true}
+	}
+	return store.RecordForeignNetworkReferenceRow(row), nil
+}
+
 // reported is a reference a network echoed back.
 func reported(ref string) networks.ClickRef { return networks.NewClickRef(ref) }
+
+// onNetwork is the network every report in these files came from.
+const onNetwork networks.NetworkID = "awin"
 
 // clickoutMiss is what the click reader answers when a reference names
 // nothing, which is the ordinary outcome this whole file is about.
@@ -122,7 +155,7 @@ func TestAReferenceNamingAClickIsAttributedToIt(t *testing.T) {
 	unmatched := &fakeUnmatched{}
 
 	attributed, err := matcherOver(t, clicks, unmatched).
-		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: ref})
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: ref, Network: onNetwork})
 	if err != nil {
 		t.Fatalf("Match(): %v", err)
 	}
@@ -132,6 +165,10 @@ func TestAReferenceNamingAClickIsAttributedToIt(t *testing.T) {
 	}
 	if attributed.Click.ID != clickID || attributed.Click.AccountID != member {
 		t.Errorf("Click = %+v, want the click %v belonging to %v", attributed.Click, clickID, member)
+	}
+	// Looked up under the network that reported it (FR-096), and no other.
+	if clicks.askedOn != onNetwork {
+		t.Errorf("the click was looked up under %q, want the reporting network %q", clicks.askedOn, onNetwork)
 	}
 	if attributed.Report != reportID {
 		t.Errorf("Report = %v, want %v", attributed.Report, reportID)
@@ -157,7 +194,7 @@ func TestAReferenceNamingNothingIsQueuedRatherThanRefused(t *testing.T) {
 	unmatched := &fakeUnmatched{row: store.RecordUnmatchedReferenceRow{ID: pgtype.UUID{Bytes: rowID, Valid: true}}}
 
 	attributed, err := matcherOver(t, &fakeClicks{err: clickoutMiss()}, unmatched).
-		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: reported("a-reference-nothing-answers-to")})
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: reported("a-reference-nothing-answers-to"), Network: onNetwork})
 	if err != nil {
 		t.Fatalf("Match() refused a miss: %v", err)
 	}
@@ -173,6 +210,42 @@ func TestAReferenceNamingNothingIsQueuedRatherThanRefused(t *testing.T) {
 	}
 	if uuid.UUID(unmatched.asked.Bytes) != reportID {
 		t.Errorf("queued report %v, want %v", uuid.UUID(unmatched.asked.Bytes), reportID)
+	}
+}
+
+// TestAReferenceAnotherNetworkIssuedIsQueuedThroughItsOwnStatement is
+// FR-098's half of FR-096. Under the reporting network the reference names
+// nothing; the unmatched statement, whose predicate is that NO click carries
+// the reference, writes nothing; the foreign-network statement then does.
+// The report is queued and announced exactly once, and the two statements
+// each ran once - which statement wrote the row is, until the queue carries
+// a reason, the only record of why.
+func TestAReferenceAnotherNetworkIssuedIsQueuedThroughItsOwnStatement(t *testing.T) {
+	t.Parallel()
+
+	reportID, rowID := uuid.New(), uuid.New()
+	unmatched := &fakeUnmatched{noRows: true, foreignRow: true,
+		row: store.RecordUnmatchedReferenceRow{ID: pgtype.UUID{Bytes: rowID, Valid: true}}}
+	out := &fakeOutbox{}
+
+	attributed, err := matcherOver(t, &fakeClicks{err: clickoutMiss()}, unmatched).
+		Match(t.Context(), out, earnings.Report{ID: reportID, Ref: reported("a-reference-another-network-issued"), Network: onNetwork})
+	if err != nil {
+		t.Fatalf("Match(): %v", err)
+	}
+
+	if attributed.Matched {
+		t.Error("a reference another network's click carries was reported as matched")
+	}
+	if attributed.Queued != rowID {
+		t.Errorf("Queued = %v, want the queue row %v", attributed.Queued, rowID)
+	}
+	if unmatched.writes != 1 || unmatched.foreignWrites != 1 {
+		t.Errorf("the unmatched statement ran %d time(s) and the foreign-network one %d, want once each",
+			unmatched.writes, unmatched.foreignWrites)
+	}
+	if announced := out.only(t, earnings.TypeTransactionUnattributed); announced.Subject != reportID.String() {
+		t.Errorf("the event is about %q, want the report %s", announced.Subject, reportID)
 	}
 }
 
@@ -198,6 +271,28 @@ func TestAReportCarryingNoReferenceIsRefused(t *testing.T) {
 	}
 }
 
+// TestAReportNamingNoNetworkIsRefused: a reference is looked up among one
+// network's clicks (FR-096), so a report that names none has no set to be
+// looked up in. Refused rather than queued: a miss is a queue row nobody
+// re-examines, and a caller's mistake would fill the queue with them.
+func TestAReportNamingNoNetworkIsRefused(t *testing.T) {
+	t.Parallel()
+
+	unmatched := &fakeUnmatched{}
+	clicks := &fakeClicks{}
+
+	_, err := matcherOver(t, clicks, unmatched).
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-that-names-a-click")})
+
+	if !errors.Is(err, earnings.ErrNoNetwork) {
+		t.Fatalf("Match() error = %v, want one wrapping %v", err, earnings.ErrNoNetwork)
+	}
+	if clicks.reads != 0 || unmatched.writes != 0 {
+		t.Errorf("a report naming no network read %d click(s) and wrote %d row(s), want none",
+			clicks.reads, unmatched.writes)
+	}
+}
+
 // TestAFailedReadIsNotAMiss is the distinction that stops a dropped
 // connection becoming a permanent record that a purchase went unattributed -
 // a record 0013 freezes and nothing later re-examines.
@@ -208,7 +303,7 @@ func TestAFailedReadIsNotAMiss(t *testing.T) {
 	clicks := &fakeClicks{err: errors.New("connection reset")}
 
 	_, err := matcherOver(t, clicks, unmatched).
-		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-that-names-a-click")})
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-that-names-a-click"), Network: onNetwork})
 
 	if err == nil {
 		t.Fatal("Match() reported success although the click could not be read")

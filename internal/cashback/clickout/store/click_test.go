@@ -70,8 +70,9 @@ func member(ctx context.Context, t *testing.T, tx pgx.Tx) pgtype.UUID {
 }
 
 // offer seeds a network, merchant, route and one live percent band, and
-// answers the offer's id.
-func offer(ctx context.Context, t *testing.T, tx pgx.Tx) pgtype.UUID {
+// answers the offer's id with the route and the network it is on - the
+// pair a click records beside the offer (0037).
+func offer(ctx context.Context, t *testing.T, tx pgx.Tx) (offer, route pgtype.UUID, network string) {
 	t.Helper()
 	tag := suffix(t)
 	networkID := "clicktest_" + tag
@@ -103,7 +104,7 @@ func offer(ctx context.Context, t *testing.T, tx pgx.Tx) pgtype.UUID {
 		returning id`, routeID).Scan(&offerID); err != nil {
 		t.Fatalf("seeding the offer: %v", err)
 	}
-	return offerID
+	return offerID, routeID, networkID
 }
 
 // aClick is one insert's worth of parameters, already valid. A case states
@@ -111,10 +112,13 @@ func offer(ctx context.Context, t *testing.T, tx pgx.Tx) pgtype.UUID {
 // site rather than buried in a helper.
 func aClick(ctx context.Context, t *testing.T, tx pgx.Tx) store.InsertClickParams {
 	t.Helper()
+	offerID, routeID, networkID := offer(ctx, t, tx)
 	return store.InsertClickParams{
 		ClickRef:               aClickRef(t),
 		AccountID:              member(ctx, t, tx),
-		OfferID:                offer(ctx, t, tx),
+		OfferID:                offerID,
+		MerchantNetworkID:      routeID,
+		NetworkID:              networkID,
 		RateSnapshot:           aRateSnapshot,
 		MemberShareBpsSnapshot: 5000,
 	}
@@ -227,12 +231,30 @@ func TestTheClickStatementsAgainstSchema(t *testing.T) {
 			t.Errorf("clicked_at = %v, want the row's own clock", click.ClickedAt)
 		}
 
-		found, err := q.GetClickByRef(ctx, params.ClickRef)
+		found, err := q.GetClickByRef(ctx, store.GetClickByRefParams{ClickRef: params.ClickRef, NetworkID: params.NetworkID})
 		if err != nil {
 			t.Fatalf("GetClickByRef(): %v", err)
 		}
 		if found.ID != click.ID {
 			t.Errorf("GetClickByRef found %v, want the click just recorded %v", found.ID, click.ID)
+		}
+		if found.MerchantNetworkID != params.MerchantNetworkID || found.NetworkID != params.NetworkID {
+			t.Errorf("the row reads route %v on %q, want %v on %q",
+				found.MerchantNetworkID, found.NetworkID, params.MerchantNetworkID, params.NetworkID)
+		}
+	})
+
+	each(ctx, t, tx, "a reference is only the click's under the network that issued it", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		params := aClick(ctx, t, tx)
+		if _, err := q.InsertClick(ctx, params); err != nil {
+			t.Fatalf("InsertClick(): %v", err)
+		}
+		// FR-096: another network echoing this reference is answered with
+		// no row, as a reference nobody minted is. The reference decides
+		// the row; the network decides whether it is answered.
+		other := store.GetClickByRefParams{ClickRef: params.ClickRef, NetworkID: params.NetworkID + "_other"}
+		if _, err := q.GetClickByRef(ctx, other); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("GetClickByRef under another network = %v, want %v", err, pgx.ErrNoRows)
 		}
 	})
 
@@ -254,7 +276,7 @@ func TestTheClickStatementsAgainstSchema(t *testing.T) {
 			params.ClickRef[:len(params.ClickRef)-1],
 			params.ClickRef + "a",
 		} {
-			if _, err := q.GetClickByRef(ctx, near); !errors.Is(err, pgx.ErrNoRows) {
+			if _, err := q.GetClickByRef(ctx, store.GetClickByRefParams{ClickRef: near, NetworkID: params.NetworkID}); !errors.Is(err, pgx.ErrNoRows) {
 				t.Errorf("GetClickByRef(%q) = %v, want %v - only an exact reference is this click's", near, err, pgx.ErrNoRows)
 			}
 		}

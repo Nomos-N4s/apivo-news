@@ -89,10 +89,11 @@ func TestCashbackEarningsRejectIllegalWrites(t *testing.T) {
 				var freshClick string
 				if err := tx.QueryRow(ctx,
 					`insert into cashback.click
-					     (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot, context_digest)
-					 values ($1, $2, $3, '{"rate_kind":"percent","rate_bps":400,"member_share_bps":5000}'::jsonb, 5000, 'ctx-digest')
+					     (click_ref, account_id, offer_id, merchant_network_id, network_id,
+					      rate_snapshot, member_share_bps_snapshot, context_digest)
+					 values ($1, $2, $3, $4, $5, '{"rate_kind":"percent","rate_bps":400,"member_share_bps":5000}'::jsonb, 5000, 'ctx-digest')
 					 returning id`,
-					randomSuffix(t)+randomSuffix(t), f.accountID, f.offerID).Scan(&freshClick); err != nil {
+					randomSuffix(t)+randomSuffix(t), f.accountID, f.offerID, f.merchantNetworkID, f.networkID).Scan(&freshClick); err != nil {
 					return err
 				}
 				var otherReport string
@@ -288,9 +289,10 @@ func TestCashbackEarningsRejectIllegalWrites(t *testing.T) {
 				otherRef := randomSuffix(t) + randomSuffix(t)
 				var otherClick string
 				if err := tx.QueryRow(ctx,
-					`insert into cashback.click (click_ref, account_id, offer_id, rate_snapshot, member_share_bps_snapshot)
-					 values ($1, $2, $3, '{}'::jsonb, 5000) returning id`,
-					otherRef, f.accountID, f.offerID).Scan(&otherClick); err != nil {
+					`insert into cashback.click
+					     (click_ref, account_id, offer_id, merchant_network_id, network_id, rate_snapshot, member_share_bps_snapshot)
+					 values ($1, $2, $3, $4, $5, '{}'::jsonb, 5000) returning id`,
+					otherRef, f.accountID, f.offerID, f.merchantNetworkID, f.networkID).Scan(&otherClick); err != nil {
 					return err
 				}
 				var report string

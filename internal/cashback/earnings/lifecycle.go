@@ -272,7 +272,11 @@ func (l *Lifecycle) creditOne(ctx context.Context, report store.ReportsAwaitingC
 	if err != nil {
 		return crediting{}, err
 	}
-	attributed, err := matcher.Match(ctx, tx, Report{ID: reportID, Ref: networks.NewClickRef(report.ClickRef.String)})
+	attributed, err := matcher.Match(ctx, tx, Report{
+		ID:      reportID,
+		Ref:     networks.NewClickRef(report.ClickRef.String),
+		Network: networks.NetworkID(report.NetworkID),
+	})
 	if err != nil {
 		return crediting{}, err
 	}

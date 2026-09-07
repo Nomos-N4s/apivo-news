@@ -77,16 +77,31 @@ func (q *Queries) CountRecentClicksByContext(ctx context.Context, arg CountRecen
 
 const getClickByRef = `-- name: GetClickByRef :one
 select id, click_ref, account_id, offer_id, clicked_at,
-       rate_snapshot, member_share_bps_snapshot, context_digest
+       rate_snapshot, member_share_bps_snapshot, context_digest,
+       merchant_network_id, network_id
   from cashback.click
  where click_ref = $1
+   and network_id = $2
 `
+
+type GetClickByRefParams struct {
+	ClickRef  string
+	NetworkID string
+}
 
 // The click a reported reference names, or no row.
 //
 // This is the attribution join, seen from the click's side: a network echoes
 // back the reference it was given, and the credit that follows may only rest
 // on the click that reference belongs to (C-2).
+//
+// Matched under the network that REPORTED it (FR-096, 0037). A reference is
+// only this click's if this click was issued through the network now
+// echoing it: with two networks, one echoing a reference the other issued
+// is answered with no row, exactly as a reference nobody minted is, and the
+// caller queues it (FR-098). Rides click_network_id_idx beside the unique
+// index on click_ref; the reference decides the row and the network decides
+// whether it is answered.
 //
 // Matched EXACTLY, with no normalisation of any kind. No trimming, no case
 // folding, no unescaping. Every one of those would widen the set of network
@@ -95,8 +110,8 @@ select id, click_ref, account_id, offer_id, clicked_at,
 // reference that does not match this row byte for byte is not this click's,
 // whatever it looks like. A reported reference that matches nothing is
 // ordinary and is the caller's to queue as unattributed (FR-034).
-func (q *Queries) GetClickByRef(ctx context.Context, clickRef string) (CashbackClick, error) {
-	row := q.db.QueryRow(ctx, getClickByRef, clickRef)
+func (q *Queries) GetClickByRef(ctx context.Context, arg GetClickByRefParams) (CashbackClick, error) {
+	row := q.db.QueryRow(ctx, getClickByRef, arg.ClickRef, arg.NetworkID)
 	var i CashbackClick
 	err := row.Scan(
 		&i.ID,
@@ -107,6 +122,8 @@ func (q *Queries) GetClickByRef(ctx context.Context, clickRef string) (CashbackC
 		&i.RateSnapshot,
 		&i.MemberShareBpsSnapshot,
 		&i.ContextDigest,
+		&i.MerchantNetworkID,
+		&i.NetworkID,
 	)
 	return i, err
 }
@@ -114,21 +131,25 @@ func (q *Queries) GetClickByRef(ctx context.Context, clickRef string) (CashbackC
 const insertClick = `-- name: InsertClick :one
 
 insert into cashback.click (
-    click_ref, account_id, offer_id,
+    click_ref, account_id, offer_id, merchant_network_id, network_id,
     rate_snapshot, member_share_bps_snapshot, context_digest
 )
 values (
     $1, $2, $3,
-    $4, $5, $6
+    $4, $5,
+    $6, $7, $8
 )
 returning id, click_ref, account_id, offer_id, clicked_at,
-          rate_snapshot, member_share_bps_snapshot, context_digest
+          rate_snapshot, member_share_bps_snapshot, context_digest,
+          merchant_network_id, network_id
 `
 
 type InsertClickParams struct {
 	ClickRef               string
 	AccountID              pgtype.UUID
 	OfferID                pgtype.UUID
+	MerchantNetworkID      pgtype.UUID
+	NetworkID              string
 	RateSnapshot           []byte
 	MemberShareBpsSnapshot int32
 	ContextDigest          pgtype.Text
@@ -159,11 +180,19 @@ type InsertClickParams struct {
 // either the entropy source is broken or a caller is re-using a reference,
 // and both are defects that must surface rather than cost a member the
 // credit whose reference was taken.
+//
+// merchant_network_id and network_id are the route and the network the
+// click was issued through (0037, FR-096). Supplied by the caller from the
+// offer it read rather than looked up here, and pinned by key to that offer
+// and to that route: a pair that disagrees with the offer is refused, so
+// the network a reference is later looked up under is never a guess.
 func (q *Queries) InsertClick(ctx context.Context, arg InsertClickParams) (CashbackClick, error) {
 	row := q.db.QueryRow(ctx, insertClick,
 		arg.ClickRef,
 		arg.AccountID,
 		arg.OfferID,
+		arg.MerchantNetworkID,
+		arg.NetworkID,
 		arg.RateSnapshot,
 		arg.MemberShareBpsSnapshot,
 		arg.ContextDigest,
@@ -178,6 +207,8 @@ func (q *Queries) InsertClick(ctx context.Context, arg InsertClickParams) (Cashb
 		&i.RateSnapshot,
 		&i.MemberShareBpsSnapshot,
 		&i.ContextDigest,
+		&i.MerchantNetworkID,
+		&i.NetworkID,
 	)
 	return i, err
 }

@@ -98,3 +98,33 @@ select nt.id
    and (p.account_id is null or p.default_currency <> nt.currency)
 on conflict on constraint unattributed_one_per_report do nothing
 returning id, network_transaction_id, detected_at;
+
+-- name: RecordForeignNetworkReference :one
+-- Record that this stored report named a click another network issued, if
+-- it did (FR-096, FR-098, spec 004).
+--
+-- The fifth way a report can be money nobody can be credited for: its
+-- reference is a real click's, and that click was issued through a network
+-- other than the one now reporting it. A retailer on two networks, whose
+-- second network echoes a reference the first one sent the member out
+-- with, does this - and so does a member's link pasted somewhere a second
+-- network tracks. The click's own network is the only one whose report of
+-- this reference is this click's (click.network_id, 0037), so the report is
+-- queued for an operator exactly as an unmatched one is: the money stays
+-- visible, and no network is credited for a purchase it did not send.
+--
+-- The predicate is the STATEMENT'S, as its siblings' are: the stored
+-- columns decide. A report whose reference names no click at all is
+-- RecordUnmatchedReference's and not this one's, and a report from the
+-- issuing network is not queued by this, whatever the caller was answered.
+-- Until the queue carries a reason column, which statement wrote the row is
+-- the only record of why; the join is what an operator would run to find
+-- out.
+insert into cashback.unattributed_transaction (network_transaction_id)
+select nt.id
+  from cashback.network_transaction nt
+  join cashback.click c on c.click_ref = nt.click_ref
+ where nt.id = sqlc.arg(network_transaction_id)
+   and c.network_id <> nt.network_id
+on conflict on constraint unattributed_one_per_report do nothing
+returning id, network_transaction_id, detected_at;
