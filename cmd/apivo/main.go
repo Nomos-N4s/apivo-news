@@ -768,13 +768,17 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 		stop()
 		return nil, nil, nil, err
 	}
-	// No details vault is wired, and that is the honest state of the alpha:
-	// a vault is somebody's KMS or a processor's tokenisation endpoint, and
-	// picking one here would pick it for every deployment. Passing nil
-	// means POST /payout-destinations answers 503 naming nothing else -
-	// every other route on the surface, including withdrawing to a
-	// destination that already exists, works (payout.ErrNoVault).
-	withdrawalSurface, err := payout.NewHandler(log, withdrawals, destinations, nil, payoutAuth{ids: ids})
+	// Where a member's bank details go (ADR-0006). Nil when this
+	// deployment has not configured a vault, which is not a failure:
+	// POST /payout-destinations then answers 503 naming nothing else, and
+	// every other route on the surface - including withdrawing to a
+	// destination recorded before - keeps working (payout.ErrNoVault).
+	vault, err := newDetailsVault(log, cfg)
+	if err != nil {
+		stop()
+		return nil, nil, nil, err
+	}
+	withdrawalSurface, err := payout.NewHandler(log, withdrawals, destinations, vault, payoutAuth{ids: ids})
 	if err != nil {
 		stop()
 		return nil, nil, nil, err
