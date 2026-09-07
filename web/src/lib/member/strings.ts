@@ -56,6 +56,20 @@ export interface MemberStrings {
   /** The link was too old, or has already been spent. */
   readonly linkExpired: string;
   /**
+   * Somebody who is already signed in, on the page for signing in.
+   *
+   * They arrive here because the chrome on a reader page cannot tell — it
+   * resolves no session, deliberately, since that costs a round trip on the
+   * pages that carry most of this site's traffic. So this page has to be the
+   * one that knows, and saying nothing while quietly sending them back is
+   * indistinguishable from a control that does not work (#583).
+   */
+  readonly alreadySignedIn: (email: string) => string;
+  readonly continueOnward: string;
+  /** How somebody signs in as somebody else. */
+  readonly signOut: string;
+  readonly signedOut: string;
+  /**
    * Signed in, and the address is already another account's here. The one
    * refusal on this page a member can actually act on, so it says what to
    * try instead rather than only what went wrong.
@@ -93,6 +107,10 @@ const EL: MemberStrings = {
   notConfigured:
     'Αυτή η εγκατάσταση δεν έχει ρυθμισμένη σύνδεση, οπότε δεν αποστέλλεται τίποτα.',
   linkExpired: 'Ο σύνδεσμος έληξε ή έχει ήδη χρησιμοποιηθεί. Ζήτησε καινούριο.',
+  alreadySignedIn: (email) => `Είσαι ήδη συνδεδεμένος ως ${email}.`,
+  continueOnward: 'Συνέχεια',
+  signOut: 'Αποσύνδεση',
+  signedOut: 'Αποσυνδέθηκες.',
   addressTaken:
     'Αυτή η διεύθυνση ανήκει ήδη σε άλλον λογαριασμό εδώ. Δοκίμασε τη διεύθυνση με την οποία συνδέθηκες την πρώτη φορά.',
   accountNotMade:
@@ -119,6 +137,10 @@ const DE: MemberStrings = {
   notConfigured:
     'Für diese Installation ist keine Anmeldung eingerichtet; es wird nichts verschickt.',
   linkExpired: 'Dieser Link ist abgelaufen oder wurde schon benutzt. Fordere einen neuen an.',
+  alreadySignedIn: (email) => `Du bist schon als ${email} angemeldet.`,
+  continueOnward: 'Weiter',
+  signOut: 'Abmelden',
+  signedOut: 'Du bist abgemeldet.',
   addressTaken:
     'Diese Adresse gehört hier bereits zu einem anderen Konto. Versuch es mit der Adresse, mit der du dich zuerst angemeldet hast.',
   accountNotMade:

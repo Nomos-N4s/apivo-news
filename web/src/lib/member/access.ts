@@ -32,6 +32,9 @@ export const ACCESS_OUTCOMES = [
   // is about this deployment and they cannot.
   'taken',
   'unmade',
+  // Signed out, on the page somebody signs in from — which is where the
+  // sign-out lands them, and where they would go next anyway.
+  'signedout',
 ] as const;
 
 export type AccessOutcome = (typeof ACCESS_OUTCOMES)[number];
