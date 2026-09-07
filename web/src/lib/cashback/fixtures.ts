@@ -178,6 +178,21 @@ export const CATALOGUE_FIXTURES: readonly MerchantDetail[] = [
         exclusions: 'Gift cards and deposits are excluded.',
         valid_to: null,
       },
+      {
+        // A SECOND published band, and the only retailer here with one.
+        //
+        // The contract has always allowed it - `GET /merchants/{slug}` returns
+        // every band in force - and no fixture carried one, so the page that
+        // offered a button for the first band and none for the rest looked
+        // correct in every preview and every test. A retailer with two bands
+        // is the case that catches that, so the preview has one.
+        offer_id: 'fx-offer-1b',
+        kind: 'percent',
+        bps: 800,
+        conditions: 'Applies to fresh produce only.',
+        exclusions: 'Not combinable with the basket rate above.',
+        valid_to: '2026-12-31T23:59:59Z',
+      },
     ],
   },
   {
