@@ -1,0 +1,293 @@
+---
+import { API_BASE_URL, APP_ENV, BRAND_DIR, PUBLIC_APP_VERSION } from 'astro:env/server';
+
+import FixtureNotice from '../../../../components/FixtureNotice.astro';
+import MemberBar from '../../../../components/MemberBar.astro';
+import ReaderLayout from '../../../../layouts/ReaderLayout.astro';
+import { BRAND_SOURCE_FIXTURE, brandOnHand } from '../../../../lib/brand/load';
+import {
+  type CashbackApi,
+  CashbackApiError,
+  CashbackConfigurationError,
+  createCashbackApi,
+} from '../../../../lib/cashback/api';
+import { cataloguePath, walletPath } from '../../../../lib/cashback/paths';
+import type { Participation } from '../../../../lib/cashback/types';
+import { isSameOrigin } from '../../../../lib/csrf';
+import { sessionOf } from '../../../../lib/editorial/session';
+import { TERMS_TEXT_VERSION } from '../../../../lib/legal/terms';
+import { signInPath } from '../../../../lib/member/access';
+import { isUnauthorized } from '../../../../lib/member/gate';
+import { frontPagePath, parseAxes } from '../../../../lib/reader/axes';
+import { cashbackStrings } from '../../../../i18n/cashback';
+
+// Accepting the terms (issue #592) — the last thing between a member and a
+// tracked click.
+//
+// The api refuses a click-out from anybody without a participation, with a
+// 403 naming where to give one (FR-110, #568). This is that place. It is
+// also the only caller `api.optIn()` has ever had.
+//
+// FIVE STATES, not one, and the second is the one that is easy to miss:
+//
+//   404              never opted in       — the terms, and a button
+//   200 status left  opted in, left since — the same, said differently; the
+//                      upsert re-joins rather than making a second row
+//   200 status active already in          — nothing to accept; go to the wallet
+//   503              no brand             — no version exists to accept
+//   401/403          not a member here    — #573's band owns this
+//
+// WHY IT MAY REFUSE TO TAKE A CONSENT. The words live in this repository and
+// the version lives on the deployment, so they can drift apart. When they
+// do, this page says so and offers no button: a member must never accept a
+// version whose text they were not shown, which is the same thing the api's
+// own stale-version refusal protects, one layer down. A fixture brand is
+// exempt — its version is picked for a test, not a claim about terms anybody
+// is held to, and checking it would refuse every preview for nothing.
+const axes = parseAxes(Astro.params['lang'], Astro.params['place']);
+if (axes === null) {
+  return Astro.rewrite('/404');
+}
+const { lang, places } = axes;
+const slugs = places.map((place) => place.slug);
+const t = cashbackStrings(lang);
+const session = sessionOf(Astro.request);
+// Where signing in again should bring them back to, query and all.
+const here = `${Astro.url.pathname}${Astro.url.search}`;
+
+const { brand, source } = brandOnHand({ brandDir: BRAND_DIR, appEnv: APP_ENV });
+// Read the careful way LegalPane reads the privacy one: `documents` is a
+// map, and absent means no version rather than the string "undefined"
+// travelling to the api as somebody's recorded consent.
+const document = brand.legal.documents['terms'];
+const brandIsFixture = source === BRAND_SOURCE_FIXTURE;
+const drifted = !brandIsFixture && document !== undefined && document.version !== TERMS_TEXT_VERSION;
+
+let api: CashbackApi | null = null;
+let participation: Participation | null = null;
+let apiUnavailable = false;
+let unrecognised = false;
+let noTerms = false;
+let refusal: string | null = null;
+let joined = false;
+
+try {
+  api = createCashbackApi(API_BASE_URL, {
+    appEnv: APP_ENV,
+    token: session.token,
+    appVersion: PUBLIC_APP_VERSION,
+  });
+
+  if (Astro.request.method === 'POST') {
+    if (!isSameOrigin(Astro.request, Astro.url.origin)) {
+      return new Response('cross-origin request refused', { status: 403 });
+    }
+    if (document === undefined) {
+      noTerms = true;
+    } else if (drifted) {
+      // Belt and braces: the button is not rendered in this state, so
+      // reaching here means a hand-made post or a deployment that moved
+      // between the render and the submit.
+      refusal = t.termsOutOfStep;
+    } else {
+      try {
+        participation = await api.optIn(document.version);
+        joined = true;
+      } catch (error) {
+        if (!(error instanceof CashbackApiError)) {
+          throw error;
+        }
+        if (error.status === 409) {
+          // Already active. Two tabs, or a double submit. It is the outcome
+          // they wanted, so it is not a refusal.
+          joined = true;
+        } else if (error.status === 400) {
+          // The version in force moved under them. Never re-post: a stale
+          // consent is never recorded, and re-posting would be asking the
+          // api to record one.
+          refusal = t.termsMovedRetry;
+        } else if (error.status === 503) {
+          noTerms = true;
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
+
+  if (!joined) {
+    participation = await api.participation();
+  }
+} catch (error) {
+  if (isUnauthorized(error)) {
+    unrecognised = true;
+    Astro.response.status = 403;
+  } else {
+    if (error instanceof CashbackConfigurationError) {
+      console.error(`cashback: ${error.message}`);
+    }
+    apiUnavailable = true;
+    Astro.response.status = 503;
+    Astro.response.headers.set('Retry-After', '60');
+  }
+}
+
+const fixtures = api?.source === 'fixture';
+const active = joined || participation?.status === 'active';
+const hadLeft = !active && participation?.status === 'left';
+
+// Whether there is a consent worth asking for.
+//
+// In fixture mode the answer is always yes. The fixture client reports every
+// member as already participating, so the honest states below would never
+// draw and this screen would be unreviewable on a preview — where reviewing
+// it is the whole point. Nothing is recorded there either way.
+const canAccept = document !== undefined && !drifted && !apiUnavailable && !unrecognised;
+const asking = fixtures || (canAccept && !active);
+
+const homeHref = frontPagePath(lang, slugs);
+---
+
+<ReaderLayout
+  lang={lang}
+  title={`${brand.name} — ${t.joinHeading}`}
+  description={t.joinIntro}
+  homeHref={homeHref}
+>
+  <MemberBar lang={lang} slugs={slugs} current="catalogue" />
+
+  <main class="page">
+    {fixtures && <FixtureNotice title={t.cashback} body={t.fixtureNotice} />}
+
+    <header class="head">
+      <h1>{t.joinHeading}</h1>
+      <p>{hadLeft ? t.rejoinIntro : t.joinIntro}</p>
+    </header>
+
+    {
+      unrecognised && (
+        <p class="band" role="alert">
+          {t.notRecognised} <a href={signInPath(lang, { next: here })}>{t.notRecognisedAction}</a>
+        </p>
+      )
+    }
+    {apiUnavailable && <p class="band" role="alert">{t.pageUnavailable}</p>}
+    {refusal !== null && <p class="band" role="alert">{refusal}</p>}
+    {noTerms && <p class="band" role="alert">{t.noTermsHere}</p>}
+    {
+      drifted && document !== undefined && (
+        <p class="band" role="alert">{t.termsOutOfStep}</p>
+      )
+    }
+
+    {
+      /* Already in — nothing to accept, and the wallet is where they were
+         going. Not a redirect: somebody who followed a link here is owed a
+         sentence saying why there is nothing to do. */
+      active && !asking && (
+        <section class="done" role="status">
+          <p>{t.alreadyJoined}</p>
+          <a class="btn btn-primary" href={walletPath(lang, slugs)}>{t.toWallet}</a>
+        </section>
+      )
+    }
+
+    {
+      asking && document !== undefined && (
+        <section class="offer">
+          <p class="consent">{t.joinConsent(document.version)}</p>
+          <a class="terms-link" href={`/${lang}/terms`}>{t.readTerms}</a>
+          <form method="post" action={`${Astro.url.pathname}`}>
+            <button class="btn btn-primary btn-block" type="submit">{t.optIn}</button>
+          </form>
+          <p class="fine">{t.rateAtClick}</p>
+        </section>
+      )
+    }
+
+    <p class="more"><a href={cataloguePath(lang, slugs)}>{t.catalogue}</a></p>
+  </main>
+</ReaderLayout>
+
+<style>
+  .page {
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-8);
+  }
+
+  .head {
+    padding-bottom: var(--space-6);
+    border-bottom: 2px solid var(--color-text);
+  }
+
+  .head h1 {
+    margin: 0 0 var(--space-2);
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 28px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+  }
+
+  .head p {
+    margin: 0;
+    max-width: 56ch;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  .band {
+    margin: var(--space-6) 0 0;
+    padding: var(--space-3) var(--space-4);
+    border-left: 2px solid var(--color-accent-700);
+    background: var(--color-accent-100);
+    max-width: 56ch;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--color-accent-800);
+    text-wrap: pretty;
+  }
+
+  /* The offer and the done state share a measure, so the page does not
+     jump between them. */
+  .offer,
+  .done {
+    margin-top: var(--space-6);
+    max-width: 46ch;
+  }
+
+  .done p {
+    margin: 0 0 var(--space-3);
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--color-text);
+  }
+
+  .consent {
+    margin: 0 0 var(--space-2);
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--color-text);
+    text-wrap: pretty;
+  }
+
+  .terms-link {
+    display: inline-block;
+    margin-bottom: var(--space-4);
+    font-size: 13px;
+  }
+
+  .fine {
+    margin: var(--space-3) 0 0;
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    text-wrap: pretty;
+  }
+
+  .more {
+    margin-top: var(--space-8);
+    font-size: 13px;
+  }
+</style>

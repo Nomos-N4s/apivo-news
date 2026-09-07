@@ -143,6 +143,31 @@ export interface CashbackStrings {
   /* Participation */
   readonly notParticipating: string;
   readonly optIn: string;
+  /** The opt-in screen's own heading and lede. */
+  readonly joinHeading: string;
+  readonly joinIntro: string;
+  /** What accepting means, beside the button that does it. */
+  readonly joinConsent: (version: string) => string;
+  readonly readTerms: string;
+  /** Already in — nothing to accept, so the page sends them on. */
+  readonly alreadyJoined: string;
+  readonly toWallet: string;
+  /** Opted in once, left since. The same screen, a different sentence. */
+  readonly rejoinIntro: string;
+  /**
+   * The deployment names no brand, so there is no version in force to
+   * accept. `POST /participation` answers 503 for this and the page says so
+   * rather than retrying something that cannot succeed.
+   */
+  readonly noTermsHere: string;
+  /**
+   * The words on file and the version this deployment names disagree. We
+   * will not collect a consent we cannot vouch for; the same reason the api
+   * refuses a stale version, one layer up.
+   */
+  readonly termsOutOfStep: string;
+  /** The version moved between rendering the page and pressing the button. */
+  readonly termsMovedRetry: string;
 
   /* Operator */
   readonly operations: string;
@@ -388,6 +413,21 @@ const el: CashbackStrings = {
   notRecognisedAction: 'Σύνδεση ξανά',
   notParticipating: 'Δεν συμμετέχεις ακόμη στην επιστροφή χρημάτων.',
   optIn: 'Συμμετοχή',
+  joinHeading: 'Συμμετοχή στην επιστροφή χρημάτων',
+  joinIntro:
+    'Η γλώσσα ανάγνωσης και οι τόποι σου μένουν όπως είναι. Με τη συμμετοχή ανοίγει το πορτοφόλι και μπορείς να ανοίγεις καταστήματα με καταγεγραμμένο κλικ.',
+  joinConsent: (version) => `Με τη συμμετοχή αποδέχεσαι τους όρους, έκδοση ${version}.`,
+  readTerms: 'Διάβασε τους όρους',
+  alreadyJoined: 'Συμμετέχεις ήδη.',
+  toWallet: 'Στο πορτοφόλι σου',
+  rejoinIntro:
+    'Είχες αποχωρήσει. Μπορείς να ξαναμπείς όποτε θέλεις· οι παλιές σου καταχωρίσεις παρέμειναν στη θέση τους.',
+  noTermsHere:
+    'Αυτή η εγκατάσταση δεν ορίζει όρους, οπότε δεν υπάρχει έκδοση για να αποδεχθείς. Δεν είναι κάτι που διορθώνεται με ανανέωση της σελίδας.',
+  termsOutOfStep:
+    'Το κείμενο των όρων και η έκδοση που δηλώνει αυτή η εγκατάσταση δεν συμφωνούν. Δεν ζητάμε αποδοχή για κείμενο που δεν μπορούμε να εγγυηθούμε.',
+  termsMovedRetry:
+    'Οι όροι άλλαξαν όσο διάβαζες. Ξαναφόρτωσε τη σελίδα και διάβασέ τους πριν αποδεχθείς.',
 
   operations: 'Λειτουργίες',
   queueUnattributed: 'Χωρίς αντιστοίχιση',
@@ -630,6 +670,21 @@ const de: CashbackStrings = {
   notRecognisedAction: 'Erneut anmelden',
   notParticipating: 'Du nimmst noch nicht am Cashback teil.',
   optIn: 'Teilnehmen',
+  joinHeading: 'Am Cashback teilnehmen',
+  joinIntro:
+    'Lesesprache und Orte bleiben, wie sie sind. Mit der Teilnahme kommt die Übersicht dazu, und du kannst Shops mit einem erfassten Klick öffnen.',
+  joinConsent: (version) => `Mit der Teilnahme nimmst du die Bedingungen an, Fassung ${version}.`,
+  readTerms: 'Bedingungen lesen',
+  alreadyJoined: 'Du nimmst bereits teil.',
+  toWallet: 'Zu deiner Übersicht',
+  rejoinIntro:
+    'Du warst ausgestiegen. Du kannst jederzeit wieder einsteigen; deine früheren Buchungen sind geblieben, wo sie waren.',
+  noTermsHere:
+    'Diese Installation benennt keine Bedingungen, also gibt es keine Fassung, die du annehmen könntest. Neu laden hilft dabei nicht.',
+  termsOutOfStep:
+    'Der Text der Bedingungen und die Fassung, die diese Installation nennt, stimmen nicht überein. Wir bitten um keine Zustimmung zu einem Text, für den wir nicht einstehen können.',
+  termsMovedRetry:
+    'Die Bedingungen haben sich geändert, während du gelesen hast. Lade die Seite neu und lies sie, bevor du zustimmst.',
 
   operations: 'Betrieb',
   queueUnattributed: 'Ohne Zuordnung',

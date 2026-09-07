@@ -9,8 +9,8 @@ import type { ReadingLanguage } from '../reader/axes';
  * facts travel separately. The catalogue endpoint takes `lang` and `place`
  * as separate parameters, so the URL that leads to it does too.
  *
- * `wallet` and `withdraw` are static segments under the same prefix a
- * merchant slug occupies. Astro resolves a static route before a dynamic
+ * `wallet`, `withdraw` and `join` are static segments under the same prefix
+ * a merchant slug occupies. Astro resolves a static route before a dynamic
  * one, so `/el/munich/cashback/wallet` reaches the wallet even if a
  * retailer is ever slugged `wallet` — and that retailer becomes
  * unreachable rather than the wallet becoming a shop, which is the right
@@ -35,6 +35,18 @@ export function walletPath(lang: ReadingLanguage, slugs: readonly string[]): str
 /** The withdrawal request and its status. */
 export function withdrawPath(lang: ReadingLanguage, slugs: readonly string[]): string {
   return `${cataloguePath(lang, slugs)}/withdraw`;
+}
+
+/**
+ * Accepting the terms — the screen a member reaches before they can click.
+ *
+ * A static segment, so a retailer ever slugged `join` becomes unreachable
+ * rather than standing where the opt-in should be. That is the right way
+ * round: the worse failure is a member sent to a shop when they meant to
+ * accept the terms, and the api refuses their click either way (FR-110).
+ */
+export function joinPath(lang: ReadingLanguage, slugs: readonly string[]): string {
+  return `${cataloguePath(lang, slugs)}/join`;
 }
 
 /** One retailer's page. */
