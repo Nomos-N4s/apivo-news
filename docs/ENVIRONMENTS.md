@@ -296,22 +296,26 @@ Three things turn polling on, and only the first is configuration.
    is required for the `fixture` adapter as much as for a live one: an adapter
    that needs no credential still polls on behalf of somebody.
 
-2. **The account row**, which an operator creates. It is not created by the
-   binary and there is no seed command yet (T130):
+2. **The account row**, which an operator creates with a subcommand of the
+   same binary, run where the api runs so it reads the same `NETWORKS` and
+   `NETWORK_<DRIVER>_ACCOUNT_ID`:
 
-   ```sql
-   insert into cashback.network_account
-       (network_id, external_publisher_id, credential_ref, active, backfill_from)
-   values ('fixture', 'fixture-publisher', 'NETWORK_FIXTURE_API_KEY',
-           true, '2026-06-01T00:00:00Z');
+   ```sh
+   apivo connect-network -backfill-from 2026-06-01
    ```
 
-   `active` defaults to false so a half-configured account cannot start
-   fetching, and `backfill_from` is where an account nobody has polled starts
-   reading. Nothing invents that instant: too recent silently skips history
-   nobody notices is missing, too old asks a network for years of it. Until
-   both are set every sweep refuses by name, at ERROR, every interval — and
-   both are fixed with one `UPDATE` and no restart.
+   `backfill_from` is where an account nobody has polled starts reading, and
+   nothing invents that instant: too recent silently skips history nobody
+   notices is missing, too old asks a network for years of it. The row is
+   `active` from the start; an account can be connected `-inactive` and
+   switched on later with one `UPDATE`, which needs no restart because every
+   sweep re-reads the row on every run.
+
+   **Then restart the api.** It resolves the account once, at startup. An
+   api that started before the row existed logs `NO AFFILIATE NETWORK IS
+   CONNECTED` at ERROR and registers only its three global jobs — neither
+   sweep and no catalogue import — and stays that way until it starts
+   again, however many rows are inserted underneath it.
 
 3. **A bigger connection pool.** The scheduler holds one connection per
    running job and one for its work, plus two reserved for the rest of the
