@@ -407,7 +407,57 @@ run qa
 check "a failed rollout rolls back" 1 '"event":"rolled_back"'
 check_pinned "and compose is pinned to the digest that was serving" "$REGISTRY/api@$DIGEST_A"
 check_state "and the recorded state still names the good release" API_DIGEST "$DIGEST_A"
-check "and it warns that the channel will be retried" 1 "the next tick will try it again"
+check "and it says the pair will not be tried again" 1 "will NOT be tried again"
+
+# ===========================================================================
+# The pair that already failed is attempted ONCE.
+#
+# Before this, a failed rollout left the channel untouched and `current` still
+# naming the old digests, so the next tick rolled forward into the identical
+# failure - every sixty seconds, recreating BOTH containers twice per cycle.
+# The frontend was never at fault and was restarted onto alternating builds
+# anyway, so the site served two different versions of itself for as long as
+# the api stayed broken. That is the loop these tests close.
+#
+# Three properties, all load-bearing. Refusing without still running `up -d`
+# would trade a churn loop for a host that stops self-healing; refusing
+# without clearing on a moved channel would turn a broken deploy into a latch
+# somebody has to remember to release; and refusing after the pull would keep
+# moving gigabytes for an answer already known.
+# ===========================================================================
+
+# The next tick. Same channel, same broken pair, nothing changed anywhere.
+: > "$STUB_DIR/calls"
+run qa
+check "the tick after a failed rollout refuses the same pair" 1 '"event":"rollout_refused"'
+check "and names the release it is holding instead" 1 "keeps serving v0.1.0"
+check_pinned "and leaves compose on the release that works" "$REGISTRY/api@$DIGEST_A"
+check_state "and the recorded state is still the good one" API_DIGEST "$DIGEST_A"
+
+if grep -q '^pull' "$STUB_DIR/calls"; then
+    echo "FAIL: a refused tick pulled images it was never going to run"
+    FAILS=1
+else
+    echo "ok: a refused tick pulls nothing"
+fi
+
+# The quiet path's whole purpose survives the refusal: a container that died
+# between ticks must still come back while the environment is held.
+if grep -q '^compose up' "$STUB_DIR/calls"; then
+    echo "ok: a refused tick still converges the running stack"
+else
+    echo "FAIL: a refused tick stopped self-healing, so a container that died between ticks would stay dead"
+    FAILS=1
+fi
+
+# Not a latch: a channel naming any other pair is taken on the very next tick,
+# with nothing for an operator to remember.
+printf '%s' "$DIGEST_A" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' 'v0.3.0' > "$STUB_DIR/label_version"
+run qa
+check "a channel that moves on clears the refusal without a manual step" 0 ""
+check_state "and the pair it moved to is recorded" WEB_DIGEST "$WEB_B"
 
 reset
 settle
