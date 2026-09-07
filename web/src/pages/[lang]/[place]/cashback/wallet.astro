@@ -9,7 +9,7 @@ import {
   type CashbackApi,
 } from '../../../../lib/cashback/api';
 import { formatMoney, formatSignedMoney } from '../../../../lib/cashback/money';
-import { cataloguePath, walletPath, withdrawPath } from '../../../../lib/cashback/paths';
+import { cataloguePath, joinPath, walletPath, withdrawPath } from '../../../../lib/cashback/paths';
 import type {
   EntryState,
   WalletEntry,
@@ -281,8 +281,11 @@ const stepsFor = (entry: WalletEntry): readonly Step[] => {
     {
       !apiUnavailable && !participating && (
         <section class="band">
+          {/* The catalogue was the wrong door: the api refuses a click-out
+              from anybody who has not opted in (FR-110), so sending them
+              shopping sent them to a refusal. The opt-in is the door. */}
           <p>{t.notParticipating}</p>
-          <a class="btn btn-primary" href={cataloguePath(lang, slugs)}>{t.catalogue}</a>
+          <a class="btn btn-primary" href={joinPath(lang, slugs)}>{t.optIn}</a>
         </section>
       )
     }

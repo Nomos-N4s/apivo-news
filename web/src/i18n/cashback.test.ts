@@ -102,6 +102,7 @@ describe('every interpolating string', () => {
         t.shortfall('2,00 \u20ac'),
         t.requestRecorded('WD-1'),
         t.reservedForRequest('18,40 \u20ac'),
+        t.joinConsent('0.1.0'),
       ];
       for (const line of built) {
         expect(line.trim()).not.toBe('');
