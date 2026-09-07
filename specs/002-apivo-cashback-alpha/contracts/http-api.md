@@ -69,18 +69,35 @@ records are untouched; pending entries continue to resolve.
 - Query: `lang` (required), `place` (required, repeatable), `category`,
   `q`, `limit`, `cursor`. Language and place stay separate parameters
   (constitution VII).
+- `lang` is required and must look like a BCP-47 primary subtag; the shop
+  page falls back when nothing is asked for, the shelf does not, because a
+  shelf of forty names in a language the reader did not choose is a shelf
+  they cannot use. Copy missing in it falls back per retailer, labelled.
+- `place` scopes each slug to itself and everything under it (the same
+  walk as browsing), and a reader following several places sees a retailer
+  once. A slug that names no place is refused, never dropped: a listing
+  scoped to fewer places than were asked for looks exactly like a listing.
+- `q` matches, case-insensitively, the name the reader would see — the
+  resolved one, fallback included.
+- `limit` defaults to 20 and is capped at 100; zero, negative or not a
+  whole number is 400. `cursor` is opaque, issued by this listing only; pages
+  run in slug order and `next_cursor` is null on the last one.
 - **`category` has nothing behind it.** No table in the schema records one,
   and inventing a taxonomy would settle four product questions (who owns
   the set, whether it hangs off the retailer or the band, how it localises,
   whether it filters or browses) in a member-facing URL. Tracked as issue
-  #414; unbuilt until it is answered.
-- 200 items:
+  #414; refused with 400 rather than ignored until it is answered, because
+  a filter that is silently ignored is a page of the wrong shops with no
+  error on it.
+- 200 `{ items: [...], next_cursor }`, each item
   `{ merchant_id, slug, name, name_language, name_is_fallback, summary, rates: [...] }`,
-  the rates in the same shape `GET /merchants/{slug}` publishes them.
-  `name_is_fallback` is how US5 scenario 2 renders "shown in German" rather
-  than silently pretending.
-- 400 on unknown `lang` or `place`. Empty result is an empty list, never a
-  500.
+  the rates in the same shape `GET /merchants/{slug}` publishes them and
+  from the same definition of "published": the preferred route's bands in
+  force at the moment of reading. `name_is_fallback` is how US5 scenario 2
+  renders "shown in German" rather than silently pretending.
+- 400 on a missing or malformed `lang`, a missing or unknown `place`, a
+  `category`, a bad `limit` or a foreign `cursor`. Empty result is an empty
+  list, never a 500.
 
 ### GET /merchants/{slug}
 

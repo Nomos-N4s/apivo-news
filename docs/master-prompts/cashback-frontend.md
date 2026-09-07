@@ -78,7 +78,7 @@ token, the catalogue included. Operator routes additionally require
 | `GET /participation` | the caller's opt-in; 404 when they never opted in | live |
 | `POST /participation` `{terms_version}` | opt in; the version must be the brand's current one; 503 with no brand | live |
 | `DELETE /participation` | leave | live |
-| `GET /catalogue?lang&place…&q&limit&cursor` | retailers for a language and places, rates in the merchant-page shape | **not implemented — B2, #545** |
+| `GET /catalogue?lang&place…&q&limit&cursor` | `{items, next_cursor}`: retailers for a language and places, each with its rates in the merchant-page shape; `lang` and at least one `place` required, `category` refused (#414) | live |
 | `GET /merchants/{slug}?lang` | one retailer, every band published for them | live |
 | `POST /clickouts` `{offer_id}` | `{click_ref, redirect_url, expires_at}`; the band is snapshotted onto the click (FR-013) | live; does not yet refuse a member who has not opted in — **B3**, T254 |
 | `GET /wallet` | pending, confirmed, reserved, paid out, threshold | live |
@@ -170,7 +170,11 @@ and one pull request each, none of them the frontend's to build:
   described under The contract, with `GET /api/v1/account` beside it. A
   sign-in calls it as its last step, and nothing else is needed for a
   member to exist to the api.
-- **B2 — `GET /catalogue` (#545).** Documented, called by the web, absent.
+- **B2 — `GET /catalogue` (#545): landed.** `GET /api/v1/cashback/catalogue`
+  as described under The contract: one page of retailers in slug order,
+  scoped to the places the reader follows, the rates on each card the
+  same bands the retailer's page shows. `api/openapi.json` has the exact
+  shape under `listCatalogue`.
 - **B3 — FR-110 (spec 004, T254).** The click-out refuses a member who has not opted in
   Until it lands the screens must not offer a click to
   a member without a participation.
@@ -209,8 +213,10 @@ and one pull request each, none of them the frontend's to build:
   own brand, which is the same file the api reads — and
   `POST /participation` with that version. A 503 there means the
   deployment has no brand, and the page says so rather than retrying.
-- **F4 — catalogue on the real endpoint**, once B2 lands, keeping the
-  fixture for development. Language and place stay separate parameters
+- **F4 — catalogue on the real endpoint**, now that B2 is live, keeping
+  the fixture for development. The page is `{items, next_cursor}`, not a
+  bare list; pass `next_cursor` back as `cursor` and stop when it is null.
+  Never send `category`: the api refuses it rather than ignoring it. Language and place stay separate parameters
   (constitution VII); `name_is_fallback` renders "shown in German" rather
   than pretending.
 - **F5 — click-out, end to end in a browser**: the retailer page's form,
@@ -234,7 +240,7 @@ and one pull request each, none of them the frontend's to build:
 
 ## The finish line: one real transaction
 
-**Preconditions.** B2, B4 and F1–F5 merged. QA switched from the
+**Preconditions.** F1–F5 merged. QA switched from the
 fixture network to Linkwise: `NETWORKS=linkwise` and its four keys in
 `/etc/apivo/qa/api.env`, `apivoctl deploy qa`, `apivo connect-network`,
 a restart, `apivo import-catalogue`, and `apivo publish-offer` on a
@@ -298,8 +304,8 @@ Work the frontend list in order — F1 sign-in on the design's terms, an
 email link and never a password, F2 gating, F3
 opt-in, F4 catalogue, F5 click-out, F6 wallet, F7 payout destination,
 F8 the end-to-end test, F9 languages and the brand lint — and do not
-build against a backend gap: B2, B4 and B5 are the Go side's to land,
-B1 is live, and the file says which screen waits on which. Develop and test
+build against a backend gap: B1, B2, B4 and B5 are live, B3 and B6
+are still the Go side's, and the file says which screen waits on which. Develop and test
 against `make cashback-demo`, which runs the whole stack locally and
 mints member tokens; prove integration on QA, not on previews.
 
