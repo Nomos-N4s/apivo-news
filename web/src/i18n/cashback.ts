@@ -82,7 +82,28 @@ export interface CashbackStrings {
   readonly shopAndEarn: string;
   readonly seeTerms: string;
   readonly noMerchants: string;
+  /**
+   * What a refused click-out says, by what the api actually answered.
+   *
+   * Six refusals used to collapse into `clickoutFailed`, which describes
+   * only one of them. They differ in what the member should do next, and
+   * one of them — not having opted in — is the only one they can act on.
+   * `clickoutFailed` stays as the answer for a status with no sentence of
+   * its own.
+   */
   readonly clickoutFailed: string;
+  /**
+   * The per-band action, shown only where a retailer publishes more than
+   * one. A click is tracked against an OFFER, so a second band a member
+   * cannot press is a rate they cannot earn.
+   */
+  readonly openThisBand: string;
+  readonly clickoutNotJoined: string;
+  readonly clickoutTooMany: string;
+  /** The same, when the api said how long to wait. */
+  readonly clickoutTooManyUntil: (when: string) => string;
+  readonly clickoutOfferGone: string;
+  readonly clickoutShopUnreachable: string;
   readonly merchantNotFound: string;
 
   /* Withdrawal */
@@ -361,6 +382,17 @@ const el: CashbackStrings = {
   noMerchants: 'Κανένα κατάστημα για αυτούς τους τόπους.',
   clickoutFailed:
     'Το κλικ δεν καταγράφηκε, οπότε δεν σε στείλαμε στο κατάστημα. Χωρίς καταγραφή η αγορά δεν αποδίδεται σε σένα — δοκίμασε ξανά σε λίγο.',
+  openThisBand: 'Άνοιγμα',
+  clickoutNotJoined:
+    'Δεν έχεις αποδεχθεί ακόμη τους όρους, οπότε το κλικ δεν καταγράφηκε και δεν σε στείλαμε στο κατάστημα.',
+  clickoutTooMany:
+    'Άνοιξες πολλά καταστήματα σε σύντομο διάστημα. Περίμενε λίγο και δοκίμασε ξανά.',
+  clickoutTooManyUntil: (when) =>
+    `Άνοιξες πολλά καταστήματα σε σύντομο διάστημα. Δοκίμασε ξανά ${when}.`,
+  clickoutOfferGone:
+    'Αυτή η προσφορά δεν ισχύει πια. Ξαναφόρτωσε τη σελίδα για να δεις τι ισχύει τώρα.',
+  clickoutShopUnreachable:
+    'Δεν μπορέσαμε να ανοίξουμε το κατάστημα αυτή τη στιγμή. Δεν καταγράφηκε τίποτα, οπότε μπορείς να ξαναδοκιμάσεις με ασφάλεια.',
   merchantNotFound: 'Αυτό το κατάστημα δεν είναι διαθέσιμο.',
 
   withdraw: 'Ανάληψη',
@@ -618,6 +650,17 @@ const de: CashbackStrings = {
   noMerchants: 'Keine Shops für diese Orte.',
   clickoutFailed:
     'Der Klick wurde nicht erfasst, deshalb haben wir dich nicht zum Shop geschickt. Ohne Erfassung lässt sich der Einkauf dir nicht zuordnen — versuch es gleich noch einmal.',
+  openThisBand: 'Öffnen',
+  clickoutNotJoined:
+    'Du hast die Bedingungen noch nicht angenommen, deshalb wurde der Klick nicht erfasst und wir haben dich nicht zum Shop geschickt.',
+  clickoutTooMany:
+    'Du hast in kurzer Zeit viele Shops geöffnet. Warte einen Moment und versuch es noch einmal.',
+  clickoutTooManyUntil: (when) =>
+    `Du hast in kurzer Zeit viele Shops geöffnet. Versuch es ${when} noch einmal.`,
+  clickoutOfferGone:
+    'Dieses Angebot gilt nicht mehr. Lade die Seite neu, um zu sehen, was jetzt gilt.',
+  clickoutShopUnreachable:
+    'Wir konnten den Shop gerade nicht öffnen. Es wurde nichts erfasst, du kannst es also bedenkenlos noch einmal versuchen.',
   merchantNotFound: 'Dieser Shop ist nicht verfügbar.',
 
   withdraw: 'Auszahlen',

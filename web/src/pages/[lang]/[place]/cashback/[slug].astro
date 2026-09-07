@@ -9,7 +9,7 @@ import {
   createCashbackApi,
   type CashbackApi,
 } from '../../../../lib/cashback/api';
-import { cataloguePath, merchantPath } from '../../../../lib/cashback/paths';
+import { cataloguePath, joinPath, merchantPath } from '../../../../lib/cashback/paths';
 import type { MerchantDetail } from '../../../../lib/cashback/types';
 import { sessionOf } from '../../../../lib/editorial/session';
 import { signInPath } from '../../../../lib/member/access';
@@ -94,15 +94,43 @@ if (!apiUnavailable && merchant === null) {
 
 const fixtures = api?.source === 'fixture';
 const homeHref = frontPagePath(lang, slugs);
-const clickoutFailed = Astro.url.searchParams.has('clickout');
+// What a refused click-out said, not merely that one was refused.
+//
+// Six refusals used to collapse into one sentence. They differ in what the
+// member should do next, and exactly one of them is theirs to act on: since
+// #568 the api answers 403 to a member who has not accepted the terms, and
+// since #593 there is a screen to send them to. A status with no sentence of
+// its own falls back to the general one, and a value that is not a status at
+// all renders nothing — a query parameter is somebody else's input.
+const refusedWith = Number(Astro.url.searchParams.get('clickout') ?? '');
+const refusal: { readonly said: string; readonly go?: { href: string; label: string } } | null =
+  refusedWith === 403
+    ? { said: t.clickoutNotJoined, go: { href: joinPath(lang, slugs), label: t.optIn } }
+    : refusedWith === 429
+      ? { said: t.clickoutTooMany }
+      : refusedWith === 409
+        ? { said: t.clickoutOfferGone }
+        : refusedWith === 502
+          ? { said: t.clickoutShopUnreachable }
+          : refusedWith === 401
+            ? {
+                said: t.notRecognised,
+                go: { href: signInPath(lang, { next: here }), label: t.notRecognisedAction },
+              }
+            : Number.isInteger(refusedWith) && refusedWith >= 400
+              ? { said: t.clickoutFailed }
+              : null;
 const backHere = merchantPath(lang, slugs, slug);
 
 // The kicker is the two facts true of every partner on this shelf: online,
 // reached by a tracked link (#445 — nothing is card-linked or in-store).
 const kicker = `${t.online} · ${t.trackedLink}`;
-// The click-out is one form, on the first band: a click is tracked against
-// an offer, and the band a member reads first is the one the button opens.
+// The primary call to action opens the first band, which is the one the page
+// leads with. Every OTHER band gets its own button in the rate table below:
+// a click is tracked against an offer, so a retailer publishing two bands had
+// one nobody could press and therefore a rate nobody could earn.
 const firstRate = merchant?.rates[0];
+const extraRates = merchant === null ? [] : merchant.rates.slice(1);
 const trackingSteps = [t.tracking1, t.tracking2, t.tracking3] as const;
 const voids = [t.void1, t.void2, t.void3] as const;
 ---
@@ -130,7 +158,19 @@ const voids = [t.void1, t.void2, t.void3] as const;
       )
     }
     {apiUnavailable && <p class="band" role="alert">{t.pageUnavailable}</p>}
-    {clickoutFailed && <p class="band" role="alert">{t.clickoutFailed}</p>}
+    {
+      refusal !== null && (
+        <p class="band" role="alert">
+          {refusal.said}
+          {refusal.go !== undefined && (
+            <>
+              {' '}
+              <a href={refusal.go.href}>{refusal.go.label}</a>
+            </>
+          )}
+        </p>
+      )
+    }
 
     {
       merchant !== null && (
@@ -157,6 +197,11 @@ const voids = [t.void1, t.void2, t.void3] as const;
               {
                 merchant.rates.length > 0 && (
                   <div class="scroll">
+                    {/* One form over the table: each button carries its own
+                        offer id as its value, so there is no hidden input per
+                        row and no form nested inside a cell. */}
+                    <form method="post" action="/api/cashback/clickout">
+                      <input type="hidden" name="back" value={backHere} />
                     <table class="table">
                       <thead>
                         <tr>
@@ -164,10 +209,11 @@ const voids = [t.void1, t.void2, t.void3] as const;
                           <th scope="col">{t.validUntil}</th>
                           <th scope="col">{t.conditions}</th>
                           <th scope="col">{t.exclusions}</th>
+                          {extraRates.length > 0 && <th scope="col">{t.openThisBand}</th>}
                         </tr>
                       </thead>
                       <tbody>
-                        {merchant.rates.map((rate) => (
+                        {merchant.rates.map((rate, index) => (
                           <tr>
                             <td class="rate-cell">
                               <RateBadge lang={lang} rate={rate} />
@@ -179,10 +225,28 @@ const voids = [t.void1, t.void2, t.void3] as const;
                             </td>
                             <td class="small">{rate.conditions ?? t.none}</td>
                             <td class="small">{rate.exclusions ?? t.none}</td>
+                            {extraRates.length > 0 && (
+                              <td class="open-cell">
+                                {/* The first band already has the primary
+                                    button above; repeating it here would be
+                                    two controls doing one thing. */}
+                                {index > 0 && (
+                                  <button
+                                    class="btn btn-secondary open-band"
+                                    type="submit"
+                                    name="offer_id"
+                                    value={rate.offer_id}
+                                  >
+                                    {t.openThisBand}
+                                  </button>
+                                )}
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
                     </table>
+                    </form>
                   </div>
                 )
               }
@@ -360,6 +424,15 @@ const voids = [t.void1, t.void2, t.void3] as const;
   .scroll th {
     white-space: nowrap;
   }
+  .open-cell {
+    white-space: nowrap;
+  }
+
+  .open-band {
+    font-size: 12px;
+    padding: 4px var(--space-2);
+  }
+
   .rate-cell {
     font-weight: 600;
     white-space: nowrap;
