@@ -366,7 +366,7 @@ func (unreachableStore) Provenance(context.Context, uuid.UUID) (editorial.Proven
 // a status code alone would dress the loss up as an ordinary 404.
 func TestOperatorPatternsAreReachable(t *testing.T) {
 	t.Parallel()
-	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, unreachableOpsRefuser{}, unreachableOpsSettler{}, unreachableOpsReconciliation{}, unreachableOpsHeld{}, unreachableOpsDestinations{}, unreachableOpsAwaiting{}, alwaysOperator{})
+	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, unreachableOpsRefuser{}, unreachableOpsSettler{}, unreachableOpsReconciliation{}, unreachableOpsHeld{}, unreachableOpsDestinations{}, unreachableOpsAwaiting{}, unreachableOpsNetworks{}, alwaysOperator{})
 
 	for _, pattern := range ops.Patterns() {
 		t.Run(pattern, func(t *testing.T) {
@@ -497,6 +497,12 @@ func (unreachableOpsDestinations) UnverifiedDestinations(context.Context, ops.De
 
 func (unreachableOpsDestinations) Verify(context.Context, ops.Verification) (ops.Verified, error) {
 	return ops.Verified{}, errors.New("unreachable")
+}
+
+type unreachableOpsNetworks struct{}
+
+func (unreachableOpsNetworks) ConnectedNetworks(context.Context) ([]ops.ConnectedNetwork, error) {
+	return nil, errors.New("unreachable")
 }
 
 type unreachableOpsAwaiting struct{}
