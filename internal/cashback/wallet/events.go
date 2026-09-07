@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,6 +41,17 @@ const (
 	// this module's tables - which is what consumer rule 2 asks of a
 	// payload.
 	TypeParticipationEnded = EventProducer + ".participation.ended"
+	// TypeWithdrawalFlagged announces one withdrawal that is still moving
+	// money for somebody who is no longer here (T126, the spec's own edge
+	// case). It is an operator's to look at: nothing automatic may finish
+	// or refuse a payment on a deleted member's behalf.
+	//
+	// Declared here rather than beside the payout module's own withdrawal
+	// events because it is not a step in a withdrawal's life - the request
+	// is unchanged and stays exactly where it was. It is a fact about an
+	// ACCOUNT, noticed by the module that reacts to accounts ending, and it
+	// is announced without touching the request at all.
+	TypeWithdrawalFlagged = EventProducer + ".withdrawal.flagged"
 )
 
 // ErrNotAnnounced reports an event that could not be appended beside the
@@ -145,6 +157,83 @@ func (a *Announcer) Ended(ctx context.Context, db events.RowQuerier, left Partic
 		return fmt.Errorf("%w: %s: %w", ErrNotAnnounced, TypeParticipationEnded, err)
 	}
 	return a.append(ctx, db, TypeParticipationEnded, left.Member, payload)
+}
+
+// FlaggedWithdrawal is one request that needs an operator's eye, and why.
+type FlaggedWithdrawal struct {
+	// Request is the withdrawal, and the subject of the announcement: a
+	// consumer indexing work by request finds this where it already looks.
+	Request uuid.UUID
+	// Member is whose it is.
+	Member uuid.UUID
+	// State is the stage the request was at when it was flagged. Reported
+	// rather than implied, because what an operator does next differs:
+	// awaiting_approval is a decision nobody has taken, approved is money a
+	// rail is already carrying.
+	State string
+	// Reason is why it was flagged, in the vocabulary of the fact that
+	// caused it rather than free text.
+	Reason string
+	// At is when the cause happened - the deletion's own instant, not this
+	// process's clock, so the flag and the fact behind it name one moment
+	// however late the delivery was.
+	At time.Time
+}
+
+// WithdrawalFlagged announces one in-flight withdrawal belonging to an
+// account that is gone.
+//
+// KEYED, unlike this module's other two announcements, and for the reason
+// they are unkeyed: those describe changes a member may legitimately repeat,
+// and this describes one that cannot. A request is flagged for one cause
+// once, and delivery of the fact behind it is at-least-once - so without a
+// key a redelivered deletion would put the same withdrawal in front of an
+// operator again on every retry. The key is the request and the cause
+// together: a request flagged later for some other reason is a different
+// fact, and must not be silenced by this one.
+//
+// An [events.ErrAlreadyAppended] from here is the caller's to read as "this
+// was already said", which is the ordinary outcome of a redelivery.
+func (a *Announcer) WithdrawalFlagged(ctx context.Context, db events.RowQuerier, flagged FlaggedWithdrawal) error {
+	switch {
+	case flagged.Request == uuid.Nil:
+		return fmt.Errorf("%w: %s about no request", ErrNotAnnounced, TypeWithdrawalFlagged)
+	case flagged.Member == uuid.Nil:
+		return fmt.Errorf("%w: %s about no member", ErrNotAnnounced, TypeWithdrawalFlagged)
+	case strings.TrimSpace(flagged.Reason) == "":
+		return fmt.Errorf("%w: %s with no reason", ErrNotAnnounced, TypeWithdrawalFlagged)
+	}
+	payload, err := json.Marshal(struct {
+		RequestID uuid.UUID `json:"request_id"`
+		AccountID uuid.UUID `json:"account_id"`
+		State     string    `json:"state"`
+		Reason    string    `json:"reason"`
+		At        time.Time `json:"at"`
+	}{
+		RequestID: flagged.Request,
+		AccountID: flagged.Member,
+		State:     flagged.State,
+		Reason:    flagged.Reason,
+		At:        flagged.At,
+	})
+	if err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrNotAnnounced, TypeWithdrawalFlagged, err)
+	}
+	if _, err := a.writer.Append(ctx, db, events.Message{
+		Type:           TypeWithdrawalFlagged,
+		Subject:        flagged.Request,
+		IdempotencyKey: TypeWithdrawalFlagged + ":" + flagged.Request.String() + ":" + flagged.Reason,
+		Payload:        payload,
+	}); err != nil {
+		// Returned as it is, not wrapped in ErrNotAnnounced: the caller has
+		// to tell "already said" from "could not say", and only one of them
+		// is a failure.
+		if errors.Is(err, events.ErrAlreadyAppended) {
+			return err
+		}
+		return fmt.Errorf("%w: %s about request %s: %w", ErrNotAnnounced, TypeWithdrawalFlagged, flagged.Request, err)
+	}
+	return nil
 }
 
 // append writes one message and wraps whatever comes back, so every caller

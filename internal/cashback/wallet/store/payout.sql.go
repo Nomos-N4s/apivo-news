@@ -11,6 +11,65 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const inFlightWithdrawalsForAccount = `-- name: InFlightWithdrawalsForAccount :many
+select id, state, amount_minor, currency, requested_at
+  from cashback.withdrawal_request
+ where account_id = $1
+   and state in ('awaiting_approval', 'approved')
+ order by requested_at, id
+`
+
+type InFlightWithdrawalsForAccountRow struct {
+	ID          pgtype.UUID
+	State       string
+	AmountMinor int64
+	Currency    string
+	RequestedAt pgtype.Timestamptz
+}
+
+// The withdrawals of this member's that are still moving money (T126).
+//
+// In flight means reserved and not yet resolved: awaiting_approval, where
+// the member has asked and the amount is held out of their balance, and
+// approved, where an operator has said yes and the rail has not yet
+// settled. rejected, paid and failed are all finished - the money is back,
+// gone, or accounted for - and a finished request needs nobody's attention.
+//
+// Asked when an account is deleted upstream, because that is the one moment
+// when money in flight belongs to somebody who is no longer here. The
+// states are named here rather than by the caller for the reason every
+// other predicate in this schema is: the stored column is the authority on
+// what stage a request is at, and a second list in Go is where the two
+// would eventually disagree - as money quietly paid to a closed account.
+//
+// Ordered oldest first, so what an operator hears about first is what has
+// been waiting longest.
+func (q *Queries) InFlightWithdrawalsForAccount(ctx context.Context, accountID pgtype.UUID) ([]InFlightWithdrawalsForAccountRow, error) {
+	rows, err := q.db.Query(ctx, inFlightWithdrawalsForAccount, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []InFlightWithdrawalsForAccountRow
+	for rows.Next() {
+		var i InFlightWithdrawalsForAccountRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.State,
+			&i.AmountMinor,
+			&i.Currency,
+			&i.RequestedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const settledPayoutsFor = `-- name: SettledPayoutsFor :one
 select coalesce(sum(payout.amount_minor), 0)::bigint as paid_minor
   from cashback.payout payout

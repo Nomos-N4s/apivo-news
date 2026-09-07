@@ -33,3 +33,27 @@ select coalesce(sum(payout.amount_minor), 0)::bigint as paid_minor
  where request.account_id = sqlc.arg(account_id)
    and payout.currency = sqlc.arg(currency)
    and payout.state = 'settled';
+
+-- name: InFlightWithdrawalsForAccount :many
+-- The withdrawals of this member's that are still moving money (T126).
+--
+-- In flight means reserved and not yet resolved: awaiting_approval, where
+-- the member has asked and the amount is held out of their balance, and
+-- approved, where an operator has said yes and the rail has not yet
+-- settled. rejected, paid and failed are all finished - the money is back,
+-- gone, or accounted for - and a finished request needs nobody's attention.
+--
+-- Asked when an account is deleted upstream, because that is the one moment
+-- when money in flight belongs to somebody who is no longer here. The
+-- states are named here rather than by the caller for the reason every
+-- other predicate in this schema is: the stored column is the authority on
+-- what stage a request is at, and a second list in Go is where the two
+-- would eventually disagree - as money quietly paid to a closed account.
+--
+-- Ordered oldest first, so what an operator hears about first is what has
+-- been waiting longest.
+select id, state, amount_minor, currency, requested_at
+  from cashback.withdrawal_request
+ where account_id = sqlc.arg(account_id)
+   and state in ('awaiting_approval', 'approved')
+ order by requested_at, id;
