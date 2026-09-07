@@ -380,6 +380,12 @@ type Offer struct {
 	// MerchantSlug is the retailer's stable, human-readable address, as the
 	// frontend links to it.
 	MerchantSlug string
+	// RouteID is the route (cashback.merchant_network) this band is
+	// published on: the retailer as reached through one network. A click
+	// records it beside the offer, so the network the click was issued
+	// through is pinned by key to the route the rate snapshot came from
+	// rather than trusted (spec 004, 0037).
+	RouteID uuid.UUID
 	// NetworkID is the network whose route this band is published on
 	// ("awin", ...) - the network the click will be issued through, which
 	// follows from the band rather than being chosen beside it.
@@ -471,7 +477,7 @@ func offerFromRow(id uuid.UUID, row store.GetLiveOfferRow) (Offer, error) {
 	// An invalid pgtype.UUID converts to sixteen zero bytes without
 	// complaint, and a click attributed to the zero merchant is exactly the
 	// silent zero-fill this mapping refuses.
-	if !row.ID.Valid || !row.MerchantID.Valid {
+	if !row.ID.Valid || !row.MerchantID.Valid || !row.MerchantNetworkID.Valid {
 		return Offer{}, fmt.Errorf("%w %s: row carries an unset id", ErrMalformedOffer, id)
 	}
 
@@ -503,6 +509,7 @@ func offerFromRow(id uuid.UUID, row store.GetLiveOfferRow) (Offer, error) {
 		ID:               uuid.UUID(row.ID.Bytes),
 		MerchantID:       uuid.UUID(row.MerchantID.Bytes),
 		MerchantSlug:     row.MerchantSlug,
+		RouteID:          uuid.UUID(row.MerchantNetworkID.Bytes),
 		NetworkID:        row.NetworkID,
 		ClickRefParam:    row.ClickRefParam,
 		Rate:             band,

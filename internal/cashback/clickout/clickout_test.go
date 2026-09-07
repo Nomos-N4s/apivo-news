@@ -70,6 +70,7 @@ func anOffer() catalogue.Offer {
 		ID:               uuid.New(),
 		MerchantID:       uuid.New(),
 		MerchantSlug:     "a-retailer",
+		RouteID:          uuid.New(),
 		NetworkID:        "awin",
 		ClickRefParam:    "clickref",
 		Rate:             catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 400},

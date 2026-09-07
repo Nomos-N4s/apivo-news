@@ -45,6 +45,7 @@ func (s *stubStore) GetLiveOffer(_ context.Context, arg store.GetLiveOfferParams
 var (
 	offerID    = uuid.MustParse("5e0e0a4e-9c86-4c53-9f6a-1d2b3c4d5e6f")
 	merchantID = uuid.MustParse("a1b2c3d4-e5f6-4a01-8b23-c4d5e6f70819")
+	routeID    = uuid.MustParse("0b1c2d3e-4f50-4a61-8b72-c3d4e5f60718")
 	clickedAt  = time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
 	validFrom  = time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	validTo    = time.Date(2026, time.September, 30, 0, 0, 0, 0, time.UTC)
@@ -57,7 +58,7 @@ var (
 func percentRow() store.GetLiveOfferRow {
 	return store.GetLiveOfferRow{
 		ID:                pgtype.UUID{Bytes: offerID, Valid: true},
-		MerchantNetworkID: pgtype.UUID{Bytes: [16]byte{0x01}, Valid: true},
+		MerchantNetworkID: pgtype.UUID{Bytes: routeID, Valid: true},
 		RateKind:          "percent",
 		RateBps:           pgtype.Int4{Int32: 400, Valid: true},
 		MemberShareBps:    5000,
@@ -101,6 +102,7 @@ func TestLiveOfferMapsRows(t *testing.T) {
 				ID:               offerID,
 				MerchantID:       merchantID,
 				MerchantSlug:     "shop-example",
+				RouteID:          routeID,
 				NetworkID:        "awin",
 				ClickRefParam:    "clickref",
 				Rate:             catalogue.RateBand{Kind: catalogue.RatePercent, Percent: 400},
@@ -119,6 +121,7 @@ func TestLiveOfferMapsRows(t *testing.T) {
 				ID:            offerID,
 				MerchantID:    merchantID,
 				MerchantSlug:  "shop-example",
+				RouteID:       routeID,
 				NetworkID:     "awin",
 				ClickRefParam: "clickref",
 				Rate:          catalogue.RateBand{Kind: catalogue.RateFixed, Fixed: money.Amount{Minor: 250, Currency: "EUR"}},
@@ -258,6 +261,12 @@ func TestLiveOfferRejectsMalformedRows(t *testing.T) {
 		}},
 		{"an unset merchant id", func(row *store.GetLiveOfferRow) {
 			row.MerchantID = pgtype.UUID{}
+		}},
+		{"an unset route", func(row *store.GetLiveOfferRow) {
+			// A click pins its network to its route by key (0037); a route
+			// of sixteen zero bytes would be refused there, one insert too
+			// late to be a mapping error.
+			row.MerchantNetworkID = pgtype.UUID{}
 		}},
 		{"a band with no start", func(row *store.GetLiveOfferRow) {
 			row.ValidFrom = pgtype.Timestamptz{}
