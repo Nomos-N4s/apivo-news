@@ -1,0 +1,39 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01M1Z0DS20MYE4723X64GKZ864",
+  "session_id": "352e46d4-945d-4e7c-9d70-c97d660c799e",
+  "strategy": "manual-commit",
+  "created_at": "2026-09-07T22:39:43.153953Z",
+  "branch": "xcoder/604-rollout-retried-forever",
+  "checkpoints_count": 4,
+  "save_step_count": 1,
+  "files_touched": [
+    "deploy/hetzner/bin/apivo-reconcile"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5[1m]",
+  "turn_id": "d9c49a75faae",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 1191,
+    "cache_creation_tokens": 3512550,
+    "cache_read_tokens": 339395466,
+    "output_tokens": 505382,
+    "api_call_count": 596
+  },
+  "session_metrics": {
+    "turn_count": 17
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-09-07T22:39:42.1860642Z",
+    "agent_lines": 0,
+    "agent_removed": 2,
+    "human_added": 46,
+    "human_modified": 555,
+    "human_removed": 0,
+    "total_committed": 601,
+    "total_lines_changed": 603,
+    "agent_percentage": 0.33167495854063017,
+    "metric_version": 2
+  }
+}
