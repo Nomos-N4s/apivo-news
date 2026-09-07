@@ -93,3 +93,11 @@ wait, what? what is wrong with qa?
 ---
 
 can we work in other new screens? whilst the whole deployment topology thing is being solved? Like I went to the mockups again and I'm mising the launcher screen! it's so cool in both desktop and mobile, why haven't we built it? isn't the logical "entrypoint"? or does it belong to EverOS? the same for the home screen.
+
+---
+
+can I see the profile screen?
+
+---
+
+the mobile view doesn't work... at leas when i tried via developer tools
