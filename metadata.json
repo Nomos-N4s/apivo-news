@@ -3,7 +3,7 @@
   "checkpoint_id": "01M1Z0DS20MYE4723X64GKZ864",
   "strategy": "manual-commit",
   "branch": "xcoder/604-rollout-retried-forever",
-  "checkpoints_count": 4,
+  "checkpoints_count": 5,
   "files_touched": [
     "deploy/hetzner/bin/apivo-reconcile"
   ],
@@ -14,13 +14,20 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": "/0/prompt.txt"
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": "/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 1191,
-    "cache_creation_tokens": 3512550,
-    "cache_read_tokens": 339395466,
-    "output_tokens": 505382,
-    "api_call_count": 596
+    "input_tokens": 1199,
+    "cache_creation_tokens": 3518439,
+    "cache_read_tokens": 340671807,
+    "output_tokens": 511082,
+    "api_call_count": 600
   }
 }
