@@ -351,6 +351,44 @@ check "and the tick after the channel settles rolls forward" 0 '"event":"rollout
 check_state "onto the new pair" API_DIGEST "$DIGEST_B"
 
 # ===========================================================================
+# An image that cannot say what it is.
+#
+# The skew guard above compares two label values for equality, so what the
+# reconciler does when it CANNOT READ a label decides whether that guard
+# works at all. Substituting `dev` for an absent label spelled "I could not
+# find out" the same as "this is what it is", and two unlabelled images
+# therefore compared equal and sailed through the one check standing between
+# a half-moved channel and a mismatched deploy.
+#
+# Nothing downstream would have caught it: `served_version` is asserted
+# against that same value, so an api reporting `dev` would have been proved
+# to serve `dev` and the rollout recorded as sound.
+# ===========================================================================
+
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+: > "$STUB_DIR/label_version"
+run qa
+check "neither image carrying a version label is refused, not called 'dev'" 1 '"event":"unstamped"'
+check "and it says the pipeline did not publish that image" 1 "publish.yml sets that label on both images"
+check_state "and the environment is left on the pair that works" API_DIGEST "$DIGEST_A"
+
+# The half-labelled case, which is what a half-completed publish looks like
+# once one of the two images is rebuilt without the label.
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' 'v0.2.0' > "$STUB_DIR/label_version"
+: > "$STUB_DIR/web_label_version"
+run qa
+check "a web image alone with no label is refused too" 1 '"event":"unstamped"'
+check "and the refusal names web rather than api" 1 "/web carries no org.opencontainers.image.version"
+check_state "and that environment also keeps what it had" API_DIGEST "$DIGEST_A"
+
+# ===========================================================================
 # The registry is unreachable.
 #
 # The single most likely real failure - an expired GHCR credential - and the

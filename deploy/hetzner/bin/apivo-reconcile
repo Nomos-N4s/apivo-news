@@ -359,14 +359,34 @@ fi
 # image itself rather than from the tag that led here. This is what the
 # frontend renders in its footer and what the release probe compares against,
 # so it must come from the artefact.
+#
+# EMPTY when the label is absent or the inspect fails, and that is the whole
+# correctness of it. This used to substitute the literal `dev` for both, which
+# spelled "I could not find out" exactly the same as "this is what it is" -
+# and the skew guard below compares the two values for equality. Two images
+# with no label were therefore both called `dev`, compared equal, and passed
+# the one check standing between a half-moved channel and a mismatched
+# deploy: the precise pair that guard exists to refuse.
+#
+# It cannot be caught downstream either. `served_version` is asserted against
+# THIS value, so an api that said `dev` would have been proved to serve `dev`
+# and the rollout would have been recorded as sound.
 image_version() {
-    _v=$($DOCKER image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$1" 2>/dev/null || true)
-    [ -n "$_v" ] || _v=dev
-    printf '%s' "$_v"
+    $DOCKER image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$1" 2>/dev/null || true
 }
 
 IMAGE_VERSION=$(image_version "$API_REPO@$API_DIGEST")
 WEB_VERSION=$(image_version "$WEB_REPO@$WEB_DIGEST")
+
+# Refusing costs one tick and nothing else: the channel has not been consumed,
+# so a publish that lands the labels properly is picked up sixty seconds
+# later. Deploying an artefact that cannot say what it is costs an environment
+# nobody can describe.
+if [ -z "$IMAGE_VERSION" ] || [ -z "$WEB_VERSION" ]; then
+    _unstamped=web
+    [ -n "$IMAGE_VERSION" ] || _unstamped=api
+    die unstamped "$APIVO_REGISTRY/$_unstamped carries no org.opencontainers.image.version label, so this pair cannot be checked for the skew a half-moved channel produces. publish.yml sets that label on both images, so an image without one was not published by the pipeline - or the daemon could not inspect it. Nothing was changed; $ENV_NAME keeps serving whatever it already had." 1
+fi
 
 # ---------------------------------------------------------------------------
 # The two channel tags do not move atomically.
