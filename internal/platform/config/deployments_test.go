@@ -69,6 +69,31 @@ func deployments() []deployment {
 			},
 			elsewhere: base,
 		},
+		// The same host with the payout details vault layered on (ADR-0006).
+		//
+		// A separate shape rather than a longer path list on the one above,
+		// because both are real: the vault overlay is its own file precisely
+		// so cashback can run without it, and an environment that has not
+		// listed it must still start. Checking only the shape with the vault
+		// would stop proving that.
+		//
+		// What it proves is what this file proves for every other shape: the
+		// keys this combination sets are enough for FromEnv to start, and
+		// none of them makes it refuse. It does NOT prove PAYOUT_VAULT_URL is
+		// well formed - FromEnv only reads that key, and the endpoint is
+		// parsed in the composition root (cmd/apivo/vault.go), where a
+		// malformed one is a startup failure. The manifest's own value is
+		// held to its shape by deploy/hetzner/validate.sh, which asserts the
+		// api addresses `http://apivo-<env>-openbao:8200` and no other.
+		{
+			name: "hetzner-vault",
+			paths: []string{
+				"deploy/hetzner/compose/docker-compose.cashback.yml",
+				"deploy/hetzner/compose/docker-compose.vault.yml",
+				"deploy/hetzner/env/api.env.example",
+			},
+			elsewhere: base,
+		},
 	}
 }
 

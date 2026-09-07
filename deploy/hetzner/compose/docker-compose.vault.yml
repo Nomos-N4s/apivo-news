@@ -1,0 +1,193 @@
+# The payout details vault — OpenBao beside the api (ADR-0006).
+#
+# Loaded the same way the ledger is: by listing this file in COMPOSE_FILE.
+# An environment that does not list it has no vault, and that is a supported
+# state rather than a broken one — see "Why this is a file of its own" below.
+#
+# ---------------------------------------------------------------------------
+# What it holds, and why it is not the database
+# ---------------------------------------------------------------------------
+#
+# One secret per payout destination: the IBAN a member asked to be paid at.
+# ADR-0006 chose a vault over a column because the api must be unable to read
+# a destination's details back — it stores a reference, resolves nothing, and
+# the manual rail moves money by a person reading the vault's own interface.
+# A column would have made every future query, export and log a place those
+# digits could surface.
+#
+# Losing this vault strands every destination recorded in it. The members are
+# still there, their balances are still right, and nobody can be paid until
+# each one re-enters their details. That is the one operational fact about
+# this service that matters more than the rest, and it is why the backup
+# below is part of running it rather than a later improvement.
+#
+# ---------------------------------------------------------------------------
+# Why this is a file of its own rather than part of the cashback overlay
+# ---------------------------------------------------------------------------
+#
+# Because cashback without a vault is a state the api was deliberately built
+# to survive. With PAYOUT_VAULT_URL unset it starts, mounts the whole cashback
+# surface, says so once at ERROR, and answers 503 on the single endpoint that
+# records a NEW destination; reading destinations already recorded, and
+# withdrawing to them, keep working (cmd/apivo/vault.go).
+#
+# Folding this into docker-compose.cashback.yml would have made the vault
+# arrive with the ledger and quietly deleted that distinction. Two files keep
+# it true, and keep switching the vault on an increment an operator can make
+# on its own day.
+#
+# ---------------------------------------------------------------------------
+# It starts SEALED, and that must not fail a rollout
+# ---------------------------------------------------------------------------
+#
+# A vault holds its own encryption key sealed until somebody presents the
+# unseal shares. So a freshly created container — a host reboot, a change to
+# this file — is up, listening, and refusing to read or write anything until
+# an operator unseals it. That is the design, not a fault.
+#
+# It collides with the rollout gate. apivo-reconcile runs `compose up -d
+# --wait`, which waits on EVERY service declaring a healthcheck, whatever
+# depends on what. A probe that called a sealed vault unhealthy would fail
+# the rollout and roll the environment back — the newspaper with it — because
+# nobody had typed an unseal key yet.
+#
+# So the healthcheck below deliberately asks OpenBao to report sealed and
+# uninitialised as 200 (`sealedcode=200&uninitcode=200`). Those are operator
+# states. What it still proves is the thing a rollout should care about: the
+# process is alive and serving its API. A vault that crash-looped on its
+# storage would fail this and stop the rollout, which is correct.
+#
+# The api pairs that with `service_started`, not `service_healthy`, for the
+# same reason the ledger does: one binary serves the newspaper and the wallet,
+# and a vault having a bad day must not take the front page down.
+
+services:
+  openbao:
+    # OpenBao 2.6.2, the current stable line, pinned by the digest of its
+    # multi-architecture index — amd64, arm64, ppc64le, s390x and arm — so the
+    # pin does not quietly commit this deployment to one architecture.
+    #
+    # Pinned here rather than resolved at runtime like the api and web images,
+    # for the reason the ledger states: a channel tag MOVES and has to be
+    # re-resolved every tick; a third-party version does not. Bumping it is a
+    # deliberate decision and belongs in a diff somebody approves. The tag is
+    # documentation, the digest is the contract.
+    image: openbao/openbao:2.6.2@sha256:11fd73a2102cda9c55d5d881a8c3210303146a7ec1e8ac76f526e175c6d24641
+    container_name: apivo-${APIVO_ENV}-openbao
+    restart: unless-stopped
+    # `server` and nothing else. The image's entrypoint expands this to
+    # `bao server -config=/openbao/config`, and the default command it would
+    # otherwise run is `server -dev`, which keeps every secret in RAM and
+    # prints its own root token. Naming the subcommand is what makes sure a
+    # production vault is never that.
+    command: ["server"]
+    environment:
+      # The whole configuration, as JSON, with no file to ship to the host.
+      # The image's entrypoint writes $BAO_LOCAL_CONFIG to
+      # /openbao/config/local.json before starting; this is the documented
+      # way to configure it without a bind mount.
+      #
+      # Structural, so it lives here and not in api.env — the same rule that
+      # puts BLNK_URL in the cashback overlay and NETWORKS in api.env.
+      #
+      # storage.file: one of the four backends 2.6.2 ships (file, inmem, raft,
+      #   postgresql). `file` is chosen over `raft` because this is a single
+      #   node with no HA story, and raft would add a cluster listener, a node
+      #   id and a join step to buy replication nothing here uses. What raft
+      #   would also buy is `bao operator raft snapshot save` — an atomic
+      #   backup — and that is the one reason to revisit this. Until then the
+      #   backup is a copy of the volume, and the note below says how.
+      #
+      # listener.tcp: plain HTTP on the internal network, exactly as the api
+      #   reaches Blnk. The `data` network is `internal: true`, so nothing
+      #   outside the compose stack can address this at all, and there are no
+      #   published ports. Postgres carries TLS on the same network for a
+      #   different reason entirely — the api refuses a cleartext DATABASE_URL
+      #   under APP_ENV=prod — and no such rule applies here.
+      #
+      # api_addr: what the vault reports as its own address. Named per
+      #   environment so two vaults on one pre-production host cannot describe
+      #   themselves as each other.
+      #
+      # ui: off. It would be unreachable anyway with no published port, and a
+      #   console nobody can open is surface nobody is watching.
+      BAO_LOCAL_CONFIG: |
+        {
+          "storage": { "file": { "path": "/openbao/file" } },
+          "listener": { "tcp": { "address": "0.0.0.0:8200", "tls_disable": true } },
+          "api_addr": "http://apivo-${APIVO_ENV}-openbao:8200",
+          "ui": false
+        }
+      TZ: Etc/UTC
+    volumes:
+      # THE state of this service. A named volume rather than a bind mount,
+      # namespaced by environment for the reason every container name is: two
+      # environments on the pre-production host must not share one vault, and
+      # the second to start would otherwise open the first one's storage.
+      #
+      # Backing it up: `docker compose stop openbao`, copy
+      # /var/lib/docker/volumes/apivo-<env>-baodata, start it again. Stopped,
+      # because the file backend is a directory tree and a copy taken mid-write
+      # can be torn. Writes happen only when a member adds a destination, so
+      # the window is small and the stop is short. The contents are encrypted
+      # at rest and worthless without the unseal shares, which is why the
+      # shares are not stored beside them.
+      - baodata:/openbao/file
+    networks:
+      # `data` only. The vault needs nothing from the internet, and nothing on
+      # the internet needs the vault. Its one client is the api, by container
+      # name, over a network marked internal.
+      - data
+    # Sealed and uninitialised both report 200 — see the header. `standbyok`
+    # is set for the same class of reason and costs nothing on a single node.
+    #
+    # A compose healthcheck runs inside the container, so it can only use a
+    # client the image ships. Alpine's busybox provides wget, and the upstream
+    # image is alpine:3.24.1. `--spider` is avoided deliberately: it sends
+    # HEAD, and a route that answers GET is not obliged to answer HEAD.
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8200/v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: ${APIVO_LOG_MAX_SIZE:-10m}
+        max-file: ${APIVO_LOG_MAX_FILE:-3}
+    deploy:
+      resources:
+        limits:
+          cpus: ${APIVO_OPENBAO_CPUS:-0.5}
+          memory: ${APIVO_OPENBAO_MEMORY:-256M}
+    security_opt:
+      - no-new-privileges:true
+
+  api:
+    environment:
+      # Structural: the address is a container name this file chose, so this
+      # file is where it is named. The TOKEN is a credential and lives only in
+      # ${APIVO_ETC}/<env>/api.env, with PAYOUT_VAULT_MOUNT beside it — one
+      # value, one home, because two homes disagree the first time one of them
+      # is edited in a hurry.
+      PAYOUT_VAULT_URL: http://apivo-${APIVO_ENV}-openbao:8200
+    # `service_started`, not `service_healthy`. Same rule as the ledger: this
+    # host serves a newspaper as well as a wallet, and one binary serves both.
+    # The api does not connect to the vault at start-up anyway — it parses the
+    # URL and nothing more (internal/cashback/payout/openbao) — so a sealed or
+    # absent vault is a 503 on one endpoint rather than a process that will
+    # not boot.
+    depends_on:
+      openbao:
+        condition: service_started
+
+volumes:
+  baodata:
+    name: apivo-${APIVO_ENV}-baodata
