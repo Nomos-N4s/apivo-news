@@ -305,17 +305,21 @@ const payoutText =
     text-wrap: pretty;
   }
 
-  /* Two panes on desktop, stacked on a phone — the boards' own split. */
+  /* Two panes on desktop, stacked on a phone — the boards' own split.
+     Written widest-first, because every other breakpoint in this
+     application is a max-width and a lone min-width leaves the reader of
+     this file guessing which way the cascade runs. */
   .cols {
     display: grid;
-    gap: var(--space-6);
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-8);
     margin-top: var(--space-6);
   }
 
-  @media (min-width: 800px) {
+  @media (max-width: 900px) {
     .cols {
-      grid-template-columns: 1fr 1fr;
-      gap: var(--space-8);
+      grid-template-columns: 1fr;
+      gap: var(--space-6);
     }
   }
 
@@ -348,6 +352,35 @@ const payoutText =
     text-align: right;
     color: var(--color-text);
     overflow-wrap: anywhere;
+  }
+
+  /* On a phone the label and its value stop sharing a line.
+     `Ηλεκτρονικό ταχυδρομείο` beside `member@example.test` in 390px left
+     the two fighting over the width: the label wrapped to two lines and
+     `overflow-wrap` broke the address wherever it happened to land,
+     orphaning a single letter. Stacking gives the address the full
+     measure, so it never has to be broken at all. 660px is this
+     application's phone breakpoint — ReaderLayout drops its frame there. */
+  @media (max-width: 660px) {
+    .page {
+      padding: var(--space-4) var(--space-4) var(--space-6);
+    }
+
+    .row {
+      display: block;
+      padding: var(--space-2) 0 var(--space-3);
+    }
+
+    .v {
+      display: block;
+      margin-top: 2px;
+      text-align: left;
+    }
+
+    .chip,
+    .tag {
+      margin-left: 0;
+    }
   }
 
   .chip,
