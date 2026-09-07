@@ -130,16 +130,22 @@ behind `lib/cashback/ops-guard.ts`.
 history is a fixture); every cashback surface on previews or without
 `API_BASE_URL`.
 
-**Missing entirely:** member sign-up; member sign-in (the reader's
-sign-in button is disabled; the only credential form is
-`pages/[lang]/editor/signin.astro`); an opt-in screen (`api.optIn()` and
-its strings exist, nothing calls them; the wallet's not-participating
-band links to the catalogue instead); auth gating (no page redirects to
-a sign-in; unauthenticated calls surface as 503 or empty states);
-adding or verifying a payout destination (the withdrawal only lists
-verified ones); sign-out, password reset and email verification for
-members; any end-to-end test (Vitest only, 42 unit files, no browser
-tests).
+**Named, not mocked:** member sign-in exists as a screen with every
+control disabled. `pages/[lang]/signin.astro` (#531, merged the same
+hour as this file) draws the two paths the design board draws — an email
+link, and a token from the app shell exchanged for a session of our own
+— and prints on its face that neither is wired. No password anywhere, by
+design. `register.astro` takes the same posture for sign-up.
+
+**Missing entirely:** anything working behind those two screens (the
+front page's sign-in button is disabled and quotes that state; the only
+live credential form is `pages/[lang]/editor/signin.astro`); an opt-in
+screen (`api.optIn()` and its strings exist, nothing calls them; the
+wallet's not-participating band links to the catalogue instead); auth
+gating (no page redirects to a sign-in; unauthenticated calls surface as
+503 or empty states); adding or verifying a payout destination (the
+withdrawal only lists verified ones); sign-out for members; any
+end-to-end test (Vitest only, no browser tests).
 
 **Two breaks on the deployed host that are not the web's fault:** the
 edge sends `/api/*` to the Go api, so the web's own
@@ -176,12 +182,18 @@ and one pull request each, none of them the frontend's to build:
 
 **Frontend**, in the order that shortens the path to a real transaction:
 
-- **F1 — member sign-up and sign-in.** Supabase Auth, email and password,
-  through the same `@supabase/ssr` cookie session the editor sign-in
-  uses, on member-facing routes under `/{lang}/`. Sign-up calls B1 as its
-  last step; a sign-in with no account row also calls B1, so a user
-  created in the dashboard becomes a member on first sign-in. Sign-out.
-  Password reset through Supabase's own flow.
+- **F1 — member sign-in, on the design's terms.** Bring
+  `pages/[lang]/signin.astro` and `register.astro` to life without
+  changing what they promise. The email path is a link sent by Supabase
+  Auth (`signInWithOtp`; the nonprod project's own mailer is rate-limited
+  but enough for QA) and never a password. The shell path is a token
+  exchanged for a session of our own, and stays disabled with its copy
+  until there is a shell to hand one over. A first link creates the
+  Supabase user, so sign-up and sign-in are one flow; the callback lands
+  in the same `@supabase/ssr` cookie session the editor sign-in uses and
+  then calls B1, which is what makes the person a member. The front
+  page's sign-in button comes alive in the same change, because the page
+  quotes its state. Sign-out. No password means no reset.
 - **F2 — gating.** An unauthenticated request to any `/{lang}/{place}/cashback/…`
   page redirects to sign-in with a return path; a 401 from the api does
   the same; `/ops` without the operator role is a 403 page, not a queue
@@ -276,7 +288,8 @@ first and take its facts as the state of the world; where you find the
 code disagrees with it, the code is right and the file needs a line
 changed in your pull request.
 
-Work the frontend list in order — F1 sign-up and sign-in, F2 gating, F3
+Work the frontend list in order — F1 sign-in on the design's terms, an
+email link and never a password, F2 gating, F3
 opt-in, F4 catalogue, F5 click-out, F6 wallet, F7 payout destination,
 F8 the end-to-end test, F9 languages and the brand lint — and do not
 build against a backend gap: B1, B2, B4 and B5 are the Go side's to
