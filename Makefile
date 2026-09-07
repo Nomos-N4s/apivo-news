@@ -221,7 +221,7 @@ ACCOUNT :=
 cashback-up:
 	@grep -q '^  blnk:' docker-compose.yml || \
 		$(call missing,a blnk service in docker-compose.yml,task T002 (issue #149) - blnk and redis in the local compose stack,run the api with LEDGER_DRIVER=memory NETWORKS=fixture and skip the ledger entirely)
-	$(COMPOSE) up -d --wait postgres redis blnk
+	$(COMPOSE) up -d --wait postgres redis blnk openbao
 
 ## cashback-demo: run the whole product locally - api, ledger, auth and web
 # The one command that answers "can I see it". It migrates, seeds a fixture
