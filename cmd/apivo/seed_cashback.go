@@ -122,6 +122,10 @@ type seedRequest struct {
 	sourceLanguage string
 	termsVersion   string
 	currency       string
+	// payoutCurrency is the deployment's, the threshold's: the fixture
+	// network is declared to report in the brand's currency, and connecting
+	// it refuses a mismatch the way a real network's would be (FR-108).
+	payoutCurrency string
 }
 
 // seedInputs resolves and refuses. Each refusal below is a row this command
@@ -189,6 +193,7 @@ func seedInputs(cfg config.Config) (seedRequest, error) {
 		sourceLanguage: network.SourceLanguage,
 		termsVersion:   terms.Version,
 		currency:       defined.Defaults.Currency,
+		payoutCurrency: string(cfg.Cashback.PayoutThreshold.Currency),
 	}, nil
 }
 
@@ -258,6 +263,8 @@ func seedConnection(ctx context.Context, pool *pgxpool.Pool, req seedRequest) (n
 		CredentialRef:       req.credentialRef,
 		BackfillFrom:        time.Now().UTC().Add(-seedBackfill),
 		Active:              true,
+		ReportsCurrency:     req.currency,
+		PaysOutIn:           req.payoutCurrency,
 	})
 	if err != nil {
 		return networks.Connection{}, err

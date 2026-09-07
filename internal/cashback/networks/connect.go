@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -49,6 +50,17 @@ type ConnectRequest struct {
 	// see [Connection.BackfillFrom] for why a re-run must not move it, and
 	// why that makes it optional on one.
 	BackfillFrom time.Time
+	// ReportsCurrency is the ISO 4217 currency this network reports
+	// commission in, as the operator declares it from the adapter's
+	// recording (FR-108). Optional: an account connected before anything
+	// establishes it has nothing honest to declare, and a null is reported
+	// rather than refused. Written when given, kept when not.
+	ReportsCurrency string
+	// PaysOutIn is the deployment's payout currency, the threshold's. A
+	// declared ReportsCurrency that is not this is refused by name: a
+	// network paying in a currency no member can withdraw would credit
+	// balances that never move, and this is the moment a person can act.
+	PaysOutIn string
 	// Active is whether this network and account should be live, and is the
 	// operator's intent expressed by running the command. It is written on
 	// every run, so the same operation both connects and pauses.
@@ -71,8 +83,24 @@ func (r ConnectRequest) Validate() error {
 		return fmt.Errorf("%w: account %s at %s names no configuration key its credential is read from",
 			ErrCannotConnect, strconv.Quote(r.ExternalPublisherID), strconv.Quote(r.Network.ID.String()))
 	}
+	if r.ReportsCurrency != "" {
+		if !iso4217.MatchString(r.ReportsCurrency) {
+			return fmt.Errorf("%w: %s is not an ISO 4217 currency code, and it is what %s would be recorded as reporting in",
+				ErrCannotConnect, strconv.Quote(r.ReportsCurrency), strconv.Quote(r.Network.ID.String()))
+		}
+		// FR-108: refused here, by name, where a person can act - not
+		// discovered by a member who cannot withdraw.
+		if r.PaysOutIn != "" && r.ReportsCurrency != r.PaysOutIn {
+			return fmt.Errorf("%w: %s reports in %s and this deployment pays out in %s, so nothing it reported could ever be withdrawn",
+				ErrCannotConnect, strconv.Quote(r.Network.ID.String()), r.ReportsCurrency, r.PaysOutIn)
+		}
+	}
 	return nil
 }
+
+// iso4217 is the shape of a currency code, the same check the column
+// carries (network_account_reports_currency_iso4217_format).
+var iso4217 = regexp.MustCompile(`^[A-Z]{3}$`)
 
 // requireHistoryStart is the one rule that depends on whether the account
 // already exists, and so is checked in [ConnectPublisherAccount] rather than
@@ -114,6 +142,11 @@ type Connection struct {
 	// account at an inactive network polls, and every offer on it is
 	// unclickable, because cashback.offer's read joins on n.active.
 	Active bool
+	// ReportsCurrency is what the row now carries: the currency this
+	// network was declared to report in, or empty when nobody has
+	// established it yet (FR-108). Reported so the operator sees the
+	// blank as a blank.
+	ReportsCurrency string
 }
 
 // ConnectPublisherAccount writes the network row and the publisher account
@@ -181,8 +214,9 @@ func ConnectPublisherAccount(ctx context.Context, db store.DBTX, req ConnectRequ
 		CredentialRef:       req.CredentialRef,
 		// Valid only when one was given. It is unused on conflict, and a
 		// zero time written as a real instant would be the year 1.
-		BackfillFrom: pgtype.Timestamptz{Time: req.BackfillFrom.UTC(), Valid: !req.BackfillFrom.IsZero()},
-		Active:       req.Active,
+		BackfillFrom:    pgtype.Timestamptz{Time: req.BackfillFrom.UTC(), Valid: !req.BackfillFrom.IsZero()},
+		Active:          req.Active,
+		ReportsCurrency: pgtype.Text{String: req.ReportsCurrency, Valid: req.ReportsCurrency != ""},
 	})
 	if err != nil {
 		return Connection{}, fmt.Errorf("networks: connecting publisher account %s at %s: %w",
@@ -194,11 +228,12 @@ func ConnectPublisherAccount(ctx context.Context, db store.DBTX, req ConnectRequ
 		return Connection{}, err
 	}
 	return Connection{
-		Account:        account,
-		NetworkCreated: !networkExisted,
-		AccountCreated: !accountExisted,
-		BackfillFrom:   row.BackfillFrom.Time,
-		Active:         row.Active,
+		Account:         account,
+		NetworkCreated:  !networkExisted,
+		AccountCreated:  !accountExisted,
+		BackfillFrom:    row.BackfillFrom.Time,
+		Active:          row.Active,
+		ReportsCurrency: row.ReportsCurrency.String,
 	}, nil
 }
 

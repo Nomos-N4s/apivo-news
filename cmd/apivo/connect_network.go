@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
@@ -64,6 +65,8 @@ func connectNetworkCommand(ctx context.Context, args []string, getenv func(strin
 		"where this account's history starts (2026-06-01 or an RFC3339 instant). Required the first time; ignored afterwards, because moving it would leave a span never re-read.")
 	inactive := flags.Bool("inactive", false,
 		"connect without turning the network on. Without it both rows are made active, which is what lets members click through.")
+	reportsCurrency := flags.String("reports-currency", "",
+		"the ISO 4217 currency this network reports commission in, from the adapter's recording (EUR). Refused if it is not the payout currency: a network paying in a currency no member can withdraw credits balances that never move. Absent, the account is connected with the currency not yet established, and the report says so.")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -97,6 +100,22 @@ func connectNetworkCommand(ctx context.Context, args []string, getenv func(strin
 	if err != nil {
 		return err
 	}
+	req := networks.ConnectRequest{
+		Network:             documented,
+		ExternalPublisherID: network.AccountID,
+		CredentialRef:       credentialRef(network),
+		BackfillFrom:        start,
+		Active:              !*inactive,
+		ReportsCurrency:     strings.ToUpper(strings.TrimSpace(*reportsCurrency)),
+		PaysOutIn:           string(cfg.Cashback.PayoutThreshold.Currency),
+	}
+	// Refused before a database is needed: everything Validate checks is
+	// known from the flags and the environment, and a currency this
+	// deployment cannot pay out (FR-108) is not something to discover after
+	// connecting.
+	if err := req.Validate(); err != nil {
+		return err
+	}
 
 	pool, err := platformdb.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -114,13 +133,7 @@ func connectNetworkCommand(ctx context.Context, args []string, getenv func(strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	connection, err := networks.ConnectPublisherAccount(ctx, tx, networks.ConnectRequest{
-		Network:             documented,
-		ExternalPublisherID: network.AccountID,
-		CredentialRef:       credentialRef(network),
-		BackfillFrom:        start,
-		Active:              !*inactive,
-	})
+	connection, err := networks.ConnectPublisherAccount(ctx, tx, req)
 	if err != nil {
 		return err
 	}
@@ -173,6 +186,13 @@ func reportConnection(stdout io.Writer, c networks.Connection, ref string, asked
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "  history from    %s\n", c.BackfillFrom.UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	reports := c.ReportsCurrency
+	if reports == "" {
+		reports = "not yet established - declare it with -reports-currency once the adapter's recording says what the network pays in"
+	}
+	if _, err := fmt.Fprintf(stdout, "  reports in      %s\n", reports); err != nil {
 		return err
 	}
 	if !asked.IsZero() && !asked.Equal(c.BackfillFrom) {
