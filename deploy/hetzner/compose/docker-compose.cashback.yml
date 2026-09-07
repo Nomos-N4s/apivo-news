@@ -402,6 +402,13 @@ services:
   # an operator's choice against a founder question that is still open (Q1),
   # so they live in api.env and default to the fixture adapter. Each network
   # named there brings its own NETWORK_<DRIVER>_* block, in the same file.
+  #
+  # The brand definition (ADR-0004) is a third kind. The file is an
+  # operator's to write - nothing this repository could ship would be
+  # anything but a lie about a real company - and BRAND_DIR waits for it in
+  # api.env beside NETWORKS. WHERE that file reaches the container is this
+  # file's layout decision, though, so the mount is below with the rest of
+  # the structure.
   api:
     environment:
       CASHBACK_ENABLED: "true"
@@ -429,6 +436,22 @@ services:
       PAYOUT_THRESHOLD_CURRENCY: EUR
       BLNK_URL: http://apivo-${APIVO_ENV}-blnk:5001
       REDIS_URL: redis://apivo-${APIVO_ENV}-redis:6379
+    # Where a real brand.json reaches the api: ${APIVO_ETC}/<env>/brand on
+    # the host, /etc/apivo/brand in the container, read-only - the shape the
+    # Postgres certificates take in docker-compose.local-db.yml. provision.sh
+    # creates the directory and leaves it empty; the operator writes the file
+    # and then sets BRAND_DIR=/etc/apivo/brand in api.env.
+    #
+    # The mount is here and BRAND_DIR is NOT, and the difference is what
+    # happens to a host that lists this overlay before anyone has written a
+    # brand. Unset, the key degrades: the opt-in answers 503 naming it and no
+    # catalogue import is scheduled, each said once at ERROR, and the
+    # newspaper is served. Set to a directory holding no complete brand file
+    # it is a startup failure, because a deployment that named a brand meant
+    # it. So the value that would make an empty directory fatal is the one
+    # thing the operator adds last, after the file exists.
+    volumes:
+      - ${APIVO_ETC:-/etc/apivo}/${APIVO_ENV}/brand:/etc/apivo/brand:ro
     # `service_started` and NOT `service_healthy`, even though blnk now has a
     # healthcheck worth waiting on. This host serves a newspaper as well as a
     # wallet, and one binary serves both: a ledger that cannot pass its probe

@@ -269,7 +269,17 @@ EOF
             note "$env_name: wrote $_blnk_env TEMPLATE - BLNK_DATA_SOURCE_DNS is empty"
         fi
     done
-    note "$env_name: cashback stays off until both blnk env files are filled in, the blnk_app role is created with scripts/spikes/ledger_schema/bootstrap.sql, and the overlay is added to COMPOSE_FILE"
+
+    # Where the api reads this environment's brand definition from
+    # (ADR-0004): docker-compose.cashback.yml bind-mounts this directory at
+    # /etc/apivo/brand, read-only. Created empty and NEVER written to, for a
+    # stronger version of the reason api.env is left alone - there is no
+    # brand.json this repository could ship that would not be a lie about a
+    # real company. The operator writes one, world-readable because the api
+    # runs unprivileged, and then names it with BRAND_DIR=/etc/apivo/brand in
+    # api.env (docs/RUNBOOK.md, "Switching cashback on").
+    mkdir -p "$ETC/$env_name/brand"
+    note "$env_name: cashback stays off until both blnk env files are filled in, the blnk_app role is created with scripts/spikes/ledger_schema/bootstrap.sql, brand/brand.json is written and named by BRAND_DIR in api.env, and the overlay is added to COMPOSE_FILE"
 done
 
 # ---------------------------------------------------------------------------

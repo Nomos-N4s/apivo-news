@@ -510,6 +510,247 @@ differs from production's is exactly the kind of drift it exists to catch.
 
 ---
 
+## Switching cashback on — QA first
+
+Everything cashback needs on a host is already there in outline: the
+overlay, the two ledger env files `provision.sh` wrote as templates, the
+`blnk_app` recipe, and an empty brand directory. What follows is the order
+that turns them into a running wallet on QA, and why each step is where it
+is. The gate [ENVIRONMENTS.md](ENVIRONMENTS.md#cashback-the-ledger-and-the-docker-free-path)
+names — the three ADR-0002 spikes — is recorded as passed in
+`specs/002-apivo-cashback-alpha/research.md` (2026-08-29).
+
+**QA, and on the fixture network first.** QA reconciles on every merge to
+`main`, which makes it the right place for the first real ledger and the
+wrong place for a publisher's credentials: a poll is a real call against a
+real publisher account, counted against a real rate limit, and QA would
+spend that budget continuously (`api.env.example` says so at `NETWORKS`).
+The fixture adapter needs no credential and carries a small catalogue of
+invented retailers, embedded in the binary — enough to prove the whole
+path from brand to click-out before a real network is named.
+
+### 1. Refresh the compose files
+
+The overlay gained the brand mount, and the compose files on the host are
+copies made at provisioning time — the reconciler updates images, never
+these. Bring the checkout up to date and install just the compose files:
+
+```sh
+cd ~/apivo-news && git pull
+cp deploy/hetzner/compose/*.yml /opt/apivo/compose/
+mkdir -p /etc/apivo/qa/brand
+```
+
+Nothing restarts. A copied compose file is read at the next `up`, and QA's
+`COMPOSE_FILE` does not list the overlay yet.
+
+### 2. Write the brand definition
+
+The api ships no brand (ADR-0004): no legal entity, domain or terms
+revision this repository could carry would be true of a real company.
+Without one it refuses every opt-in and schedules no catalogue import, so
+step 7 would have nothing to publish on. The file is
+`/etc/apivo/qa/brand/brand.json`, its full shape is
+`internal/platform/brand/testdata/fixture/brand.json`, and the rules the
+api holds it to are each a startup failure when broken:
+
+- `id` is a slug; `legal.jurisdiction` is an ISO 3166-1 alpha-2 code; the
+  `terms` and `privacy` documents each carry an `id` and a `version`. The
+  terms `version` is what a member's participation records — change it when
+  the terms change, and not otherwise.
+- `domains.primary` and every alias are bare lower-case host names, and all
+  three `support` addresses sit on one of them: `ra1ze.com` for QA.
+- `theme.colours` has `bg`, `surface`, `text` and `accent` as lower-case
+  six-digit hex; the three `assets` are rooted paths under the web root.
+- `defaults.language` is a BCP-47 primary subtag (`el`), `defaults.place` a
+  slug, and `defaults.currency` is `EUR` on this host: it is the currency a
+  member's wallet is kept in, and the overlay's `PAYOUT_THRESHOLD_CURRENCY`
+  is EUR — a threshold in one currency cannot be compared against a balance
+  in another.
+- `payout.descriptor` is at most 22 printable ASCII characters: it is what
+  a member reads on their bank statement.
+
+```sh
+cp ~/apivo-news/internal/platform/brand/testdata/fixture/brand.json /etc/apivo/qa/brand/brand.json
+chmod 644 /etc/apivo/qa/brand/brand.json
+```
+
+Then replace every value in it. World-readable is required rather than
+careless: the api runs as an unprivileged user inside its container, and a
+brand it cannot read is a brand that fails startup. Nothing in the file is
+a secret.
+
+### 3. The ledger's database role
+
+The ledger serves as `blnk_app`, which does not exist until the recipe in
+`scripts/spikes/ledger_schema/bootstrap.sql` creates it. It runs as the
+database owner — on QA the container's own `apivo` user over its local
+socket, so nothing asks for a password — and it must run **before** the
+first `blnk migrate`, because its default-privilege grants apply to tables
+created after it. Generate the role's password into a variable first, since
+step 4 writes it into `blnk.env`; hex, so it is safe inside a URL:
+
+```sh
+pw=$(openssl rand -hex 32)
+docker exec -i apivo-qa-postgres psql -U apivo -d apivo -v ON_ERROR_STOP=1 \
+  -v blnk_password="$pw" -f - < ~/apivo-news/scripts/spikes/ledger_schema/bootstrap.sql
+```
+
+`ON_ERROR_STOP=1` is load-bearing: several statements in the recipe are
+guards that work by raising. The recipe is re-runnable — a second run
+re-passwords the role rather than failing on it.
+
+### 4. The two ledger env files, and the shared secret
+
+`provision.sh` wrote `/etc/apivo/qa/blnk.env` and
+`/etc/apivo/qa/blnk-migrate.env` with their DSNs empty. One takes the
+runtime role, the other the owner — two files because Blnk reads the DSN
+from one variable whichever job it does, and the owner's credential must be
+absent from the long-lived server's environment rather than merely unused
+by it. The owner's password is the one `provision.sh` generated into
+`stack.env`:
+
+```sh
+owner=$(sed -n 's/^APIVO_PG_PASSWORD=//p' /etc/apivo/qa/stack.env)
+[ -n "$owner" ] || echo "no password found — stop"
+sed -i '/^BLNK_DATA_SOURCE_DNS=/d' /etc/apivo/qa/blnk.env /etc/apivo/qa/blnk-migrate.env
+printf 'BLNK_DATA_SOURCE_DNS=postgres://blnk_app:%s@postgres:5432/apivo?sslmode=require\n' "$pw" \
+  >> /etc/apivo/qa/blnk.env
+printf 'BLNK_DATA_SOURCE_DNS=postgres://apivo:%s@postgres:5432/apivo?sslmode=require\n' "$owner" \
+  >> /etc/apivo/qa/blnk-migrate.env
+unset pw owner
+```
+
+Then the credential the api presents to the ledger and the ledger accepts.
+One value in two files — `BLNK_SERVER_SECRET_KEY` in `blnk.env`,
+`BLNK_SECRET_KEY` in `api.env` — and with cashback enabled the api refuses
+to start without its half:
+
+```sh
+secret=$(openssl rand -hex 32)
+sed -i '/^BLNK_SERVER_SECRET_KEY=/d' /etc/apivo/qa/blnk.env
+sed -i '/^BLNK_SECRET_KEY=/d' /etc/apivo/qa/api.env
+printf 'BLNK_SERVER_SECRET_KEY=%s\n' "$secret" >> /etc/apivo/qa/blnk.env
+printf 'BLNK_SECRET_KEY=%s\n' "$secret" >> /etc/apivo/qa/api.env
+unset secret
+chmod 600 /etc/apivo/qa/blnk.env /etc/apivo/qa/blnk-migrate.env /etc/apivo/qa/api.env
+```
+
+### 5. What the api needs to know
+
+Four keys appended to `/etc/apivo/qa/api.env`, last occurrence winning: the
+brand's path inside the container, the network to poll, the account it
+polls as, and the language that network's catalogue arrives in.
+
+```sh
+printf 'BRAND_DIR=/etc/apivo/brand\nNETWORKS=fixture\nNETWORK_FIXTURE_ACCOUNT_ID=fixture-publisher\nNETWORK_FIXTURE_SOURCE_LANGUAGE=en\n' \
+  >> /etc/apivo/qa/api.env
+```
+
+And two things already in that file to check rather than add. `JWKS_URL`
+must be set: every cashback route is a member's or an operator's and mounts
+behind the same verifier as the editorial routes, so without it the whole
+product answers 404 — step 5 put it there. And `DATABASE_URL` must carry
+`pool_max_conns=14`: the scheduler takes a connection per job, the six jobs
+a fully configured cashback deployment registers need fourteen where pgx
+defaults to four, and the api refuses to start rather than deadlock under
+load.
+
+```sh
+grep '^JWKS_URL=' /etc/apivo/qa/api.env
+grep -q 'pool_max_conns' /etc/apivo/qa/api.env || \
+  sed -i 's#^\(DATABASE_URL=.*sslmode=require\)$#\1\&pool_max_conns=14#' /etc/apivo/qa/api.env
+grep '^DATABASE_URL=' /etc/apivo/qa/api.env | sed 's#://.*@#://…@#'
+```
+
+### 6. The switch
+
+Listing the overlay in `COMPOSE_FILE` **is** the decision; nothing in
+`api.env` is a second switch, on purpose. Append it and reconcile:
+
+```sh
+grep -q 'docker-compose.cashback.yml' /etc/apivo/qa/stack.env || \
+  sed -i 's#^COMPOSE_FILE=.*#&:/opt/apivo/compose/docker-compose.cashback.yml#' /etc/apivo/qa/stack.env
+grep '^COMPOSE_FILE=' /etc/apivo/qa/stack.env
+apivoctl deploy qa
+```
+
+The deploy runs the ledger's migration as a one-shot container, then waits
+on every healthcheck — the api's, the ledger's, the worker's. Three checks
+say it worked:
+
+```sh
+apivoctl ps qa
+curl -sS -o /dev/null -w '%{http_code}\n' https://ra1ze.com/api/v1/cashback/wallet
+docker logs apivo-qa-api 2>&1 | grep -E 'brand definition|BRAND_DIR|NOT MOUNTED|cannot poll|scheduler started'
+```
+
+The six long-running containers healthy (the migration is a one-shot and
+has already exited). **401 from the wallet**, for the reason 401 was the
+answer for the editorial queue in step 5: mounted, and refusing you for
+having no token. 404 means cashback did not mount, and the log names why —
+a network that cannot poll, or `JWKS_URL` missing. The grep should show
+`brand definition loaded` and neither of the two `BRAND_DIR` ERROR lines.
+
+### 7. Connect the network, then publish a rate
+
+The account has to be told where its history starts — nothing invents a
+`backfill_from`, and every sweep refuses by name until it is set — and the
+catalogue has to arrive before there is a route to publish a band on. Both
+are subcommands of the deployed binary, run inside its container so they
+read its environment:
+
+```sh
+docker exec apivo-qa-api apivo connect-network -backfill-from 2026-09-01
+```
+
+The first catalogue import runs within the first half hour after the api
+starts (a tenth of its six-hour interval, jittered) and every six hours
+after. When `docker logs apivo-qa-api` shows it, the routes it wrote are
+what a band is published on, named by the network's own id for the
+retailer:
+
+```sh
+apivoctl psql qa
+```
+
+```sql
+select n.id as network, mn.external_merchant_id, m.slug, mn.status
+  from cashback.merchant_network mn
+  join cashback.merchant m on m.id = mn.merchant_id
+  join cashback.network n on n.id = mn.network_id
+ order by 1, 2;
+```
+
+On the fixture network `FIXM-77` is a live retailer. A band at 15% of the
+sale with the member's default share, on a tracking template that can be
+any absolute URL — the fixture appends its click reference to whatever it
+is given:
+
+```sh
+docker exec apivo-qa-api apivo publish-offer -merchant FIXM-77 -rate-bps 1500 \
+  -deeplink 'https://outdoor.fixture.invalid/'
+```
+
+The command reports the route it published on and the click-out to try;
+`deploy/k8s/README.md` walks through every flag. From here the member flow
+is the one `make cashback-demo` runs locally, against QA's Supabase tokens
+instead of the demo's stand-in.
+
+### Moving QA to a real network
+
+Swap `NETWORKS=fixture` for the driver and add its block —
+`NETWORK_LINKWISE_ACCOUNT_ID`, `NETWORK_LINKWISE_API_KEY`,
+`NETWORK_LINKWISE_API_SECRET`, `NETWORK_LINKWISE_SOURCE_LANGUAGE=el` — then
+`apivoctl deploy qa` and `connect-network` again for the new account. Read
+the caution at `NETWORKS` in `api.env.example` first: QA polls that account
+every fifteen minutes for as long as the keys are in the file. And the
+attribution canary (below, #524) refuses the sweep after three reports that
+matched no click while none has ever matched one — on a real network, the
+first thing worth watching for.
+
+---
+
 ## Later: production
 
 Not in this pass, and nothing above touches it. When there is something to
