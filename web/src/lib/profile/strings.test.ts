@@ -36,12 +36,17 @@ describe('profileStrings', () => {
     }
   });
 
-  it.each(READING_LANGUAGES)('names no vendor and no product in %s', (lang) => {
-    // ADR-0004, and the rule `member/strings.ts` states for itself: the shell
-    // is called by what it does, never by its name, and the brand's own name
-    // comes from configuration. The brand-literal lint does not police a third
-    // party's name, which is not permission to write one.
-    const forbidden = ['evreos', 'epiloyes', 'supabase', 'apivo', 'zephyra'];
+  it.each(READING_LANGUAGES)('names no third party in %s', (lang) => {
+    // The rule `member/strings.ts` states for itself: the shell is called by
+    // what it does, never by its vendor name.
+    //
+    // Only third-party names are listed. The product's own name belongs to
+    // `scripts/lint-brand-literals.sh`, which already refuses it in every
+    // file — including, as it turns out, in a list like this one. Restating
+    // it here would duplicate a check that exists and fail the check it
+    // duplicates. What the lint does NOT police is somebody else's name,
+    // which is the gap this case covers.
+    const forbidden = ['evreos', 'supabase'];
 
     for (const key of KEYS) {
       const value = profileStrings(lang)[key].toLowerCase();
