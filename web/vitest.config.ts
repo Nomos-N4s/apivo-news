@@ -47,6 +47,7 @@ export default getViteConfig({
         'src/lib/member/access.ts',
         'src/lib/member/strings.ts',
         'src/lib/account/consent.ts',
+        'src/lib/account/register.ts',
         'src/lib/account/tours.ts',
         'src/lib/app-env.ts',
         // The brand loader. brand.types.ts beside it is generated from
