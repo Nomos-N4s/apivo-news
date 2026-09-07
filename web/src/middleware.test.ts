@@ -28,6 +28,15 @@ vi.mock('./lib/editorial/supabase', () => ({
   resolveSession: vi.fn(),
 }));
 
+// The cashback fence asks the deployment whether it answers from fixtures.
+// Unset, that is true and the fence never fires, so a test of the fence has
+// to say it is a deployment with an api.
+vi.mock('astro:env/server', () => ({
+  API_BASE_URL: 'http://api.invalid:8080',
+  APP_ENV: 'dev',
+  PUBLIC_APP_VERSION: undefined,
+}));
+
 /** Builds the minimal request context the middleware reads. */
 function makeContext(options: {
   path?: string;
@@ -42,10 +51,16 @@ function makeContext(options: {
   const context = {
     request: new Request(url, { method: options.method ?? 'GET', headers }),
     url,
+    // The cashback fence redirects, which is the one piece of the render
+    // pipeline it does touch. Astro's own implementation is a Response with
+    // a Location header, and so is this.
+    redirect: (location: string, status = 302): Response =>
+      new Response(null, { status, headers: { Location: location } }),
   };
-  // The middleware only reads `request` and `url`; the rest of APIContext is
-  // render-pipeline state that a unit test neither needs nor can construct.
-  return context as APIContext;
+  // Beyond that the middleware only reads `request` and `url`; the rest of
+  // APIContext is render-pipeline state a unit test neither needs nor can
+  // construct.
+  return context as unknown as APIContext;
 }
 
 /** A `next` that renders a plain page and records whether it was reached. */
@@ -504,6 +519,72 @@ describe('isAccessPath', () => {
   it('still leaves the front page paying for no round trip', async () => {
     const { response } = await run({ path: '/el/munich' });
     expect(response.headers.get('cache-control')).not.toBe('private, no-store');
+  });
+});
+
+describe('the cashback sign-in fence (FR-023)', () => {
+  const MEMBER: Session = {
+    displayName: 'A Member',
+    email: 'member@example.invalid',
+    role: 'reader',
+    token: 'live-access-token',
+    authenticated: true,
+  };
+
+  beforeEach(() => {
+    vi.mocked(resolveSession).mockReset();
+    vi.mocked(resolveSession).mockResolvedValue(NO_SESSION);
+  });
+
+  it.each([
+    '/el/munich/cashback',
+    '/el/munich/cashback/wallet',
+    '/de/munich+greece/cashback/withdraw',
+    '/el/munich/cashback/agora',
+  ])('sends a signed-out visitor from %s to sign in', async (path) => {
+    const { response, reachedRoute } = await run({ path });
+
+    expect(response.status).toBe(303);
+    expect(reachedRoute).toBe(false);
+    const location = response.headers.get('location') ?? '';
+    expect(location.startsWith(`/${path.split('/')[1] ?? ''}/signin`)).toBe(true);
+  });
+
+  it('brings them back to the page they asked for, query and all', async () => {
+    // Somebody sent away from a filtered wallet wants that wallet back, not
+    // the top of it.
+    const { response } = await run({ path: '/el/munich/cashback/wallet?state=pending' });
+
+    expect(response.headers.get('location')).toBe(
+      `/el/signin?next=${encodeURIComponent('/el/munich/cashback/wallet?state=pending')}`,
+    );
+  });
+
+  it('lets a signed-in member through', async () => {
+    vi.mocked(resolveSession).mockResolvedValue(MEMBER);
+    const { response, reachedRoute } = await run({ path: '/el/munich/cashback/wallet' });
+
+    expect(reachedRoute).toBe(true);
+    expect(response.status).toBe(200);
+  });
+
+  it.each([
+    ['/ops/held', 'the operator queues check a role instead, and have no language'],
+    ['/api/cashback/clickout', 'a form posts here; a redirect would lose what it sent'],
+    ['/el/munich', 'the news is not a cashback surface'],
+    ['/el/signin', 'the page it would redirect to'],
+  ])('does not fence %s (%s)', async (path) => {
+    const { reachedRoute } = await run({ path });
+
+    expect(reachedRoute).toBe(true);
+  });
+
+  it('leaves a language this application does not serve to the 404 guard', async () => {
+    // Redirecting it would invent a reader's language on the way past
+    // (FR-009, FR-015).
+    const { reachedRoute } = await run({ path: '/fr/munich/cashback/wallet' });
+
+    expect(reachedRoute).toBe(true);
   });
 });
 
