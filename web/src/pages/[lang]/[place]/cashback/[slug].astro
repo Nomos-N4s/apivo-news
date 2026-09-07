@@ -12,6 +12,8 @@ import {
 import { cataloguePath, merchantPath } from '../../../../lib/cashback/paths';
 import type { MerchantDetail } from '../../../../lib/cashback/types';
 import { sessionOf } from '../../../../lib/editorial/session';
+import { signInPath } from '../../../../lib/member/access';
+import { isUnauthorized } from '../../../../lib/member/gate';
 import { frontPagePath, parseAxes } from '../../../../lib/reader/axes';
 import { formatItemDate } from '../../../../lib/reader/format';
 import { cashbackStrings, languageName } from '../../../../i18n/cashback';
@@ -49,6 +51,9 @@ const slugs = places.map((place) => place.slug);
 const t = cashbackStrings(lang);
 
 const session = sessionOf(Astro.request);
+// Where signing in again should bring them back to, query and all.
+const here = `${Astro.url.pathname}${Astro.url.search}`;
+let unrecognised = false;
 
 let api: CashbackApi | null = null;
 let merchant: MerchantDetail | null = null;
@@ -62,12 +67,22 @@ try {
   });
   merchant = await api.merchant(slug, lang);
 } catch (error) {
-  if (error instanceof CashbackConfigurationError) {
-    console.error(`cashback: ${error.message}`);
+  // Past the middleware fence there IS a session, so the api declining the
+  // caller means it does not recognise somebody who is signed in - an
+  // account row that was never created (#567), or a token this deployment's
+  // JWKS will not verify. Redirecting to sign in would come straight back
+  // here and redirect again; the page says so and offers it as a choice.
+  if (isUnauthorized(error)) {
+    unrecognised = true;
+    Astro.response.status = 403;
+  } else {
+    if (error instanceof CashbackConfigurationError) {
+      console.error(`cashback: ${error.message}`);
+    }
+    apiUnavailable = true;
+    Astro.response.status = 503;
+    Astro.response.headers.set('Retry-After', '60');
   }
-  apiUnavailable = true;
-  Astro.response.status = 503;
-  Astro.response.headers.set('Retry-After', '60');
 }
 
 // An unknown retailer and an inactive one are one answer by contract —
@@ -107,7 +122,14 @@ const voids = [t.void1, t.void2, t.void3] as const;
 
   <main class="merchant">
     {fixtures && <FixtureNotice title={t.cashback} body={t.fixtureNotice} />}
-    {apiUnavailable && <p class="band" role="alert">{t.emptyQueue}</p>}
+    {
+      unrecognised && (
+        <p class="band" role="alert">
+          {t.notRecognised} <a href={signInPath(lang, { next: here })}>{t.notRecognisedAction}</a>
+        </p>
+      )
+    }
+    {apiUnavailable && <p class="band" role="alert">{t.pageUnavailable}</p>}
     {clickoutFailed && <p class="band" role="alert">{t.clickoutFailed}</p>}
 
     {

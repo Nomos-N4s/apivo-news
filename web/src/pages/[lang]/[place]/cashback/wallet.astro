@@ -16,6 +16,8 @@ import type {
   WalletTotals,
 } from '../../../../lib/cashback/types';
 import { sessionOf } from '../../../../lib/editorial/session';
+import { signInPath } from '../../../../lib/member/access';
+import { isUnauthorized } from '../../../../lib/member/gate';
 import { frontPagePath, parseAxes } from '../../../../lib/reader/axes';
 import { formatDateTime, formatItemDate } from '../../../../lib/reader/format';
 import { cashbackStrings, languageName } from '../../../../i18n/cashback';
@@ -71,6 +73,10 @@ const active = FILTERS.find((filter) => filter.key === requested) ?? FILTERS[0]!
 const requestedEntry = Astro.url.searchParams.get('entry');
 
 const session = sessionOf(Astro.request);
+// Where signing in again should bring them back to, query and all: a member
+// sent away from a filtered wallet wants that wallet back, not the top of it.
+const here = `${Astro.url.pathname}${Astro.url.search}`;
+let unrecognised = false;
 
 let api: CashbackApi | null = null;
 let totals: WalletTotals | null = null;
@@ -95,14 +101,24 @@ try {
     ]);
   }
 } catch (error) {
-  // A misconfigured deployment is otherwise silent: every page answers 503
-  // and nothing says why, and the operator is the only one who can fix it.
-  if (error instanceof CashbackConfigurationError) {
-    console.error(`cashback: ${error.message}`);
+  // Past the middleware fence there IS a session, so the api declining the
+  // caller means it does not recognise somebody who is signed in - an
+  // account row that was never created (#567), or a token this deployment's
+  // JWKS will not verify. Redirecting to sign in would come straight back
+  // here and redirect again; the page says so and offers it as a choice.
+  if (isUnauthorized(error)) {
+    unrecognised = true;
+    Astro.response.status = 403;
+  } else {
+    // A misconfigured deployment is otherwise silent: every page answers 503
+    // and nothing says why, and the operator is the only one who can fix it.
+    if (error instanceof CashbackConfigurationError) {
+      console.error(`cashback: ${error.message}`);
+    }
+    apiUnavailable = true;
+    Astro.response.status = 503;
+    Astro.response.headers.set('Retry-After', '60');
   }
-  apiUnavailable = true;
-  Astro.response.status = 503;
-  Astro.response.headers.set('Retry-After', '60');
 }
 
 const fixtures = api?.source === 'fixture';
@@ -239,12 +255,24 @@ const stepsFor = (entry: WalletEntry): readonly Step[] => {
     }
 
     {
-      apiUnavailable && (
-        <p class="band" role="alert">{t.emptyQueue}</p>
+      unrecognised && (
+        <p class="band" role="alert">
+          {t.notRecognised} <a href={signInPath(lang, { next: here })}>{t.notRecognisedAction}</a>
+        </p>
       )
     }
 
     {
+      apiUnavailable && (
+        <p class="band" role="alert">{t.pageUnavailable}</p>
+      )
+    }
+
+    {
+      /* Signed out is the middleware's to answer now (#570), so this band is
+         reachable only in fixture mode, where nobody is signed in and the
+         screens render anyway. It stays because that is the state a reviewer
+         looking at a preview is in. */
       !apiUnavailable && !session.authenticated && !fixtures && (
         <p class="band" role="alert">{t.notParticipating}</p>
       )
