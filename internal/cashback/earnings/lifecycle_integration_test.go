@@ -277,6 +277,47 @@ func TestAReferenceNamingNoClickIsQueuedNotCredited(t *testing.T) {
 	j.wantBalances(t, 0, 0, 0)
 }
 
+// TestASecondReportCitingOneClickIsQueuedNotCreditedTwice is 0034 in the
+// production path (spec 004, T202): one click backs one credit, and the
+// second report citing it goes to the operator's queue - the window is not
+// failed, and nobody is paid twice for one purchase.
+func TestASecondReportCitingOneClickIsQueuedNotCreditedTwice(t *testing.T) {
+	t.Parallel()
+	j := begin(t)
+	j.seed(t)
+	click := j.clickOut(t)
+	first := j.reports(t, click.Ref.Ref(), networks.StatusPending)
+	second := j.reports(t, click.Ref.Ref(), networks.StatusPending)
+	job := j.lifecycle(t, earnings.HoldRules{})
+
+	if out := j.runs(t, job); out != (earnings.Outcome{Credited: 1, Queued: 1}) {
+		t.Fatalf("the run did %+v, want one credit and one report queued", out)
+	}
+	credited, queued := first, second
+	if len(j.entriesCiting(t, first)) == 0 {
+		credited, queued = second, first
+	}
+	if entries := j.entriesCiting(t, credited); len(entries) != 1 {
+		t.Fatalf("the credited report earned %+v, want exactly one entry", entries)
+	}
+	if entries := j.entriesCiting(t, queued); len(entries) != 0 {
+		t.Fatalf("the second report on one click earned %+v, want nothing", entries)
+	}
+	var inQueue int
+	if err := j.tx.QueryRow(j.ctx, `
+		select count(*) from cashback.unattributed_transaction where network_transaction_id = $1`, queued).Scan(&inQueue); err != nil {
+		t.Fatalf("reading the queue: %v", err)
+	}
+	if inQueue != 1 {
+		t.Fatalf("the second report is in the unattributed queue %d times, want once", inQueue)
+	}
+	// The next run has nothing left to decide.
+	if out := j.runs(t, job); out != (earnings.Outcome{}) {
+		t.Fatalf("a second run did %+v, want nothing", out)
+	}
+	j.wantBalances(t, 0, clickTimeMemberShare, 0)
+}
+
 // TestAReportDeclinedBeforeCreditMovesNoMoney. Crediting it only to reverse
 // it would move money twice to say nothing.
 func TestAReportDeclinedBeforeCreditMovesNoMoney(t *testing.T) {

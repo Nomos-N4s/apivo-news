@@ -11,6 +11,52 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const recordCreditedClickReference = `-- name: RecordCreditedClickReference :one
+insert into cashback.unattributed_transaction (network_transaction_id)
+select nt.id
+  from cashback.network_transaction nt
+ where nt.id = $1
+   and nt.click_ref is not null
+   and exists (
+       select 1
+         from cashback.click c
+         join cashback.entry e on e.click_id = c.id and e.reversal_of_id is null
+        where c.click_ref = nt.click_ref
+   )
+on conflict on constraint unattributed_one_per_report do nothing
+returning id, network_transaction_id, detected_at
+`
+
+type RecordCreditedClickReferenceRow struct {
+	ID                   pgtype.UUID
+	NetworkTransactionID pgtype.UUID
+	DetectedAt           pgtype.Timestamptz
+}
+
+// Record that this stored report named a click that already backs a credit,
+// if it did.
+//
+// The third way a report can be money nobody can be credited for (spec 004,
+// T202): its reference round-tripped and matched a click, and that click
+// already earned its one credit (entry_click_id_idx, 0034). A second
+// network echoing the same reference does this, and so does one network
+// reporting one purchase under two transaction ids. The report is queued
+// for an operator exactly as an unmatched one is - the money stays visible,
+// and nobody is paid twice for one click.
+//
+// The predicate is the STATEMENT'S, as RecordUnmatchedReference's is and
+// for the same reason: the stored columns decide, not a caller that has
+// just been refused and believes it knows why. A report whose click backs
+// no credit yet is not queued by this, whatever the caller thinks.
+//
+// Reversals do not count as the click's credit, mirroring the index.
+func (q *Queries) RecordCreditedClickReference(ctx context.Context, networkTransactionID pgtype.UUID) (RecordCreditedClickReferenceRow, error) {
+	row := q.db.QueryRow(ctx, recordCreditedClickReference, networkTransactionID)
+	var i RecordCreditedClickReferenceRow
+	err := row.Scan(&i.ID, &i.NetworkTransactionID, &i.DetectedAt)
+	return i, err
+}
+
 const recordUnmatchedReference = `-- name: RecordUnmatchedReference :one
 insert into cashback.unattributed_transaction (network_transaction_id)
 select nt.id

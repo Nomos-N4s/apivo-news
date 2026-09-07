@@ -134,6 +134,31 @@ func TestAReportAlreadyCreditedIsRefusedBeforeAnyMoneyMoves(t *testing.T) {
 	}
 }
 
+// TestAClickAlreadyCreditedIsRefusedBeforeAnyMoneyMoves. One click backs
+// one credit (entry_click_id_idx, spec 004): a second report citing the same
+// click is refused by name, and no transfer is posted for it.
+func TestAClickAlreadyCreditedIsRefusedBeforeAnyMoneyMoves(t *testing.T) {
+	t.Parallel()
+
+	entries := &fakeEntries{createErr: &pgconn.PgError{
+		Code:           pgerrcode.UniqueViolation,
+		ConstraintName: "entry_click_id_idx",
+	}}
+	ledger := &fakeLedger{}
+
+	_, err := machine(t, entries, ledger).Open(t.Context(), &fakeOutbox{}, aCredit(t, earnings.StatePending))
+
+	if !errors.Is(err, earnings.ErrClickAlreadyCredited) {
+		t.Fatalf("Open() error = %v, want one wrapping %v", err, earnings.ErrClickAlreadyCredited)
+	}
+	if errors.Is(err, earnings.ErrAlreadyCredited) {
+		t.Error("a credited click reads as a credited report; the two are different refusals with different handling")
+	}
+	if len(ledger.posted) != 0 {
+		t.Errorf("a second report on one click posted %d transfer(s), want none", len(ledger.posted))
+	}
+}
+
 // TestAHeldCreditNamesTheRuleHoldingIt, and one that is not held names none.
 // The schema checks the rule and the state on the row as a whole, so a
 // pending entry carrying a rule is a row it refuses.
