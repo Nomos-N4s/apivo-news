@@ -36,6 +36,11 @@ export default getViteConfig({
         // the same reason reader/strings.ts is: a language it answers in
         // nothing has ever rendered is copy nobody has read.
         'src/lib/legal/strings.ts',
+        // The cashback terms. Measured because its whole discipline is
+        // that it owns headings and references the product's own
+        // sentences, and a case beside it counts the prose it owns — a
+        // catalogue nobody measures cannot prove that.
+        'src/lib/legal/terms.ts',
         // The FAQ's questions and structure. Measured for the same reason
         // reader/strings.ts is — and because the set-membership case beside
         // it is what stops an answer being written here instead of
