@@ -111,6 +111,14 @@ type ImportResult struct {
 	Departed int64
 }
 
+// WithdrewAndAddedNone is what an upstream change looks like from here - a
+// credential that lost its programme approvals, a filter somebody edited -
+// and it is indistinguishable from the world having changed until somebody
+// looks. Whoever reports a run says so when this holds.
+func (r ImportResult) WithdrewAndAddedNone() bool {
+	return r.Departed > 0 && r.Created == 0
+}
+
 // Run reads the whole catalogue and writes it, then reconciles what was not
 // in it.
 //

@@ -105,20 +105,9 @@ func (i *Imports) Register(jobs *scheduler.Scheduler) error {
 // few hours; the alternative is a catalogue nobody can reason about after a
 // crash.
 func (i *Imports) Refresh(ctx context.Context) error {
-	tx, err := i.db.Begin(ctx)
+	result, err := i.Once(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: opening the transaction: %w", ErrNotImported, err)
-	}
-	// Rollback after a commit is a no-op, so this is the one path that runs
-	// on every exit and the only one that has to.
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	result, err := i.importer.Run(ctx, tx, i.adapter)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrNotImported, err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("%w: committing %d retailers: %w", ErrNotImported, result.Seen, err)
+		return err
 	}
 
 	i.log.InfoContext(ctx, "catalogue imported",
@@ -132,7 +121,7 @@ func (i *Imports) Refresh(ctx context.Context) error {
 	// approvals, a filter somebody edited - and it is indistinguishable
 	// from the world having changed until somebody looks. Saying so at WARN
 	// is that somebody being told.
-	if result.Departed > 0 && result.Created == 0 {
+	if result.WithdrewAndAddedNone() {
 		i.log.WarnContext(ctx, "the catalogue import withdrew retailers and added none",
 			"network", i.adapter.ID().String(),
 			"departed", result.Departed,
@@ -140,3 +129,33 @@ func (i *Imports) Refresh(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Once runs the import a single time, in one transaction, and answers what
+// it did without saying anything: the scheduled job logs the result, and
+// the import-catalogue command prints it, and the two should not both.
+//
+// It does NOT take the fleet-wide lock. The scheduler takes it around
+// Refresh, and a caller running the import by hand takes it around this -
+// see the command - so that an operator's run and the scheduled one never
+// stamp two start instants against one catalogue.
+func (i *Imports) Once(ctx context.Context) (ImportResult, error) {
+	tx, err := i.db.Begin(ctx)
+	if err != nil {
+		return ImportResult{}, fmt.Errorf("%w: opening the transaction: %w", ErrNotImported, err)
+	}
+	// Rollback after a commit is a no-op, so this is the one path that runs
+	// on every exit and the only one that has to.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	result, err := i.importer.Run(ctx, tx, i.adapter)
+	if err != nil {
+		return ImportResult{}, fmt.Errorf("%w: %w", ErrNotImported, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ImportResult{}, fmt.Errorf("%w: committing %d retailers: %w", ErrNotImported, result.Seen, err)
+	}
+	return result, nil
+}
+
+// Network is the network this import reads, as the report names it.
+func (i *Imports) Network() networks.NetworkID { return i.adapter.ID() }
