@@ -7,3 +7,11 @@ where are we? what do i need to merge? in what order? also the backend team has 
 ---
 
 everything is merged, what's next?
+
+---
+
+In terms of F3 I'll follow your lead, for F1.4 and F4/F5/F6 let's plan and act accordingly. Prioritise the housekeeping detail, i want them both to be available please. create a small pr for that. In fact on housekeeping, do you mind also cleaning up the stale gh issues? I reckon there are many that have been alread implemented but where never referenced therefore never closed.
+
+---
+
+is graft enabled in the repo/session? if so how many tokens have we saved?
