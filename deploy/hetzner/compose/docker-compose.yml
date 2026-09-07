@@ -120,6 +120,16 @@ services:
       # which is reached with sslmode=require for the same reason - encrypt
       # the hop without claiming to have authenticated it.
       - ${APIVO_ETC:-/etc/apivo}/${APIVO_ENV}/web-certs:/run/web-certs:ro
+      # The brand definition (ADR-0004), the same directory and the same
+      # file the api reads through the cashback overlay: the legal notices
+      # print the entity, the address and the support mailboxes out of it,
+      # and the opt-in shows the terms a member accepts. The web refuses to
+      # print the repository's fixture company in production mode, so
+      # without this mount those pages have nothing to render (#547).
+      # provision.sh creates the directory empty; the operator writes the
+      # file and names it with BRAND_DIR in web.env, on the same terms as
+      # the api's key in api.env.
+      - ${APIVO_ETC:-/etc/apivo}/${APIVO_ENV}/brand:/etc/apivo/brand:ro
     networks:
       - edge
     logging:

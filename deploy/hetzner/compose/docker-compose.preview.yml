@@ -85,6 +85,10 @@ services:
       # reads it as the exact string "1" so a half-set value elsewhere does
       # nothing. The reader pages keep their own refusal untouched.
       CASHBACK_PREVIEW_FIXTURES: "1"
+      # Where the mount below puts the brand. A preview with no brand file
+      # in /etc/apivo/preview/brand renders no legal notice, exactly as it
+      # did before the mount existed.
+      BRAND_DIR: /etc/apivo/brand
       # See docker-compose.yml for why the container serves TLS: Astro.url
       # takes its scheme from the socket, and a preview is the environment
       # that proved it, because a WILDCARD host cannot have the Origin
@@ -122,6 +126,12 @@ services:
       # and never verified, so a name per preview would be ceremony: what it
       # buys is a socket that reports itself encrypted.
       - ${APIVO_ETC:-/etc/apivo}/preview/web-certs:/run/web-certs:ro
+      # One brand for every preview on this host, for the reason
+      # docker-compose.yml gives: the legal notices and the opt-in render
+      # out of it, and a preview that cannot show them cannot be reviewed
+      # (#547). Named here rather than in an env file because a preview has
+      # none for the web that an operator edits.
+      - ${APIVO_ETC:-/etc/apivo}/preview/brand:/etc/apivo/brand:ro
     networks:
       - preview-edge
     logging:
