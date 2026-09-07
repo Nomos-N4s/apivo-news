@@ -1,0 +1,61 @@
+ok, next steps... See https://github.com/Nomos-N4s/apivo-news/blob/main/docs/master-prompts/cashback-frontend.md and follow it thoroughly so we can have a complete working app in the frontend (again you own the designs and exprience) we have approved those artifacts a while ago. In terms of the gaps, th backend team is working on them as we speak so consider them a to-be-solved issue and not something to be stalled. If you reckon there's ork you can do in the meantime go ahead and do it
+
+---
+
+where are we? what do i need to merge? in what order? also the backend team has addressed the gaps
+
+---
+
+everything is merged, what's next?
+
+---
+
+In terms of F3 I'll follow your lead, for F1.4 and F4/F5/F6 let's plan and act accordingly. Prioritise the housekeeping detail, i want them both to be available please. create a small pr for that. In fact on housekeeping, do you mind also cleaning up the stale gh issues? I reckon there are many that have been alread implemented but where never referenced therefore never closed.
+
+---
+
+is graft enabled in the repo/session? if so how many tokens have we saved?
+
+---
+
+the other thing is that I just clicked the signin button in our qa box ra1ze.com and it doesn't do anything... are you using claude for chrome to test what you're building? or the sign in is not complete yet?
+
+---
+
+you don't have to wait until the code hits main (which is QA) that's why we have ephemeral preview environments. And we get pr-*.ra1ze so you must use it to test there.
+
+---
+
+i think 584 preview is up, right?
+
+---
+
+<task-notification>
+<task-id>bi4ot62h0</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>C:\Users\madym\AppData\Local\Temp\claude\C--Users-madym-repos-apivo-news\5224ef45-f1db-43d0-83d0-6bee986d1aee\tasks\bi4ot62h0.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for the pr-584 preview to come up" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+it's okay I just merged 584, wait until it hits main and just test in QA... the preview bug is something someone else must fix. Where are we in terms of our frontend journey?
+
+---
+
+<task-notification>
+<task-id>buv2cttkc</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>C:\Users\madym\AppData\Local\Temp\claude\C--Users-madym-repos-apivo-news\5224ef45-f1db-43d0-83d0-6bee986d1aee\tasks\buv2cttkc.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for QA to deploy the fix" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+so where are we?
+
+---
+
+start F3, someone is already working on fixing the preview environments failure. don't you worry about it
