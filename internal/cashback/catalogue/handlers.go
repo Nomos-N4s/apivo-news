@@ -36,8 +36,22 @@ import (
 // swallow every other module's routes into this one's 404.
 const MerchantPrefix = "/api/v1/cashback/merchants"
 
-// merchantPath is the one route, with the slug as a path segment.
+// merchantPath is the shop page's route, with the slug as a path segment.
 const merchantPath = MerchantPrefix + "/{slug}"
+
+// CataloguePrefix is the listing's path (#545), mounted the way
+// MerchantPrefix is: at the path and at its subtree, so a stray sub-path is
+// answered in problem+json here.
+const CataloguePrefix = "/api/v1/cashback/catalogue"
+
+// The listing's query parameters, beside languageParam.
+const (
+	placeParam    = "place"
+	searchParam   = "q"
+	limitParam    = "limit"
+	cursorParam   = "cursor"
+	categoryParam = "category"
+)
 
 // languageParam is how a reader says which language they want. Separate from
 // place, always, because language and place are independent axes
@@ -54,6 +68,7 @@ const timeFormat = time.RFC3339Nano
 type Handler struct {
 	log       *slog.Logger
 	merchants *MerchantReader
+	listings  *Lister
 	auth      MemberAuthenticator
 	// now is the clock the page is read against, injectable so a test can
 	// pin the moment a band's validity window is judged at.
@@ -80,8 +95,8 @@ func WithPageClock(now func() time.Time) HandlerOption {
 
 // NewHandler builds the catalogue route table as an http.Handler for the
 // composition root to mount. Every route sits behind the requireMember gate.
-func NewHandler(log *slog.Logger, merchants *MerchantReader, auth MemberAuthenticator, opts ...HandlerOption) http.Handler {
-	h := &Handler{log: log, merchants: merchants, auth: auth, now: time.Now}
+func NewHandler(log *slog.Logger, merchants *MerchantReader, listings *Lister, auth MemberAuthenticator, opts ...HandlerOption) http.Handler {
+	h := &Handler{log: log, merchants: merchants, listings: listings, auth: auth, now: time.Now}
 	for _, opt := range opts {
 		opt(h)
 	}
@@ -90,10 +105,15 @@ func NewHandler(log *slog.Logger, merchants *MerchantReader, auth MemberAuthenti
 	for pattern, handler := range h.routes() {
 		mux.HandleFunc(pattern, handler)
 	}
-	// Every error under this path is problem+json, including the ones nobody
-	// wrote a handler for - the convention every other module here holds.
+	// Every error under either path is problem+json, including the ones
+	// nobody wrote a handler for - the convention every other module here
+	// holds. The bare paths are registered too, so a known path reached
+	// with the wrong method is a 405 with Allow rather than ServeMux's own
+	// text/plain.
 	mux.HandleFunc(MerchantPrefix+"/", h.handleUnrouted)
 	mux.HandleFunc(MerchantPrefix, h.handleUnrouted)
+	mux.HandleFunc(CataloguePrefix+"/", h.handleUnrouted)
+	mux.HandleFunc(CataloguePrefix, h.handleUnrouted)
 	return h.requireMember(mux)
 }
 
@@ -103,7 +123,8 @@ func NewHandler(log *slog.Logger, merchants *MerchantReader, auth MemberAuthenti
 // checked against the routes rather than against someone's memory of them.
 func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
-		"GET " + merchantPath: h.getMerchant,
+		"GET " + CataloguePrefix: h.listCatalogue,
+		"GET " + merchantPath:    h.getMerchant,
 	}
 }
 

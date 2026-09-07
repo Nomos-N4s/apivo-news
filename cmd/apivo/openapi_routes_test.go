@@ -167,6 +167,7 @@ func TestOpenAPISecurityMatchesTheAuthGate(t *testing.T) {
 			strings.HasPrefix(path, opsPrefix) ||
 			strings.HasPrefix(path, clickoutPrefix) ||
 			strings.HasPrefix(path, merchantPrefix) ||
+			strings.HasPrefix(path, cataloguePrefix) ||
 			strings.HasPrefix(path, walletPrefix) ||
 			strings.HasPrefix(path, participationPrefix) ||
 			strings.HasPrefix(path, exportPrefix) ||
