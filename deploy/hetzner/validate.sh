@@ -111,6 +111,15 @@ check_env() {
     else
         echo "ok: $env_name keeps the data network internal"
     fi
+
+    # The web can be handed a brand (#547): the legal notices and the opt-in
+    # render out of it, and in production mode the web refuses the fixture.
+    # A rendered bind mount carries its container path as `target:`.
+    if ! printf '%s' "$rendered" | grep -q 'target: /etc/apivo/brand'; then
+        fail "$env_name: no service mounts a brand at /etc/apivo/brand, so the web has nothing to print an Impressum from"
+    else
+        echo "ok: $env_name mounts a brand directory"
+    fi
 }
 
 # QA layers the local Postgres on; production does not.

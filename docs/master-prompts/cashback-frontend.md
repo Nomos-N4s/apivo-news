@@ -157,9 +157,10 @@ end-to-end test (Vitest only, no browser tests).
 **Two breaks on the deployed host that are not the web's fault:** the
 edge sends `/api/*` to the Go api, so the web's own
 `/api/cashback/clickout` and `/api/tour/*` never reached the web on
-Hetzner until **B4 (#546)** narrowed the edge matcher to `/api/v1/*`; and the web container is given no `BRAND_DIR`, so in
-production mode the legal pages and anything rendering the brand refuse
-rather than print a fixture company (**B5, #547**).
+Hetzner until **B4 (#546)** narrowed the edge matcher to `/api/v1/*`; and
+the web container was given no `BRAND_DIR`, so in production mode the
+legal pages and anything rendering the brand refused rather than print a
+fixture company, until **B5 (#547)** mounted it.
 
 ## The gaps, in order, and who owns them
 
@@ -184,8 +185,11 @@ and one pull request each, none of them the frontend's to build:
   The web's own `/api/cashback/clickout` and `/api/tour/*` reach the web.
   On a host provisioned before this, the Caddy snippets must be copied
   to `/opt/apivo/caddy/` and the edge reloaded; the runbook says how.
-- **B5 — the web's brand (#547).** Mount `/etc/apivo/<env>/brand` into the web
-  container as the overlay now does for the api, and set its `BRAND_DIR`.
+- **B5 — the web's brand (#547): landed.** The base compose file mounts
+  `/etc/apivo/<env>/brand` into the web as the overlay does for the api,
+  previews mount the host's preview brand, and `BRAND_DIR` in `web.env`
+  names it on the same terms as the api's key. `validate.sh` checks the
+  mount. QA's Impressum answering 200 is the proof it took.
 - **B6 — payout destination verification (#548).** FR-051 says a destination is
   verified before it is paid to and the contract says verification is a
   separate flow; no endpoint performs it. Needed before the first

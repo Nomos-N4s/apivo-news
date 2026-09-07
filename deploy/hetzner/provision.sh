@@ -400,6 +400,10 @@ done
 if [ "$APIVO_HOST_ROLE" = preprod ]; then
     say "Previews"
     mkdir -p "$ETC/preview/pg-certs"
+    # The brand every preview's web container mounts (#547), empty until an
+    # operator writes brand.json into it - the same posture as each
+    # environment's own brand directory above.
+    mkdir -p "$ETC/preview/brand"
 
     # One web certificate for every preview on this host. Self-signed and
     # never verified, so a name per pull request would buy nothing: what it
