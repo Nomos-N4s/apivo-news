@@ -51,6 +51,14 @@ returning id, click_ref, account_id, offer_id, clicked_at,
 -- back the reference it was given, and the credit that follows may only rest
 -- on the click that reference belongs to (C-2).
 --
+-- Matched under the network that REPORTED it (FR-096, 0037). A reference is
+-- only this click's if this click was issued through the network now
+-- echoing it: with two networks, one echoing a reference the other issued
+-- is answered with no row, exactly as a reference nobody minted is, and the
+-- caller queues it (FR-098). Rides click_network_id_idx beside the unique
+-- index on click_ref; the reference decides the row and the network decides
+-- whether it is answered.
+--
 -- Matched EXACTLY, with no normalisation of any kind. No trimming, no case
 -- folding, no unescaping. Every one of those would widen the set of network
 -- strings that resolve to a member's click, and the reference is the only
@@ -62,7 +70,8 @@ select id, click_ref, account_id, offer_id, clicked_at,
        rate_snapshot, member_share_bps_snapshot, context_digest,
        merchant_network_id, network_id
   from cashback.click
- where click_ref = sqlc.arg(click_ref);
+ where click_ref = sqlc.arg(click_ref)
+   and network_id = sqlc.arg(network_id);
 
 -- name: CountRecentClicksByAccount :one
 -- How many clicks this member has made since a moment, and the oldest of

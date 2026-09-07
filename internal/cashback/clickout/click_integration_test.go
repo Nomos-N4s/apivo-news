@@ -152,7 +152,7 @@ func TestTheClickRecorderAgainstSchema(t *testing.T) {
 			t.Error("the recorded click carries no instant; clicked_at is the row's own clock and is read back")
 		}
 
-		found, err := clicks.ByRef(ctx, networks.NewClickRef(ref.Ref()))
+		found, err := clicks.ByRef(ctx, network, networks.NewClickRef(ref.Ref()))
 		if err != nil {
 			t.Fatalf("ByRef(): %v", err)
 		}
@@ -202,8 +202,32 @@ func TestTheClickRecorderAgainstSchema(t *testing.T) {
 		// Ordinary rather than a failure: networks echo references from
 		// other publishers and from stale links, and the caller queues that
 		// transaction as unattributed (FR-034).
-		if _, err := clicks.ByRef(ctx, networks.NewClickRef(ref.Ref())); !errors.Is(err, clickout.ErrNoSuchClick) {
+		if _, err := clicks.ByRef(ctx, "awin", networks.NewClickRef(ref.Ref())); !errors.Is(err, clickout.ErrNoSuchClick) {
 			t.Fatalf("ByRef() for an unissued reference = %v, want one wrapping %v", err, clickout.ErrNoSuchClick)
+		}
+	})
+
+	// FR-096: the reference is the click's only under the network that
+	// issued it. Another network echoing it - a second network the same
+	// retailer is on, reporting a purchase it did not send the member to -
+	// is answered exactly as a reference nobody minted.
+	each("a reference is only the click's on the network that issued it", func(t *testing.T, tx pgx.Tx, clicks *clickout.Clicks) {
+		account, offer, route, network := clickable(ctx, t, tx)
+		ref, err := clickout.NewMinter().Mint()
+		if err != nil {
+			t.Fatalf("Mint(): %v", err)
+		}
+		if _, err := clicks.Record(ctx, clickout.NewClick{
+			Ref: ref, AccountID: account, OfferID: offer, RouteID: route, NetworkID: network, Promised: promised,
+		}); err != nil {
+			t.Fatalf("Record(): %v", err)
+		}
+
+		if _, err := clicks.ByRef(ctx, network+"_other", networks.NewClickRef(ref.Ref())); !errors.Is(err, clickout.ErrNoSuchClick) {
+			t.Fatalf("ByRef() under another network = %v, want one wrapping %v", err, clickout.ErrNoSuchClick)
+		}
+		if found, err := clicks.ByRef(ctx, network, networks.NewClickRef(ref.Ref())); err != nil || found.Ref != ref {
+			t.Fatalf("ByRef() under the issuing network = %+v, %v; want the click", found, err)
 		}
 	})
 }

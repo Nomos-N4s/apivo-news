@@ -193,7 +193,7 @@ type Click struct {
 // whether that commit carries anything else is the caller's decision.
 type ClickStore interface {
 	InsertClick(ctx context.Context, arg store.InsertClickParams) (store.CashbackClick, error)
-	GetClickByRef(ctx context.Context, clickRef string) (store.CashbackClick, error)
+	GetClickByRef(ctx context.Context, arg store.GetClickByRefParams) (store.CashbackClick, error)
 }
 
 // Clicks records clicks and finds them again by the reference a network
@@ -263,7 +263,8 @@ func (c *Clicks) Record(ctx context.Context, click NewClick) (Click, error) {
 	return clickFrom(row)
 }
 
-// ByRef answers the click a network's reported reference names.
+// ByRef answers the click a network's reported reference names, among the
+// clicks issued through that network.
 //
 // It takes a [networks.ClickRef] - what a network ECHOED - rather than a
 // string, so a caller cannot pass a reference of its own by accident, and so
@@ -271,15 +272,27 @@ func (c *Clicks) Record(ctx context.Context, click NewClick) (Click, error) {
 // empty string. A report carrying no reference is not a failed match; it is
 // a report that never claimed one, and it never reaches here.
 //
+// The network is the one that REPORTED the reference (FR-096). A click is
+// found only under the network it was issued through, so a reference one
+// network echoes that another issued is [ErrNoSuchClick] exactly as a
+// reference nobody minted is - and the caller tells the two apart on its own
+// side (FR-098), where the report and the queue live. A caller naming no
+// network is refused as a failure rather than answered with a miss: a miss
+// is queued, and a whole window queued for a caller's mistake is money
+// nobody looks for again.
+//
 // A reference matching nothing reports [ErrNoSuchClick], which is ordinary:
 // networks echo references from other publishers and from stale links, and
 // the caller queues that transaction as unattributed (FR-034).
-func (c *Clicks) ByRef(ctx context.Context, reported networks.ClickRef) (Click, error) {
+func (c *Clicks) ByRef(ctx context.Context, network networks.NetworkID, reported networks.ClickRef) (Click, error) {
 	ref, present := reported.Ref()
 	if !present {
 		return Click{}, fmt.Errorf("%w: the report carries no reference to match", ErrNoSuchClick)
 	}
-	row, err := c.store.GetClickByRef(ctx, ref)
+	if err := network.Validate(); err != nil {
+		return Click{}, fmt.Errorf("clickout: reading the click for %s: no network to look it up under: %w", reported, err)
+	}
+	row, err := c.store.GetClickByRef(ctx, store.GetClickByRefParams{ClickRef: ref, NetworkID: network.String()})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return Click{}, fmt.Errorf("%w: %s", ErrNoSuchClick, reported)

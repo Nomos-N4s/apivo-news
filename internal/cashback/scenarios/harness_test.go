@@ -282,7 +282,9 @@ func (w *world) match(t *testing.T, report reported, ref string) earnings.Attrib
 	if err != nil {
 		t.Fatalf("NewMatcher(): %v", err)
 	}
-	attributed, err := matcher.Match(w.ctx, w.tx, earnings.Report{ID: report.id, Ref: networks.NewClickRef(ref)})
+	attributed, err := matcher.Match(w.ctx, w.tx, earnings.Report{
+		ID: report.id, Ref: networks.NewClickRef(ref), Network: networks.NetworkID(w.networkID),
+	})
 	if err != nil {
 		t.Fatalf("Match(): %v", err)
 	}

@@ -42,7 +42,7 @@ type fakeStore struct {
 	echo bool
 
 	inserted store.InsertClickParams
-	askedFor string
+	askedFor store.GetClickByRefParams
 	inserts  int
 	reads    int
 }
@@ -73,8 +73,8 @@ func (f *fakeStore) InsertClick(_ context.Context, arg store.InsertClickParams) 
 // the column's own default.
 var echoedClickedAt = time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 
-func (f *fakeStore) GetClickByRef(_ context.Context, ref string) (store.CashbackClick, error) {
-	f.askedFor, f.reads = ref, f.reads+1
+func (f *fakeStore) GetClickByRef(_ context.Context, arg store.GetClickByRefParams) (store.CashbackClick, error) {
+	f.askedFor, f.reads = arg, f.reads+1
 	if f.getErr != nil {
 		return store.CashbackClick{}, f.getErr
 	}
@@ -353,7 +353,7 @@ func TestAReportedReferenceFindsItsClickOrNothing(t *testing.T) {
 	t.Run("a reference that names a click", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeStore{row: storedRow(t, ref, account, offer, "")}
-		click, err := recorder(t, fake).ByRef(t.Context(), networks.NewClickRef(ref.Ref()))
+		click, err := recorder(t, fake).ByRef(t.Context(), aNetwork, networks.NewClickRef(ref.Ref()))
 		if err != nil {
 			t.Fatalf("ByRef(): %v", err)
 		}
@@ -362,15 +362,34 @@ func TestAReportedReferenceFindsItsClickOrNothing(t *testing.T) {
 		}
 		// Asked for verbatim: the lookup is exact, and anything this layer
 		// trimmed or folded would widen the match before the query could.
-		if fake.askedFor != ref.Ref() {
-			t.Errorf("asked the store for %q, want %q", fake.askedFor, ref.Ref())
+		// And asked for under the reporting network (FR-096): the store
+		// answers among that network's clicks and no other's.
+		if fake.askedFor.ClickRef != ref.Ref() {
+			t.Errorf("asked the store for %q, want %q", fake.askedFor.ClickRef, ref.Ref())
+		}
+		if fake.askedFor.NetworkID != aNetwork.String() {
+			t.Errorf("asked the store under network %q, want %q", fake.askedFor.NetworkID, aNetwork)
+		}
+	})
+
+	// A caller that names no network is a defect, not a report nobody
+	// matched: answered as a miss it would queue every report in the window.
+	t.Run("a lookup under no network at all", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeStore{row: storedRow(t, ref, account, offer, "")}
+		_, err := recorder(t, fake).ByRef(t.Context(), "", networks.NewClickRef(ref.Ref()))
+		if err == nil || errors.Is(err, clickout.ErrNoSuchClick) {
+			t.Fatalf("ByRef() under no network = %v, want a failure that is not a miss", err)
+		}
+		if fake.reads != 0 {
+			t.Errorf("the store was read %d time(s) under no network", fake.reads)
 		}
 	})
 
 	t.Run("a reference that names no click", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeStore{getErr: pgx.ErrNoRows}
-		_, err := recorder(t, fake).ByRef(t.Context(), networks.NewClickRef("SomeOtherPublishersRef"))
+		_, err := recorder(t, fake).ByRef(t.Context(), aNetwork, networks.NewClickRef("SomeOtherPublishersRef"))
 		if !errors.Is(err, clickout.ErrNoSuchClick) {
 			t.Fatalf("ByRef() error = %v, want one wrapping %v", err, clickout.ErrNoSuchClick)
 		}
@@ -383,7 +402,7 @@ func TestAReportedReferenceFindsItsClickOrNothing(t *testing.T) {
 	t.Run("a report carrying no reference at all", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeStore{}
-		_, err := recorder(t, fake).ByRef(t.Context(), networks.ClickRef{})
+		_, err := recorder(t, fake).ByRef(t.Context(), aNetwork, networks.ClickRef{})
 		if !errors.Is(err, clickout.ErrNoSuchClick) {
 			t.Fatalf("ByRef() error = %v, want one wrapping %v", err, clickout.ErrNoSuchClick)
 		}
@@ -395,7 +414,7 @@ func TestAReportedReferenceFindsItsClickOrNothing(t *testing.T) {
 	t.Run("the read failed", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeStore{getErr: errors.New("connection reset")}
-		_, err := recorder(t, fake).ByRef(t.Context(), networks.NewClickRef(ref.Ref()))
+		_, err := recorder(t, fake).ByRef(t.Context(), aNetwork, networks.NewClickRef(ref.Ref()))
 		if errors.Is(err, clickout.ErrNoSuchClick) {
 			t.Fatal("a failed read reads as 'no such click', which would queue a matched purchase as unattributed")
 		}
@@ -430,7 +449,7 @@ func TestARowThatCannotBeATrustedClickIsRefused(t *testing.T) {
 			t.Parallel()
 			row := storedRow(t, ref, account, offer, "")
 			tc.spoil(&row)
-			if _, err := recorder(t, &fakeStore{row: row}).ByRef(t.Context(), networks.NewClickRef(ref.Ref())); err == nil {
+			if _, err := recorder(t, &fakeStore{row: row}).ByRef(t.Context(), aNetwork, networks.NewClickRef(ref.Ref())); err == nil {
 				t.Fatal("ByRef() returned a click built from a row that cannot be one")
 			}
 		})

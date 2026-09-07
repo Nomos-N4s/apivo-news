@@ -24,14 +24,15 @@ import (
 // fakeClicks stands in for the one read the matcher makes, recording what it
 // was asked so a case can assert the reference actually looked up.
 type fakeClicks struct {
-	click clickout.Click
-	err   error
-	asked networks.ClickRef
-	reads int
+	click   clickout.Click
+	err     error
+	asked   networks.ClickRef
+	askedOn networks.NetworkID
+	reads   int
 }
 
-func (f *fakeClicks) ByRef(_ context.Context, reported networks.ClickRef) (clickout.Click, error) {
-	f.asked = reported
+func (f *fakeClicks) ByRef(_ context.Context, network networks.NetworkID, reported networks.ClickRef) (clickout.Click, error) {
+	f.asked, f.askedOn = reported, network
 	f.reads++
 	if f.err != nil {
 		return clickout.Click{}, f.err
@@ -92,6 +93,9 @@ func (f *fakeUnmatched) RecordForeignCurrencyReference(ctx context.Context, id p
 // reported is a reference a network echoed back.
 func reported(ref string) networks.ClickRef { return networks.NewClickRef(ref) }
 
+// onNetwork is the network every report in these files came from.
+const onNetwork networks.NetworkID = "awin"
+
 // clickoutMiss is what the click reader answers when a reference names
 // nothing, which is the ordinary outcome this whole file is about.
 func clickoutMiss() error { return clickout.ErrNoSuchClick }
@@ -122,7 +126,7 @@ func TestAReferenceNamingAClickIsAttributedToIt(t *testing.T) {
 	unmatched := &fakeUnmatched{}
 
 	attributed, err := matcherOver(t, clicks, unmatched).
-		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: ref})
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: ref, Network: onNetwork})
 	if err != nil {
 		t.Fatalf("Match(): %v", err)
 	}
@@ -132,6 +136,10 @@ func TestAReferenceNamingAClickIsAttributedToIt(t *testing.T) {
 	}
 	if attributed.Click.ID != clickID || attributed.Click.AccountID != member {
 		t.Errorf("Click = %+v, want the click %v belonging to %v", attributed.Click, clickID, member)
+	}
+	// Looked up under the network that reported it (FR-096), and no other.
+	if clicks.askedOn != onNetwork {
+		t.Errorf("the click was looked up under %q, want the reporting network %q", clicks.askedOn, onNetwork)
 	}
 	if attributed.Report != reportID {
 		t.Errorf("Report = %v, want %v", attributed.Report, reportID)
@@ -157,7 +165,7 @@ func TestAReferenceNamingNothingIsQueuedRatherThanRefused(t *testing.T) {
 	unmatched := &fakeUnmatched{row: store.RecordUnmatchedReferenceRow{ID: pgtype.UUID{Bytes: rowID, Valid: true}}}
 
 	attributed, err := matcherOver(t, &fakeClicks{err: clickoutMiss()}, unmatched).
-		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: reported("a-reference-nothing-answers-to")})
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: reported("a-reference-nothing-answers-to"), Network: onNetwork})
 	if err != nil {
 		t.Fatalf("Match() refused a miss: %v", err)
 	}
@@ -198,6 +206,28 @@ func TestAReportCarryingNoReferenceIsRefused(t *testing.T) {
 	}
 }
 
+// TestAReportNamingNoNetworkIsRefused: a reference is looked up among one
+// network's clicks (FR-096), so a report that names none has no set to be
+// looked up in. Refused rather than queued: a miss is a queue row nobody
+// re-examines, and a caller's mistake would fill the queue with them.
+func TestAReportNamingNoNetworkIsRefused(t *testing.T) {
+	t.Parallel()
+
+	unmatched := &fakeUnmatched{}
+	clicks := &fakeClicks{}
+
+	_, err := matcherOver(t, clicks, unmatched).
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-that-names-a-click")})
+
+	if !errors.Is(err, earnings.ErrNoNetwork) {
+		t.Fatalf("Match() error = %v, want one wrapping %v", err, earnings.ErrNoNetwork)
+	}
+	if clicks.reads != 0 || unmatched.writes != 0 {
+		t.Errorf("a report naming no network read %d click(s) and wrote %d row(s), want none",
+			clicks.reads, unmatched.writes)
+	}
+}
+
 // TestAFailedReadIsNotAMiss is the distinction that stops a dropped
 // connection becoming a permanent record that a purchase went unattributed -
 // a record 0013 freezes and nothing later re-examines.
@@ -208,7 +238,7 @@ func TestAFailedReadIsNotAMiss(t *testing.T) {
 	clicks := &fakeClicks{err: errors.New("connection reset")}
 
 	_, err := matcherOver(t, clicks, unmatched).
-		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-that-names-a-click")})
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-that-names-a-click"), Network: onNetwork})
 
 	if err == nil {
 		t.Fatal("Match() reported success although the click could not be read")

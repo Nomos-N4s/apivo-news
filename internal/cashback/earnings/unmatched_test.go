@@ -45,7 +45,7 @@ func TestAWriteThatFailedIsNotAnObservationRecorded(t *testing.T) {
 	unmatched := &fakeUnmatched{err: errors.New("connection reset")}
 
 	_, err := matcherOver(t, &fakeClicks{err: clickoutMiss()}, unmatched).
-		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: reported("a-reference-nothing-answers-to")})
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: reported("a-reference-nothing-answers-to"), Network: onNetwork})
 
 	if !errors.Is(err, earnings.ErrNotQueued) {
 		t.Fatalf("Match() error = %v, want one wrapping %v", err, earnings.ErrNotQueued)
@@ -67,7 +67,7 @@ func TestAnObservationAlreadyRecordedIsNotAnError(t *testing.T) {
 	unmatched := &fakeUnmatched{noRows: true}
 
 	attributed, err := matcherOver(t, &fakeClicks{err: clickoutMiss()}, unmatched).
-		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: reported("a-reference-nothing-answers-to")})
+		Match(t.Context(), &fakeOutbox{}, earnings.Report{ID: reportID, Ref: reported("a-reference-nothing-answers-to"), Network: onNetwork})
 	if err != nil {
 		t.Fatalf("Match(): %v", err)
 	}
@@ -94,7 +94,7 @@ func TestAQueuedReportIsAnnounced(t *testing.T) {
 	out := &fakeOutbox{}
 
 	if _, err := matcherOver(t, &fakeClicks{err: clickoutMiss()}, unmatched).
-		Match(t.Context(), out, earnings.Report{ID: reportID, Ref: reported("a-reference-nothing-answers-to")}); err != nil {
+		Match(t.Context(), out, earnings.Report{ID: reportID, Ref: reported("a-reference-nothing-answers-to"), Network: onNetwork}); err != nil {
 		t.Fatalf("Match(): %v", err)
 	}
 
@@ -122,7 +122,7 @@ func TestAnObservationAlreadyRecordedAnnouncesNothing(t *testing.T) {
 	unmatched := &fakeUnmatched{noRows: true}
 
 	if _, err := matcherOver(t, &fakeClicks{err: clickoutMiss()}, unmatched).
-		Match(t.Context(), out, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-nothing-answers-to")}); err != nil {
+		Match(t.Context(), out, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-nothing-answers-to"), Network: onNetwork}); err != nil {
 		t.Fatalf("Match(): %v", err)
 	}
 
@@ -140,7 +140,7 @@ func TestAMatchedReportAnnouncesNothing(t *testing.T) {
 	unmatched := &fakeUnmatched{}
 
 	if _, err := matcherOver(t, &fakeClicks{}, unmatched).
-		Match(t.Context(), out, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-that-names-a-click")}); err != nil {
+		Match(t.Context(), out, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-that-names-a-click"), Network: onNetwork}); err != nil {
 		t.Fatalf("Match(): %v", err)
 	}
 
@@ -158,7 +158,7 @@ func TestAQueuedReportThatCannotBeAnnouncedFails(t *testing.T) {
 	out := &fakeOutbox{err: errOutboxRefused}
 
 	_, err := matcherOver(t, &fakeClicks{err: clickoutMiss()}, &fakeUnmatched{}).
-		Match(t.Context(), out, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-nothing-answers-to")})
+		Match(t.Context(), out, earnings.Report{ID: uuid.New(), Ref: reported("a-reference-nothing-answers-to"), Network: onNetwork})
 
 	if !errors.Is(err, earnings.ErrNotAnnounced) {
 		t.Fatalf("Match() error = %v, want one wrapping %v", err, earnings.ErrNotAnnounced)
