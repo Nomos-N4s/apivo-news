@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "icepanel": {
+      "type": "http",
+      "url": "https://mcp.icepanel.io/mcp"
+    }
+  }
+}
