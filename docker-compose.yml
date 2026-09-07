@@ -175,6 +175,42 @@ services:
       blnk-migrate:
         condition: service_completed_successfully
 
+  # The payout details vault (ADR-0006), IN DEV MODE, which is the one place
+  # dev mode is the right answer.
+  #
+  # It keeps every secret in RAM, unseals itself, and takes a root token this
+  # file chooses rather than printing one. So `docker compose up` gives a
+  # working POST /payout-destinations with no init, no unseal shares and
+  # nothing to store — and loses every destination when it stops, which is
+  # what you want from a local vault and never from a deployed one.
+  #
+  # The deployment is the opposite in every respect and says so in
+  # deploy/hetzner/compose/docker-compose.vault.yml, where validate.sh asserts
+  # dev mode is absent. Nothing here reaches that file.
+  openbao:
+    image: openbao/openbao:2.6.2@sha256:11fd73a2102cda9c55d5d881a8c3210303146a7ec1e8ac76f526e175c6d24641
+    # The image's own default command is `server -dev -dev-no-store-token`.
+    # Named explicitly anyway: the token IS wanted here, because the api is
+    # given the same value below and the two have to agree.
+    command: ["server", "-dev"]
+    environment:
+      TZ: Etc/UTC
+      # Local only, and obviously so. The entrypoint passes this to
+      # `-dev-root-token-id`, and dev mode mounts KV v2 at `secret/` — the
+      # conventional path the api assumes when PAYOUT_VAULT_MOUNT is unset,
+      # so nothing has to enable a secrets engine to make this work.
+      BAO_DEV_ROOT_TOKEN_ID: apivo-local-dev-root
+    ports:
+      - "127.0.0.1:8200:8200"
+    healthcheck:
+      # Alpine's busybox provides wget. A dev-mode vault unseals itself, so
+      # the plain health route is enough here — none of the sealed and
+      # uninitialised handling the deployment needs applies.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8200/v1/sys/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # Go API. No `ports`: internal network only (contract topology). The
   # image defines its own healthcheck, which `depends_on` below relies on.
   api:
@@ -245,6 +281,17 @@ services:
       BLNK_URL: ${BLNK_URL:-}
       BLNK_SECRET_KEY: ${BLNK_SECRET_KEY:-}
       REDIS_URL: ${REDIS_URL:-}
+      # The payout details vault (ADR-0006). Passed through with no default
+      # for the reason BLNK_URL has none: a default here is a decision made
+      # by accident. Against the openbao service above the shape is
+      #   PAYOUT_VAULT_URL=http://openbao:8200
+      #   PAYOUT_VAULT_TOKEN=apivo-local-dev-root
+      # and with the binary on the host rather than in compose the URL is
+      # http://127.0.0.1:8200 instead. Unset, the api starts and answers 503
+      # on POST /payout-destinations alone.
+      PAYOUT_VAULT_URL: ${PAYOUT_VAULT_URL:-}
+      PAYOUT_VAULT_TOKEN: ${PAYOUT_VAULT_TOKEN:-}
+      PAYOUT_VAULT_MOUNT: ${PAYOUT_VAULT_MOUNT:-}
       # The list, and the block for the one driver this binary ships. A
       # second network means a second block here, named after it: the api
       # reads NETWORK_<DRIVER>_*, and compose cannot pass a variable whose

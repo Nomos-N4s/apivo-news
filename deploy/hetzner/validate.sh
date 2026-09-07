@@ -340,6 +340,104 @@ check_cashback staging docker-compose.yml docker-compose.cashback.yml
 check_cashback prod docker-compose.yml docker-compose.cashback.yml
 
 # ---------------------------------------------------------------------------
+# The payout details vault (ADR-0006): OpenBao beside the api.
+#
+# Checked layered over the cashback overlay, because that is the only shape it
+# is ever loaded in: the vault holds payout destinations and there are no
+# payout destinations without cashback. It is a separate file rather than part
+# of that overlay because cashback WITHOUT a vault is a supported state — the
+# api says so once at ERROR and answers 503 on one endpoint — and folding the
+# two together would have deleted the distinction.
+#
+# check_env carries the generic properties; check_cashback carries the
+# ledger's. This adds only what this overlay can get wrong on its own.
+# ---------------------------------------------------------------------------
+check_vault() {
+    # check_vault <env> <compose-files...>
+    env_name="$1"
+    shift
+
+    check_cashback "$env_name" "$@"
+
+    args=""
+    for f in "$@"; do
+        args="$args -f $COMPOSE_DIR/$f"
+    done
+
+    # shellcheck disable=SC2086 # deliberate word splitting: -f pairs
+    if ! rendered=$(docker compose $args config 2>&1); then
+        # Already reported by check_env; nothing below could say anything true
+        # about a configuration that did not render.
+        return
+    fi
+
+    printf '%s' "$rendered" | grep -q -F "apivo-$env_name-openbao" ||
+        fail "$env_name vault: nothing in the rendered configuration is named 'apivo-$env_name-openbao'"
+
+    # The api must be pointed at THIS environment's vault. Two environments on
+    # the pre-production host each run one, and an api addressing the other's
+    # would write a member's bank details into it and hand back references
+    # that resolve to nothing here — with every container healthy and every
+    # log quiet, exactly the failure the ledger's own check guards against.
+    printf '%s' "$rendered" | grep -q -F "http://apivo-$env_name-openbao:8200" ||
+        fail "$env_name vault: the api's PAYOUT_VAULT_URL does not name apivo-$env_name-openbao; an api pointed at another environment's vault stores members' details in it and nothing fails visibly"
+
+    # And the storage must be namespaced too. A shared volume is the same
+    # accident one layer down: the second environment to start would open the
+    # first one's storage and be unsealed by the first one's keys.
+    printf '%s' "$rendered" | grep -q -F "apivo-$env_name-baodata" ||
+        fail "$env_name vault: the storage volume is not named apivo-$env_name-baodata, so two environments on one host would share one vault's data"
+    echo "ok: $env_name gives the api its own vault and its own storage"
+
+    # ---------------------------------------------------------------------
+    # It must not be a dev server.
+    #
+    # Asserted rather than reviewed because it is invisible when it
+    # regresses. `bao server -dev` works perfectly: it starts, it unseals
+    # itself, it accepts every write, and every destination a member records
+    # is held in RAM behind a root token printed to the log. Nothing fails
+    # until a restart, and what fails then is every payout.
+    #
+    # The image's default command IS `server -dev -dev-no-store-token`, so
+    # this is one dropped line in the overlay away at all times.
+    # ---------------------------------------------------------------------
+    if printf '%s' "$rendered" | grep -q -e '-dev$' -e '-dev-'; then
+        fail "$env_name vault: the vault is started in dev mode; every payout destination would live in RAM behind a printed root token and be lost on restart"
+    else
+        echo "ok: $env_name runs a real vault, not a dev server"
+    fi
+    if printf '%s' "$rendered" | grep -q -F '"inmem"'; then
+        fail "$env_name vault: the vault is configured with the inmem storage backend; destinations would not survive a restart"
+    fi
+
+    # ---------------------------------------------------------------------
+    # A sealed vault must not fail the rollout.
+    #
+    # A vault comes up SEALED after any restart — that is the design. The
+    # reconciler runs `up -d --wait`, which waits on every service declaring a
+    # healthcheck, so a probe that called sealed unhealthy would roll the
+    # whole environment back, newspaper included, every time the host
+    # rebooted and before anyone could type an unseal key.
+    #
+    # The probe still proves the process is alive and serving, which is what a
+    # rollout should gate on. Both codes are asserted because either one alone
+    # leaves a state that stops a deploy for an operator's attention.
+    # ---------------------------------------------------------------------
+    printf '%s' "$rendered" | grep -q -F 'sealedcode=200' ||
+        fail "$env_name vault: the vault's healthcheck does not report a sealed vault as healthy, so every reboot would fail the rollout gate and roll the environment back before anyone could unseal it"
+    printf '%s' "$rendered" | grep -q -F 'uninitcode=200' ||
+        fail "$env_name vault: the vault's healthcheck does not report an uninitialised vault as healthy, so the deploy that first introduces the vault would roll itself back"
+    printf '%s' "$rendered" | grep -q -F '/v1/sys/health' ||
+        fail "$env_name vault: the vault has no healthcheck against its own health route, so a vault that crash-looped on its storage would pass the rollout gate"
+    echo "ok: $env_name gates the rollout on the vault serving, and lets it be sealed"
+}
+
+check_vault qa docker-compose.yml docker-compose.local-db.yml docker-compose.cashback.yml docker-compose.vault.yml
+check_vault staging docker-compose.yml docker-compose.local-db.yml docker-compose.cashback.yml docker-compose.vault.yml
+check_vault staging docker-compose.yml docker-compose.cashback.yml docker-compose.vault.yml
+check_vault prod docker-compose.yml docker-compose.cashback.yml docker-compose.vault.yml
+
+# ---------------------------------------------------------------------------
 # The preview stacks.
 #
 # A preview is one pull request, named by a registry tag. Both files are
