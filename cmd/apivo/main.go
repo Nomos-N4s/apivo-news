@@ -167,6 +167,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 		// adapter itself - see seedInputs for why that is a refusal rather
 		// than a warning. Its own arguments are its own to check.
 		return seedCommand(ctx, args[1:], getenv, stdout)
+	case args[0] == publishOfferName:
+		// The other subcommand that writes to the database: one rate band
+		// on one route of the configured network (#537). Its own arguments
+		// are its own to check.
+		return publishOfferCommand(ctx, args[1:], getenv, stdout)
 	case args[0] != "healthcheck" && args[0] != "version":
 		return fmt.Errorf("unknown command %q", args[0])
 	case len(args) > 1:
