@@ -181,16 +181,16 @@ const hasBands =
                                   <div class="panel-row">
                                     <div class="panel-text">
                                       <div class="panel-title">
-                                        {formatMoney(lang, row.amount)} · {row.account_id}
+                                        {formatMoney(lang, row.reserved_amount)} ·{' '}
+                                        {row.account_email}
                                       </div>
                                       <div class="panel-sub">
-                                        {t.reserved} {formatMoney(lang, row.reserved_amount)} ·{' '}
-                                        {t.destinationKinds[row.destination.kind]}
+                                        {t.reserved} · {t.destinationKinds[row.destination.kind]}
                                       </div>
                                     </div>
                                     <a
                                       class="btn btn-secondary panel-btn"
-                                      href={panelHref('withdrawals', row.id)}
+                                      href={panelHref('withdrawals', row.request_id)}
                                     >
                                       {t.review}
                                     </a>

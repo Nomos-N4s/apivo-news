@@ -337,23 +337,38 @@ export interface HeldEntry {
   readonly transacted_at: string;
 }
 
-/** `GET /ops/withdrawals?state=awaiting_approval`. */
-export interface WithdrawalForApproval {
-  readonly id: string;
-  readonly account_id: string;
-  readonly amount: Money;
-  readonly reserved_amount: Money;
-  readonly destination: PayoutDestination;
-  readonly requested_at: string;
+/**
+ * The destination one queued withdrawal would pay, as the operator queue
+ * sends it: `PayoutDestination` plus the reference an operator opens.
+ */
+export interface WithdrawalDestination extends PayoutDestination {
+  /**
+   * Where the details are, never what they are. It is on this row because
+   * it is the operator's next action: the manual rail pays by a person
+   * opening this reference in the vault, and no endpoint can resolve it.
+   */
+  readonly details_ref: string;
 }
 
-/*
- * A note on the shape above: no endpoint serves it. The operator queue calls
- * `GET /ops/withdrawals?state=awaiting_approval` and the api registers only
- * the three decisions on that prefix, so this is the shape the screen was
- * written to and not one the api has ever sent. Tracked as its own issue;
- * the queue is a fixture-only screen until it lands.
- */
+/** `GET /ops/withdrawals?state=awaiting_approval`. */
+export interface WithdrawalForApproval {
+  readonly request_id: string;
+  readonly account_id: string;
+  /** How to reach the member. Releasing money is sometimes a conversation. */
+  readonly account_email: string;
+  /**
+   * What will be paid — and there is no second figure beside it.
+   *
+   * It is not what the member asked for: entries are reserved whole, so
+   * covering a request for €18.40 may reserve €19.10, and the larger figure
+   * is what leaves the ledger. What was *asked* is not stored anywhere, only
+   * the reservation, so an `amount` field here would be a number the api
+   * cannot send and an operator would compare against nothing.
+   */
+  readonly reserved_amount: Money;
+  readonly destination: WithdrawalDestination;
+  readonly requested_at: string;
+}
 
 /** The three kinds of disagreement detection derives from a statement. */
 export type DifferenceKind = 'reported_not_paid' | 'amount_mismatch' | 'paid_not_reported';

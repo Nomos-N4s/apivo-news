@@ -101,7 +101,7 @@ if (access.blocked && !apiUnavailable) {
 // it; otherwise the oldest row, which is the first the queue lists.
 const asked = Astro.url.searchParams.get('id');
 const selected: WithdrawalForApproval | null =
-  items.find((item) => item.id === asked) ?? items[0] ?? null;
+  items.find((item) => item.request_id === asked) ?? items[0] ?? null;
 
 const rowHref = (id: string): string => {
   const params = new URLSearchParams();
@@ -132,20 +132,19 @@ const ageOf = (iso: string): string =>
     {
       items.map((item) => (
         <a
-          href={rowHref(item.id)}
-          class:list={['qrow', { on: item.id === selected?.id }]}
-          aria-current={item.id === selected?.id ? 'true' : undefined}
+          href={rowHref(item.request_id)}
+          class:list={['qrow', { on: item.request_id === selected?.request_id }]}
+          aria-current={item.request_id === selected?.request_id ? 'true' : undefined}
         >
           <div class="qrow-top">
             <span class="card-kicker">{t.queueWithdrawals}</span>
             <span class="qrow-age">{ageOf(item.requested_at)}</span>
           </div>
           <div class="qrow-title">
-            {formatMoney(lang, item.amount)} · {item.account_id}
+            {formatMoney(lang, item.reserved_amount)} · {item.account_email}
           </div>
           <div class="qrow-sub">
-            {t.reserved} {formatMoney(lang, item.reserved_amount)} ·{' '}
-            {t.destinationKinds[item.destination.kind]}
+            {t.reserved} · {t.destinationKinds[item.destination.kind]}
           </div>
         </a>
       ))
@@ -163,11 +162,11 @@ const ageOf = (iso: string): string =>
               <span class="card-kicker">{t.queueWithdrawals}</span>
               <span class="d-rule" aria-hidden="true" />
               <span class="d-ref">
-                {t.reference} <span class="mono">{selected.id}</span> · {ageOf(selected.requested_at)}
+                {t.reference} <span class="mono">{selected.request_id}</span> · {ageOf(selected.requested_at)}
               </span>
             </div>
             <h3>
-              {formatMoney(lang, selected.amount)} · {selected.account_id}
+              {formatMoney(lang, selected.reserved_amount)} · {selected.account_email}
             </h3>
           </div>
           <div class="d-body">
@@ -178,15 +177,13 @@ const ageOf = (iso: string): string =>
                 <dd class="strong mono">{selected.account_id}</dd>
                 <dt>{t.requested}</dt>
                 <dd>{formatItemDate(lang, new Date(selected.requested_at))}</dd>
-                <dt>{t.amountLabel}</dt>
-                <dd>{formatMoney(lang, selected.amount)}</dd>
                 <dt>{t.reserved}</dt>
                 <dd class="strong">{formatMoney(lang, selected.reserved_amount)}</dd>
                 <dt>{t.destination}</dt>
                 <dd>{t.destinationKinds[selected.destination.kind]}</dd>
               </dl>
               <h6 class="evidence-head">{t.evidence}</h6>
-              <pre class="evidence">{`request_id: ${selected.id}\ndestination_id: ${selected.destination.destination_id}\nkind: ${selected.destination.kind}\nverified_at: ${selected.destination.verified_at ?? '—'}\nverified_method: ${selected.destination.verified_method ?? '—'}\nrequested_at: ${selected.requested_at}`}</pre>
+              <pre class="evidence">{`request_id: ${selected.request_id}\ndestination_id: ${selected.destination.destination_id}\nkind: ${selected.destination.kind}\nverified_at: ${selected.destination.verified_at ?? '—'}\nverified_method: ${selected.destination.verified_method ?? '—'}\nrequested_at: ${selected.requested_at}`}</pre>
             </div>
             <div class="d-right">
               <div class="d-say">
@@ -216,7 +213,7 @@ const ageOf = (iso: string): string =>
                 </div>
               </div>
               <form method="post" class="act">
-                <input type="hidden" name="id" value={selected.id} />
+                <input type="hidden" name="id" value={selected.request_id} />
                 <div class="field">
                   <label for="reason">{t.reasonLabel}</label>
                   <input class="input" id="reason" name="reason" autocomplete="off" />
