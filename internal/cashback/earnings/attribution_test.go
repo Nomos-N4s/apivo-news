@@ -84,6 +84,11 @@ func (f *fakeUnmatched) RecordCreditedClickReference(ctx context.Context, id pgt
 	return store.RecordCreditedClickReferenceRow(row), err
 }
 
+func (f *fakeUnmatched) RecordForeignCurrencyReference(ctx context.Context, id pgtype.UUID) (store.RecordForeignCurrencyReferenceRow, error) {
+	row, err := f.RecordUnmatchedReference(ctx, id)
+	return store.RecordForeignCurrencyReferenceRow(row), err
+}
+
 // reported is a reference a network echoed back.
 func reported(ref string) networks.ClickRef { return networks.NewClickRef(ref) }
 

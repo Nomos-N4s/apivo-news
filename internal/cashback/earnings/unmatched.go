@@ -44,6 +44,7 @@ var (
 type UnmatchedStore interface {
 	RecordUnmatchedReference(ctx context.Context, networkTransactionID pgtype.UUID) (store.RecordUnmatchedReferenceRow, error)
 	RecordCreditedClickReference(ctx context.Context, networkTransactionID pgtype.UUID) (store.RecordCreditedClickReferenceRow, error)
+	RecordForeignCurrencyReference(ctx context.Context, networkTransactionID pgtype.UUID) (store.RecordForeignCurrencyReferenceRow, error)
 }
 
 // queueWrite is one of the statements that put a report in the queue:
@@ -109,6 +110,24 @@ func queueUnmatched(ctx context.Context, unmatched UnmatchedStore, reportID uuid
 // just refused for. False and no error is the same three silences.
 func queueCreditedClick(ctx context.Context, unmatched UnmatchedStore, reportID uuid.UUID) (Unmatched, bool, error) {
 	row, err := unmatched.RecordCreditedClickReference(ctx, pgtype.UUID{Bytes: reportID, Valid: true})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return Unmatched{}, false, nil
+	case err != nil:
+		return Unmatched{}, false, fmt.Errorf("%w: report %s: %w", ErrNotQueued, reportID, err)
+	}
+	return Unmatched{
+		ID:         uuid.UUID(row.ID.Bytes),
+		ReportID:   uuid.UUID(row.NetworkTransactionID.Bytes),
+		DetectedAt: row.DetectedAt.Time,
+	}, true, nil
+}
+
+// queueForeignCurrency records that this report is in a currency its member
+// cannot be paid in (entry_currency_is_the_members, FR-109), reporting
+// whether it wrote a row. The statement decides, as its siblings' do.
+func queueForeignCurrency(ctx context.Context, unmatched UnmatchedStore, reportID uuid.UUID) (Unmatched, bool, error) {
+	row, err := unmatched.RecordForeignCurrencyReference(ctx, pgtype.UUID{Bytes: reportID, Valid: true})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return Unmatched{}, false, nil

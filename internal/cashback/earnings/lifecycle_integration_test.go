@@ -318,6 +318,38 @@ func TestASecondReportCitingOneClickIsQueuedNotCreditedTwice(t *testing.T) {
 	j.wantBalances(t, 0, clickTimeMemberShare, 0)
 }
 
+// TestAReportInACurrencyTheMemberCannotBePaidInIsQueued is FR-109 in the
+// production path: the entry is refused by entry_currency_is_the_members,
+// the report goes to the operator's queue, nothing moves, and the window
+// is not failed.
+func TestAReportInACurrencyTheMemberCannotBePaidInIsQueued(t *testing.T) {
+	t.Parallel()
+	j := begin(t)
+	j.seed(t)
+	click := j.clickOut(t)
+	report := j.reportsIn(t, click.Ref.Ref(), networks.StatusConfirmed, "USD")
+	job := j.lifecycle(t, earnings.HoldRules{})
+
+	if out := j.runs(t, job); out != (earnings.Outcome{Queued: 1}) {
+		t.Fatalf("the run did %+v, want the report queued and nothing credited", out)
+	}
+	if entries := j.entriesCiting(t, report); len(entries) != 0 {
+		t.Fatalf("a report in a currency the member cannot withdraw earned %+v", entries)
+	}
+	var queued int
+	if err := j.tx.QueryRow(j.ctx, `
+		select count(*) from cashback.unattributed_transaction where network_transaction_id = $1`, report).Scan(&queued); err != nil {
+		t.Fatalf("reading the queue: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("the report is in the unattributed queue %d times, want once", queued)
+	}
+	if out := j.runs(t, job); out != (earnings.Outcome{}) {
+		t.Fatalf("a second run did %+v, want nothing", out)
+	}
+	j.wantBalances(t, 0, 0, 0)
+}
+
 // TestAReportDeclinedBeforeCreditMovesNoMoney. Crediting it only to reverse
 // it would move money twice to say nothing.
 func TestAReportDeclinedBeforeCreditMovesNoMoney(t *testing.T) {

@@ -323,6 +323,22 @@ func (l *Lifecycle) creditOne(ctx context.Context, report store.ReportsAwaitingC
 			return crediting{}, fmt.Errorf("committing the queue row for report %s: %w", queued.Report, err)
 		}
 		return crediting{queued: true}, nil
+	case errors.Is(err, ErrCurrencyNotTheMembers):
+		// FR-109: a report in a currency the member cannot be paid in - or
+		// for a member who is not in cashback at all - opens no entry. It
+		// is queued for an operator like the others, and said out loud
+		// with the currency in it, because the fix is upstream: a network
+		// declared to report in the wrong currency, or not declared at all.
+		l.log.WarnContext(ctx, "a report in a currency the member cannot be paid in was queued",
+			"report", reportID, "network", report.NetworkID, "currency", report.Currency, "member", click.AccountID)
+		queued, err := matcher.queueReport(ctx, tx, reportID, queueForeignCurrency)
+		if err != nil {
+			return crediting{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return crediting{}, fmt.Errorf("committing the queue row for report %s: %w", queued.Report, err)
+		}
+		return crediting{queued: true}, nil
 	case err != nil:
 		return crediting{}, err
 	}

@@ -57,6 +57,44 @@ func (q *Queries) RecordCreditedClickReference(ctx context.Context, networkTrans
 	return i, err
 }
 
+const recordForeignCurrencyReference = `-- name: RecordForeignCurrencyReference :one
+insert into cashback.unattributed_transaction (network_transaction_id)
+select nt.id
+  from cashback.network_transaction nt
+  join cashback.click c on c.click_ref = nt.click_ref
+  left join cashback.participation p on p.account_id = c.account_id
+ where nt.id = $1
+   and (p.account_id is null or p.default_currency <> nt.currency)
+on conflict on constraint unattributed_one_per_report do nothing
+returning id, network_transaction_id, detected_at
+`
+
+type RecordForeignCurrencyReferenceRow struct {
+	ID                   pgtype.UUID
+	NetworkTransactionID pgtype.UUID
+	DetectedAt           pgtype.Timestamptz
+}
+
+// Record that this stored report is in a currency its member cannot be paid
+// in, if it is (FR-109, spec 004).
+//
+// The fourth way a report can be money nobody can be credited for: its
+// reference matched a click, and the click's member is in cashback in a
+// currency other than the report's - or in none at all, which
+// entry_currency_is_the_members (0036) refuses alike. The report is queued
+// for an operator exactly as an unmatched one is; the row names the
+// report, and the report names its currency.
+//
+// The predicate is the STATEMENT'S, as its two siblings' are: the stored
+// columns decide, not a caller that was just refused and believes it knows
+// why. A report whose currency IS the member's is not queued by this.
+func (q *Queries) RecordForeignCurrencyReference(ctx context.Context, networkTransactionID pgtype.UUID) (RecordForeignCurrencyReferenceRow, error) {
+	row := q.db.QueryRow(ctx, recordForeignCurrencyReference, networkTransactionID)
+	var i RecordForeignCurrencyReferenceRow
+	err := row.Scan(&i.ID, &i.NetworkTransactionID, &i.DetectedAt)
+	return i, err
+}
+
 const recordUnmatchedReference = `-- name: RecordUnmatchedReference :one
 insert into cashback.unattributed_transaction (network_transaction_id)
 select nt.id

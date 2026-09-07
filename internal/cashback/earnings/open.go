@@ -58,6 +58,12 @@ var (
 	// reference through a different transaction. One click earns one
 	// credit; the second report is queued for an operator, never credited.
 	ErrClickAlreadyCredited = errors.New("earnings: this click already backs a credit")
+	// ErrCurrencyNotTheMembers reports a credit in a currency the member is
+	// not in cashback in (entry_currency_is_the_members, spec 004 FR-109):
+	// the network reported in a currency this member could never withdraw,
+	// or the member has no participation at all. The report is queued for
+	// an operator, never credited.
+	ErrCurrencyNotTheMembers = errors.New("earnings: the credit is not in the member's currency")
 	// ErrNotOpened reports a credit the database refused for any other
 	// reason.
 	ErrNotOpened = errors.New("earnings: the entry could not be opened")
@@ -130,6 +136,8 @@ func (e *Entries) Open(ctx context.Context, db events.RowQuerier, credit Credit)
 			return Entry{}, fmt.Errorf("%w: report %s", ErrAlreadyCredited, credit.Report)
 		case clickAlreadyCredited(err):
 			return Entry{}, fmt.Errorf("%w: click %s, report %s", ErrClickAlreadyCredited, credit.Click, credit.Report)
+		case currencyNotTheMembers(err):
+			return Entry{}, fmt.Errorf("%w: %s for member %s, report %s", ErrCurrencyNotTheMembers, credit.Amount.Currency, credit.Member, credit.Report)
 		}
 		return Entry{}, fmt.Errorf("%w: report %s: %w", ErrNotOpened, credit.Report, err)
 	}
@@ -203,20 +211,28 @@ func openingKey(report uuid.UUID, to State) string {
 // alreadyCredited answers whether the database refused this insert because
 // the report already has an entry, rather than for any other reason.
 func alreadyCredited(err error) bool {
-	return refusedBy(err, "entry_one_per_report")
+	return refusedBy(err, pgerrcode.UniqueViolation, "entry_one_per_report")
 }
 
 // clickAlreadyCredited answers whether the database refused this insert
 // because the click already backs a credit (entry_click_id_idx, 0034).
 func clickAlreadyCredited(err error) bool {
-	return refusedBy(err, "entry_click_id_idx")
+	return refusedBy(err, pgerrcode.UniqueViolation, "entry_click_id_idx")
 }
 
-// refusedBy answers whether err is the database refusing an insert under the
-// named unique constraint or index, rather than for any other reason.
-func refusedBy(err error, name string) bool {
+// currencyNotTheMembers answers whether the database refused this insert
+// because the credit is not in the member's participation currency
+// (entry_currency_is_the_members, 0036).
+func currencyNotTheMembers(err error) bool {
+	return refusedBy(err, pgerrcode.ForeignKeyViolation, "entry_currency_is_the_members")
+}
+
+// refusedBy answers whether err is the database refusing an insert with the
+// given SQLSTATE under the named constraint or index, rather than for any
+// other reason.
+func refusedBy(err error, code, name string) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) &&
-		pgErr.Code == pgerrcode.UniqueViolation &&
+		pgErr.Code == code &&
 		pgErr.ConstraintName == name
 }
