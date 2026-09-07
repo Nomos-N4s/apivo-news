@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { READING_LANGUAGES } from '../reader/axes';
-import { uiStrings } from '../reader/strings';
 import { memberStrings } from './strings';
 
 /** Every value in a catalogue, with the functions called on a sample. */
@@ -26,34 +25,53 @@ describe('memberStrings', () => {
     }
   });
 
-  it('names the front page button by its label rather than quoting it', () => {
-    // The sentence tells a reader what that control currently says. Quoting
-    // the words would go stale the day the label changes; taking them as an
-    // argument cannot.
+  it('names the address the link went to, rather than assembling the sentence', () => {
+    // Taken as an argument so a translation can put it where its own grammar
+    // wants it, instead of the page gluing a name onto a fixed phrase.
     for (const lang of READING_LANGUAGES) {
-      const sentence = memberStrings(lang).frontPageButtonState('SAMPLE');
-      expect(sentence).toContain('SAMPLE');
+      expect(memberStrings(lang).linkSent('SAMPLE')).toContain('SAMPLE');
     }
   });
 
-  it('quotes the label the front page actually renders', () => {
-    // The front page renders `signIn` on the button and hangs `signInPending`
-    // off it as the title. A sentence that says the button "reads" something
-    // has to quote the first, or it describes a tooltip.
-    for (const lang of READING_LANGUAGES) {
-      const label = uiStrings(lang).signIn;
-      expect(memberStrings(lang).frontPageButtonState(label)).toContain(label);
-    }
-  });
-
-  it('promises no mechanism', () => {
-    // Nothing on this page works. A URL, a mailto: or an http reference in
-    // the catalogue would be the first sign that copy had started describing
-    // something the product cannot do.
+  it('offers no password, in either language', () => {
+    // The board draws no password field and the shell note rules one out in
+    // as many words: no password takes that route. This is the assertion
+    // that used to say no copy here may describe a mechanism at all. The
+    // email path describes one now; the thing worth forbidding is the
+    // mechanism this product has decided never to have.
+    const password = /κωδικ|passwor|passwort|kennwort/i;
+    // The word is allowed in a sentence that DENIES one, and nowhere else:
+    // both the shell note and the email note earn their keep by saying
+    // outright that no password takes this route. A label, a placeholder or
+    // an instruction would carry no negation, which is how this tells the
+    // two apart without forbidding the honest use.
+    const denial = /χωρίς|κανένας|καμία|ποτέ|ohne|kein|nie/i;
     for (const lang of READING_LANGUAGES) {
       for (const text of allText(lang)) {
-        expect(text, `${lang}: "${text}"`).not.toMatch(/https?:|mailto:|\/\//);
+        if (password.test(text)) {
+          expect(text, `${lang} uses the word without denying one: "${text}"`).toMatch(denial);
+        }
       }
+    }
+  });
+
+  it('tells a member which browser to finish in', () => {
+    // Not a nicety. The exchange completes against a verifier this browser
+    // holds, so a link opened on a phone after being asked for on a laptop
+    // cannot finish, and a member told nothing would try exactly that.
+    for (const lang of READING_LANGUAGES) {
+      expect(memberStrings(lang).linkSentNote.trim()).not.toBe('');
+    }
+  });
+
+  it('says what is still owed is the app path, not the whole page', () => {
+    // Standing beside a form that works and saying neither path does would
+    // be the same dishonesty this panel exists to prevent, pointing the
+    // other way.
+    for (const lang of READING_LANGUAGES) {
+      const owed = memberStrings(lang).notWorkingBody;
+      expect(owed.trim()).not.toBe('');
+      expect(owed).not.toBe(memberStrings(lang).notWorkingTitle);
     }
   });
 
