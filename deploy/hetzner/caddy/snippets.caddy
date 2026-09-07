@@ -87,7 +87,13 @@
 # reachable.
 # ---------------------------------------------------------------------------
 (apivo-routes) {
-	@api path /api/* /healthz /readyz
+	# /api/v1/*, not /api/*: the api serves nothing under /api/ but v1, and
+	# the frontend serves endpoints of its own under /api/ - the retailer
+	# page's click-out posts to /api/cashback/clickout, the guided tours
+	# read /api/tour/*. A matcher on the whole prefix sent both to the api,
+	# which answered 404, and a click-out that never reached the frontend
+	# is a member sent nowhere (#546). validate.sh proves both halves.
+	@api path /api/v1/* /healthz /readyz
 
 	handle @api {
 		reverse_proxy {args[0]}:8080
@@ -217,7 +223,10 @@
 # rewriting headers, which is how it came to be fixed properly.
 # ---------------------------------------------------------------------------
 (apivo-preview-routes) {
-	@preview-api path /api/* /healthz /readyz
+	# /api/v1/* for the reason (apivo-routes) gives: the frontend has
+	# endpoints of its own under /api/, and a preview that swallowed them
+	# would not show a reviewer the click-out it was opened for.
+	@preview-api path /api/v1/* /healthz /readyz
 
 	handle @preview-api {
 		reverse_proxy apivo-{re.preview.1}-api:8080
