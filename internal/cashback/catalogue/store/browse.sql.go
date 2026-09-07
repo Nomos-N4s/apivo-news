@@ -142,3 +142,185 @@ func (q *Queries) MerchantsForPlace(ctx context.Context, placeID pgtype.UUID) ([
 	}
 	return items, nil
 }
+
+const merchantsForPlaces = `-- name: MerchantsForPlaces :many
+with recursive scope as (
+    select p.id, p.parent_id
+      from place p
+     where p.id = any ($1::uuid[])
+    union
+    select up.id, up.parent_id
+      from place up
+      join scope s on s.parent_id = up.id
+)
+select
+    m.id,
+    m.slug,
+    m.country,
+    m.source_language_code,
+    m.status
+  from cashback.merchant m
+ where m.status = 'active'
+   and exists (
+       select 1
+         from cashback.merchant_place mp
+         join scope s on s.id = mp.place_id
+        where mp.merchant_id = m.id
+   )
+ order by m.slug
+`
+
+// MerchantsForPlace for several places at once: the union of what each one
+// scopes to, each walked up its own tree, one row per retailer. A retailer
+// attached to Germany is one row for a reader following Munich and Greece,
+// not two.
+func (q *Queries) MerchantsForPlaces(ctx context.Context, placeIds []pgtype.UUID) ([]CashbackMerchant, error) {
+	rows, err := q.db.Query(ctx, merchantsForPlaces, placeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CashbackMerchant
+	for rows.Next() {
+		var i CashbackMerchant
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Country,
+			&i.SourceLanguageCode,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const placesBySlugs = `-- name: PlacesBySlugs :many
+
+select
+    p.id,
+    p.slug::text as slug
+  from place p
+ where p.slug = any ($1::text[])
+`
+
+type PlacesBySlugsRow struct {
+	ID   pgtype.UUID
+	Slug string
+}
+
+// ---------------------------------------------------------------------------
+// The listing (#545): GET /catalogue. The reads above, generalised to the
+// several places a reader follows, plus the rates for one page of retailers
+// at once.
+// ---------------------------------------------------------------------------
+// The places behind reader-supplied slugs. The caller compares what came
+// back against what was asked: a slug that names no place is refused (400),
+// never quietly dropped, because a listing scoped to fewer places than the
+// reader asked for looks exactly like a listing.
+func (q *Queries) PlacesBySlugs(ctx context.Context, slugs []string) ([]PlacesBySlugsRow, error) {
+	rows, err := q.db.Query(ctx, placesBySlugs, slugs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PlacesBySlugsRow
+	for rows.Next() {
+		var i PlacesBySlugsRow
+		if err := rows.Scan(&i.ID, &i.Slug); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const publishedBandsForMerchants = `-- name: PublishedBandsForMerchants :many
+select
+    mn.merchant_id,
+    o.id,
+    o.rate_kind,
+    o.rate_bps,
+    o.rate_fixed_minor,
+    o.currency,
+    o.member_share_bps,
+    o.conditions,
+    o.exclusions,
+    o.valid_from,
+    o.valid_to
+  from cashback.offer o
+  join cashback.merchant_network mn on mn.id = o.merchant_network_id
+  join cashback.network n on n.id = mn.network_id
+ where mn.merchant_id = any ($1::uuid[])
+   and mn.preferred
+   and mn.status = 'active'
+   and n.active
+   and o.valid_from <= $2::timestamptz
+   and coalesce(o.valid_to, 'infinity'::timestamptz) > $2::timestamptz
+ order by mn.merchant_id, o.valid_from desc, o.id
+`
+
+type PublishedBandsForMerchantsParams struct {
+	MerchantIds []pgtype.UUID
+	At          pgtype.Timestamptz
+}
+
+type PublishedBandsForMerchantsRow struct {
+	MerchantID     pgtype.UUID
+	ID             pgtype.UUID
+	RateKind       string
+	RateBps        pgtype.Int4
+	RateFixedMinor pgtype.Int8
+	Currency       pgtype.Text
+	MemberShareBps int32
+	Conditions     pgtype.Text
+	Exclusions     pgtype.Text
+	ValidFrom      pgtype.Timestamptz
+	ValidTo        pgtype.Timestamptz
+}
+
+// PublishedBands for one page of retailers in one read, with the retailer
+// each band belongs to, so a listing of twenty shops is one query and not
+// twenty. Every predicate is PublishedBands' own - the preferred route, an
+// active route and network, the validity window at one moment - because a
+// rate shown on the shelf and the same rate shown on the shop's page must
+// come from one definition of "published".
+func (q *Queries) PublishedBandsForMerchants(ctx context.Context, arg PublishedBandsForMerchantsParams) ([]PublishedBandsForMerchantsRow, error) {
+	rows, err := q.db.Query(ctx, publishedBandsForMerchants, arg.MerchantIds, arg.At)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PublishedBandsForMerchantsRow
+	for rows.Next() {
+		var i PublishedBandsForMerchantsRow
+		if err := rows.Scan(
+			&i.MerchantID,
+			&i.ID,
+			&i.RateKind,
+			&i.RateBps,
+			&i.RateFixedMinor,
+			&i.Currency,
+			&i.MemberShareBps,
+			&i.Conditions,
+			&i.Exclusions,
+			&i.ValidFrom,
+			&i.ValidTo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

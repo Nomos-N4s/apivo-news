@@ -75,3 +75,80 @@ select
   from cashback.merchant_copy mc
  where mc.merchant_id = any (sqlc.arg(merchant_ids)::uuid[])
  order by mc.merchant_id, mc.language_code;
+
+-- ---------------------------------------------------------------------------
+-- The listing (#545): GET /catalogue. The reads above, generalised to the
+-- several places a reader follows, plus the rates for one page of retailers
+-- at once.
+-- ---------------------------------------------------------------------------
+
+-- name: PlacesBySlugs :many
+-- The places behind reader-supplied slugs. The caller compares what came
+-- back against what was asked: a slug that names no place is refused (400),
+-- never quietly dropped, because a listing scoped to fewer places than the
+-- reader asked for looks exactly like a listing.
+select
+    p.id,
+    p.slug::text as slug
+  from place p
+ where p.slug = any (sqlc.arg(slugs)::text[]);
+
+-- name: MerchantsForPlaces :many
+-- MerchantsForPlace for several places at once: the union of what each one
+-- scopes to, each walked up its own tree, one row per retailer. A retailer
+-- attached to Germany is one row for a reader following Munich and Greece,
+-- not two.
+with recursive scope as (
+    select p.id, p.parent_id
+      from place p
+     where p.id = any (sqlc.arg(place_ids)::uuid[])
+    union
+    select up.id, up.parent_id
+      from place up
+      join scope s on s.parent_id = up.id
+)
+select
+    m.id,
+    m.slug,
+    m.country,
+    m.source_language_code,
+    m.status
+  from cashback.merchant m
+ where m.status = 'active'
+   and exists (
+       select 1
+         from cashback.merchant_place mp
+         join scope s on s.id = mp.place_id
+        where mp.merchant_id = m.id
+   )
+ order by m.slug;
+
+-- name: PublishedBandsForMerchants :many
+-- PublishedBands for one page of retailers in one read, with the retailer
+-- each band belongs to, so a listing of twenty shops is one query and not
+-- twenty. Every predicate is PublishedBands' own - the preferred route, an
+-- active route and network, the validity window at one moment - because a
+-- rate shown on the shelf and the same rate shown on the shop's page must
+-- come from one definition of "published".
+select
+    mn.merchant_id,
+    o.id,
+    o.rate_kind,
+    o.rate_bps,
+    o.rate_fixed_minor,
+    o.currency,
+    o.member_share_bps,
+    o.conditions,
+    o.exclusions,
+    o.valid_from,
+    o.valid_to
+  from cashback.offer o
+  join cashback.merchant_network mn on mn.id = o.merchant_network_id
+  join cashback.network n on n.id = mn.network_id
+ where mn.merchant_id = any (sqlc.arg(merchant_ids)::uuid[])
+   and mn.preferred
+   and mn.status = 'active'
+   and n.active
+   and o.valid_from <= sqlc.arg(at)::timestamptz
+   and coalesce(o.valid_to, 'infinity'::timestamptz) > sqlc.arg(at)::timestamptz
+ order by mn.merchant_id, o.valid_from desc, o.id;
