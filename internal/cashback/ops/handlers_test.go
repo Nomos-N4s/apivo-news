@@ -45,7 +45,7 @@ func TestABlankReasonIsRefusedOnEveryOperatorAction(t *testing.T) {
 				req.Header.Set("Authorization", "Bearer t")
 				rec := httptest.NewRecorder()
 				ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{},
-					unreachableReconciliation{}, unreachableHeld{}, unreachableDestinations{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
+					unreachableReconciliation{}, unreachableHeld{}, unreachableDestinations{}, unreachableAwaiting{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
 				if rec.Code != http.StatusBadRequest {
 					t.Errorf("%s reason: status = %d, want 400 (body %q)", blank, rec.Code, rec.Body.String())
 					continue

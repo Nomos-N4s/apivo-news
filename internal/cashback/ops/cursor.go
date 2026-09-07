@@ -24,6 +24,7 @@ const (
 	differenceCursors   = "differences"
 	heldCursors         = "held"
 	destinationCursors  = "destinations"
+	withdrawalCursors   = "withdrawals"
 )
 
 // maxCursorBytes bounds the encoded cursor the endpoints will even look at,

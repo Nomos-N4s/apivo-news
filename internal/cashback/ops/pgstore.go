@@ -201,6 +201,44 @@ func (s *PGStore) UnverifiedDestinations(ctx context.Context, after DestinationA
 	return queue, nil
 }
 
+// WithdrawalsAwaitingApproval returns one page of the requests nobody has
+// decided yet, with the destination each would pay (FR-060).
+//
+// A read and nothing else. The three decisions this queue feeds live in the
+// payout module and are reached through withdrawals.go; what happens here is
+// finding a request to make one about.
+func (s *PGStore) WithdrawalsAwaitingApproval(ctx context.Context, after WithdrawalAfter, limit int) ([]AwaitingWithdrawal, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("ops: a page of withdrawals awaiting approval needs a positive size, got %d", limit)
+	}
+	rows, err := store.New(s.db).ListWithdrawalsAwaitingApproval(ctx, store.ListWithdrawalsAwaitingApprovalParams{
+		AfterRequestedAt: pgtype.Timestamptz{Time: after.RequestedAt, Valid: true},
+		AfterID:          pgtype.UUID{Bytes: after.ID, Valid: true},
+		PageSize:         int32(limit), //nolint:gosec // G115: bounded above by the caller's page size, which is small by construction.
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ops: reading the withdrawals awaiting approval: %w", err)
+	}
+	queue := make([]AwaitingWithdrawal, 0, len(rows))
+	for _, row := range rows {
+		queue = append(queue, AwaitingWithdrawal{
+			ID:                        uuid.UUID(row.ID.Bytes),
+			AccountID:                 uuid.UUID(row.AccountID.Bytes),
+			AccountEmail:              row.AccountEmail,
+			AmountMinor:               row.AmountMinor,
+			Currency:                  row.Currency,
+			RequestedAt:               row.RequestedAt.Time,
+			DestinationID:             uuid.UUID(row.DestinationID.Bytes),
+			DestinationKind:           row.DestinationKind,
+			DestinationDetailsRef:     row.DestinationDetailsRef,
+			DestinationVerifiedAt:     row.DestinationVerifiedAt.Time,
+			DestinationVerifiedMethod: row.DestinationVerifiedMethod.String,
+			DestinationCreatedAt:      row.DestinationCreatedAt.Time,
+		})
+	}
+	return queue, nil
+}
+
 // Verify records that a named operator proved a destination belongs to its
 // member, and announces it, in one transaction (FR-051, FR-061).
 //

@@ -79,7 +79,7 @@ func operatorRequest(t *testing.T, d ops.DestinationVerifier, method, path, body
 	req.Header.Set("Authorization", "Bearer t")
 	rec := httptest.NewRecorder()
 	ops.NewHandler(discardLogger(), &pageStore{}, unreachableApprover{}, unreachableRefuser{},
-		unreachableSettler{}, unreachableReconciliation{}, unreachableHeld{}, d,
+		unreachableSettler{}, unreachableReconciliation{}, unreachableHeld{}, d, unreachableAwaiting{},
 		stubAuth{op: anOperator}).ServeHTTP(rec, req)
 	return rec
 }
@@ -242,7 +242,7 @@ func TestTheDestinationRoutesNeedAnOperator(t *testing.T) {
 		req := httptest.NewRequest(route.method, ops.Prefix+route.path, strings.NewReader(`{"method":"x"}`))
 		rec := httptest.NewRecorder()
 		ops.NewHandler(discardLogger(), &pageStore{}, unreachableApprover{}, unreachableRefuser{},
-			unreachableSettler{}, unreachableReconciliation{}, unreachableHeld{}, unreachableDestinations{},
+			unreachableSettler{}, unreachableReconciliation{}, unreachableHeld{}, unreachableDestinations{}, unreachableAwaiting{},
 			stubAuth{err: ops.ErrUnauthenticated}).ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s without a token = %d, want %d", route.method, route.path, rec.Code, http.StatusUnauthorized)

@@ -53,7 +53,12 @@ type Handler struct {
 	// from each other: what an operator may decide and what the money does
 	// answer to different modules.
 	destinations DestinationVerifier
-	auth         OperatorAuthenticator
+	// awaiting lists the withdrawals nobody has decided yet - the queue the
+	// three decisions above act on (FR-060). This module's own read, not
+	// the payout module's: every statement there is narrowed on the
+	// account, and an operator has no account to narrow on.
+	awaiting WithdrawalLister
+	auth     OperatorAuthenticator
 	// allow is the 405 classifier, derived from routes() in NewHandler so
 	// it cannot drift from what is actually registered.
 	allow platformhttp.AllowTable
@@ -63,11 +68,11 @@ type Handler struct {
 // composition root to mount. Every route sits behind the requireOperator
 // gate - authentication wraps the whole table, so a future route cannot be
 // added unauthenticated by omission.
-func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, refusals WithdrawalRefuser, settlements WithdrawalSettler, reconciliation ReconciliationStore, held HeldReviewer, destinations DestinationVerifier, auth OperatorAuthenticator) http.Handler {
+func NewHandler(log *slog.Logger, store UnattributedStore, approvals WithdrawalApprover, refusals WithdrawalRefuser, settlements WithdrawalSettler, reconciliation ReconciliationStore, held HeldReviewer, destinations DestinationVerifier, awaiting WithdrawalLister, auth OperatorAuthenticator) http.Handler {
 	h := &Handler{
 		log: log, store: store, approvals: approvals, refusals: refusals,
 		settlements: settlements, reconciliation: reconciliation, held: held,
-		destinations: destinations, auth: auth,
+		destinations: destinations, awaiting: awaiting, auth: auth,
 	}
 	h.allow = platformhttp.NewAllowTable(slices.Collect(maps.Keys(h.routes())))
 	mux := http.NewServeMux()
@@ -90,6 +95,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		"GET " + Prefix + "unattributed":               h.listUnattributed,
 		"POST " + Prefix + "unattributed/{id}/dismiss": h.dismissUnattributed,
+		"GET " + Prefix + "withdrawals":                h.listWithdrawalsAwaitingApproval,
 		"POST " + Prefix + "withdrawals/{id}/approve":  h.approveWithdrawal,
 		"POST " + Prefix + "withdrawals/{id}/reject":   h.rejectWithdrawal,
 		"POST " + Prefix + "withdrawals/{id}/settle":   h.settleWithdrawal,

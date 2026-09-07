@@ -3682,6 +3682,83 @@
           }
         }
       }
+    },
+    "/api/v1/cashback/ops/withdrawals": {
+      "get": {
+        "tags": [
+          "cashback-ops"
+        ],
+        "operationId": "listWithdrawalsAwaitingApproval",
+        "summary": "List withdrawals waiting to be approved",
+        "description": "The queue the three withdrawal decisions act on (FR-060). Approving, rejecting and settling are each keyed by a request id; this is the read that finds one to decide about.\n\nEvery withdrawal enters this state whatever its size, because C-4 forbids a payout without a named human approver. The money is already reserved when the request is made (D9), so a row sitting here unattended is a member's balance they can neither see nor spend.\n\nThe figure is `reserved_amount` and not `amount`, deliberately: entries are reserved whole, so what leaves the ledger may exceed what the member asked for, and what they asked for is not stored anywhere.\n\nThe whole /api/v1/cashback/ops/ prefix sits behind one auth gate, so a request without a usable token answers 401 whether or not the path exists. The prefix is unmounted entirely when cashback is off, and then answers 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "awaiting_approval"
+              ]
+            },
+            "description": "Accepted for the one value this queue serves. Any other state is refused with 400 rather than ignored: a parameter silently dropped is a filter somebody believes is applied."
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the queue, oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AwaitingWithdrawalQueue"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A state other than awaiting_approval, or a limit or cursor this endpoint did not issue."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No usable bearer token."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The token's account does not hold the operator role."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -7101,6 +7178,124 @@
           "verified_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "AwaitingWithdrawalDestination": {
+        "type": "object",
+        "description": "Where one queued withdrawal would send the money. Joined onto the row rather than left to a second call: deciding whether to release money means seeing where it goes, and a destination nobody has verified must not be paid at all (FR-051).",
+        "required": [
+          "destination_id",
+          "kind",
+          "details_ref",
+          "verified_at",
+          "verified_method",
+          "created_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "destination_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sepa",
+              "manual",
+              "stub"
+            ],
+            "description": "Which rail would carry the money."
+          },
+          "details_ref": {
+            "type": "string",
+            "description": "Where the details are, never what they are. It is on this row because it is the operator's next action: the manual rail pays by a person opening this reference in the vault (ADR-0006), and nothing in this API can resolve it for them."
+          },
+          "verified_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Null only where nobody has proved this destination belongs to its member. A withdrawal naming an unverified destination is refused when it is made (FR-051), so a null here should be unreachable - it is rendered rather than assumed away, because the reader is about to release money and a silent assumption is not something they can check."
+          },
+          "verified_method": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How it was proved, in the operator's own words. Null while verified_at is."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AwaitingWithdrawal": {
+        "type": "object",
+        "description": "One withdrawal nobody has decided yet. Every withdrawal enters this state whatever its size, because C-4 forbids a payout without a named human approver - so this queue is not an exception list, it is the whole of the money leaving. The member's balance has already left their confirmed total to sit in it (D9), so a row left here is money they can neither see nor spend.",
+        "required": [
+          "request_id",
+          "account_id",
+          "account_email",
+          "reserved_amount",
+          "requested_at",
+          "destination"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The member who asked to be paid."
+          },
+          "account_email": {
+            "type": "string",
+            "description": "How an operator reaches that member."
+          },
+          "reserved_amount": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ],
+            "description": "What will be paid, and the name is the point. It is NOT what the member asked for: entries are reserved whole, so covering a request for EUR 18.40 may reserve EUR 19.10, and that larger figure is what leaves the ledger and what the rail pays (D9). What was asked is not stored anywhere - only the reservation is - so this is the one figure that exists, under the one name that is true of it."
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/AwaitingWithdrawalDestination"
+          }
+        }
+      },
+      "AwaitingWithdrawalQueue": {
+        "type": "object",
+        "description": "One page of the approval queue, oldest first.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AwaitingWithdrawal"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
           }
         }
       }
