@@ -1,0 +1,9 @@
+ok, next steps... See https://github.com/Nomos-N4s/apivo-news/blob/main/docs/master-prompts/cashback-frontend.md and follow it thoroughly so we can have a complete working app in the frontend (again you own the designs and exprience) we have approved those artifacts a while ago. In terms of the gaps, th backend team is working on them as we speak so consider them a to-be-solved issue and not something to be stalled. If you reckon there's ork you can do in the meantime go ahead and do it
+
+---
+
+where are we? what do i need to merge? in what order? also the backend team has addressed the gaps
+
+---
+
+everything is merged, what's next?
