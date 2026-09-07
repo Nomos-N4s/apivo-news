@@ -80,7 +80,7 @@ token, the catalogue included. Operator routes additionally require
 | `DELETE /participation` | leave | live |
 | `GET /catalogue?lang&place…&q&limit&cursor` | `{items, next_cursor}`: retailers for a language and places, each with its rates in the merchant-page shape; `lang` and at least one `place` required, `category` refused (#414) | live |
 | `GET /merchants/{slug}?lang` | one retailer, every band published for them | live |
-| `POST /clickouts` `{offer_id}` | `{click_ref, redirect_url, expires_at}`; the band is snapshotted onto the click (FR-013) | live; does not yet refuse a member who has not opted in — **B3**, T254 |
+| `POST /clickouts` `{offer_id}` | `{click_ref, redirect_url, expires_at}`; the band is snapshotted onto the click (FR-013); 403 for a member who has not opted in (FR-110) | live |
 | `GET /wallet` | pending, confirmed, reserved, paid out, threshold | live |
 | `GET /wallet/entries?state&limit&cursor` | the statement, reversals with reasons | live |
 | `GET` · `POST /payout-destinations` `{kind, details}` | 201 with `verified_at: null`; verification is a separate flow that **does not exist — B6, #548** | live / gap |
@@ -176,9 +176,11 @@ and one pull request each, none of them the frontend's to build:
   scoped to the places the reader follows, the rates on each card the
   same bands the retailer's page shows. `api/openapi.json` has the exact
   shape under `listCatalogue`.
-- **B3 — FR-110 (spec 004, T254).** The click-out refuses a member who
-  has not opted in. Until it lands the screens must not offer a click to
-  a member without a participation.
+- **B3 — FR-110 (spec 004, T254, #568): landed.** The click-out refuses
+  a member who has not opted in with 403, before anything is minted or
+  recorded, and the problem names `POST /api/v1/cashback/participation`
+  as the remedy. The screens should still not offer the button to a
+  member without a participation, but the rule is now the api's.
 - **B4 — edge routing (#546): landed.** The edge now sends `/api/v1/*`,
   `/healthz` and `/readyz` to the api and everything else to the web, on
   environments and previews alike, and `validate.sh` proves both halves.
@@ -227,8 +229,10 @@ and one pull request each, none of them the frontend's to build:
   than pretending.
 - **F5 — click-out, end to end in a browser**: the retailer page's form,
   the web endpoint, the 303 to `redirect_url`, and the failure banner —
-  reachable on QA now that B4 has landed, and refusing to render the
-  button for a member without a participation until B3 exists.
+  reachable on QA now that B4 has landed. The api answers 403 for a member
+  without a participation (B3), so the banner needs a string for it that
+  points at the opt-in, and the button is best not shown to such a member
+  at all.
 - **F6 — wallet against real entries.** Already wired; verify with the
   first pending entry that the statement, the detail pane and the
   lifecycle read correctly, and that a reversal shows its reason.
@@ -310,8 +314,8 @@ Work the frontend list in order — F1 sign-in on the design's terms, an
 email link and never a password, F2 gating, F3
 opt-in, F4 catalogue, F5 click-out, F6 wallet, F7 payout destination,
 F8 the end-to-end test, F9 languages and the brand lint — and do not
-build against a backend gap: B1, B2, B4 and B5 are live, B3 and B6
-are still the Go side's, and the file says which screen waits on which. Develop and test
+build against a backend gap: B1 to B5 are live, B6 is still the Go
+side's, and the file says which screen waits on which. Develop and test
 against `make cashback-demo`, which runs the whole stack locally and
 mints member tokens; prove integration on QA, not on previews.
 
