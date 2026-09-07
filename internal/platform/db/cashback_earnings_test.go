@@ -339,7 +339,8 @@ func TestCashbackEarningsRejectIllegalWrites(t *testing.T) {
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
 				var queued string
 				if err := tx.QueryRow(ctx,
-					`insert into cashback.unattributed_transaction (network_transaction_id) values ($1) returning id`,
+					`insert into cashback.unattributed_transaction (network_transaction_id, reason)
+					 values ($1, 'unknown_reference') returning id`,
 					f.networkTxn).Scan(&queued); err != nil {
 					return err
 				}
@@ -429,12 +430,14 @@ func TestCashbackEarningsRejectIllegalWrites(t *testing.T) {
 			rule: "FR-034",
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
 				if _, err := tx.Exec(ctx,
-					`insert into cashback.unattributed_transaction (network_transaction_id) values ($1)`,
+					`insert into cashback.unattributed_transaction (network_transaction_id, reason)
+					 values ($1, 'unknown_reference')`,
 					f.networkTxn); err != nil {
 					return err
 				}
 				_, err := tx.Exec(ctx,
-					`insert into cashback.unattributed_transaction (network_transaction_id) values ($1)`,
+					`insert into cashback.unattributed_transaction (network_transaction_id, reason)
+					 values ($1, 'unknown_reference')`,
 					f.networkTxn)
 				return err
 			},
@@ -451,8 +454,8 @@ func TestCashbackEarningsRejectIllegalWrites(t *testing.T) {
 				// record can be erased is not audited.
 				var queued string
 				if err := tx.QueryRow(ctx,
-					`insert into cashback.unattributed_transaction (network_transaction_id, resolved_by, resolved_reason, resolved_at)
-					 values ($1, $2, 'dismissed: a test purchase of our own', now()) returning id`,
+					`insert into cashback.unattributed_transaction (network_transaction_id, reason, resolved_by, resolved_reason, resolved_at)
+					 values ($1, 'unknown_reference', $2, 'dismissed: a test purchase of our own', now()) returning id`,
 					f.networkTxn, f.accountID).Scan(&queued); err != nil {
 					return err
 				}
@@ -475,7 +478,8 @@ func TestCashbackEarningsRejectIllegalWrites(t *testing.T) {
 				// never wrong.
 				var queued string
 				if err := tx.QueryRow(ctx,
-					`insert into cashback.unattributed_transaction (network_transaction_id) values ($1) returning id`,
+					`insert into cashback.unattributed_transaction (network_transaction_id, reason)
+					 values ($1, 'unknown_reference') returning id`,
 					f.networkTxn).Scan(&queued); err != nil {
 					return err
 				}
@@ -489,8 +493,8 @@ func TestCashbackEarningsRejectIllegalWrites(t *testing.T) {
 			rule: "FR-060",
 			write: func(ctx context.Context, tx pgx.Tx, f cashbackFixtures) error {
 				_, err := tx.Exec(ctx,
-					`insert into cashback.unattributed_transaction (network_transaction_id, resolved_by, resolved_at)
-					 values ($1, $2, now())`, f.networkTxn, f.accountID)
+					`insert into cashback.unattributed_transaction (network_transaction_id, reason, resolved_by, resolved_at)
+					 values ($1, 'unknown_reference', $2, now())`, f.networkTxn, f.accountID)
 				return err
 			},
 			wantCode: codeCheckViolation,

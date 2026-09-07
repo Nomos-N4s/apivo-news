@@ -425,6 +425,8 @@ type CashbackUnattributedTransaction struct {
 	ResolvedBy           pgtype.UUID
 	ResolvedReason       pgtype.Text
 	ResolvedAt           pgtype.Timestamptz
+	// Why this report could not be credited, as the statement that queued it decided (FR-098). Frozen with the rest of the observation: it records what was true when the row was written, not what would be true if the question were asked again now.
+	Reason string
 }
 
 // A member asking to be paid. The reservation transfer already exists when the row is written (D9): the double-spend window is between request and approval, and it is closed with the ledger rather than with a lock.

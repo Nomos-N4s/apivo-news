@@ -42,8 +42,8 @@
 --
 -- No rows back means the report carried a reference, or its observation is
 -- already stored. Both mean there is nothing to do, so both answer alike.
-insert into cashback.unattributed_transaction (network_transaction_id)
-select nt.id
+insert into cashback.unattributed_transaction (network_transaction_id, reason)
+select nt.id, 'no_reference'
   from cashback.network_transaction nt
  where nt.id = sqlc.arg(network_transaction_id)
    and nt.click_ref is null

@@ -250,7 +250,7 @@ func TestTheAttributionCanaryAgainstTheRealSchema(t *testing.T) {
 		}
 		storeThroughPoller(ctx, t, tx, account, reports...)
 		for _, report := range reports {
-			if _, err := tx.Exec(ctx, `insert into cashback.unattributed_transaction (network_transaction_id) values ($1)`,
+			if _, err := tx.Exec(ctx, `insert into cashback.unattributed_transaction (network_transaction_id, reason) values ($1, 'unknown_reference')`,
 				reportID(ctx, t, tx, account, report.ExternalID)); err != nil {
 				t.Fatalf("planting the matcher's observation: %v", err)
 			}

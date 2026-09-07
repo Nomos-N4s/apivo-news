@@ -61,8 +61,8 @@ func queueRow(ctx context.Context, t *testing.T, tx pgx.Tx) (row, report pgtype.
 	}
 	report = transaction(ctx, t, tx, networkID, accountID, pgtype.UUID{})
 	if err := tx.QueryRow(ctx, `
-		insert into cashback.unattributed_transaction (network_transaction_id)
-		values ($1) returning id`, report).Scan(&row); err != nil {
+		insert into cashback.unattributed_transaction (network_transaction_id, reason)
+		values ($1, 'unknown_reference') returning id`, report).Scan(&row); err != nil {
 		t.Fatalf("seeding the queue row: %v", err)
 	}
 	return row, report, networkID, accountID

@@ -213,8 +213,8 @@ func (q *Queries) ListOpenUnattributedReports(ctx context.Context, arg ListOpenU
 
 const recordUnattributedReport = `-- name: RecordUnattributedReport :one
 
-insert into cashback.unattributed_transaction (network_transaction_id)
-select nt.id
+insert into cashback.unattributed_transaction (network_transaction_id, reason)
+select nt.id, 'no_reference'
   from cashback.network_transaction nt
  where nt.id = $1
    and nt.click_ref is null
