@@ -101,9 +101,12 @@ sweep and a catalogue import, all per publisher account:
 
 | Networks | Jobs | `pool_max_conns` floor |
 |---|---|---|
-| 1 | 6 | 14 |
-| 2 | 9 | **20** |
-| 3 | 12 | 26 |
+| 1 | 7 | 16 |
+| 2 | 10 | **22** |
+| 3 | 13 | 28 |
+
+Four jobs are global: the zero-sum check, the settlement sweep, the earnings
+lifecycle, and the event subscribers' delivery pass added with T126.
 
 `locker.CheckCapacity` asserts this at startup against the jobs **actually
 registered** (FR-095), and its error carries the numbers. So a deployment

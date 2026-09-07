@@ -35,11 +35,11 @@ export NETWORK_FIXTURE2_SOURCE_LANGUAGE=el
 No `NETWORK_*_API_KEY` for either: `NeedsCredentials()` is false for a
 fixture driver, which is the whole point of it.
 
-**Raise the pool.** Two networks is nine scheduled jobs, and the capacity
-check refuses to start below `2 × 9 + 2 = 20`:
+**Raise the pool.** Two networks is ten scheduled jobs, and the capacity
+check refuses to start below `2 × 10 + 2 = 22`:
 
 ```sh
-export DATABASE_URL="postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable&pool_max_conns=20"
+export DATABASE_URL="postgres://apivo:apivo@localhost:5432/apivo?sslmode=disable&pool_max_conns=22"
 ```
 
 Getting this wrong is the *good* failure — the check names the number it
@@ -165,7 +165,7 @@ the only honest form the claim can take.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `the connection pool allows MaxConns=14, but 9 jobs need 20` | The pool was sized for one network | Raise `pool_max_conns`; the message carries the number |
+| `the connection pool allows MaxConns=16, but 10 jobs need 22` | The pool was sized for one network | Raise `pool_max_conns`; the message carries the number |
 | `NETWORK_DRIVER is no longer read` | The old flat configuration | `NETWORKS` plus `NETWORK_<DRIVER>_*` — see [contracts/config.md](contracts/config.md) |
 | A network is in `NETWORKS` but never polls | Its block is incomplete | The ERROR line names the network and the key. The deployment stays up on purpose |
 | A `NETWORK_FOO_*` block is ignored | `foo` is not in `NETWORKS` | Presence never implies intent; add it to the list |
