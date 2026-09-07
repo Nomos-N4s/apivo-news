@@ -29,6 +29,7 @@ superseded by a new record that names it.
 | [0003](0003-affiliate-network-integration.md) | Affiliate network integration: consumer-defined adapters, fixtures first | Accepted |
 | [0004](0004-white-label-rebranding.md) | White-label architecture: one brand configuration, zero brand literals | Accepted |
 | [0005](0005-cashback-stack.md) | Cashback stack: no second stack — Go and Astro, as today | Accepted |
+| [0006](0006-payout-details-vault.md) | Payout details vault: OpenBao, KV, held outside this database | Accepted |
 
 ## Relationship to Spec Kit
 
