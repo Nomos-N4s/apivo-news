@@ -76,19 +76,25 @@ returning
 -- Neither cursor is touched at all. They are the poller's, they are advanced
 -- only inside the transaction that persisted a window (FR-031), and a connect
 -- command that reset one would skip every window between.
+--
+-- reports_currency is written when declared and kept when not (FR-108): a
+-- re-run that says nothing about the currency does not erase what an
+-- earlier run established, and a run that declares one may correct it.
 insert into cashback.network_account (
-    network_id, external_publisher_id, credential_ref, backfill_from, active
+    network_id, external_publisher_id, credential_ref, backfill_from, active, reports_currency
 )
 values (
     sqlc.arg(network_id),
     sqlc.arg(external_publisher_id),
     sqlc.arg(credential_ref),
     sqlc.narg(backfill_from),
-    sqlc.arg(active)
+    sqlc.arg(active),
+    sqlc.narg(reports_currency)
 )
 on conflict (network_id, external_publisher_id) do update
    set credential_ref = excluded.credential_ref,
-       active = excluded.active
+       active = excluded.active,
+       reports_currency = coalesce(excluded.reports_currency, cashback.network_account.reports_currency)
 returning
     id,
     network_id,
@@ -97,7 +103,8 @@ returning
     backfill_from,
     cursor_at,
     trailing_cursor_at,
-    active;
+    active,
+    reports_currency;
 
 -- name: GetNetwork :one
 -- The network row as it stands, so a connect can say whether it created one

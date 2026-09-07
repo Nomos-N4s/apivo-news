@@ -106,6 +106,11 @@ func person(ctx context.Context, t *testing.T, tx pgx.Tx, role string) pgtype.UU
 		role+"-"+tag(t)+"@example.test", role).Scan(&id); err != nil {
 		t.Fatalf("seeding an account: %v", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		insert into cashback.participation (account_id, brand_id, terms_version, default_currency)
+		values ($1, 'fixture', '1.0.0', 'EUR')`, id); err != nil {
+		t.Fatalf("opting the member in: %v", err)
+	}
 	return id
 }
 

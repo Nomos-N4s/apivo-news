@@ -154,6 +154,11 @@ func (p *payouts) person(t *testing.T, role string) uuid.UUID {
 		role+"-"+uuid.NewString()+"@example.test", role).Scan(&id); err != nil {
 		t.Fatalf("seeding the %s: %v", role, err)
 	}
+	if _, err := p.pool.Exec(p.ctx, `
+		insert into cashback.participation (account_id, brand_id, terms_version, default_currency)
+		values ($1, 'fixture', '1.0.0', 'EUR')`, id); err != nil {
+		t.Fatalf("opting the %s in: %v", role, err)
+	}
 	return id
 }
 

@@ -173,29 +173,40 @@ func TestConnectNetworkWritesTheRowsADeploymentThenReads(t *testing.T) {
 
 	var out bytes.Buffer
 	err := run(context.Background(),
-		[]string{"connect-network", "-backfill-from", "2026-06-01"},
-		envFrom(connectEnv(dbURL, driver, accountID)), &out)
+		[]string{"connect-network", "-backfill-from", "2026-06-01", "-reports-currency", "eur"},
+		envFrom(paysOutInEuros(connectEnv(dbURL, driver, accountID))), &out)
 	if err != nil {
 		t.Fatalf("connect-network: %v", err)
 	}
 
 	printed := out.String()
-	for _, want := range []string{accountID, driver, "active", "2026-06-01T00:00:00Z", "NETWORK_FIXTURE_API_KEY"} {
+	for _, want := range []string{accountID, driver, "active", "2026-06-01T00:00:00Z", "NETWORK_FIXTURE_API_KEY", "reports in      EUR"} {
 		if !strings.Contains(printed, want) {
 			t.Errorf("the command printed %q, which does not mention %q", printed, want)
 		}
 	}
 
 	var active bool
-	var external string
+	var external, reportsIn string
 	if err := pool.QueryRow(context.Background(), `
-		select external_publisher_id, active from cashback.network_account
-		 where network_id = $1 and external_publisher_id = $2`, driver, accountID).Scan(&external, &active); err != nil {
+		select external_publisher_id, active, coalesce(reports_currency, '') from cashback.network_account
+		 where network_id = $1 and external_publisher_id = $2`, driver, accountID).Scan(&external, &active, &reportsIn); err != nil {
 		t.Fatalf("the row the command reported is not there: %v", err)
 	}
 	if !active {
 		t.Errorf("the account is inactive, and the poller refuses one")
 	}
+	if reportsIn != "EUR" {
+		t.Errorf("the account reports in %q, want the EUR the command declared", reportsIn)
+	}
+}
+
+// paysOutInEuros gives the deployment a payout threshold, so a declared
+// currency has something to be compared against (FR-108).
+func paysOutInEuros(env map[string]string) map[string]string {
+	env["PAYOUT_THRESHOLD_MINOR"] = "2000"
+	env["PAYOUT_THRESHOLD_CURRENCY"] = "EUR"
+	return env
 }
 
 // TestConnectNetworkIsSafeToRunAgain: an operator who cannot re-run a
@@ -313,6 +324,20 @@ func TestConnectNetworkRefusesWhatItCannotConnect(t *testing.T) {
 			args: []string{"connect-network", "awin"},
 			env:  connectEnv("postgres://nobody@127.0.0.1:1/none", "fixture", "123"),
 			want: "takes no arguments",
+		},
+		{
+			// FR-108: refused here, by name, where a person can act - not
+			// discovered by a member who cannot withdraw.
+			name: "a currency this deployment cannot pay out",
+			args: []string{"connect-network", "-backfill-from", "2026-06-01", "-reports-currency", "USD"},
+			env:  paysOutInEuros(connectEnv("postgres://nobody@127.0.0.1:1/none", "fixture", "123")),
+			want: "pays out in EUR",
+		},
+		{
+			name: "a currency that is not a code",
+			args: []string{"connect-network", "-backfill-from", "2026-06-01", "-reports-currency", "euros"},
+			env:  connectEnv("postgres://nobody@127.0.0.1:1/none", "fixture", "123"),
+			want: "ISO 4217",
 		},
 	}
 

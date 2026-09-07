@@ -255,6 +255,12 @@ func (j *theJourney) publishANewRate(t *testing.T) {
 // reports stores what the network said about the purchase, citing the click.
 func (j *theJourney) reports(t *testing.T, ref string, status networks.Status) uuid.UUID {
 	t.Helper()
+	return j.reportsIn(t, ref, status, "EUR")
+}
+
+// reportsIn is the same in a currency of the case's choosing.
+func (j *theJourney) reportsIn(t *testing.T, ref string, status networks.Status, currency string) uuid.UUID {
+	t.Helper()
 	at := time.Now().Add(-time.Hour)
 	var id uuid.UUID
 	if err := j.tx.QueryRow(j.ctx, `
@@ -262,11 +268,11 @@ func (j *theJourney) reports(t *testing.T, ref string, status networks.Status) u
 			network_id, network_account_id, external_id, click_ref,
 			status_raw, status, sale_amount_minor, commission_minor, currency,
 			transacted_at, retrieved_at, query_window_start, query_window_end, raw_payload)
-		values ($1, $2, $3, $4, $5, $5, $6, $7, 'EUR', $8, now(), $9, $10, $11)
+		values ($1, $2, $3, $4, $5, $5, $6, $7, $12, $8, now(), $9, $10, $11)
 		returning id`,
 		j.networkID, j.publisher, "JOURNEY-"+tag(t), ref, string(status),
 		reportedSaleMinor, reportedCommission,
-		at, at.Add(-48*time.Hour), at.Add(48*time.Hour), []byte(`{"transaction_id":"JOURNEY"}`),
+		at, at.Add(-48*time.Hour), at.Add(48*time.Hour), []byte(`{"transaction_id":"JOURNEY"}`), currency,
 	).Scan(&id); err != nil {
 		t.Fatalf("storing the report: %v", err)
 	}

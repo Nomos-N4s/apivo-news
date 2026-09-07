@@ -13,18 +13,20 @@ import (
 
 const connectNetworkAccount = `-- name: ConnectNetworkAccount :one
 insert into cashback.network_account (
-    network_id, external_publisher_id, credential_ref, backfill_from, active
+    network_id, external_publisher_id, credential_ref, backfill_from, active, reports_currency
 )
 values (
     $1,
     $2,
     $3,
     $4,
-    $5
+    $5,
+    $6
 )
 on conflict (network_id, external_publisher_id) do update
    set credential_ref = excluded.credential_ref,
-       active = excluded.active
+       active = excluded.active,
+       reports_currency = coalesce(excluded.reports_currency, cashback.network_account.reports_currency)
 returning
     id,
     network_id,
@@ -33,7 +35,8 @@ returning
     backfill_from,
     cursor_at,
     trailing_cursor_at,
-    active
+    active,
+    reports_currency
 `
 
 type ConnectNetworkAccountParams struct {
@@ -42,6 +45,7 @@ type ConnectNetworkAccountParams struct {
 	CredentialRef       string
 	BackfillFrom        pgtype.Timestamptz
 	Active              bool
+	ReportsCurrency     pgtype.Text
 }
 
 type ConnectNetworkAccountRow struct {
@@ -53,6 +57,7 @@ type ConnectNetworkAccountRow struct {
 	CursorAt            pgtype.Timestamptz
 	TrailingCursorAt    pgtype.Timestamptz
 	Active              bool
+	ReportsCurrency     pgtype.Text
 }
 
 // Create the publisher account row the cursors hang off, or update the two
@@ -75,6 +80,10 @@ type ConnectNetworkAccountRow struct {
 // Neither cursor is touched at all. They are the poller's, they are advanced
 // only inside the transaction that persisted a window (FR-031), and a connect
 // command that reset one would skip every window between.
+//
+// reports_currency is written when declared and kept when not (FR-108): a
+// re-run that says nothing about the currency does not erase what an
+// earlier run established, and a run that declares one may correct it.
 func (q *Queries) ConnectNetworkAccount(ctx context.Context, arg ConnectNetworkAccountParams) (ConnectNetworkAccountRow, error) {
 	row := q.db.QueryRow(ctx, connectNetworkAccount,
 		arg.NetworkID,
@@ -82,6 +91,7 @@ func (q *Queries) ConnectNetworkAccount(ctx context.Context, arg ConnectNetworkA
 		arg.CredentialRef,
 		arg.BackfillFrom,
 		arg.Active,
+		arg.ReportsCurrency,
 	)
 	var i ConnectNetworkAccountRow
 	err := row.Scan(
@@ -93,6 +103,7 @@ func (q *Queries) ConnectNetworkAccount(ctx context.Context, arg ConnectNetworkA
 		&i.CursorAt,
 		&i.TrailingCursorAt,
 		&i.Active,
+		&i.ReportsCurrency,
 	)
 	return i, err
 }

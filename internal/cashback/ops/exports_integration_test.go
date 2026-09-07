@@ -24,6 +24,11 @@ func member(ctx context.Context, t *testing.T, tx pgx.Tx) uuid.UUID {
 		"member-"+suffix(t)+"@example.test").Scan(&id); err != nil {
 		t.Fatalf("seeding the member: %v", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		insert into cashback.participation (account_id, brand_id, terms_version, default_currency)
+		values ($1, 'fixture', '1.0.0', 'EUR')`, id); err != nil {
+		t.Fatalf("opting the member in: %v", err)
+	}
 	return id
 }
 

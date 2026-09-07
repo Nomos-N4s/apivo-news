@@ -223,3 +223,88 @@ func TestTheCreditedClickStatementAgainstSchema(t *testing.T) {
 		}
 	})
 }
+
+// reportIn stores one report carrying the reference in the given currency.
+func reportIn(ctx context.Context, t *testing.T, tx pgx.Tx, networkID string, publisher pgtype.UUID, ref, currency string) pgtype.UUID {
+	t.Helper()
+	at := time.Date(2026, time.August, 3, 9, 15, 0, 0, time.UTC)
+	var id pgtype.UUID
+	if err := tx.QueryRow(ctx, `
+		insert into cashback.network_transaction (
+			network_id, network_account_id, external_id, click_ref,
+			status_raw, status, sale_amount_minor, commission_minor, currency,
+			transacted_at, retrieved_at, query_window_start, query_window_end,
+			raw_payload)
+		values ($1, $2, $3, $4, 'pending', 'pending', 4999, 499, $5, $6, $7, $8, $9, $10)
+		returning id`,
+		networkID, publisher, "EARN-"+tag(t), ref, currency,
+		at, at.Add(time.Hour), at.Add(-48*time.Hour), at.Add(48*time.Hour),
+		[]byte(`{"transaction_id":"EARN"}`),
+	).Scan(&id); err != nil {
+		t.Fatalf("storing the report: %v", err)
+	}
+	return id
+}
+
+// TestTheForeignCurrencyStatementAgainstSchema is FR-109's queue write: a
+// report in a currency its member is not in cashback in is queued, one in
+// the member's currency is not, and a member in cashback in nothing at all
+// is the same answer as the wrong currency.
+func TestTheForeignCurrencyStatementAgainstSchema(t *testing.T) {
+	t.Parallel()
+	ctx, tx, done := schemaTx(t)
+	defer done()
+
+	each(ctx, t, tx, "a report in a currency the member cannot be paid in is queued", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, member, offer := world(ctx, t, tx)
+		ref := "a-reference-paid-in-dollars-00"
+		click(ctx, t, tx, member, offer, ref)
+		stored := reportIn(ctx, t, tx, networkID, publisher, ref, "USD")
+
+		row, err := q.RecordForeignCurrencyReference(ctx, stored)
+		if err != nil {
+			t.Fatalf("RecordForeignCurrencyReference(): %v", err)
+		}
+		if row.NetworkTransactionID != stored {
+			t.Errorf("the queue row names report %v, want %v", row.NetworkTransactionID, stored)
+		}
+	})
+
+	each(ctx, t, tx, "a report in the member's currency is not queued", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, member, offer := world(ctx, t, tx)
+		ref := "a-reference-paid-in-euros-0000"
+		click(ctx, t, tx, member, offer, ref)
+		stored := reportIn(ctx, t, tx, networkID, publisher, ref, "EUR")
+
+		if _, err := q.RecordForeignCurrencyReference(ctx, stored); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("RecordForeignCurrencyReference() = %v, want %v - a creditable report was queued", err, pgx.ErrNoRows)
+		}
+	})
+
+	each(ctx, t, tx, "a member in cashback in no currency at all is queued too", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, _, offer := world(ctx, t, tx)
+		var stranger pgtype.UUID
+		if err := tx.QueryRow(ctx, `
+			insert into public.account (email, display_name, role)
+			values ($1, 'Never Opted In', 'reader') returning id`,
+			"stranger-"+tag(t)+"@example.test").Scan(&stranger); err != nil {
+			t.Fatalf("seeding the stranger: %v", err)
+		}
+		ref := "a-reference-by-a-stranger-0000"
+		click(ctx, t, tx, stranger, offer, ref)
+		stored := reportIn(ctx, t, tx, networkID, publisher, ref, "EUR")
+
+		if _, err := q.RecordForeignCurrencyReference(ctx, stored); err != nil {
+			t.Fatalf("RecordForeignCurrencyReference() = %v, want a queue row: nothing says what currency this member is paid in", err)
+		}
+	})
+
+	each(ctx, t, tx, "a reference naming nothing is left to the unmatched half", func(t *testing.T, tx pgx.Tx, q *store.Queries) {
+		networkID, publisher, _, _ := world(ctx, t, tx)
+		stored := reportIn(ctx, t, tx, networkID, publisher, "ref-that-names-nothing-002", "USD")
+
+		if _, err := q.RecordForeignCurrencyReference(ctx, stored); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("RecordForeignCurrencyReference() = %v, want %v", err, pgx.ErrNoRows)
+		}
+	})
+}

@@ -222,6 +222,8 @@ type CashbackNetworkAccount struct {
 	Active           bool
 	// The instant this account's first poll reads from, and the floor the trailing re-read walks from until its own cursor exists. Set by the operator who connects the account; NULL means nobody has said, and the poller refuses to guess (FR-031, ADR-0003).
 	BackfillFrom pgtype.Timestamptz
+	// The currency this publisher account's network reports commission in, as declared when it was connected (FR-108). Null means nobody has established it yet - which is itself the state that produces an unwithdrawable balance, so an operator listing shows it as such rather than as blank.
+	ReportsCurrency pgtype.Text
 }
 
 // IMMUTABLE (C-3). Exactly what a network reported, when, and for which query window. A status or amount change is a NEW row superseding the previous one; nothing here is ever edited, because a member's money rests on it.

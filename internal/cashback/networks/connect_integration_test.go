@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -387,5 +388,74 @@ func TestANewAccountMustSayWhereItsHistoryStarts(t *testing.T) {
 	}
 	if again.Active {
 		t.Errorf("the account is still active after a run that asked for inactive")
+	}
+}
+
+// TestConnectingRecordsTheDeclaredCurrencyAndKeepsIt is FR-108's record: a
+// declared currency is written, a re-run that says nothing keeps it, and a
+// re-run that declares one corrects it.
+func TestConnectingRecordsTheDeclaredCurrencyAndKeepsIt(t *testing.T) {
+	ctx, tx := connectTestTx(t)
+	req := aConnectRequest(t)
+	req.ReportsCurrency, req.PaysOutIn = "EUR", "EUR"
+
+	got, err := networks.ConnectPublisherAccount(ctx, tx, req)
+	if err != nil {
+		t.Fatalf("ConnectPublisherAccount(): %v", err)
+	}
+	if got.ReportsCurrency != "EUR" {
+		t.Errorf("ReportsCurrency = %q after declaring EUR, want EUR", got.ReportsCurrency)
+	}
+
+	quiet := aConnectRequest(t)
+	quiet.Network = req.Network
+	again, err := networks.ConnectPublisherAccount(ctx, tx, quiet)
+	if err != nil {
+		t.Fatalf("the quiet re-run failed: %v", err)
+	}
+	if again.ReportsCurrency != "EUR" {
+		t.Errorf("a re-run that declared nothing left ReportsCurrency = %q, want the EUR it had", again.ReportsCurrency)
+	}
+
+	corrected := quiet
+	corrected.ReportsCurrency = "SEK"
+	third, err := networks.ConnectPublisherAccount(ctx, tx, corrected)
+	if err != nil {
+		t.Fatalf("the correcting re-run failed: %v", err)
+	}
+	if third.ReportsCurrency != "SEK" {
+		t.Errorf("a re-run declaring SEK left ReportsCurrency = %q", third.ReportsCurrency)
+	}
+}
+
+// TestConnectingRefusesACurrencyTheDeploymentCannotPayOut is FR-108's
+// refusal, at connection time and by name: a network paying in a currency
+// no member can withdraw would credit balances that never move. A null is
+// not refused - nobody has established it yet.
+func TestConnectingRefusesACurrencyTheDeploymentCannotPayOut(t *testing.T) {
+	t.Parallel()
+
+	req := aConnectRequest(t)
+	req.ReportsCurrency, req.PaysOutIn = "USD", "EUR"
+	err := req.Validate()
+	if !errors.Is(err, networks.ErrCannotConnect) {
+		t.Fatalf("Validate() = %v, want one wrapping ErrCannotConnect", err)
+	}
+	for _, currency := range []string{"USD", "EUR"} {
+		if !strings.Contains(err.Error(), currency) {
+			t.Errorf("the refusal does not name %s: %v", currency, err)
+		}
+	}
+
+	malformed := aConnectRequest(t)
+	malformed.ReportsCurrency = "euros"
+	if err := malformed.Validate(); !errors.Is(err, networks.ErrCannotConnect) || !strings.Contains(err.Error(), "ISO 4217") {
+		t.Errorf("Validate() with a currency that is not a code = %v, want ErrCannotConnect naming ISO 4217", err)
+	}
+
+	undeclared := aConnectRequest(t)
+	undeclared.PaysOutIn = "EUR"
+	if err := undeclared.Validate(); err != nil {
+		t.Errorf("Validate() with no declared currency = %v, want acceptance: a null is reported, not refused", err)
 	}
 }

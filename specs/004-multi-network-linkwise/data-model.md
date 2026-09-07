@@ -161,100 +161,7 @@ afterwards.
 
 ---
 
-## 0036 — A click carries the network that issued it
-
-### The defect
-
-Attribution must ask *which network issued this click*. Today that is three
-tables:
-
-```text
-click.offer_id → offer.merchant_network_id → merchant_network.network_id
-```
-
-FR-096 makes the answer a predicate on the hot attribution path, and the
-current shape makes that predicate a join.
-
-### Why the denormalisation needs keys, not comments
-
-`0011` refused this denormalisation once already, and said why:
-
-> *'…the network it is sourced from follows from the route
-> (`merchant_network`) rather than being repeated here where the two could
-> disagree.'* — `0011:261`, on `cashback.offer`
-
-That objection is correct and applies here unchanged. It is answered not by
-overruling it but by making disagreement **unrepresentable** — the technique
-`0012` already used for exactly this purpose:
-
-> *'Redundant against the primary key on its own; it exists so 0013 can
-> carry the ownership rule in a foreign key rather than in a trigger.'*
-> — `0012:50-54`, on `click_id_account_unique`
-
-### The change
-
-```sql
--- The two keys the composite foreign keys join on. Each is redundant
--- against its own primary key; each exists so the value below can be
--- pinned by a key rather than trusted.
-alter table cashback.offer
-    add constraint offer_id_merchant_network_unique unique (id, merchant_network_id);
-
-alter table cashback.merchant_network
-    add constraint merchant_network_id_network_unique unique (id, network_id);
-
-alter table cashback.click
-    add column merchant_network_id uuid,
-    add column network_id text;
-
--- Backfill from the join the columns replace, then close the door.
-update cashback.click c
-   set merchant_network_id = o.merchant_network_id,
-       network_id          = mn.network_id
-  from cashback.offer o
-  join cashback.merchant_network mn on mn.id = o.merchant_network_id
- where o.id = c.offer_id;
-
-alter table cashback.click
-    alter column merchant_network_id set not null,
-    alter column network_id set not null,
-    add constraint click_route_matches_offer
-        foreign key (offer_id, merchant_network_id)
-        references cashback.offer (id, merchant_network_id),
-    add constraint click_network_matches_route
-        foreign key (merchant_network_id, network_id)
-        references cashback.merchant_network (id, network_id);
-
-create index click_network_id_idx on cashback.click (network_id);
-```
-
-Two columns, not one. `merchant_network_id` is the route the member actually
-clicked — the thing the rate snapshot came from — and it is the only value
-that can chain the network back to the offer by key. `network_id` is the
-attribution key, and with the second foreign key it cannot name a network
-the route does not belong to.
-
-`cashback.click` is append-only (C-3), so neither column can drift after the
-insert that set it.
-
-### Rejected alternatives
-
-| Alternative | Rejected because |
-|---|---|
-| One column, `network_id`, no keys | Nothing stops it disagreeing with the offer's route — exactly the objection `0011:261` raised |
-| A trigger validating the pair | Validates writes, says nothing about rows already present |
-| Add `network_id` to `cashback.offer` instead | Overrules `0011:261` at the table it was written about, and puts the value one level further from where it is needed |
-| Leave it joined | FR-096 becomes a performance argument rather than a rule |
-
-### Test
-
-Real Postgres. Insert a click whose `network_id` names a network its route
-does not belong to; assert refusal by SQLSTATE `23503` naming
-`click_network_matches_route`. Assert the backfill leaves no null.
-
----
-
-## 0037 — A member's entry is in a currency they can be paid in
+## 0036 — A member's entry is in a currency they can be paid in
 
 ### The defect
 
@@ -354,6 +261,99 @@ participation currency; assert SQLSTATE `23503` naming
 member's `default_currency` while an entry references the old one; assert
 the same. And connect an account declaring a currency other than the payout
 threshold's; assert the refusal names both currencies.
+
+---
+
+## 0037 — A click carries the network that issued it
+
+### The defect
+
+Attribution must ask *which network issued this click*. Today that is three
+tables:
+
+```text
+click.offer_id → offer.merchant_network_id → merchant_network.network_id
+```
+
+FR-096 makes the answer a predicate on the hot attribution path, and the
+current shape makes that predicate a join.
+
+### Why the denormalisation needs keys, not comments
+
+`0011` refused this denormalisation once already, and said why:
+
+> *'…the network it is sourced from follows from the route
+> (`merchant_network`) rather than being repeated here where the two could
+> disagree.'* — `0011:261`, on `cashback.offer`
+
+That objection is correct and applies here unchanged. It is answered not by
+overruling it but by making disagreement **unrepresentable** — the technique
+`0012` already used for exactly this purpose:
+
+> *'Redundant against the primary key on its own; it exists so 0013 can
+> carry the ownership rule in a foreign key rather than in a trigger.'*
+> — `0012:50-54`, on `click_id_account_unique`
+
+### The change
+
+```sql
+-- The two keys the composite foreign keys join on. Each is redundant
+-- against its own primary key; each exists so the value below can be
+-- pinned by a key rather than trusted.
+alter table cashback.offer
+    add constraint offer_id_merchant_network_unique unique (id, merchant_network_id);
+
+alter table cashback.merchant_network
+    add constraint merchant_network_id_network_unique unique (id, network_id);
+
+alter table cashback.click
+    add column merchant_network_id uuid,
+    add column network_id text;
+
+-- Backfill from the join the columns replace, then close the door.
+update cashback.click c
+   set merchant_network_id = o.merchant_network_id,
+       network_id          = mn.network_id
+  from cashback.offer o
+  join cashback.merchant_network mn on mn.id = o.merchant_network_id
+ where o.id = c.offer_id;
+
+alter table cashback.click
+    alter column merchant_network_id set not null,
+    alter column network_id set not null,
+    add constraint click_route_matches_offer
+        foreign key (offer_id, merchant_network_id)
+        references cashback.offer (id, merchant_network_id),
+    add constraint click_network_matches_route
+        foreign key (merchant_network_id, network_id)
+        references cashback.merchant_network (id, network_id);
+
+create index click_network_id_idx on cashback.click (network_id);
+```
+
+Two columns, not one. `merchant_network_id` is the route the member actually
+clicked — the thing the rate snapshot came from — and it is the only value
+that can chain the network back to the offer by key. `network_id` is the
+attribution key, and with the second foreign key it cannot name a network
+the route does not belong to.
+
+`cashback.click` is append-only (C-3), so neither column can drift after the
+insert that set it.
+
+### Rejected alternatives
+
+| Alternative | Rejected because |
+|---|---|
+| One column, `network_id`, no keys | Nothing stops it disagreeing with the offer's route — exactly the objection `0011:261` raised |
+| A trigger validating the pair | Validates writes, says nothing about rows already present |
+| Add `network_id` to `cashback.offer` instead | Overrules `0011:261` at the table it was written about, and puts the value one level further from where it is needed |
+| Leave it joined | FR-096 becomes a performance argument rather than a rule |
+
+### Test
+
+Real Postgres. Insert a click whose `network_id` names a network its route
+does not belong to; assert refusal by SQLSTATE `23503` naming
+`click_network_matches_route`. Assert the backfill leaves no null.
 
 ---
 

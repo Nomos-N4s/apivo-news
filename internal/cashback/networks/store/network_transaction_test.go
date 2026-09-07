@@ -99,6 +99,13 @@ func seedAccount(ctx context.Context, t *testing.T, tx pgx.Tx, role string) pgty
 		hex.EncodeToString(suffix)+"@example.test", role).Scan(&id); err != nil {
 		t.Fatalf("seeding an account: %v", err)
 	}
+	// Opted in, in EUR, so a case may credit them: an entry is only ever
+	// in the member's own currency (entry_currency_is_the_members).
+	if _, err := tx.Exec(ctx, `
+		insert into cashback.participation (account_id, brand_id, terms_version, default_currency)
+		values ($1, 'fixture', '1.0.0', 'EUR')`, id); err != nil {
+		t.Fatalf("opting the member in: %v", err)
+	}
 	return id
 }
 

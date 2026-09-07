@@ -59,6 +59,14 @@ func seedCashback(t *testing.T, tx pgx.Tx) cashbackFixtures {
 	if err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
+	// In cashback, in the currency every entry below is in: an entry is
+	// only ever in the member's own currency (entry_currency_is_the_members).
+	_, err = tx.Exec(ctx,
+		`insert into cashback.participation (account_id, brand_id, terms_version, default_currency)
+		 values ($1, 'fixture', 'terms-v1', 'EUR')`, f.accountID)
+	if err != nil {
+		t.Fatalf("seed participation: %v", err)
+	}
 
 	f.networkID = "fixture_" + suffix
 	_, err = tx.Exec(ctx,

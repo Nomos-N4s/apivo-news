@@ -159,6 +159,28 @@ func TestAClickAlreadyCreditedIsRefusedBeforeAnyMoneyMoves(t *testing.T) {
 	}
 }
 
+// TestACreditInACurrencyNotTheMembersIsRefusedBeforeAnyMoneyMoves is
+// FR-109 at the machine: entry_currency_is_the_members refuses the insert,
+// the refusal is recognised by name, and no transfer is posted for it.
+func TestACreditInACurrencyNotTheMembersIsRefusedBeforeAnyMoneyMoves(t *testing.T) {
+	t.Parallel()
+
+	entries := &fakeEntries{createErr: &pgconn.PgError{
+		Code:           pgerrcode.ForeignKeyViolation,
+		ConstraintName: "entry_currency_is_the_members",
+	}}
+	ledger := &fakeLedger{}
+
+	_, err := machine(t, entries, ledger).Open(t.Context(), &fakeOutbox{}, aCredit(t, earnings.StatePending))
+
+	if !errors.Is(err, earnings.ErrCurrencyNotTheMembers) {
+		t.Fatalf("Open() error = %v, want one wrapping %v", err, earnings.ErrCurrencyNotTheMembers)
+	}
+	if len(ledger.posted) != 0 {
+		t.Errorf("a credit in the wrong currency posted %d transfer(s), want none", len(ledger.posted))
+	}
+}
+
 // TestAHeldCreditNamesTheRuleHoldingIt, and one that is not held names none.
 // The schema checks the rule and the state on the row as a whole, so a
 // pending entry carrying a rule is a row it refuses.

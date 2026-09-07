@@ -717,7 +717,7 @@ to publish a band on. Both are subcommands of the deployed binary, run
 inside its container so they read its environment:
 
 ```sh
-docker exec apivo-qa-api apivo connect-network -backfill-from 2026-09-01
+docker exec apivo-qa-api apivo connect-network -backfill-from 2026-09-01 -reports-currency EUR
 docker restart apivo-qa-api
 sleep 15
 docker logs --since 1m apivo-qa-api 2>&1 | grep -E 'scheduler started|registered|NO AFFILIATE'
