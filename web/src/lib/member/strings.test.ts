@@ -37,8 +37,11 @@ describe('memberStrings', () => {
   });
 
   it('quotes the label the front page actually renders', () => {
+    // The front page renders `signIn` on the button and hangs `signInPending`
+    // off it as the title. A sentence that says the button "reads" something
+    // has to quote the first, or it describes a tooltip.
     for (const lang of READING_LANGUAGES) {
-      const label = uiStrings(lang).signInPending;
+      const label = uiStrings(lang).signIn;
       expect(memberStrings(lang).frontPageButtonState(label)).toContain(label);
     }
   });

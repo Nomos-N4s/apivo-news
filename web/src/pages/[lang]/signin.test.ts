@@ -80,7 +80,11 @@ describe.each(READING_LANGUAGES)('member sign-in in %s', (lang) => {
       expect(html).toContain(m.notWorkingBody);
       // Read from the catalogues rather than retyped, so this case cannot
       // disagree with the page about what it promises.
-      expect(html).toContain(m.frontPageButtonState(t.signInPending));
+      expect(html).toContain(m.frontPageButtonState(t.signIn));
+      // signInPending is that button's title, not its face. Quoting it
+      // here would tell a reader to look for words the button does not
+      // show unless they hover it.
+      expect(html).not.toContain(m.frontPageButtonState(t.signInPending));
     },
     RENDER_TIMEOUT_MS,
   );
