@@ -47,6 +47,83 @@ func (q *Queries) CreateMerchant(ctx context.Context, arg CreateMerchantParams) 
 	return i, err
 }
 
+const demotePreferredRoute = `-- name: DemotePreferredRoute :one
+update cashback.merchant_network
+   set preferred = false
+ where network_id = $1
+   and external_merchant_id = $2
+   and preferred
+returning id, merchant_id
+`
+
+type DemotePreferredRouteParams struct {
+	NetworkID          string
+	ExternalMerchantID string
+}
+
+type DemotePreferredRouteRow struct {
+	ID         pgtype.UUID
+	MerchantID pgtype.UUID
+}
+
+// Withdraw the published slot from one route, answering the retailer it
+// belonged to, or no row when the route was not the published one.
+//
+// Run BEFORE a status change that would make the route unpublishable:
+// merchant_network_preferred_is_publishable (0035) refuses a preferred
+// route that is not active, so the order of the two statements is the
+// whole of why an import can pause the published route at all.
+func (q *Queries) DemotePreferredRoute(ctx context.Context, arg DemotePreferredRouteParams) (DemotePreferredRouteRow, error) {
+	row := q.db.QueryRow(ctx, demotePreferredRoute, arg.NetworkID, arg.ExternalMerchantID)
+	var i DemotePreferredRouteRow
+	err := row.Scan(&i.ID, &i.MerchantID)
+	return i, err
+}
+
+const demotePreferredRoutesNotSeen = `-- name: DemotePreferredRoutesNotSeen :many
+update cashback.merchant_network
+   set preferred = false
+ where network_id = $1
+   and retrieved_at < $2
+   and status <> 'left_network'
+   and preferred
+returning id, merchant_id
+`
+
+type DemotePreferredRoutesNotSeenParams struct {
+	NetworkID       string
+	ImportStartedAt pgtype.Timestamptz
+}
+
+type DemotePreferredRoutesNotSeenRow struct {
+	ID         pgtype.UUID
+	MerchantID pgtype.UUID
+}
+
+// Withdraw the published slot from every route MarkRoutesNotSeen is about
+// to mark departed, answering the retailers affected so a survivor can be
+// promoted for each. The same predicate as MarkRoutesNotSeen, run first, for
+// the reason DemotePreferredRoute gives.
+func (q *Queries) DemotePreferredRoutesNotSeen(ctx context.Context, arg DemotePreferredRoutesNotSeenParams) ([]DemotePreferredRoutesNotSeenRow, error) {
+	rows, err := q.db.Query(ctx, demotePreferredRoutesNotSeen, arg.NetworkID, arg.ImportStartedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DemotePreferredRoutesNotSeenRow
+	for rows.Next() {
+		var i DemotePreferredRoutesNotSeenRow
+		if err := rows.Scan(&i.ID, &i.MerchantID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const findMerchantBySlug = `-- name: FindMerchantBySlug :one
 select
     m.id,
@@ -206,6 +283,95 @@ func (q *Queries) MerchantHasPreferredRoute(ctx context.Context, merchantID pgty
 	var has_preferred bool
 	err := row.Scan(&has_preferred)
 	return has_preferred, err
+}
+
+const promotePublishableRoute = `-- name: PromotePublishableRoute :one
+update cashback.merchant_network
+   set preferred = true
+ where id = (
+       select c.id
+         from cashback.merchant_network c
+        where c.merchant_id = $1
+          and c.status = 'active'
+          and c.can_attribute
+          and not exists (
+              select 1 from cashback.merchant_network p
+               where p.merchant_id = c.merchant_id and p.preferred
+          )
+        order by c.retrieved_at, c.id
+        limit 1
+   )
+returning id, network_id
+`
+
+type PromotePublishableRouteRow struct {
+	ID        pgtype.UUID
+	NetworkID string
+}
+
+// Give the retailer's published slot to its earliest publishable route, if
+// the retailer has none published and such a route exists (FR-100).
+// Answers the route promoted, or no row when there was nothing to do -
+// which is both "already published" and "nothing publishable", and the
+// caller tells them apart by what it knows it just demoted.
+//
+// Earliest by retrieved_at, then by id: the route we have known longest,
+// and a total order so two imports promoting the same retailer's survivor
+// choose alike.
+func (q *Queries) PromotePublishableRoute(ctx context.Context, merchantID pgtype.UUID) (PromotePublishableRouteRow, error) {
+	row := q.db.QueryRow(ctx, promotePublishableRoute, merchantID)
+	var i PromotePublishableRouteRow
+	err := row.Scan(&i.ID, &i.NetworkID)
+	return i, err
+}
+
+const retailersPublishingNothing = `-- name: RetailersPublishingNothing :many
+select m.id, m.slug, count(*)::int as publishable_routes
+  from cashback.merchant m
+  join cashback.merchant_network mn
+    on mn.merchant_id = m.id
+   and mn.status = 'active'
+   and mn.can_attribute
+ where m.status = 'active'
+   and not exists (
+       select 1 from cashback.merchant_network p
+        where p.merchant_id = m.id and p.preferred
+   )
+ group by m.id, m.slug
+ order by m.slug
+`
+
+type RetailersPublishingNothingRow struct {
+	ID                pgtype.UUID
+	Slug              string
+	PublishableRoutes int32
+}
+
+// Retailers that have a publishable route and publish nothing: an active,
+// attributable route exists and no route is preferred. This is the
+// cross-row rule data-model.md deliberately does not make a constraint,
+// and it must be visible rather than silent (T210): the importer promotes
+// a survivor whenever it demotes, so a row here is either a route revived
+// by hand or a state the importer never saw - and either way an operator
+// should look.
+func (q *Queries) RetailersPublishingNothing(ctx context.Context) ([]RetailersPublishingNothingRow, error) {
+	rows, err := q.db.Query(ctx, retailersPublishingNothing)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RetailersPublishingNothingRow
+	for rows.Next() {
+		var i RetailersPublishingNothingRow
+		if err := rows.Scan(&i.ID, &i.Slug, &i.PublishableRoutes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertMerchantCopy = `-- name: UpsertMerchantCopy :exec

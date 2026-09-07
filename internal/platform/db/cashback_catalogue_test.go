@@ -15,11 +15,14 @@ package db_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // TestCashbackCatalogueRejectsIllegalWrites is the catalogue's rejection
@@ -720,4 +723,66 @@ func TestNoForeignKeyLeavesTheCashbackSchemaForANewsTable(t *testing.T) {
 	if len(crossings) > 0 {
 		t.Fatalf("a foreign key crosses the product boundary: %v", crossings)
 	}
+}
+
+// TestThePublishedRouteMustBePublishable is 0035 (spec 004, T207/T208,
+// SC-022, SC-026): a route cannot hold the published slot unless it is
+// active and can carry a click reference, so demotion is an explicit act
+// that precedes the status change - the order the importer uses.
+func TestThePublishedRouteMustBePublishable(t *testing.T) {
+	t.Parallel()
+	tx := beginTx(t)
+	ctx := context.Background()
+	f := seedCashback(t, tx)
+
+	refusedBy := func(t *testing.T, what string, run func(sp pgx.Tx) error) {
+		t.Helper()
+		var pgErr *pgconn.PgError
+		if err := refused(ctx, tx, run); !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.CheckViolation || pgErr.ConstraintName != "merchant_network_preferred_is_publishable" {
+			t.Fatalf("%s = %v, want a check violation on merchant_network_preferred_is_publishable", what, err)
+		}
+	}
+
+	// The published route leaving the network while it holds the slot.
+	refusedBy(t, "a published route marked left_network", func(sp pgx.Tx) error {
+		_, err := sp.Exec(ctx, `update cashback.merchant_network set status = 'left_network' where id = $1`, f.merchantNetworkID)
+		return err
+	})
+	refusedBy(t, "a published route marked paused", func(sp pgx.Tx) error {
+		_, err := sp.Exec(ctx, `update cashback.merchant_network set status = 'paused' where id = $1`, f.merchantNetworkID)
+		return err
+	})
+	// SC-026: an active route that cannot carry a click reference cannot be
+	// the published one either.
+	refusedBy(t, "a published route that cannot attribute", func(sp pgx.Tx) error {
+		_, err := sp.Exec(ctx, `update cashback.merchant_network set can_attribute = false where id = $1`, f.merchantNetworkID)
+		return err
+	})
+
+	// Demoted first, the same changes are accepted: this is the order the
+	// importer writes them in.
+	if _, err := tx.Exec(ctx, `update cashback.merchant_network set preferred = false where id = $1`, f.merchantNetworkID); err != nil {
+		t.Fatalf("demoting the route: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `update cashback.merchant_network set status = 'left_network', can_attribute = false where id = $1`, f.merchantNetworkID); err != nil {
+		t.Fatalf("a demoted route was refused its status change: %v", err)
+	}
+
+	// And a route cannot be inserted into the slot unpublishable either.
+	refusedBy(t, "a paused route inserted as published", func(sp pgx.Tx) error {
+		_, err := sp.Exec(ctx, `
+			insert into cashback.merchant_network
+			     (brand_id, merchant_id, network_id, external_merchant_id, retrieved_at, raw_payload, status, preferred)
+			 values ('fixture', $1, $2, $3, now(), '{}'::jsonb, 'paused', true)`,
+			f.merchantID, f.networkID, "paused-"+f.suffix)
+		return err
+	})
+	refusedBy(t, "an unattributable route inserted as published", func(sp pgx.Tx) error {
+		_, err := sp.Exec(ctx, `
+			insert into cashback.merchant_network
+			     (brand_id, merchant_id, network_id, external_merchant_id, retrieved_at, raw_payload, status, preferred, can_attribute)
+			 values ('fixture', $1, $2, $3, now(), '{}'::jsonb, 'active', true, false)`,
+			f.merchantID, f.networkID, "noref-"+f.suffix)
+		return err
+	})
 }

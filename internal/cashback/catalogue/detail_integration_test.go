@@ -298,8 +298,11 @@ func TestADepartedRoutePublishesNothing(t *testing.T) {
 	merchant := aMerchant(ctx, t, tx, slug, nil, map[string]string{"de": "Weg"})
 	route := aRoute(ctx, t, tx, merchant, net.id.String(), true)
 	aBand(ctx, t, tx, route, 700, "", "", detailAt.Add(-time.Hour), nil)
+	// Departing withdraws the published slot in the same breath: the
+	// schema refuses a preferred route that is not active (0035), which is
+	// how the importer leaves such a route too.
 	if _, err := tx.Exec(ctx,
-		`update cashback.merchant_network set status = 'left_network' where id = $1`, route); err != nil {
+		`update cashback.merchant_network set status = 'left_network', preferred = false where id = $1`, route); err != nil {
 		t.Fatalf("marking the route departed: %v", err)
 	}
 

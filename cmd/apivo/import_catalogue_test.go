@@ -94,6 +94,26 @@ func TestImportCatalogueReportSaysWhatTheRunDidAndWhatIsNowPublishable(t *testin
 		t.Errorf("the report does not stop at %d routes and say how many follow:\n%s", importedRoutesShown, out.String())
 	}
 
+	// A run that moved published slots says so, and a retailer that could
+	// publish and does not is named rather than counted.
+	out.Reset()
+	if err := reportImport(&out, "fixture",
+		catalogue.ImportResult{StartedAt: started, Seen: 3, Republished: 1, LostPublication: 1,
+			PublishingNothing: []catalogue.UnpublishedRetailer{{Slug: "quiet-shop", PublishableRoutes: 2}}},
+		nil); err != nil {
+		t.Fatalf("reportImport(): %v", err)
+	}
+	for _, want := range []string{
+		"published route 1 retailer(s) moved to a surviving route, 1 left with nothing to publish through",
+		"LOOK            1 retailer(s) have a publishable route and publish nothing:",
+		"quiet-shop",
+		"2 publishable route(s)",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the report lacks %q:\n%s", want, out.String())
+		}
+	}
+
 	// A network with nothing publishable is not told to publish.
 	out.Reset()
 	if err := reportImport(&out, "fixture", catalogue.ImportResult{StartedAt: started}, nil); err != nil || strings.Contains(out.String(), "publish a rate") {

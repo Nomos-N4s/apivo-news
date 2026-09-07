@@ -183,6 +183,24 @@ func reportImport(stdout io.Writer, network string, result catalogue.ImportResul
 	if result.WithdrewAndAddedNone() {
 		lines = append(lines, "  LOOK            this run withdrew retailers and added none, which is what a lost programme approval or an edited filter looks like from here")
 	}
+	if result.Republished > 0 || result.LostPublication > 0 {
+		lines = append(lines, fmt.Sprintf("  published route %d retailer(s) moved to a surviving route, %d left with nothing to publish through",
+			result.Republished, result.LostPublication))
+	}
+	// A retailer that could publish and does not is a state this run could
+	// not fix - a route revived by hand, or one on a network this import
+	// does not read - and it is named rather than counted, because the
+	// operator's next step is to look at that retailer.
+	if n := len(result.PublishingNothing); n > 0 {
+		lines = append(lines, fmt.Sprintf("  LOOK            %d retailer(s) have a publishable route and publish nothing:", n))
+		for i, r := range result.PublishingNothing {
+			if i == importedRoutesShown {
+				lines = append(lines, fmt.Sprintf("                  ... and %d more", n-i))
+				break
+			}
+			lines = append(lines, fmt.Sprintf("                  %-40s %d publishable route(s)", r.Slug, r.PublishableRoutes))
+		}
+	}
 
 	var active []importedRoute
 	for _, route := range routes {

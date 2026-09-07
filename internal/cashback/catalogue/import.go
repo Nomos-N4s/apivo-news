@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -66,6 +67,10 @@ type Importer struct {
 	// now is the clock, injectable so a test can pin the instant every
 	// route in one run is stamped with.
 	now func() time.Time
+	// announcer records a hand-over of a retailer's published route, so
+	// "why does this retailer publish through that network now" has an
+	// answer after the log has rolled.
+	announcer *Announcer
 }
 
 // NewImporter builds the importer, refusing one that could not write a row.
@@ -76,7 +81,11 @@ func NewImporter(brandID, sourceLanguage string, opts ...ImporterOption) (*Impor
 	if sourceLanguage == "" {
 		return nil, fmt.Errorf("%w: nothing says what language the network supplies its copy in", ErrImportNotConfigured)
 	}
-	i := &Importer{brandID: brandID, sourceLanguage: sourceLanguage, now: time.Now}
+	announcer, err := NewAnnouncer()
+	if err != nil {
+		return nil, err
+	}
+	i := &Importer{brandID: brandID, sourceLanguage: sourceLanguage, now: time.Now, announcer: announcer}
 	for _, opt := range opts {
 		opt(i)
 	}
@@ -109,6 +118,26 @@ type ImportResult struct {
 	// looking at before the next run: an import that reports thousands is
 	// one where something changed at the network rather than in the world.
 	Departed int64
+	// Republished is how many retailers' published route moved to a
+	// survivor this run, because the one they had paused or left (FR-100).
+	Republished int
+	// LostPublication is how many retailers lost their published route
+	// this run with no publishable route to take its place. They publish
+	// nothing until one appears or an operator acts.
+	LostPublication int
+	// PublishingNothing lists the retailers that, after this run, have a
+	// publishable route and publish nothing (T210). The importer promotes
+	// a survivor whenever it demotes, so a retailer here is one whose
+	// routes this run did not touch: a route revived by hand, or one on a
+	// network this import does not read. Visible rather than silent.
+	PublishingNothing []UnpublishedRetailer
+}
+
+// UnpublishedRetailer is one retailer that could publish and does not.
+type UnpublishedRetailer struct {
+	ID                uuid.UUID
+	Slug              string
+	PublishableRoutes int
 }
 
 // WithdrewAndAddedNone is what an upstream change looks like from here - a
@@ -149,7 +178,7 @@ func (i *Importer) Run(ctx context.Context, db store.DBTX, adapter networks.Netw
 			// here is that nothing may be concluded from what is missing.
 			return result, fmt.Errorf("%w: %w", ErrImportIncomplete, err)
 		}
-		created, err := i.writeRoute(ctx, q, networkID, result.StartedAt, merchant)
+		created, err := i.writeRoute(ctx, q, db, networkID, merchant, &result)
 		if err != nil {
 			return result, err
 		}
@@ -159,6 +188,18 @@ func (i *Importer) Run(ctx context.Context, db store.DBTX, adapter networks.Netw
 		}
 	}
 
+	// The published slot is withdrawn from a departing route BEFORE its
+	// status changes: merchant_network_preferred_is_publishable refuses a
+	// preferred route that is not active, so the order of these two
+	// statements is what lets a published retailer leave at all.
+	demoted, err := q.DemotePreferredRoutesNotSeen(ctx, store.DemotePreferredRoutesNotSeenParams{
+		NetworkID:       networkID,
+		ImportStartedAt: pgtype.Timestamptz{Time: result.StartedAt, Valid: true},
+	})
+	if err != nil {
+		return result, fmt.Errorf("catalogue: withdrawing the published routes %s did not return: %w",
+			strconv.Quote(networkID), err)
+	}
 	departed, err := q.MarkRoutesNotSeen(ctx, store.MarkRoutesNotSeenParams{
 		NetworkID:       networkID,
 		ImportStartedAt: pgtype.Timestamptz{Time: result.StartedAt, Valid: true},
@@ -168,12 +209,65 @@ func (i *Importer) Run(ctx context.Context, db store.DBTX, adapter networks.Netw
 			strconv.Quote(networkID), err)
 	}
 	result.Departed = departed
+	for _, route := range demoted {
+		if err := i.handOver(ctx, q, db, route.MerchantID, route.ID, "the published route left the network", &result); err != nil {
+			return result, err
+		}
+	}
+
+	unpublished, err := q.RetailersPublishingNothing(ctx)
+	if err != nil {
+		return result, fmt.Errorf("catalogue: listing the retailers that publish nothing: %w", err)
+	}
+	for _, row := range unpublished {
+		result.PublishingNothing = append(result.PublishingNothing, UnpublishedRetailer{
+			ID: uuid.UUID(row.ID.Bytes), Slug: row.Slug, PublishableRoutes: int(row.PublishableRoutes),
+		})
+	}
 	return result, nil
 }
 
+// handOver gives a retailer's published slot to its earliest publishable
+// route, if it has none published and such a route exists, and records what
+// happened (FR-100). previous is the route that just lost the slot, or the
+// zero value when the retailer simply had none.
+//
+// Nothing to promote after a demotion is a fact too - the retailer now
+// publishes nothing - and it is announced rather than left for somebody to
+// notice. Nothing to promote when nothing was demoted is silence: a new
+// retailer imported paused is not news.
+func (i *Importer) handOver(ctx context.Context, q *store.Queries, db store.DBTX, merchant, previous pgtype.UUID, reason string, result *ImportResult) error {
+	change := RouteChange{
+		Merchant: uuid.UUID(merchant.Bytes),
+		Reason:   reason,
+		At:       result.StartedAt,
+	}
+	if previous.Valid {
+		change.Previous = uuid.UUID(previous.Bytes)
+	}
+	promoted, err := q.PromotePublishableRoute(ctx, merchant)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		if !previous.Valid {
+			return nil
+		}
+		result.LostPublication++
+		return i.announcer.RouteUnpublished(ctx, db, change)
+	case err != nil:
+		return fmt.Errorf("catalogue: promoting a route for retailer %s: %w", change.Merchant, err)
+	}
+	if previous.Valid {
+		result.Republished++
+	}
+	change.Route, change.Network = uuid.UUID(promoted.ID.Bytes), promoted.NetworkID
+	return i.announcer.RoutePublished(ctx, db, change)
+}
+
 // writeRoute writes one retailer and its route, reporting whether the
-// retailer was new to us.
-func (i *Importer) writeRoute(ctx context.Context, q *store.Queries, networkID string, at time.Time, m networks.ReportedMerchant) (bool, error) {
+// retailer was new to us, and keeps the retailer's published slot on a
+// route that can be published (FR-100).
+func (i *Importer) writeRoute(ctx context.Context, q *store.Queries, db store.DBTX, networkID string, m networks.ReportedMerchant, result *ImportResult) (bool, error) {
+	at := result.StartedAt
 	merchantID, created, err := i.resolveMerchant(ctx, q, networkID, m)
 	if err != nil {
 		return false, err
@@ -188,18 +282,42 @@ func (i *Importer) writeRoute(ctx context.Context, q *store.Queries, networkID s
 			strconv.Quote(m.ExternalID), strconv.Quote(networkID), err)
 	}
 
-	// A retailer's first route becomes the one the catalogue publishes, so
-	// there is something to publish at all. After that arbitration is an
-	// operator's: merchant_network_one_preferred is a partial unique index,
-	// so a second preferred route is refused by the database rather than
-	// silently accepted, and the upsert above never rewrites the flag.
+	// A route the network no longer lists as active cannot stay the
+	// published one (merchant_network_preferred_is_publishable), and the
+	// slot is withdrawn BEFORE the status is written, because the
+	// constraint is checked on the status write. What was withdrawn is
+	// remembered so the hand-over below can say what it replaced.
+	publishable := m.Status == networks.MerchantStatusActive
+	var withdrawn pgtype.UUID
+	if !publishable {
+		demoted, err := q.DemotePreferredRoute(ctx, store.DemotePreferredRouteParams{
+			NetworkID:          networkID,
+			ExternalMerchantID: m.ExternalID,
+		})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			// Not the published route; nothing to withdraw.
+		case err != nil:
+			return false, fmt.Errorf("catalogue: withdrawing the published route to retailer %s at %s: %w",
+				strconv.Quote(m.ExternalID), strconv.Quote(networkID), err)
+		default:
+			withdrawn = demoted.ID
+		}
+	}
+
+	// A retailer's first publishable route becomes the one the catalogue
+	// publishes, so there is something to publish at all. After that
+	// arbitration is an operator's: merchant_network_one_preferred is a
+	// partial unique index, so a second preferred route is refused by the
+	// database rather than silently accepted, and the upsert never
+	// rewrites the flag.
 	preferred, err := q.MerchantHasPreferredRoute(ctx, merchantID)
 	if err != nil {
 		return false, fmt.Errorf("catalogue: reading the preferred route of retailer %s: %w",
 			strconv.Quote(m.ExternalID), err)
 	}
 
-	if _, err := q.UpsertRoute(ctx, store.UpsertRouteParams{
+	route, err := q.UpsertRoute(ctx, store.UpsertRouteParams{
 		MerchantID:         merchantID,
 		NetworkID:          networkID,
 		BrandID:            i.brandID,
@@ -207,10 +325,24 @@ func (i *Importer) writeRoute(ctx context.Context, q *store.Queries, networkID s
 		RetrievedAt:        pgtype.Timestamptz{Time: at, Valid: true},
 		RawPayload:         m.RawPayload,
 		Status:             m.Status.String(),
-		Preferred:          !preferred,
-	}); err != nil {
+		Preferred:          !preferred && publishable,
+	})
+	if err != nil {
 		return false, fmt.Errorf("catalogue: writing the route to retailer %s at %s: %w",
 			strconv.Quote(m.ExternalID), strconv.Quote(networkID), err)
+	}
+
+	// A retailer left with no published route gets its earliest
+	// publishable one: the survivor of a route that just paused, or a
+	// route that has come back to a retailer nobody publishes.
+	if !preferred && !route.Preferred {
+		reason := "the retailer had no published route"
+		if withdrawn.Valid {
+			reason = "the published route is " + m.Status.String()
+		}
+		if err := i.handOver(ctx, q, db, merchantID, withdrawn, reason, result); err != nil {
+			return false, err
+		}
 	}
 	return created, nil
 }

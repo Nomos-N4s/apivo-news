@@ -152,3 +152,80 @@ update cashback.merchant_network
  where network_id = sqlc.arg(network_id)
    and retrieved_at < sqlc.arg(import_started_at)
    and status <> 'left_network';
+
+-- name: DemotePreferredRoute :one
+-- Withdraw the published slot from one route, answering the retailer it
+-- belonged to, or no row when the route was not the published one.
+--
+-- Run BEFORE a status change that would make the route unpublishable:
+-- merchant_network_preferred_is_publishable (0035) refuses a preferred
+-- route that is not active, so the order of the two statements is the
+-- whole of why an import can pause the published route at all.
+update cashback.merchant_network
+   set preferred = false
+ where network_id = sqlc.arg(network_id)
+   and external_merchant_id = sqlc.arg(external_merchant_id)
+   and preferred
+returning id, merchant_id;
+
+-- name: DemotePreferredRoutesNotSeen :many
+-- Withdraw the published slot from every route MarkRoutesNotSeen is about
+-- to mark departed, answering the retailers affected so a survivor can be
+-- promoted for each. The same predicate as MarkRoutesNotSeen, run first, for
+-- the reason DemotePreferredRoute gives.
+update cashback.merchant_network
+   set preferred = false
+ where network_id = sqlc.arg(network_id)
+   and retrieved_at < sqlc.arg(import_started_at)
+   and status <> 'left_network'
+   and preferred
+returning id, merchant_id;
+
+-- name: PromotePublishableRoute :one
+-- Give the retailer's published slot to its earliest publishable route, if
+-- the retailer has none published and such a route exists (FR-100).
+-- Answers the route promoted, or no row when there was nothing to do -
+-- which is both "already published" and "nothing publishable", and the
+-- caller tells them apart by what it knows it just demoted.
+--
+-- Earliest by retrieved_at, then by id: the route we have known longest,
+-- and a total order so two imports promoting the same retailer's survivor
+-- choose alike.
+update cashback.merchant_network
+   set preferred = true
+ where id = (
+       select c.id
+         from cashback.merchant_network c
+        where c.merchant_id = sqlc.arg(merchant_id)
+          and c.status = 'active'
+          and c.can_attribute
+          and not exists (
+              select 1 from cashback.merchant_network p
+               where p.merchant_id = c.merchant_id and p.preferred
+          )
+        order by c.retrieved_at, c.id
+        limit 1
+   )
+returning id, network_id;
+
+-- name: RetailersPublishingNothing :many
+-- Retailers that have a publishable route and publish nothing: an active,
+-- attributable route exists and no route is preferred. This is the
+-- cross-row rule data-model.md deliberately does not make a constraint,
+-- and it must be visible rather than silent (T210): the importer promotes
+-- a survivor whenever it demotes, so a row here is either a route revived
+-- by hand or a state the importer never saw - and either way an operator
+-- should look.
+select m.id, m.slug, count(*)::int as publishable_routes
+  from cashback.merchant m
+  join cashback.merchant_network mn
+    on mn.merchant_id = m.id
+   and mn.status = 'active'
+   and mn.can_attribute
+ where m.status = 'active'
+   and not exists (
+       select 1 from cashback.merchant_network p
+        where p.merchant_id = m.id and p.preferred
+   )
+ group by m.id, m.slug
+ order by m.slug;
