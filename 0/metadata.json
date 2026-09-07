@@ -21,6 +21,40 @@
     "output_tokens": 15501,
     "api_call_count": 10
   },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01EuzGbs7UJVP6L6ybMMqqfJ",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "graft"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "964a9a49cdb6",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 800,
+        "end": 801,
+        "entry_ids": [
+          "d629e7f4-0966-4318-bfe2-b8796cc43b4e"
+        ],
+        "tool_use_id": "toolu_01EuzGbs7UJVP6L6ybMMqqfJ"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01EuzGbs7UJVP6L6ybMMqqfJ"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: graft",
+        "default_collapsed": true
+      }
+    }
+  ],
   "session_metrics": {
     "turn_count": 2
   },

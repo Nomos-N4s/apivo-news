@@ -233,3 +233,42 @@ tmpfs           775M  8.0K  775M   1% /run/user/0
 Mem:            7746        1318         261         237        6715        6427
 Swap:              0           0           0
 root@Carlos1:~#
+
+---
+
+root@Carlos1:~# docker logs apivo-qa-api 2>&1 | tail -30
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+apivo: db: migrate up: no migration found for version 39: read down for version 39 migrations: file does not exist
+root@Carlos1:~#
+
+---
+
+are you using graft as much as possible? to save tokens!
