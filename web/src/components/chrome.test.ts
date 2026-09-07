@@ -109,7 +109,7 @@ describe.each(READING_LANGUAGES)('chrome rendered in %s', (lang) => {
 
 describe('the links each chrome component exists to carry', () => {
   it(
-    'the footer reaches the three legal notices, about, and the editorial way in',
+    'the footer reaches the three legal notices, about, the FAQ, and the editorial way in',
     async () => {
       // Every one of these was added because somebody could not get
       // somewhere: the editorial link because staff were typing the URL
@@ -122,6 +122,7 @@ describe('the links each chrome component exists to carry', () => {
         '/de/privacy',
         '/de/contact',
         '/de/about',
+        '/de/faq',
         '/de/editor/signin',
       ]) {
         expect(html, `footer no longer links ${href}`).toContain(`href="${href}"`);

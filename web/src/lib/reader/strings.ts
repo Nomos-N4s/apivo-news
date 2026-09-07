@@ -98,6 +98,11 @@ export interface UiStrings {
    * people it would only refuse.
    */
   readonly operationsLabel: string;
+  /**
+   * The FAQ (issue #528). One key for the page's own h1 and for the footer
+   * link that reaches it, so the two cannot come to disagree.
+   */
+  readonly faqLabel: string;
   readonly aboutHeading: string;
   readonly aboutIntro: string;
   readonly aboutPipelineHeading: string;
@@ -191,6 +196,7 @@ const EL: UiStrings = {
   aboutLabel: 'Σχετικά',
   editorialLabel: 'Σύνταξη',
   operationsLabel: 'Διαχείριση',
+  faqLabel: 'Συχνές ερωτήσεις',
   aboutHeading: 'Σχετικά με το epiloYES',
   aboutIntro:
     'Το epiloYES είναι μια πολύγλωσση τοπική εφημερίδα για τις ελληνικές κοινότητες του εξωτερικού. Η γλώσσα ανάγνωσης και οι τόποι που παρακολουθείτε είναι δύο ανεξάρτητοι άξονες: διαβάζετε στα ελληνικά ή στα γερμανικά, για όποιους τόπους σας αφορούν — η αλλαγή του ενός δεν αγγίζει ποτέ τον άλλον.',
@@ -302,6 +308,7 @@ const DE: UiStrings = {
   aboutLabel: 'Über epiloYES',
   editorialLabel: 'Redaktion',
   operationsLabel: 'Betrieb',
+  faqLabel: 'Häufige Fragen',
   aboutHeading: 'Über epiloYES',
   aboutIntro:
     'epiloYES ist eine mehrsprachige Lokalzeitung für die griechischen Gemeinden im Ausland. Lesesprache und Orte sind zwei unabhängige Achsen: Sie lesen auf Griechisch oder Deutsch, über die Orte, die Sie betreffen — die eine Wahl berührt die andere nie.',

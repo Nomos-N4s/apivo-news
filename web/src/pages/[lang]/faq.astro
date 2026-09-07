@@ -1,0 +1,243 @@
+---
+import { APP_ENV, BRAND_DIR } from 'astro:env/server';
+
+import Masthead from '../../components/Masthead.astro';
+import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import { brandOnHand } from '../../lib/brand/load';
+import { faqStrings } from '../../lib/faq/strings';
+import { frontPagePath, isReadingLanguage } from '../../lib/reader/axes';
+
+// The FAQ (issue #528). Its own rule, printed on its own face: the answers
+// are the same sentences the screens already say, and if this page said
+// something different, one of the two would be wrong. So lib/faq/strings.ts
+// owns the questions and holds no answer — every answer is a reference into
+// a catalogue that already renders it elsewhere.
+//
+// Not a member surface, so no MemberBar: this route carries a language axis
+// and no place axis, and MemberBar's links are all place-scoped. Building
+// one here would mean choosing a place on the reader's behalf, which is the
+// one thing Principle VII forbids.
+//
+// No accordion and no client script. Every answer is open, as the board
+// draws it — a disclosure widget would hide eight short answers behind
+// eight clicks and take a keyboard user through all of them to read one.
+const langSegment = Astro.params['lang'];
+if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+  return Astro.rewrite('/404');
+}
+const lang = langSegment;
+const t = faqStrings(lang);
+const { brand } = brandOnHand({ brandDir: BRAND_DIR, appEnv: APP_ENV });
+
+// The page has a language axis but no place axis, so the brand falls back to
+// the flagship places under the READER'S language. DEFAULT_FRONT_PAGE is
+// hard-coded to Greek and would flip a German reader's language axis (FR-009).
+const home = frontPagePath(lang, ['munich', 'greece']);
+---
+
+<ReaderLayout lang={lang} title={`${brand.name} — ${t.heading}`} description={t.intro} homeHref={home}>
+  <Masthead homeHref={home}>
+    <div class="seg" role="group">
+      {
+        lang === 'el' ? (
+          <span class="seg-opt" aria-current="true" lang="el">
+            Ελληνικά
+          </span>
+        ) : (
+          <a class="seg-opt" href="/el/faq" lang="el">
+            Ελληνικά
+          </a>
+        )
+      }
+      {
+        lang === 'de' ? (
+          <span class="seg-opt" aria-current="true" lang="de">
+            Deutsch
+          </span>
+        ) : (
+          <a class="seg-opt" href="/de/faq" lang="de">
+            Deutsch
+          </a>
+        )
+      }
+    </div>
+  </Masthead>
+
+  <main class="page">
+    <header class="head">
+      <h1>{t.heading}</h1>
+      <p>{t.intro}</p>
+    </header>
+
+    <div class="groups">
+      {
+        t.sections.map((section) => (
+          <section class="grp">
+            <h2>{section.heading}</h2>
+            {section.entries.map((entry) => (
+              <article class="q">
+                {/* A real heading outline, not the board's bold span: eight
+                    questions are what a screen-reader user navigates by. */}
+                <h3>{entry.question}</h3>
+                {entry.answer.map((paragraph) => (
+                  <p>{paragraph}</p>
+                ))}
+              </article>
+            ))}
+          </section>
+        ))
+      }
+    </div>
+
+    <aside class="ask">
+      <p>{t.noAnswerHere}</p>
+      {/* The board offers the shell's assistant here. There is no assistant
+          in this repository and the canvas gives it to a shell that does not
+          exist, so this leads to the contact addresses, which do. */}
+      <a class="btn btn-secondary btn-block ask-link" href={`/${lang}/contact`}>{t.contact}</a>
+    </aside>
+  </main>
+</ReaderLayout>
+
+<style>
+  .page {
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-8);
+  }
+
+  /* The board is a 390px phone and draws one column. On a desktop that is a
+     ribbon of questions down the left with the page empty beside it, so the
+     two sections the board already separates become two columns — the same
+     treatment the legal notices get, and the same 900px break. */
+  .groups {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 var(--space-8);
+    align-items: start;
+  }
+
+  @media (max-width: 900px) {
+    .groups {
+      grid-template-columns: 1fr;
+    }
+
+    .q {
+      padding-bottom: var(--space-4);
+      border-bottom: 1px solid var(--color-divider);
+    }
+  }
+
+  .head {
+    padding-bottom: var(--space-6);
+    /* The board's double rule: a major break, not a row divider. */
+    border-bottom: 2px solid var(--color-text);
+  }
+
+  .head h1 {
+    margin: 0 0 var(--space-2);
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 28px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+  }
+
+  .head p {
+    margin: 0;
+    max-width: 56ch;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  .grp h2 {
+    margin: 0;
+    padding: var(--space-6) 0 var(--space-2);
+    border-bottom: 1px solid var(--color-divider);
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    /* accent-700 is the step contrast.test.ts asserts at 4.5:1; the base
+       accent is a 3:1 non-text colour and fails as a label this size. */
+    color: var(--color-accent-700);
+  }
+
+  /* No rule between entries while there are two columns. The columns are
+     independent grids whose entries wrap to different heights, so a rule per
+     entry lands at a different y in each and the pair reads as ragged rather
+     than ruled. The section rule above still spans both and does align, and
+     that is the one this layout needs. The per-entry rule returns below,
+     where a single column makes it a list separator again. */
+  .q {
+    padding: var(--space-4) 0 var(--space-6);
+  }
+
+  .q h3 {
+    margin: 0 0 var(--space-2);
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: 0;
+    text-wrap: pretty;
+  }
+
+  .q p {
+    margin: 0 0 var(--space-2);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  .q p:last-child {
+    margin-bottom: 0;
+  }
+
+  .ask {
+    margin-top: var(--space-6);
+    padding: var(--space-4) calc(var(--space-4) + var(--space-1));
+    background: var(--color-surface);
+    max-width: 46ch;
+  }
+
+  .ask p {
+    margin: 0 0 var(--space-3);
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  .ask-link {
+    justify-content: center;
+    text-align: center;
+  }
+
+  /* modernist.css styles .seg-opt for the radio form; the anchor and
+     aria-current form the language switcher uses needs these locally. */
+  .seg {
+    margin-left: auto;
+  }
+
+  .seg-opt {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: var(--color-text);
+    text-decoration: none;
+  }
+
+  .seg-opt[aria-current='true'] {
+    background: var(--color-accent-700);
+    color: var(--color-bg);
+  }
+
+  a.seg-opt:hover,
+  a.seg-opt:focus-visible {
+    background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  }
+</style>

@@ -36,6 +36,11 @@ export default getViteConfig({
         // the same reason reader/strings.ts is: a language it answers in
         // nothing has ever rendered is copy nobody has read.
         'src/lib/legal/strings.ts',
+        // The FAQ's questions and structure. Measured for the same reason
+        // reader/strings.ts is — and because the set-membership case beside
+        // it is what stops an answer being written here instead of
+        // referenced from the catalogue that already renders it.
+        'src/lib/faq/strings.ts',
         'src/lib/account/consent.ts',
         'src/lib/account/tours.ts',
         'src/lib/app-env.ts',
