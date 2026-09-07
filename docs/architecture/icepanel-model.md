@@ -2027,7 +2027,7 @@ Three ways in, in increasing order of how much has to exist first.
 
 **Through the API, from section 4.** The JSON block is the payload: stable ids, `parentId` resolving within the same document, and `sourceId`/`targetId` resolving to objects in it. A script walks `domains`, then `objects` sorted so parents precede children, then `connections`, mapping this document's ids to whatever ids the workspace assigns and keeping that mapping so a second run updates rather than duplicates.
 
-**Through the MCP integration.** The repository now carries [.mcp.json](../../.mcp.json), which connects IcePanel's MCP server at project scope. It postdates this document's commit-ish and is configuration only: it names a server and nothing else.
+**Through the MCP integration.** The repository now carries [.mcp.json](../../.mcp.json), which connects IcePanel's MCP server at project scope, beside the one graft answers questions about this tree from. It postdates this document's commit-ish and is configuration only: it names the servers and nothing else.
 
 **No automated push exists in this repository.** There is no script, no workflow, no make target and no stored landscape id or API key. Nothing in [.github/workflows/](../../.github/workflows) mentions IcePanel. Whoever first pushes this model does it by hand or writes the script, and if they write it, it belongs beside [scripts/](../../scripts) with a test, like every other script here has.
 
