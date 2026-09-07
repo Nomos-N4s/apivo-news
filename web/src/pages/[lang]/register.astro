@@ -11,6 +11,7 @@ import {
   type ConsentPurpose,
   type ConsentRecord,
 } from '../../lib/account/consent';
+import { signInPath } from '../../lib/member/access';
 import { DEFAULT_FRONT_PAGE, isReadingLanguage, PLACE_CATALOG } from '../../lib/reader/axes';
 import { formatItemDate } from '../../lib/reader/format';
 import { uiStrings } from '../../lib/reader/strings';
@@ -102,18 +103,13 @@ const here = `/${lang}/register`;
 
     <div class="split">
       <section class="account">
-        <div class="field">
-          <label for="r-name">{t.nameLabel}</label>
-          <input class="input" id="r-name" name="name" disabled />
-        </div>
-        <div class="field">
-          <label for="r-email">{t.emailLabel}</label>
-          <input class="input" id="r-email" name="email" type="email" disabled />
-        </div>
-        <div class="field">
-          <label for="r-pass">{t.passwordLabel}</label>
-          <input class="input" id="r-pass" name="password" type="password" disabled />
-        </div>
+        {/* Three disabled fields and a "registration is not wired" sentence
+            stood here until #564. The account is made by the sign-in link
+            now, so the fields would be asking for what nothing reads — and
+            one of them was a password, which this product has decided never
+            to have. */}
+        <a class="btn btn-primary btn-block" href={signInPath(lang)}>{t.signIn}</a>
+        <p class="pending">{t.registrationBySignIn}</p>
 
         <h6>{t.placesToFollow}</h6>
         <div class="places">
@@ -124,10 +120,6 @@ const here = `/${lang}/register`;
         </div>
         <p class="note">{t.followNote}</p>
 
-        <button class="btn btn-primary btn-block" type="button" disabled>
-          {t.createAccount}
-        </button>
-        <p class="pending">{t.registrationPending}</p>
       </section>
 
       <section class="consent" data-tour="register-consent">

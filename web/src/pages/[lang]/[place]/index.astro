@@ -32,6 +32,7 @@ import {
   PREFERENCE_COOKIE,
   rememberPreference,
 } from '../../../lib/reader/preference';
+import { signInPath } from '../../../lib/member/access';
 import { uiStrings } from '../../../lib/reader/strings';
 import { isSecureRequest } from '../../../lib/secure-request';
 
@@ -135,7 +136,13 @@ const title = `epiloYES — ${places.map((place) => place.endonym).join(' + ')}`
     current="news"
     dateText={formatMastheadDate(lang, now)}
   >
-    <button class="btn btn-secondary sign-in" disabled title={t.signInPending}>{t.signIn}</button>
+    {/* A link, at last (#564). It was a disabled button for as long as
+        nothing stood behind it, and the sign-in page said so on its own
+        face; the two could not stop agreeing on different days. `next`
+        brings the reader back to the page they were reading. */}
+    <a class="btn btn-secondary sign-in" href={signInPath(lang, { next: Astro.url.pathname })}>
+      {t.signIn}
+    </a>
   </MemberBar>
 
   <AxisBar lang={lang} places={places} />
