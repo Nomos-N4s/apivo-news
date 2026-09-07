@@ -11,6 +11,7 @@ import {
   CRAWLER_SIGNATURES,
   ROBOTS_TXT_BODY,
   X_ROBOTS_TAG_VALUE,
+  isAccessPath,
   isAuthenticatedPath,
   isCashbackPath,
   isEditorialPath,
@@ -455,6 +456,54 @@ describe('isCashbackPath', () => {
   it('still covers the editorial screens', () => {
     expect(isAuthenticatedPath('/el/editor/sources')).toBe(true);
     expect(isCashbackPath('/el/editor/sources')).toBe(false);
+  });
+});
+
+describe('isAccessPath', () => {
+  it.each([
+    '/el/signin',
+    '/de/signin',
+    '/el/register',
+    '/de/register',
+    '/auth',
+    '/auth/confirm',
+    '/auth/shell',
+  ])('recognises %s as needing an identity', (path) => {
+    expect(isAccessPath(path)).toBe(true);
+    expect(isAuthenticatedPath(path)).toBe(true);
+  });
+
+  it.each([
+    '/',
+    '/el/munich',
+    '/el/signinfo',
+    '/el/registered',
+    '/authors',
+    '/el/editor/signin',
+    '/el/munich/cashback/wallet',
+  ])('leaves %s to somebody else', (path) => {
+    expect(isAccessPath(path)).toBe(false);
+  });
+
+  /*
+   * The editorial sign-in is matched by isEditorialPath and always has
+   * been. It is named here so that a later tidy-up which folds the two
+   * sign-ins together has to argue with a test rather than with a comment.
+   */
+  it('leaves the editorial sign-in where it already was', () => {
+    expect(isAccessPath('/el/editor/signin')).toBe(false);
+    expect(isEditorialPath('/el/editor/signin')).toBe(true);
+    expect(isAuthenticatedPath('/el/editor/signin')).toBe(true);
+  });
+
+  it('resolves an identity on a sign-in page, and marks it unshareable', async () => {
+    const { response } = await run({ path: '/el/signin' });
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+  });
+
+  it('still leaves the front page paying for no round trip', async () => {
+    const { response } = await run({ path: '/el/munich' });
+    expect(response.headers.get('cache-control')).not.toBe('private, no-store');
   });
 });
 
