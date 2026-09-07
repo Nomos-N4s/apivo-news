@@ -366,7 +366,7 @@ func (unreachableStore) Provenance(context.Context, uuid.UUID) (editorial.Proven
 // a status code alone would dress the loss up as an ordinary 404.
 func TestOperatorPatternsAreReachable(t *testing.T) {
 	t.Parallel()
-	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, unreachableOpsRefuser{}, unreachableOpsSettler{}, unreachableOpsReconciliation{}, unreachableOpsHeld{}, alwaysOperator{})
+	h := ops.NewHandler(discardLogger(), unreachableOpsStore{}, unreachableOpsApprover{}, unreachableOpsRefuser{}, unreachableOpsSettler{}, unreachableOpsReconciliation{}, unreachableOpsHeld{}, unreachableOpsDestinations{}, alwaysOperator{})
 
 	for _, pattern := range ops.Patterns() {
 		t.Run(pattern, func(t *testing.T) {
@@ -485,4 +485,16 @@ func (unreachableOpsHeld) Release(context.Context, earnings.Review) (earnings.Re
 
 func (unreachableOpsHeld) Reject(context.Context, earnings.Review) (earnings.Rejected, error) {
 	return earnings.Rejected{}, errors.New("unreachable")
+}
+
+// unreachableOpsDestinations stands in for the destination verifier: the
+// route probe proves a pattern is registered, never that it works.
+type unreachableOpsDestinations struct{}
+
+func (unreachableOpsDestinations) UnverifiedDestinations(context.Context, ops.DestinationAfter, int) ([]ops.UnverifiedDestination, error) {
+	return nil, errors.New("unreachable")
+}
+
+func (unreachableOpsDestinations) Verify(context.Context, ops.Verification) (ops.Verified, error) {
+	return ops.Verified{}, errors.New("unreachable")
 }

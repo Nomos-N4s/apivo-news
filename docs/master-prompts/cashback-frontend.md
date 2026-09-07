@@ -83,7 +83,7 @@ token, the catalogue included. Operator routes additionally require
 | `POST /clickouts` `{offer_id}` | `{click_ref, redirect_url, expires_at}`; the band is snapshotted onto the click (FR-013); 403 for a member who has not opted in (FR-110) | live |
 | `GET /wallet` | pending, confirmed, reserved, paid out, threshold | live |
 | `GET /wallet/entries?state&limit&cursor` | the statement, reversals with reasons | live |
-| `GET` · `POST /payout-destinations` `{kind, details}` | 201 with `verified_at: null`; verification is a separate flow that **does not exist — B6, #548** | live / gap |
+| `GET` · `POST /payout-destinations` `{kind, details}` | 201 with `verified_at: null`. **Live**: the details go to this deployment's vault (ADR-0006, #591) and 503 only where none is configured. Verification is an operator flow — B6 landed, below | live |
 | `POST /withdrawals` · `GET /withdrawals` · `GET /withdrawals/{id}` | ask to be paid; 409 with `threshold`/`shortfall` below €20 or on an unverified destination | live |
 | `GET /export` | the caller's own history, JSON or CSV | live |
 
@@ -192,10 +192,22 @@ and one pull request each, none of them the frontend's to build:
   previews mount the host's preview brand, and `BRAND_DIR` in `web.env`
   names it on the same terms as the api's key. `validate.sh` checks the
   mount. QA's Impressum answering 200 is the proof it took.
-- **B6 — payout destination verification (#548).** FR-051 says a destination is
-  verified before it is paid to and the contract says verification is a
-  separate flow; no endpoint performs it. Needed before the first
-  withdrawal, not before the first transaction.
+- **B6 — payout destination verification (#548). LANDED.** Two halves, both
+  merged. The details vault (ADR-0006, #591): OpenBao holds one secret per
+  destination, so `POST /payout-destinations` records one instead of
+  answering 503. And the operator flow (#548): `GET …/ops/payout-destinations`
+  lists the destinations nobody has verified, and
+  `POST …/ops/payout-destinations/{id}/verify` records that a named operator
+  proved one belongs to its member, with the method in their own words.
+
+  What the frontend should know. Verification is **not** something a member
+  does: this api cannot read a destination's details back, by design, so
+  proving one is a person confirming ownership out of band. A member's own
+  destination therefore sits at `verified_at: null` until an operator acts,
+  and a withdrawal naming it answers 409 in the meantime — which is the
+  existing behaviour and needs no change. `verified_method` says how it was
+  done, and a provider-verified destination will one day carry a method and
+  no operator at all.
 
 **Frontend**, in the order that shortens the path to a real transaction:
 

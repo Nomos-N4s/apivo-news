@@ -83,7 +83,7 @@ func review(t *testing.T, held ops.HeldReviewer, method, path, body string) *htt
 	req := httptest.NewRequest(method, ops.Prefix+path, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer t")
 	rec := httptest.NewRecorder()
-	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, unreachableReconciliation{}, held, stubAuth{op: anOperator}).ServeHTTP(rec, req)
+	ops.NewHandler(discardLogger(), unreachableStore{}, unreachableApprover{}, unreachableRefuser{}, unreachableSettler{}, unreachableReconciliation{}, held, unreachableDestinations{}, stubAuth{op: anOperator}).ServeHTTP(rec, req)
 	return rec
 }
 

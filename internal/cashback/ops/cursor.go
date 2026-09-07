@@ -23,6 +23,7 @@ const (
 	unattributedCursors = "unattributed"
 	differenceCursors   = "differences"
 	heldCursors         = "held"
+	destinationCursors  = "destinations"
 )
 
 // maxCursorBytes bounds the encoded cursor the endpoints will even look at,

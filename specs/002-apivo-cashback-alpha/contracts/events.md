@@ -94,6 +94,7 @@ there is a defect, and the dispatcher test asserts it.
 | `cashback.withdrawal.requested` / `.approved` / `.rejected` | `{ request_id, account_id, amount, actor?, reason?, at }` |
 | `cashback.withdrawal.flagged` | `{ request_id, account_id, state, reason, at }` — one withdrawal still moving money for somebody who is no longer here (T126). It is not a step in the request's life: the request is untouched and stays exactly where it was. Keyed on the request and the reason, so a redelivered cause never shows an operator the same work twice |
 | `cashback.payout.settled` / `.failed` | `{ payout_id, request_id, rail_reference?, classification?, at }` |
+| `cashback.destination.verified` | `{ destination_id, account_id, kind, verified_method, verified_by, at }` — an operator proved a payout destination belongs to its member (FR-051, FR-061, B6). It carries no details and cannot: the row holds a reference and the details are in the vault (ADR-0006), so an event carrying them would put a bank account into the stream forever |
 | `cashback.reconciliation.statement_imported` | `{ run_id, network_account_id, network_id, period_start, period_end, lines, statement_digest, imported_by, at }` |
 | `cashback.reconciliation.difference_found` | `{ run_id, difference_id, kind, delta, at }` |
 | `cashback.reconciliation.difference_resolved` | `{ difference_id, run_id, kind, resolution, resolved_by, reason, at }` |
