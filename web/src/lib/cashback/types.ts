@@ -21,6 +21,12 @@ export interface Participation {
   readonly opted_in_at: string;
   readonly terms_version: string;
   readonly default_currency: string;
+  /**
+   * Null unless they have left. Leaving is a status and a date, never a
+   * deletion (FR-003), and the api sends both so a client can say WHEN
+   * rather than only that.
+   */
+  readonly left_at: string | null;
 }
 
 /**
@@ -69,6 +75,13 @@ export interface CatalogueItem {
 /** `GET /merchants/{slug}`. */
 export interface MerchantDetail extends CatalogueItem {
   /**
+   * Where the retailer trades, or null when they are bound to none. Not
+   * where the reader is: the two are separate axes (constitution VII).
+   */
+  readonly country: string | null;
+  /** The retailer's own conditions, as the catalogue import received them. */
+  readonly terms: string | null;
+  /**
    * Always null today. Nothing in the schema records it — not on the
    * retailer, not on the route, not on the network — and the contract emits
    * null rather than a plausible constant, because a member reads a number
@@ -81,7 +94,15 @@ export interface MerchantDetail extends CatalogueItem {
 export interface Clickout {
   readonly click_ref: string;
   readonly redirect_url: string;
-  readonly expires_at: string;
+  /**
+   * When the rate band this click was issued against stops being published,
+   * or null for a band with no published end.
+   *
+   * It is about the OFFER, not about the redirect: the credit this click
+   * earns is governed by the snapshot already taken (FR-013), and no network
+   * expires a deeplink. Declaring it non-null said the opposite.
+   */
+  readonly expires_at: string | null;
 }
 
 /**

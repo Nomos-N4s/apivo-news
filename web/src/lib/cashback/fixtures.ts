@@ -166,6 +166,8 @@ export const CATALOGUE_FIXTURES: readonly MerchantDetail[] = [
     name_language: 'el',
     name_is_fallback: false,
     summary: 'Greek groceries, delivered across Germany and Austria.',
+    country: 'DE',
+    terms: 'Delivery within Germany and Austria only. Marketplace sellers are the seller of record.',
     typical_confirmation_days: null,
     rates: [
       {
@@ -185,6 +187,8 @@ export const CATALOGUE_FIXTURES: readonly MerchantDetail[] = [
     name_language: 'de',
     name_is_fallback: true,
     summary: 'Online pharmacy shipping to Germany.',
+    country: 'DE',
+    terms: 'Prescription medicines are dispensed under German pharmacy law and are never eligible.',
     typical_confirmation_days: null,
     rates: [
       {
@@ -204,6 +208,8 @@ export const CATALOGUE_FIXTURES: readonly MerchantDetail[] = [
     name_language: 'el',
     name_is_fallback: false,
     summary: 'Bakery goods shipped weekly.',
+    country: 'GR',
+    terms: 'Shipped weekly from Crete. Perishable goods are not returnable.',
     typical_confirmation_days: null,
     rates: [
       {
@@ -226,6 +232,8 @@ export const CATALOGUE_FIXTURES: readonly MerchantDetail[] = [
     name_language: 'el',
     name_is_fallback: false,
     summary: 'Deli and traiteur, ships within Bavaria.',
+    country: 'DE',
+    terms: null,
     typical_confirmation_days: null,
     rates: [],
   },
