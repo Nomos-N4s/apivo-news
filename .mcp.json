@@ -1,5 +1,9 @@
 {
   "mcpServers": {
+    "graft": {
+      "command": "npx",
+      "args": ["-y", "@nanonets/graft", "mcp"]
+    },
     "icepanel": {
       "type": "http",
       "url": "https://mcp.icepanel.io/mcp"
