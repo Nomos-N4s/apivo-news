@@ -39,7 +39,7 @@ const UNCONFIGURED = { ...CONFIGURED, PUBLIC_SUPABASE_URL: '', PUBLIC_SUPABASE_A
 
 async function renderSignIn(
   lang: string,
-  options: { query?: string; env?: Record<string, unknown> } = {},
+  options: { query?: string; env?: Record<string, unknown>; signedInAs?: string } = {},
 ): Promise<string> {
   vi.resetModules();
   vi.doMock('astro:env/server', () => options.env ?? CONFIGURED);
@@ -49,7 +49,23 @@ async function renderSignIn(
   forgetBrandOnHand();
   const SignIn = (await import('./signin.astro')).default;
   const url = `https://example.invalid/${lang}/signin${options.query ?? ''}`;
-  return container.renderToString(SignIn, { params: { lang }, request: new Request(url) });
+  const request = new Request(url);
+  if (options.signedInAs !== undefined) {
+    // The middleware is what normally files a session under the request, and
+    // it does not run in a container render. Filing one by hand is what makes
+    // the signed-in branch reachable at all — and not doing so is why #583
+    // shipped: every case here rendered as a stranger, which is the one
+    // visitor the page was already right for.
+    const { rememberSession } = await import('../../lib/editorial/session');
+    rememberSession(request, {
+      displayName: options.signedInAs,
+      email: options.signedInAs,
+      role: 'reader',
+      token: 'a-live-token',
+      authenticated: true,
+    });
+  }
+  return container.renderToString(SignIn, { params: { lang }, request });
 }
 
 describe.each(READING_LANGUAGES)('member sign-in in %s', (lang) => {
@@ -164,6 +180,70 @@ describe.each(READING_LANGUAGES)('member sign-in in %s', (lang) => {
       // nobody checks it. `//evil.example` starts with a slash.
       const refused = await renderSignIn(lang, { query: '?next=%2F%2Fevil.example' });
       expect(refused).not.toContain('evil.example');
+    },
+    RENDER_TIMEOUT_MS,
+  );
+
+  it(
+    'tells somebody already signed in, instead of quietly sending them away (#583)',
+    async () => {
+      // The bug this replaces: the page redirected to where they came from,
+      // so the front page's sign-in control appeared to do nothing at all.
+      const m = memberStrings(lang);
+      const html = await renderSignIn(lang, { signedInAs: 'someone@example.invalid' });
+
+      expect(html).toContain(m.alreadySignedIn('someone@example.invalid'));
+      expect(html).toMatch(/role="status"/);
+      // A way onward, and a way to become somebody else.
+      expect(html).toContain(m.continueOnward);
+      expect(html).toContain(m.signOut);
+      expect(html).toContain('value="signout"');
+    },
+    RENDER_TIMEOUT_MS,
+  );
+
+  it(
+    'offers nothing to sign in with when there is nothing to sign in to',
+    async () => {
+      // Rendered away rather than hidden: a form in the DOM is a form that
+      // can be posted, and an email field beside "you are already signed in"
+      // is an invitation to a confusing outcome.
+      const m = memberStrings(lang);
+      const html = await renderSignIn(lang, { signedInAs: 'someone@example.invalid' });
+
+      expect(html).not.toContain('id="member-email"');
+      expect(html).not.toContain(m.sendLink);
+      expect(html).not.toContain(m.continueWithApp);
+      // Not merely `hidden`: the block is not rendered. (`aria-hidden` on
+      // the divider is a different attribute and stays.)
+      expect(html).not.toMatch(/<div[^>]*\shidden/);
+    },
+    RENDER_TIMEOUT_MS,
+  );
+
+  it(
+    'carries the return path onward, so continuing lands where they started',
+    async () => {
+      const html = await renderSignIn(lang, {
+        signedInAs: 'someone@example.invalid',
+        query: '?next=%2Fel%2Fmunich%2Fcashback%2Fwallet',
+      });
+
+      expect(html).toContain('href="/el/munich/cashback/wallet"');
+    },
+    RENDER_TIMEOUT_MS,
+  );
+
+  it(
+    'says so after a sign-out, rather than looking untouched',
+    async () => {
+      const m = memberStrings(lang);
+      const html = await renderSignIn(lang, { query: '?outcome=signedout' });
+
+      expect(html).toContain(m.signedOut);
+      expect(html).toMatch(/role="status"/);
+      // And the way back in is on the page again.
+      expect(html).toContain('id="member-email"');
     },
     RENDER_TIMEOUT_MS,
   );

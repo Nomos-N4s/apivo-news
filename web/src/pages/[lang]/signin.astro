@@ -77,6 +77,13 @@ if (Astro.request.method === 'POST') {
   const client = authClient(Astro.request, Astro.cookies);
   if (client === null) {
     outcome = 'unconfigured';
+  } else if (String(form.get('action') ?? '') === 'signout') {
+    // How somebody signs in as somebody else. Lands back here, said out
+    // loud, rather than on whatever page they came from — signing out and
+    // being returned to a page that looks identical is the same silence
+    // this page was fixed for.
+    await client.auth.signOut();
+    return Astro.redirect(signInPath(lang, { next, outcome: 'signedout' }), 303);
   } else if (email === '') {
     outcome = 'refused';
   } else {
@@ -99,12 +106,18 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-// Somebody already signed in has no business on this page. Read after the
-// POST branch so a sign-in completes and sends them onward in one request.
+// Somebody already signed in is TOLD SO, and not quietly sent away (#583).
+//
+// This page used to redirect them to `onward`, which is where they came
+// from — so the sign-in control on the front page appeared to do nothing at
+// all. It cannot be the chrome's job to know: reader pages resolve no
+// session on purpose, because that costs a round trip to the auth server on
+// the pages carrying most of this site's traffic. So this page is the one
+// that knows, and the least it owes somebody is a sentence.
+//
+// Read after the POST branch so a sign-in completes in one request.
 const session = sessionOf(Astro.request);
-if (session.authenticated && Astro.request.method !== 'POST') {
-  return Astro.redirect(onward);
-}
+const signedIn = session.authenticated && Astro.request.method !== 'POST';
 
 const canSend = configured && outcome !== 'unconfigured';
 // One sentence per outcome, chosen here so the template carries no logic.
@@ -117,6 +130,8 @@ const ALERTS: Readonly<Record<string, string>> = {
   unconfigured: m.notConfigured,
 };
 const alert = outcome !== null ? (ALERTS[outcome] ?? null) : canSend ? null : m.notConfigured;
+// `signedout` is a status rather than a refusal, so it is not in ALERTS.
+const notice = outcome === 'signedout' ? m.signedOut : null;
 ---
 
 <ReaderLayout lang={lang} title={`${brand.name} — ${t.signIn}`} description={m.intro} homeHref={home}>
@@ -153,58 +168,88 @@ const alert = outcome !== null ? (ALERTS[outcome] ?? null) : canSend ? null : m.
       <p>{m.intro}</p>
     </header>
 
-    <div class="split">
-      <section class="panel">
-        {/* The shell path. Still disabled, still saying why. */}
-        <button class="btn btn-primary btn-block" type="button" disabled>
-          {m.continueWithApp}
-        </button>
-        <p class="fine">{m.tokenExchangeNote}</p>
-
-        <div class="or" aria-hidden="true"><i></i>{m.orWord}<i></i></div>
-
-        {alert !== null && <p class="alert" role="alert">{alert}</p>}
-
-        {
-          outcome === 'sent' && sentTo !== null && (
+    {
+      /* Already signed in: who, a way onward, and the way to become somebody
+         else. Nothing to sign in with is offered, because there is nothing
+         to sign in to. */
+      signedIn && (
+        <div class="split">
+          <section class="panel">
             <div class="sent" role="status">
-              <p class="sent-line">{m.linkSent(sentTo)}</p>
-              <p class="fine">{m.linkSentNote}</p>
+              <p class="sent-line">{m.alreadySignedIn(session.email)}</p>
             </div>
-          )
-        }
+            <a class="btn btn-primary btn-block" href={onward}>{m.continueOnward}</a>
+            <form method="post" action={signInPath(lang, { next })}>
+              <input type="hidden" name="action" value="signout" />
+              <button class="btn btn-secondary btn-block signout" type="submit">
+                {m.signOut}
+              </button>
+            </form>
+          </section>
+        </div>
+      )
+    }
 
-        {/* The email path: a real form, posting to itself, carrying the
-            return path so finishing lands where the member started. */}
-        <form method="post" action={signInPath(lang, { next })}>
-          <div class="field">
-            <label for="member-email">{t.emailLabel}</label>
-            <input
-              class="input"
-              id="member-email"
-              name="email"
-              type="email"
-              autocomplete="email"
-              required
-              disabled={!canSend}
-            />
-          </div>
-          <button class="btn btn-secondary btn-block" type="submit" disabled={!canSend}>
-            {m.sendLink}
+    {
+      /* The two paths, for somebody who has none yet. Rendered away rather
+         than hidden: a form in the DOM is a form that can be posted. */
+      !signedIn && (
+        <div class="split">
+        <section class="panel">
+          {notice !== null && <p class="sent" role="status">{notice}</p>}
+
+          {/* The shell path. Still disabled, still saying why. */}
+          <button class="btn btn-primary btn-block" type="button" disabled>
+            {m.continueWithApp}
           </button>
-        </form>
-        <p class="fine">{m.emailPathNote}</p>
-      </section>
+          <p class="fine">{m.tokenExchangeNote}</p>
 
-      {/* Beside the path that is still owed, and no longer speaking for the
-          one next to it. */}
-      <aside class="owed">
-        {/* A heading, not a bold span: it is the landmark by which this
-            statement is reachable. */}
-        <h2>{m.notWorkingTitle}</h2>
-        <p>{m.notWorkingBody}</p>
-      </aside>
-    </div>
+          <div class="or" aria-hidden="true"><i></i>{m.orWord}<i></i></div>
+
+          {alert !== null && <p class="alert" role="alert">{alert}</p>}
+
+          {
+            outcome === 'sent' && sentTo !== null && (
+              <div class="sent" role="status">
+                <p class="sent-line">{m.linkSent(sentTo)}</p>
+                <p class="fine">{m.linkSentNote}</p>
+              </div>
+            )
+          }
+
+          {/* The email path: a real form, posting to itself, carrying the
+              return path so finishing lands where the member started. */}
+          <form method="post" action={signInPath(lang, { next })}>
+            <div class="field">
+              <label for="member-email">{t.emailLabel}</label>
+              <input
+                class="input"
+                id="member-email"
+                name="email"
+                type="email"
+                autocomplete="email"
+                required
+                disabled={!canSend}
+              />
+            </div>
+            <button class="btn btn-secondary btn-block" type="submit" disabled={!canSend}>
+              {m.sendLink}
+            </button>
+          </form>
+          <p class="fine">{m.emailPathNote}</p>
+        </section>
+
+        {/* Beside the path that is still owed, and no longer speaking for the
+            one next to it. */}
+        <aside class="owed">
+          {/* A heading, not a bold span: it is the landmark by which this
+              statement is reachable. */}
+          <h2>{m.notWorkingTitle}</h2>
+          <p>{m.notWorkingBody}</p>
+        </aside>
+        </div>
+      )
+    }
   </main>
 </ReaderLayout>
 
@@ -308,6 +353,10 @@ const alert = outcome !== null ? (ALERTS[outcome] ?? null) : canSend ? null : m.
   .sent-line {
     margin: 0;
     font-weight: 600;
+  }
+
+  .signout {
+    margin-top: var(--space-3);
   }
 
   .sent .fine {
