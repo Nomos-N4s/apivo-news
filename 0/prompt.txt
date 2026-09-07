@@ -73,3 +73,7 @@ carry on, and you have full authority to merge your Prs
 <status>completed</status>
 <summary>Background command "Wait for the terms page to appear on QA" completed (exit code 0)</summary>
 </task-notification>
+
+---
+
+sure, carry on and also tell me how many tokens did graft saved us on this one?
