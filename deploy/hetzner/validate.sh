@@ -611,6 +611,57 @@ case "$got" in
 esac
 
 # ---------------------------------------------------------------------------
+# Which upstream a path reaches, asserted by RUNNING it (#546).
+#
+# The api serves /api/v1/*, /healthz and /readyz and nothing else under
+# /api/; the frontend serves endpoints of its own under /api/ - the
+# retailer page's click-out posts to /api/cashback/clickout, the guided
+# tours read /api/tour/*. The matcher used to claim the whole prefix, so
+# both reached the api and answered 404, and a click-out that never reaches
+# the frontend is a member sent nowhere. `caddy validate` is blind to it:
+# the file is valid either way.
+# ---------------------------------------------------------------------------
+route_probe() {
+    # route_probe <path> — what the environment site routes a path to: the
+    # api upstream answers "api", the frontend upstream answers its scheme.
+    docker run --rm -v "$REWRITE:/rw:ro" --entrypoint sh "$CADDY_IMAGE" -c "
+        caddy start --config /rw/Caddyfile >/dev/null 2>&1
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            wget -q -O- 'http://127.0.0.1:9081$1' 2>/dev/null && exit 0
+            sleep 1
+        done
+        exit 1
+    " 2>/dev/null || true
+}
+
+for api_path in /api/v1/openapi.json /api/v1/cashback/wallet /healthz /readyz; do
+    got=$(route_probe "$api_path")
+    case "$got" in
+    api)
+        echo "ok: $api_path reaches the api"
+        ;;
+    *)
+        fail "$api_path does not reach the api (got: ${got:-nothing}); the api serves it and nothing else can"
+        ;;
+    esac
+done
+
+for web_path in /api/cashback/clickout /api/tour/reader; do
+    got=$(route_probe "$web_path")
+    case "$got" in
+    "scheme="*)
+        echo "ok: $web_path reaches the frontend, which serves it"
+        ;;
+    api)
+        fail "$web_path reaches the API, which answers it 404: the frontend serves this endpoint, and the click-out from the retailer page posts to it (#546)"
+        ;;
+    *)
+        fail "could not probe $web_path (got: ${got:-nothing})"
+        ;;
+    esac
+done
+
+# ---------------------------------------------------------------------------
 # Preview routing, asserted by RUNNING it — at TWO preview-domain depths.
 #
 # `caddy validate` cannot catch this either, and the first version of this
@@ -714,6 +765,27 @@ REFUSED)
     ;;
 esac
 
+# The same split on a preview: its click-out has to reach its own frontend,
+# and its api calls its own api.
+got=$(preview_probe pr-7.example.com /api/cashback/clickout)
+case "$got" in
+web-upstream)
+    echo "ok: a preview routes the frontend's own /api/cashback/clickout to its frontend"
+    ;;
+*)
+    fail "a preview routes /api/cashback/clickout to '${got:-nothing}', not to its frontend (#546)"
+    ;;
+esac
+got=$(preview_probe pr-7.example.com /api/v1/cashback/wallet)
+case "$got" in
+api-upstream)
+    echo "ok: a preview routes /api/v1/* to its api"
+    ;;
+*)
+    fail "a preview routes /api/v1/cashback/wallet to '${got:-nothing}', not to its api"
+    ;;
+esac
+
 # A TWO-LEVEL preview domain (pr-7.qa.example.com), so the fix is not merely
 # the old bug moved one label along.
 got=$(preview_probe pr-7.qa.example.com /)
@@ -723,16 +795,6 @@ web-upstream)
     ;;
 *)
     fail "a preview on a two-level domain (pr-7.qa.example.com) did not reach its web container (got: ${got:-nothing}); the preview routing works at one depth only"
-    ;;
-esac
-
-got=$(preview_probe pr-7.example.com /api/x)
-case "$got" in
-api-upstream)
-    echo "ok: and /api/* reaches that preview's api container, not its frontend"
-    ;;
-*)
-    fail "a preview's /api/* did not reach its api container (got: ${got:-nothing})"
     ;;
 esac
 

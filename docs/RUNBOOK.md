@@ -538,11 +538,17 @@ these. Bring the checkout up to date and install just the compose files:
 ```sh
 cd ~/apivo-news && git pull
 cp deploy/hetzner/compose/*.yml /opt/apivo/compose/
+cp deploy/hetzner/caddy/* /opt/apivo/caddy/
+apivoctl edge reload
 mkdir -p /etc/apivo/qa/brand
 ```
 
-Nothing restarts. A copied compose file is read at the next `up`, and QA's
-`COMPOSE_FILE` does not list the overlay yet.
+Nothing but the edge restarts. A copied compose file is read at the next
+`up`, and QA's `COMPOSE_FILE` does not list the overlay yet. The Caddy
+snippets are copied because the edge now sends only `/api/v1/*` to the
+api: the frontend serves the click-out and the guided tours under `/api/`
+itself, and an edge provisioned before that change hands both to the api,
+which answers 404 (#546).
 
 ### 2. Write the brand definition
 
