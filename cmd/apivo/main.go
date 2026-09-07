@@ -153,8 +153,9 @@ func main() {
 // run parses the arguments and dispatches: no arguments serves until ctx is
 // cancelled or a termination signal arrives; "healthcheck" probes the serving
 // process once and reports the verdict as its error; "version" prints the
-// stamped release version. It is separated from main so the wiring is
-// testable; main only handles the exit code.
+// stamped release version; "schema-version" prints the schema this build
+// carries, or the one the database is at. It is separated from main so the
+// wiring is testable; main only handles the exit code.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -181,6 +182,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 		// lock, for the operator who has just connected a network and
 		// should not be waiting on a timer.
 		return importCatalogueCommand(ctx, args[1:], getenv, stdout)
+	case args[0] == schemaVersionName:
+		// Asked by the deployment host, from outside the process, to decide
+		// whether a rollback can work at all - a schema does not roll back
+		// with an image. Its own arguments are its own to check.
+		return schemaVersionCommand(args[1:], getenv, stdout)
 	case args[0] != "healthcheck" && args[0] != "version":
 		return fmt.Errorf("unknown command %q", args[0])
 	case len(args) > 1:

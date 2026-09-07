@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	platformdb "github.com/Nomos-N4s/apivo-news/internal/platform/db"
 )
 
 // syncBuffer is a goroutine-safe writer capturing run()'s log output so the
@@ -271,5 +274,41 @@ func TestRunServesAndShutsDown(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("run() did not return after context cancellation")
+	}
+}
+
+// TestRunSchemaVersion drives the subcommand end to end through run(). Like
+// "version" it must answer with no configuration and no database: the
+// deployment host asks a rollback candidate this question by running the
+// image bare, before it has decided to give that image an environment at all.
+func TestRunSchemaVersion(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{schemaVersionName}, envFrom(nil), &out); err != nil {
+		t.Fatalf("run(%s): %v", schemaVersionName, err)
+	}
+
+	carried, err := platformdb.LatestMigration()
+	if err != nil {
+		t.Fatalf("LatestMigration: %v", err)
+	}
+	if got, want := out.String(), fmt.Sprintf("%d\n", carried); got != want {
+		t.Errorf("run(%s) printed %q, want %q - the number an image reports about itself is what a host decides a rollback on",
+			schemaVersionName, got, want)
+	}
+}
+
+// A build asked for the APPLIED version with nowhere to look must say so
+// plainly. This runs on a deployment that is already broken, so an error that
+// sent an operator hunting for the wrong thing would cost more here than
+// almost anywhere else in the binary.
+func TestRunSchemaVersionAppliedWithoutDatabaseURL(t *testing.T) {
+	t.Parallel()
+
+	err := run(context.Background(), []string{schemaVersionName, "--applied"}, envFrom(nil), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Errorf("run(%s --applied) with no DATABASE_URL: want an error naming DATABASE_URL, got %v",
+			schemaVersionName, err)
 	}
 }
