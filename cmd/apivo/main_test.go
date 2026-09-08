@@ -312,3 +312,20 @@ func TestRunSchemaVersionAppliedWithoutDatabaseURL(t *testing.T) {
 			schemaVersionName, err)
 	}
 }
+
+// And a DATABASE_URL that is not one is reported rather than dialled. The host
+// runs this against a deployment it already suspects, so every refusal here
+// has to name its own reason instead of timing out against a hostname nobody
+// meant to type.
+func TestRunSchemaVersionAppliedWithUnparseableDatabaseURL(t *testing.T) {
+	t.Parallel()
+
+	env := envFrom(map[string]string{"DATABASE_URL": "this is not a connection string"})
+	err := run(context.Background(), []string{schemaVersionName, "--applied"}, env, io.Discard)
+	if err == nil {
+		t.Fatalf("run(%s --applied) with an unparseable DATABASE_URL: want an error, got nil", schemaVersionName)
+	}
+	if !strings.Contains(err.Error(), "db:") {
+		t.Errorf("the error does not come from the database layer, so it is not the one being tested: %v", err)
+	}
+}
