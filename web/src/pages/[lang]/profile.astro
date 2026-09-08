@@ -132,6 +132,18 @@ try {
 
 const standing = payoutStanding(destinations);
 const name = displayName(account?.display_name);
+
+// The mobile board leads with WHO YOU ARE, not with a page title: an avatar,
+// the member's name, and a line of context under it. The name is the display
+// name where there is one and the address otherwise, because an account
+// always has an address and often has no name.
+//
+// The board's subline is "Μέλος από τον Ιούλιο 2026 · München · Ελληνικά".
+// The date has no column behind it and is dropped; the other two are the
+// reader's own axes and are real, so the line keeps them.
+const languageName = lang === 'el' ? 'Ελληνικά' : 'Deutsch';
+const whoName = name ?? account?.email ?? null;
+const subline = [...places.map((place) => place.endonym), languageName].join(' · ');
 const payoutText =
   standing === 'verified'
     ? c.verifiedPayoutsOn
@@ -176,9 +188,12 @@ const payoutText =
   <main class="page">
     {fixtures && <FixtureNotice title={t.heading} body={c.fixtureNotice} />}
 
-    <header class="head">
-      <h1>{t.heading}</h1>
-      <p>{t.intro}</p>
+    <header class="who-head">
+      <span class="av" aria-hidden="true"></span>
+      <span class="who-text">
+        <h1>{whoName ?? t.heading}</h1>
+        <p>{subline}</p>
+      </span>
     </header>
 
     {accountUnknown && <p class="band" role="alert">{t.accountUnknown}</p>}
@@ -270,27 +285,43 @@ const payoutText =
     padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-8);
   }
 
-  .head {
+  /* The board's `.who-head`: a plain avatar disc, the person, their axes. */
+  .who-head {
+    display: flex;
+    gap: var(--space-3);
+    align-items: center;
     padding-bottom: var(--space-6);
     border-bottom: 2px solid var(--color-text);
   }
 
-  .head h1 {
-    margin: 0 0 var(--space-2);
-    font-family: var(--font-heading);
-    font-weight: var(--font-heading-weight);
-    font-size: 28px;
-    line-height: 1.15;
-    letter-spacing: -0.02em;
+  .av {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--color-accent-100);
+    border: 1px solid var(--color-divider);
   }
 
-  .head p {
+  .who-text {
+    min-width: 0;
+  }
+
+  .who-head h1 {
+    margin: 0 0 2px;
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 24px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    overflow-wrap: anywhere;
+  }
+
+  .who-head p {
     margin: 0;
-    max-width: 56ch;
-    font-size: 14px;
-    line-height: 1.6;
+    font-size: 13px;
+    line-height: 1.5;
     color: var(--ink-muted);
-    text-wrap: pretty;
   }
 
   .band {
@@ -334,9 +365,15 @@ const payoutText =
     color: var(--ink-muted);
   }
 
+  /* Label left, value right — the board's `.rowline`. `flex-wrap` is what
+     lets it stay that way: a long label and a long value (Greek's
+     `Ηλεκτρονικό ταχυδρομείο` beside an address) drop the value onto its own
+     line only when they genuinely cannot share one, instead of every row
+     stacking at a fixed width whether it needed to or not. */
   .row {
     display: flex;
-    gap: var(--space-4);
+    flex-wrap: wrap;
+    gap: 2px var(--space-4);
     align-items: baseline;
     justify-content: space-between;
     padding: var(--space-3) 0;
@@ -349,37 +386,63 @@ const payoutText =
   }
 
   .v {
+    margin-left: auto;
     text-align: right;
     color: var(--color-text);
     overflow-wrap: anywhere;
   }
 
-  /* On a phone the label and its value stop sharing a line.
-     `Ηλεκτρονικό ταχυδρομείο` beside `member@example.test` in 390px left
-     the two fighting over the width: the label wrapped to two lines and
-     `overflow-wrap` broke the address wherever it happened to land,
-     orphaning a single letter. Stacking gives the address the full
-     measure, so it never has to be broken at all. 660px is this
-     application's phone breakpoint — ReaderLayout drops its frame there. */
+  /* THE PHONE, and not merely a narrower desk.
+
+     ReaderLayout drops the frame's margin and border at 660px, so every
+     member screen here goes edge to edge below it — the wallet is the one
+     to match, and it carries 18px of its own inside each block rather than
+     one gutter around everything. This does the same, so the two line up
+     when a reader moves between them.
+
+     The rows are NOT forced to stack: `flex-wrap` above already drops a
+     value onto its own line when it cannot share one, which keeps the
+     board's label-left/value-right reading wherever it still fits. */
   @media (max-width: 660px) {
     .page {
-      padding: var(--space-4) var(--space-4) var(--space-6);
+      padding: 0 0 var(--space-6);
     }
 
-    .row {
-      display: block;
-      padding: var(--space-2) 0 var(--space-3);
+    .who-head,
+    .band,
+    .pane,
+    .activity {
+      padding-left: 18px;
+      padding-right: 18px;
     }
 
-    .v {
-      display: block;
-      margin-top: 2px;
-      text-align: left;
+    .who-head {
+      padding-top: var(--space-4);
+      padding-bottom: var(--space-4);
     }
 
-    .chip,
-    .tag {
-      margin-left: 0;
+    .band {
+      max-width: none;
+      margin: 0;
+      padding-top: var(--space-3);
+      padding-bottom: var(--space-3);
+    }
+
+    .cols {
+      gap: 0;
+      margin-top: 0;
+    }
+
+    /* Each section becomes its own block, ruled off rather than floating. */
+    .pane {
+      padding-top: var(--space-4);
+      padding-bottom: var(--space-4);
+      border-bottom: 2px solid var(--color-divider);
+    }
+
+    .activity {
+      margin-top: 0;
+      padding-top: var(--space-4);
     }
   }
 
