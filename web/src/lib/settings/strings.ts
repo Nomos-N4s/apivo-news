@@ -32,6 +32,14 @@ export interface SettingsStrings {
   /** Why a destination has to be proved before money moves (FR-051). */
   readonly payoutNote: string;
 
+  /**
+   * What a preview is looking at. `uiStrings.fixtureNoticeBody` speaks of
+   * invented articles, publishers and editors, which is the news pages'
+   * truth and not this one's: what is invented here is a consent history,
+   * and the sharper fact is that pressing a switch records nothing at all.
+   */
+  readonly fixtureNotice: string;
+
   readonly notificationsHeading: string;
   /** Marked as a sketch in the label, so it cannot read as shipped. */
   readonly sketchTitle: string;
@@ -49,6 +57,9 @@ const el: SettingsStrings = {
   payoutNote:
     'Η πληρωμή γίνεται μόνο σε λογαριασμό που σου ανήκει και έχει επαληθευτεί.',
 
+  fixtureNotice:
+    'Δείγμα δεδομένων. Το ιστορικό συγκαταθέσεων παρακάτω είναι επινοημένο, και τίποτα από όσα πατήσεις εδώ δεν καταγράφεται.',
+
   notificationsHeading: 'Ειδοποιήσεις',
   sketchTitle: 'Σκίτσο — δεν υπάρχει ακόμη κανάλι',
   sketchDivision:
@@ -64,6 +75,9 @@ const de: SettingsStrings = {
   payoutsHeading: 'Auszahlungen',
   payoutNote:
     'Ausgezahlt wird nur auf ein Konto, das dir gehört und bestätigt ist.',
+
+  fixtureNotice:
+    'Beispieldaten. Der Einwilligungsverlauf unten ist erfunden, und nichts, was du hier drückst, wird gespeichert.',
 
   notificationsHeading: 'Benachrichtigungen',
   sketchTitle: 'Skizze — es gibt noch keinen Kanal',
