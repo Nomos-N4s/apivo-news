@@ -436,7 +436,16 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 			ledgerSchema = "ledger"
 		}
 		locker := scheduler.NewAdvisoryLocker(pool, scheduler.LockerConfig{})
-		jobs := scheduler.New(log, locker, scheduler.Config{})
+		// The observer is built even where telemetry is off, because its
+		// instruments are then no-ops and the alternative is a nil check
+		// at a seam that would only ever be exercised in production. An
+		// error here is a name this binary got wrong, which is a bug and
+		// not a deployment condition, so it stops the process.
+		jobsObserver, err := newJobObserver(telemetryProvider)
+		if err != nil {
+			return err
+		}
+		jobs := scheduler.New(log, locker, scheduler.Config{Observer: jobsObserver})
 		if err := wallet.NewZeroSumCheck(log, pool, ledgerSchema).Register(jobs); err != nil {
 			return err
 		}
