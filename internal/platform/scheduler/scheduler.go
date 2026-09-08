@@ -188,6 +188,10 @@ type Config struct {
 	// ReleaseTimeout bounds releasing one job's lock. Zero or negative means
 	// DefaultReleaseTimeout.
 	ReleaseTimeout time.Duration
+	// Observer is told the outcome of every attempt to run a job. Nil means
+	// nobody is told, which is a supported state and the one every test in
+	// this repository runs in. See observer.go.
+	Observer Observer
 }
 
 // withDefaults returns cfg with every unset or out-of-range field replaced by
@@ -381,6 +385,7 @@ func (s *Scheduler) runOnce(ctx context.Context, job Job) (bool, error) {
 		if ctx.Err() == nil {
 			s.log.ErrorContext(ctx, "taking the job lock failed", "job", job.Name, "error", err)
 		}
+		s.observe(ctx, Attempt{Job: job.Name, Outcome: LockFailed, Err: err})
 		return false, err
 	}
 	if !held {
@@ -389,6 +394,7 @@ func (s *Scheduler) runOnce(ctx context.Context, job Job) (bool, error) {
 		// design working, not an event, and at Info it would be a
 		// continuous stream that buries the failures worth reading.
 		s.log.DebugContext(ctx, "job skipped: another instance holds its lock", "job", job.Name)
+		s.observe(ctx, Attempt{Job: job.Name, Outcome: Skipped})
 		return false, nil
 	}
 	defer s.release(ctx, job, lock)
@@ -402,18 +408,22 @@ func (s *Scheduler) runOnce(ctx context.Context, job Job) (bool, error) {
 
 	started := time.Now()
 	err = invoke(runCtx, job)
+	took := time.Since(started)
 	if err != nil {
 		var panicked *PanicError
-		if errors.As(err, &panicked) {
+		crashed := errors.As(err, &panicked)
+		if crashed {
 			s.log.ErrorContext(ctx, "job panicked", "job", job.Name,
-				"duration", time.Since(started), "error", err, "stack", string(panicked.Stack))
+				"duration", took, "error", err, "stack", string(panicked.Stack))
 		} else {
 			s.log.ErrorContext(ctx, "job failed", "job", job.Name,
-				"duration", time.Since(started), "error", err)
+				"duration", took, "error", err)
 		}
+		s.observe(ctx, Attempt{Job: job.Name, Outcome: Ran, Took: took, Err: err, Panicked: crashed})
 		return true, err
 	}
-	s.log.InfoContext(ctx, "job completed", "job", job.Name, "duration", time.Since(started))
+	s.log.InfoContext(ctx, "job completed", "job", job.Name, "duration", took)
+	s.observe(ctx, Attempt{Job: job.Name, Outcome: Ran, Took: took})
 	return true, nil
 }
 
