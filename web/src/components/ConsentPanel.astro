@@ -1,0 +1,206 @@
+---
+import {
+  CONSENT_PURPOSES,
+  historyNewestFirst,
+  isGranted,
+  type ConsentRecord,
+} from '../lib/account/consent';
+import { formatItemDate } from '../lib/reader/format';
+import type { ReadingLanguage } from '../lib/reader/axes';
+import { uiStrings } from '../lib/reader/strings';
+
+/**
+ * The consent panel: one switch per purpose, and the record behind each.
+ *
+ * Extracted from `register.astro` (issue #617) so that the settings screen
+ * can show it without a second copy existing. Consent is a legal record —
+ * FR-011 and migration 0001 make it one dated row per purpose, append-only,
+ * with revocation a date rather than a deletion. Two hand-maintained
+ * renderings of that would disagree eventually, and the one a reader was
+ * shown is the one a regulator would ask about.
+ *
+ * It renders the switches and the history and NOT the heading, so each host
+ * can place it at the right level in its own document outline. The copy is
+ * `uiStrings`, which both pages already share, so nothing is duplicated by
+ * leaving the heading out.
+ *
+ * `action` is where a switch posts. The host owns the POST because the host
+ * owns the api client and the outcome band above it; this component only has
+ * to know where to send the form.
+ */
+interface Props {
+  readonly lang: ReadingLanguage;
+  readonly history: readonly ConsentRecord[];
+  readonly historyFailed: boolean;
+  readonly action: string;
+  /** The product tour's anchor, where a host takes part in the tour. */
+  readonly tourAnchor?: string | undefined;
+}
+
+const { lang, history, historyFailed, action, tourAnchor } = Astro.props;
+const t = uiStrings(lang);
+const ordered = historyNewestFirst(history);
+---
+
+<div class="panel" data-tour={tourAnchor}>
+  <p class="intro">{t.consentIntro}</p>
+
+  <div class="purposes">
+    {
+      CONSENT_PURPOSES.map((purpose) => {
+        const on = isGranted(history, purpose);
+        return (
+          <form class="purpose" method="post" action={action}>
+            <input type="hidden" name="purpose" value={purpose} />
+            <input type="hidden" name="granted" value={on ? 'false' : 'true'} />
+            <button
+              class:list={['switch', { 'switch-on': on }]}
+              type="submit"
+              aria-pressed={on ? 'true' : 'false'}
+              aria-label={`${on ? t.revoke : t.grant}: ${t.purposeLabels[purpose] ?? purpose}`}
+            >
+              <span class="knob" aria-hidden="true" />
+            </button>
+            <div>
+              <div class="purpose-title">{t.purposeLabels[purpose] ?? purpose}</div>
+              <div class="purpose-meta">
+                {t.purposeWord} <code>{purpose}</code> · {on ? t.granted : t.notGranted}
+              </div>
+            </div>
+          </form>
+        );
+      })
+    }
+  </div>
+
+  <div class="history">
+    <h3>{t.consentHistoryHeading}</h3>
+    {historyFailed && <p class="intro">{t.unavailableBody}</p>}
+    <ol>
+      {
+        ordered.map((record) => (
+          <li>
+            <span class="rec-purpose">{record.purpose}</span>{' '}
+            <span class="rec-verb">{t.granted}</span>{' '}
+            {formatItemDate(lang, new Date(record.granted_at))}
+            {record.revoked_at === null ? (
+              <span class="rec-current"> ← {t.current}</span>
+            ) : (
+              <>
+                {' · '}
+                <span class="rec-verb">{t.revoke.toLowerCase()}</span>{' '}
+                {formatItemDate(lang, new Date(record.revoked_at))}
+              </>
+            )}
+          </li>
+        ))
+      }
+    </ol>
+    <p class="intro">{t.recordCount(history.length)}</p>
+  </div>
+</div>
+
+<style>
+  .intro {
+    margin: 0 0 var(--space-3);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  .purposes {
+    border-top: 1px solid var(--color-divider);
+  }
+
+  .purpose {
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-start;
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--color-divider);
+  }
+
+  .switch {
+    width: 34px;
+    height: 18px;
+    flex: none;
+    position: relative;
+    padding: 0;
+    border: 0;
+    cursor: pointer;
+    background: var(--color-neutral-600);
+  }
+
+  .switch-on {
+    background: var(--color-accent);
+  }
+
+  .knob {
+    position: absolute;
+    left: 2px;
+    top: 2px;
+    width: 14px;
+    height: 14px;
+    background: var(--color-bg);
+  }
+
+  .switch-on .knob {
+    left: auto;
+    right: 2px;
+  }
+
+  .switch:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  .purpose-title {
+    font-size: 13.5px;
+    font-weight: 600;
+    text-wrap: pretty;
+  }
+
+  .purpose-meta {
+    font-size: 11.5px;
+    color: var(--ink-soft);
+  }
+
+  .purpose-meta code {
+    font-family: ui-monospace, Menlo, monospace;
+  }
+
+  .history {
+    margin-top: var(--space-6);
+    padding-top: var(--space-4);
+    border-top: 2px solid var(--color-divider);
+  }
+
+  .history h3 {
+    margin: 0 0 var(--space-2);
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .history ol {
+    list-style: none;
+    margin: 0 0 var(--space-3);
+    padding: 0;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.9;
+    color: var(--ink-muted);
+  }
+
+  .rec-purpose {
+    color: var(--color-text);
+  }
+
+  .rec-current {
+    color: var(--color-accent-700);
+  }
+</style>
