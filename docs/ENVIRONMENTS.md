@@ -499,6 +499,12 @@ common tick nothing has changed and it costs two registry queries. When the
 channel has moved it pins the new digest, rolls out, and then *proves the
 roll-forward* rather than assuming it:
 
+0. `apivo preflight` — the new build is asked, in a throwaway container
+   against this environment's real configuration, whether it would start at
+   all. It runs everything serving runs — config, migration, the pool, the
+   whole wiring, the scheduler's capacity check — and stops one line short of
+   serving. **If it says no, nothing is swapped and the environment keeps
+   running what it had.**
 1. `docker compose up -d --wait` — every container reports healthy by its own
    healthcheck.
 2. Each container is asked which image it is running; it must be the digest
@@ -511,6 +517,30 @@ Any of those failing rolls the environment back to the digest that was
 serving — **unless the schema has moved, in which case it refuses to.** Its
 decisions have [a test suite](../deploy/hetzner/bin/apivo-reconcile_test.sh)
 that CI runs on every pull request.
+
+### A build that would not start here is never swapped in
+
+Step 0 above is there because of a specific day. On 2026-09-08 a merge added a
+seventh scheduled job; QA's `pool_max_conns` — a query parameter inside
+`DATABASE_URL`, in a file `provision.sh` writes once and never touches again —
+was sized for six. The api refused to start, correctly, with a message naming
+the fix. By the time anyone read it, `up -d` had removed the only containers
+that were serving.
+
+**The class of failure matters more than that instance.** A code change created
+a new requirement on a hand-maintained host file. CI was green, the image
+published, and the host took it and died. The images reconcile themselves every
+sixty seconds; the files under `/etc/apivo` do not, and nothing compares them.
+
+The preflight closes the half of that gap a host can close on its own: it
+cannot know that a Caddyfile is stale, but it can know that *this build will
+not run here*, while the current one still is. A refusal costs one tick and
+names what to fix. `apivoctl resume <env>` retries the same build once you
+have fixed it.
+
+It proves the api and not the frontend, and a container can still die between
+passing the preflight and being started — so the three proofs after the
+rollout are unchanged, not replaced.
 
 ### A digest rolls back. A schema does not.
 
