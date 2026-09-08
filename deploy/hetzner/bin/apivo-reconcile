@@ -527,8 +527,62 @@ served_version() {
         2>/dev/null || true
 }
 
+# ---------------------------------------------------------------------------
+# Would this build start here? Asked BEFORE anything is swapped over.
+#
+# `up -d` destroys the containers that are serving and then finds out. That is
+# how 2026-09-08 went: a merge added a seventh scheduled job, this host's
+# hand-written `pool_max_conns` was sized for six, the api refused to start -
+# and by the time anybody knew, there was nothing left running to fall back
+# to. The refusal was correct and its message was excellent. It was simply
+# read too late.
+#
+# `apivo preflight` is that same startup, one line short of serving, run in a
+# throwaway container against this environment's real configuration. Config
+# errors, a pool too small for its jobs, a database that will not answer: all
+# of them come back as a non-zero exit while the current stack is untouched.
+#
+# It is NOT the whole story and does not pretend to be - it proves the api,
+# not the frontend, and a container can still die between passing this and
+# being started. `--wait` and the digest and version proofs after the rollout
+# stay exactly as they were. This only moves the cheapest and most common
+# class of failure to the side of the swap where it costs nothing.
+# ---------------------------------------------------------------------------
+preflight_passes() {
+    # preflight_passes <api-digest> <web-digest>
+    #
+    # Through compose, so the env file, the DSN, the networks and every
+    # overlay in COMPOSE_FILE are the ones the real container gets - this
+    # script must never open api.env. --no-deps because the dependencies are
+    # already running; this is not a cold start.
+    #
+    # The image refs are passed INLINE rather than through images.env, and
+    # that is the whole reason this can be trusted: images.env is what the
+    # running stack is pinned to, so writing the new digests there before the
+    # question is answered would leave a quiet tick's `up -d` free to start
+    # the very build that is still being questioned.
+    _pf=$(APIVO_API_IMAGE="$API_REPO@$1" APIVO_WEB_IMAGE="$WEB_REPO@$2" \
+        compose run --rm --no-deps -T api preflight 2>&1)
+    _pf_rc=$?
+    [ "$_pf_rc" -eq 0 ] && return 0
+    log error preflight_failed "$API_REPO@$1 would not start here: $_pf"
+    return 1
+}
+
+# roll_out <api-digest> <web-digest> <version>
+#
+# Exit codes, and the difference between them is the difference between an
+# environment that went down and one that did not:
+#
+#   0  rolled out and proven
+#   1  the rollout failed WITH the containers already swapped - the caller has
+#      to put something back
+#   2  refused before anything was touched; the stack that was serving still is
 roll_out() {
-    # roll_out <api-digest> <web-digest> <version>
+    # Asked first, while a refusal is still free. Nothing has been written and
+    # no container has been replaced at this point.
+    preflight_passes "$1" "$2" || return 2
+
     write_images_env "$1" "$2" "$3"
     compose up -d --remove-orphans --wait --wait-timeout "$WAIT_TIMEOUT" || return 1
     verify_running_digest "apivo-$ENV_NAME-api" "$API_REPO@$1" || return 1
@@ -542,7 +596,15 @@ roll_out() {
     return 0
 }
 
-if roll_out "$API_DIGEST" "$WEB_DIGEST" "$IMAGE_VERSION"; then
+# `|| ROLL_RC=$?` and not a bare call followed by `$?`: `set -e` is in force,
+# and a bare call that returned non-zero would end the script right here -
+# before the rollback, before the refusal, before anything that makes those
+# exit codes mean something. The `||` makes it a tested command, which is the
+# one form `set -e` does not act on.
+ROLL_RC=0
+roll_out "$API_DIGEST" "$WEB_DIGEST" "$IMAGE_VERSION" || ROLL_RC=$?
+
+if [ "$ROLL_RC" -eq 0 ]; then
     # The state that was good is kept as the rollback target only AFTER the
     # new one is proven, so `previous` always names a rollout that once
     # served rather than merely one that was attempted.
@@ -577,6 +639,15 @@ fi
 # The rollout failed. Put back what was serving.
 # ---------------------------------------------------------------------------
 record_failed "$API_DIGEST" "$WEB_DIGEST"
+
+# Refused before anything moved. There is nothing to roll back TO, because
+# nothing was rolled forward FROM: the containers that were serving when this
+# tick began are still the ones running. Rolling back here would recreate a
+# healthy stack for no reason, which is the churn this reconciler spent #604
+# learning not to do.
+if [ "$ROLL_RC" -eq 2 ]; then
+    die preflight_refused "$IMAGE_VERSION would not start in this environment, so it was not rolled out and nothing was touched: $ENV_NAME is still running what it was. The reason is in the preflight_failed line above - most often a key missing from $ENV_DIR/api.env, or a pool too small for the jobs this build registers. Fix it here, then 'apivoctl resume $ENV_NAME' to try the same build again." 1
+fi
 
 PREV_API=$(read_state_field "$CURRENT" API_DIGEST)
 PREV_WEB=$(read_state_field "$CURRENT" WEB_DIGEST)

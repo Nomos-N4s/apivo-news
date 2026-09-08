@@ -151,12 +151,31 @@ compose)
         exit "${code:-0}"
         ;;
     run)
-        # compose run --rm --no-deps -T api schema-version --applied - the
-        # version the DATABASE is at. Through compose, because that is where
-        # the DSN, the env file and the networks live; the reconciler never
-        # opens api.env and this stub models that boundary rather than
-        # answering a question the script was not allowed to ask.
-        read_or applied_schema '39'
+        # Two questions are asked through `compose run`, and they are told
+        # apart the way a shell tells them apart: by the subcommand. Through
+        # compose in both cases, because that is where the DSN, the env file
+        # and the networks live; the reconciler never opens api.env and this
+        # stub models that boundary rather than answering a question the
+        # script was not allowed to ask.
+        case "$*" in
+        *preflight*)
+            # `apivo preflight` - would this build start here? One exit code
+            # per line, consumed in order, so a test can say "the rollout's
+            # preflight fails and the rollback's succeeds". Past the end of
+            # the file everything passes, which keeps every test that is not
+            # about the preflight unchanged.
+            m=$(( $(cat "$STUB_DIR/preflight_count" 2>/dev/null || echo 0) + 1 ))
+            echo "$m" > "$STUB_DIR/preflight_count"
+            pcode=$(sed -n "${m}p" "$STUB_DIR/preflight_exits" 2>/dev/null || true)
+            [ "${pcode:-0}" -eq 0 ] || echo "stub preflight: refused" >&2
+            exit "${pcode:-0}"
+            ;;
+        *)
+            # `apivo schema-version --applied` - the version the DATABASE
+            # is at.
+            read_or applied_schema '39'
+            ;;
+        esac
         ;;
     esac
     ;;
@@ -208,7 +227,7 @@ EOF
 # actually about rather than counting from the fixture that set it up.
 settle() {
     sh "$RECONCILE" qa >/dev/null 2>&1
-    rm -f "$STUB_DIR/up_count"
+    rm -f "$STUB_DIR/up_count" "$STUB_DIR/preflight_count"
 }
 
 run() {
@@ -540,6 +559,57 @@ printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
 printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
 run qa
 check "a failed rollback is reported as down, not as a rollback" 1 '"event":"rollback_failed"'
+
+# ===========================================================================
+# A build that would not start here is never swapped in.
+#
+# `up -d` destroys the containers that are serving and then finds out. On
+# 2026-09-08 that cost QA the whole day: a merge added a seventh scheduled
+# job, this host's hand-written pool_max_conns was sized for six, and the api
+# refused to start - correctly, with an excellent message, read far too late.
+#
+# The assertion that matters is not that the rollout fails. It is that the
+# running stack is NOT TOUCHED when it does: no `up`, no rollback, no churn.
+# ===========================================================================
+
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' 'v0.2.0' > "$STUB_DIR/label_version"
+printf '1\n' > "$STUB_DIR/preflight_exits"
+run qa
+check "a build that fails its preflight is refused" 1 '"event":"preflight_failed"'
+check "and the refusal carries what the preflight said" 1 "stub preflight: refused"
+check "and it says nothing was touched, not that a rollback happened" 1 '"event":"preflight_refused"'
+check "and names where the fix goes" 1 "api.env"
+check_state "and the environment stays on the release that works" API_DIGEST "$DIGEST_A"
+check_pinned "and compose is still pinned to what is running" "$REGISTRY/api@$DIGEST_A"
+
+# The whole point. A failed preflight must cost NOTHING: the containers that
+# were serving are still serving, so there is nothing to roll back and no
+# window in which the site was down.
+if [ ! -e "$STUB_DIR/up_count" ]; then
+    echo "ok: a refused preflight never touched the running stack"
+else
+    echo "FAIL: compose up ran $(cat "$STUB_DIR/up_count") time(s) after a preflight that refused - the containers were swapped anyway"
+    FAILS=1
+fi
+
+# And it poisons the pair like any other failed rollout, so the next tick
+# holds rather than asking the same question every sixty seconds.
+run qa
+check "the tick after a refused preflight holds rather than re-asking" 1 '"event":"rollout_refused"'
+
+# A preflight that passes changes nothing about the ordinary path.
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' 'v0.2.0' > "$STUB_DIR/label_version"
+run qa
+check "a build that passes its preflight rolls out as before" 0 '"event":"rollout_ok"'
+check_state "onto the pair the channel names" API_DIGEST "$DIGEST_B"
 
 # ===========================================================================
 # A rollback the schema has already made impossible.
