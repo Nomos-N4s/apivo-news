@@ -508,8 +508,36 @@ roll-forward* rather than assuming it:
    the version it serves must equal the version stamped into the image.
 
 Any of those failing rolls the environment back to the digest that was
-serving. Its decisions have [a test suite](../deploy/hetzner/bin/apivo-reconcile_test.sh)
+serving — **unless the schema has moved, in which case it refuses to.** Its
+decisions have [a test suite](../deploy/hetzner/bin/apivo-reconcile_test.sh)
 that CI runs on every pull request.
+
+### A digest rolls back. A schema does not.
+
+The api migrates on boot, so a build that migrated the database and *then*
+failed one of the three proofs above has moved the schema past every earlier
+image. Starting the previous one does not restore service: it replaces a
+broken container with one that cannot boot at all, and says so in
+golang-migrate's words rather than in anybody's.
+
+That is not a hazard written down in advance. On 2026-09-07 a build carrying
+migration 39 failed its rollout on QA; the reconciler rolled back to a build
+that stops at 38; and that image crash-looped against a schema from its own
+future until somebody read the logs.
+
+So before rolling back the reconciler asks the candidate image which
+migrations it carries, and asks the database which one it is at. When the
+database is ahead it refuses, and leaves the environment on the build that
+*matches* its schema — which is also the state a fix-forward lands in. Both
+are down either way; only one of them can be recovered by publishing a working
+build.
+
+**The way out of that state is forward, never back.** Publish a build that
+carries the schema the database is already at.
+
+The check fails open: if either number cannot be read, the rollback is
+attempted, because an unanswerable question must not be the reason an
+environment stays down.
 
 **A tag is what an environment tracks; a digest is what it runs.** Every
 container in every environment is pinned by digest, so "what is running in
@@ -712,6 +740,13 @@ the evidence with it.
 release workflow from the previous tag ([RELEASING.md](RELEASING.md)). Every
 host tracking that channel converges on its own, and the path is exactly as
 tested as the release path because it *is* the release path.
+
+That holds for the images and **not for the schema**. A release that added a
+migration cannot be rolled back by moving the channel: the earlier image will
+not start against the database the later one migrated
+([above](#a-digest-rolls-back-a-schema-does-not)). Roll forward instead, or
+take the schema down deliberately first, knowing what that costs the rows in
+it.
 `apivoctl rollback` exists for when CI itself is unavailable. It pins a digest
 by hand and pauses reconciliation, because otherwise the next tick would roll
 straight back to the build you are backing out of — which leaves the

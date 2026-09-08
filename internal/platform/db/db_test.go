@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,5 +123,85 @@ func TestMigrateAcceptsThePoolParametersConnectAccepts(t *testing.T) {
 	defer pool.Close()
 	if got := pool.Config().MaxConns; got != 8 {
 		t.Errorf("the pool allows MaxConns=%d, want the 8 the DSN asked for", got)
+	}
+}
+
+// A deployment host decides whether a rollback can work by comparing the
+// version an image CARRIES against the version the database is AT. Those two
+// numbers are read by different code paths, so this checks them against each
+// other end to end: an empty database reports zero, and a migrated one reports
+// exactly what LatestMigration promised. A drift between them would authorise
+// precisely the rollback that cannot work.
+func TestAppliedVersionReportsWhatMigrateLeftBehind(t *testing.T) {
+	t.Parallel()
+	scratchURL := scratchDatabase(t, "apivo_applied_version")
+
+	// Zero, not an error. A database waiting for its first migration is a
+	// state a host has to be able to read, not a fault it should refuse on.
+	version, dirty, err := db.AppliedVersion(scratchURL)
+	if err != nil {
+		t.Fatalf("AppliedVersion on an empty database: %v", err)
+	}
+	if version != 0 || dirty {
+		t.Errorf("AppliedVersion on an empty database = (%d, %v), want (0, false)", version, dirty)
+	}
+
+	if err := db.Migrate(scratchURL); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	carried, err := db.LatestMigration()
+	if err != nil {
+		t.Fatalf("LatestMigration: %v", err)
+	}
+	version, dirty, err = db.AppliedVersion(scratchURL)
+	if err != nil {
+		t.Fatalf("AppliedVersion after Migrate: %v", err)
+	}
+	if dirty {
+		t.Error("AppliedVersion reports the schema dirty after a clean migration")
+	}
+	if version != carried {
+		t.Errorf("the database is at %d but this build carries %d; a host comparing these two numbers would draw the wrong conclusion about a rollback", version, carried)
+	}
+}
+
+// The QA outage of 2026-09-07, as a test.
+//
+// A build carrying migration 39 migrated the database and then failed its
+// health check. The reconciler rolled back to a build that stopped at 38, and
+// that image reported only golang-migrate's account of its own internals -
+// "no migration found for version 39: read down for version 39" - which says
+// nothing about what actually happened.
+//
+// Simulated by moving the database's recorded version ABOVE anything this
+// build carries, which is what a rollback across a migration boundary looks
+// like from inside the older binary.
+func TestMigrateExplainsADatabaseAheadOfThisBuild(t *testing.T) {
+	t.Parallel()
+	scratchURL := scratchDatabase(t, "apivo_schema_ahead")
+
+	if err := db.Migrate(scratchURL); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, scratchURL)
+	if err != nil {
+		t.Fatalf("connecting to scratch database: %v", err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, "update schema_migrations set version = 9999, dirty = false"); err != nil {
+		t.Fatalf("moving the recorded version ahead of this build: %v", err)
+	}
+
+	err = db.Migrate(scratchURL)
+	if err == nil {
+		t.Fatal("Migrate against a database ahead of this build: want an error, got nil")
+	}
+	for _, want := range []string{"9999", "rolled back past a migration", "Roll forward"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Migrate error does not mention %q, so an operator reading it still has to work out what happened: %v", want, err)
+		}
 	}
 }

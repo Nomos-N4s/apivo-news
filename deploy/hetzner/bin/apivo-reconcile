@@ -346,7 +346,13 @@ if [ -n "$FAILED_API" ]; then
     # served, so a container that died between ticks comes back even while
     # this environment is held.
     compose up -d --remove-orphans >/dev/null 2>&1 || true
-    die rollout_refused "$APIVO_CHANNEL points at api $API_DIGEST and web $WEB_DIGEST, whose rollout already failed; it is not being retried. $ENV_NAME keeps serving ${RUNNING_VERSION:-the digests in $CURRENT}. Read why it failed with 'docker compose logs', then fix it forward - this refusal clears itself as soon as the channel names a different pair." 1
+    # "held on", not "serving". The pair in `current` is the last one that
+    # rolled out cleanly, which is not the same claim as "it works now" - a
+    # rollback across a migration boundary leaves an image that cannot boot,
+    # and a refusal that announced it as serving would send an operator
+    # looking in the wrong place. Whether anything is answering is a question
+    # `apivoctl status` can settle and this script cannot.
+    die rollout_refused "$APIVO_CHANNEL points at api $API_DIGEST and web $WEB_DIGEST, whose rollout already failed; it is not being retried. $ENV_NAME is held on ${RUNNING_VERSION:-the digests in $CURRENT}, the last pair that rolled out cleanly - check whether it is actually answering with 'apivoctl status'. Read why the new one failed with 'docker compose logs', then fix it forward: this refusal clears itself as soon as the channel names a different pair." 1
 fi
 
 log info rollout_start "$APIVO_CHANNEL moved: api ${RUNNING_API:-none} -> $API_DIGEST, web ${RUNNING_WEB:-none} -> $WEB_DIGEST"
@@ -571,7 +577,6 @@ fi
 # The rollout failed. Put back what was serving.
 # ---------------------------------------------------------------------------
 record_failed "$API_DIGEST" "$WEB_DIGEST"
-log error rollout_failed "rolling back $ENV_NAME to the previous digest"
 
 PREV_API=$(read_state_field "$CURRENT" API_DIGEST)
 PREV_WEB=$(read_state_field "$CURRENT" WEB_DIGEST)
@@ -580,6 +585,67 @@ PREV_VERSION=$(read_state_field "$CURRENT" VERSION)
 if [ -z "$PREV_API" ]; then
     die rollback_impossible "the rollout failed and there is no previous digest to return to - this environment has never had a successful one. It is DOWN. The channel still points at the broken build, so every tick will retry it: pause with 'touch $ENV_DIR/paused' before investigating, and check 'docker compose logs'." 1
 fi
+
+# ---------------------------------------------------------------------------
+# A rollback the schema has already made impossible.
+#
+# THE API MIGRATES ON BOOT. So a build that migrated the database and then
+# failed its health check has moved the schema past every earlier image, and a
+# schema does not roll back with an image. Starting the previous one does not
+# restore service - it replaces a broken container with an unbootable one,
+# which reports:
+#
+#   apivo: db: migrate up: the database is at schema version 39 and this build
+#   carries migrations only up to 38 ...
+#
+# That is how QA reached "DOWN and no automatic path remains" on 2026-09-07:
+# the rollout of a build carrying migration 39 failed, the reconciler rolled
+# back to one that stopped at 38, and the rollback crash-looped for hours
+# against a schema from its own future.
+#
+# docs/ENVIRONMENTS.md called rolling back "exactly as tested as the release
+# path because it IS the release path". That is true of the digests and false
+# of the schema, and the gap between those two sentences is this block.
+#
+# Refusing leaves the environment on the build that at least MATCHES its
+# database, which is also the state a fix-forward lands in. Both are down
+# either way; only one of them can be recovered by publishing a working build.
+#
+# Both numbers come from the artefacts rather than from anything recorded
+# here, and the applied one goes through compose so the DSN, the env file and
+# the networks are the ones the api itself is given - this script never opens
+# api.env.
+#
+# If either question cannot be answered the rollback is ATTEMPTED. An
+# unanswerable check must not be the reason an environment stays down, and a
+# rollback that turns out to be impossible fails the way it always did.
+# ---------------------------------------------------------------------------
+image_schema_version() {
+    # Asked of the image with no environment at all, which is the only way to
+    # ask a candidate the host has not yet decided to deploy.
+    $DOCKER run --rm "$1" schema-version 2>/dev/null || true
+}
+
+applied_schema_version() {
+    compose run --rm --no-deps -T api schema-version --applied 2>/dev/null || true
+}
+
+is_version_number() {
+    case "${1:-}" in
+    '' | *[!0-9]*) return 1 ;;
+    *) return 0 ;;
+    esac
+}
+
+PREV_SCHEMA=$(image_schema_version "$API_REPO@$PREV_API")
+APPLIED_SCHEMA=$(applied_schema_version)
+
+if is_version_number "$PREV_SCHEMA" && is_version_number "$APPLIED_SCHEMA" &&
+    [ "$APPLIED_SCHEMA" -gt "$PREV_SCHEMA" ]; then
+    die rollback_impossible_schema "the rollout failed, and rolling back cannot fix it: the database is at schema version $APPLIED_SCHEMA and ${PREV_VERSION:-the previous build} carries migrations only up to $PREV_SCHEMA. This build migrated the schema past every earlier image, and a schema does not roll back with one - starting the previous image would replace a broken container with one that cannot boot at all. $ENV_NAME is left on the build that matches its database. Fix forward: publish a working build on the $APIVO_CHANNEL channel. Read why this one failed with 'docker compose logs api'." 1
+fi
+
+log error rollout_failed "rolling back $ENV_NAME to the previous digest"
 
 if roll_out "$PREV_API" "$PREV_WEB" "${PREV_VERSION:-dev}"; then
     die rolled_back "the rollout failed and $ENV_NAME was rolled back to ${PREV_VERSION:-the previous digest}. The channel still points at the broken build, and this pair will NOT be tried again: every tick from now refuses it and holds this release, until the channel names a different pair. Fix it forward, or move the channel back." 1

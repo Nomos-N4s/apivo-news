@@ -538,9 +538,27 @@ these. Bring the checkout up to date and install just the compose files:
 ```sh
 cd ~/apivo-news && git pull
 cp deploy/hetzner/compose/*.yml /opt/apivo/compose/
+
+# Caddy is TWO copies, not one. /opt/apivo/caddy is a staging directory that
+# nothing reads; the running proxy mounts /etc/apivo/edge (see
+# docker-compose.edge.yml). Copying only the first and restarting re-reads the
+# same stale config, silently - which is exactly what happened on QA on
+# 2026-09-08, where an edge nine days out of date passed every check on the
+# box while 404-ing every click-out.
 cp deploy/hetzner/caddy/* /opt/apivo/caddy/
+cp /opt/apivo/caddy/snippets.caddy /etc/apivo/edge/snippets.caddy
+cp /opt/apivo/caddy/Caddyfile.preprod /etc/apivo/edge/Caddyfile   # Caddyfile.prod on a prod host
 apivoctl edge reload
+
 mkdir -p /etc/apivo/qa/brand
+```
+
+**Check it rather than assume it.** `apivoctl edge reload` only restarts the
+service; it copies nothing, so a missed step looks identical to a successful
+one:
+
+```sh
+diff /etc/apivo/edge/snippets.caddy deploy/hetzner/caddy/snippets.caddy && echo "edge config is current"
 ```
 
 Nothing but the edge restarts. A copied compose file is read at the next

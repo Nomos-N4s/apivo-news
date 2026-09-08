@@ -169,6 +169,20 @@ pause)
 resume)
     require_env "$@"
     rm -f "$ETC/$ENV_NAME/paused"
+    # And the refused pair, because resuming after an investigation IS the
+    # "I have fixed something, try it again" gesture.
+    #
+    # The reconciler refuses a digest pair whose rollout already failed, and
+    # clears that by itself when the channel names a different pair - which is
+    # right when the fix was a new build, and useless when the fix was on this
+    # host. A pool size in api.env, a missing brand file, a stale compose
+    # file: none of those move a digest, so without this an operator who has
+    # just repaired the environment is left deleting a state file whose name
+    # nothing told them.
+    if [ -e "$STATE/$ENV_NAME/failed" ]; then
+        rm -f "$STATE/$ENV_NAME/failed"
+        echo "Cleared the refused pair, so the channel's current build is tried again."
+    fi
     echo "$ENV_NAME resumes on the next tick (within a minute), and will roll to whatever its channel now points at."
     ;;
 

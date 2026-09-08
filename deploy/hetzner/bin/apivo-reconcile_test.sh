@@ -72,6 +72,14 @@ pull)
     [ -e "$STUB_DIR/pull_fails" ] && exit 1
     exit 0
     ;;
+run)
+    # docker run --rm <ref> schema-version - the highest migration an image
+    # carries, asked of the image with no environment at all.
+    #
+    # The defaults agree with applied_schema below, so an ordinary rollback
+    # is not blocked: only a test that states a DISAGREEMENT gets one.
+    read_or image_schema '39'
+    ;;
 image)
     case "$2" in
     # The version the release pipeline stamped into the image as an OCI label.
@@ -141,6 +149,14 @@ compose)
         echo "$n" > "$STUB_DIR/up_count"
         code=$(sed -n "${n}p" "$STUB_DIR/compose_exits" 2>/dev/null || true)
         exit "${code:-0}"
+        ;;
+    run)
+        # compose run --rm --no-deps -T api schema-version --applied - the
+        # version the DATABASE is at. Through compose, because that is where
+        # the DSN, the env file and the networks live; the reconciler never
+        # opens api.env and this stub models that boundary rather than
+        # answering a question the script was not allowed to ask.
+        read_or applied_schema '39'
         ;;
     esac
     ;;
@@ -483,7 +499,12 @@ check "and it says the pair will not be tried again" 1 "will NOT be tried again"
 : > "$STUB_DIR/calls"
 run qa
 check "the tick after a failed rollout refuses the same pair" 1 '"event":"rollout_refused"'
-check "and names the release it is holding instead" 1 "keeps serving v0.1.0"
+check "and names the release it is holding instead" 1 "held on v0.1.0"
+# "held on", never "serving". A rollback across a migration boundary leaves an
+# image that cannot boot, so a refusal that announced the held pair as serving
+# would send an operator looking in the wrong place - which is exactly what it
+# did on QA on 2026-09-07.
+check "and does not claim that release is answering" 1 "check whether it is actually answering"
 check_pinned "and leaves compose on the release that works" "$REGISTRY/api@$DIGEST_A"
 check_state "and the recorded state is still the good one" API_DIGEST "$DIGEST_A"
 
@@ -519,6 +540,62 @@ printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
 printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
 run qa
 check "a failed rollback is reported as down, not as a rollback" 1 '"event":"rollback_failed"'
+
+# ===========================================================================
+# A rollback the schema has already made impossible.
+#
+# The api migrates on boot, so a build that migrated and then failed its
+# health check has moved the database past every earlier image - and a schema
+# does not roll back with an image. Starting the previous one replaces a
+# broken container with an unbootable one.
+#
+# This is not hypothetical. On 2026-09-07 a build carrying migration 39 failed
+# its rollout on QA; the reconciler rolled back to a build that stopped at 38;
+# that build crash-looped for hours against a schema from its own future, and
+# the environment reported "DOWN and no automatic path remains".
+# ===========================================================================
+
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' 'v0.2.0' > "$STUB_DIR/label_version"
+# The database has been migrated to 39; the rollback target stops at 38.
+printf '%s' '39' > "$STUB_DIR/applied_schema"
+printf '%s' '38' > "$STUB_DIR/image_schema"
+printf '1\n' > "$STUB_DIR/compose_exits"
+run qa
+check "a rollback the schema has made impossible is refused" 1 '"event":"rollback_impossible_schema"'
+check "and it names both numbers, not just the failure" 1 "schema version 39"
+check "and says the previous build only carries 38" 1 "up to 38"
+check "and points at fixing forward rather than at the pause switch" 1 "Fix forward"
+check_state "and the recorded state is not rewritten by a rollback that never ran" API_DIGEST "$DIGEST_A"
+
+# One `up` for the failed rollout and no second one: the whole point is that
+# the unbootable image is never started. Counting the calls is the only way to
+# tell a refusal apart from a rollback that happened to fail.
+if [ "$(cat "$STUB_DIR/up_count" 2>/dev/null || echo 0)" = 1 ]; then
+    echo "ok: the rollback was refused, not attempted"
+else
+    echo "FAIL: the rollback was attempted anyway - compose up ran $(cat "$STUB_DIR/up_count" 2>/dev/null || echo 0) times, expected 1"
+    FAILS=1
+fi
+
+# Fail OPEN, not closed. An unanswerable check must never be the reason an
+# environment stays down: a rollback that turns out to be impossible then
+# fails exactly the way it always did, which is a worse outcome than this
+# refusal but a better one than refusing every rollback on a host where
+# `docker run` cannot answer.
+reset
+settle
+printf '%s' "$DIGEST_B" > "$STUB_DIR/digest_api"
+printf '%s' "$WEB_B" > "$STUB_DIR/digest_web"
+printf '%s' 'v0.2.0' > "$STUB_DIR/label_version"
+: > "$STUB_DIR/image_schema"
+printf '1\n0\n' > "$STUB_DIR/compose_exits"
+run qa
+check "a schema question that cannot be answered still attempts the rollback" 1 '"event":"rolled_back"'
+check_pinned "and the stack is back on the digest that was serving" "$REGISTRY/api@$DIGEST_A"
 
 # ===========================================================================
 # Rollouts that LOOK healthy.
