@@ -1,6 +1,33 @@
 <!--
 Sync Impact Report
-- Version change: 1.2.0 → 1.3.0 (MINOR: Principle IX is materially expanded
+- Version change: 1.3.0 → 1.4.0 (MINOR: an existing rule is widened and a new
+  constraint arrives with it. No principle is removed or redefined, and
+  nothing already permitted becomes forbidden.)
+- Modified sections:
+  * Architecture Constraints, the sidecar clause: it stops naming only a
+    LEDGER and names the category - self-hosted open-source infrastructure
+    carrying a burden we would otherwise write ourselves - then ENUMERATES
+    the three that exist: the ledger (ADR-0002), the payout details vault
+    (ADR-0006) and observability (ADR-0007). Enumerated rather than open,
+    because a category with no list is not a constraint.
+  * Architecture Constraints, a new clause: a sidecar's failure degrades
+    only what depends on it, and one that is not needed to answer a request
+    may never be on the request path at all. This arrives WITH the widening
+    rather than after it. A rule widened to admit the thing you want, with
+    the safeguard deferred, is how a constraint stops meaning anything.
+- Rationale: the clause said "ledger" and said "single permitted exception",
+  and had already been overtaken twice. The payout vault shipped as a second
+  sidecar under ADR-0006 without the question being put - its reasoning fits
+  this clause's spirit exactly and its letter not at all - and observability
+  (ADR-0007) is a third that carries no correctness burden for the domain and
+  therefore could never have fitted. Naming the category, listing its
+  members, and stating what a member may not do is more honest than either
+  pretending the old sentence still described the deployment or letting the
+  next sidecar arrive unargued.
+- Follow-up: none. ADR-0006 is retroactively covered by the enumeration; its
+  own record is not edited, per the ADR process.
+
+Previous amendment (1.2.0 → 1.3.0, MINOR: Principle IX is materially expanded
   with three invariants - C-8, C-9, C-10 - and the cashback scope block gains
   a named surface. No principle is removed or redefined, and nothing already
   permitted becomes forbidden.)
@@ -37,7 +64,7 @@ Sync Impact Report
 - Follow-up: founder answers to Q10-Q13. Implementation of
   specs/003-cashback-claims/ does not begin until this amendment is ratified.
 
-Previous amendment (1.1.1 → 1.2.0, MINOR: a rule is added - branches are named
+Previous amendment (1.2.0 → 1.3.0, MINOR: a rule is added - branches are named
   `xcoder/<slug>` - and Principle I is extended to cover ref names. No
   principle is removed or redefined, and nothing already permitted becomes
   forbidden except the naming of a ref after an assistant or a vendor, which
@@ -356,12 +383,24 @@ blockers stop work and go to the founder. Records live in `docs/adr/`.
   adapter (with a per-article cost ceiling and a monthly cap that halts the
   pipeline rather than overspending), the ledger, affiliate network
   adapters and payout rails alike.
-- A **self-hosted open-source ledger may run as a sidecar service** beside
-  the binary, with its supporting infrastructure, where it carries a
-  correctness burden we would otherwise write ourselves. This is the single
-  permitted exception to one-process-per-application, it must be
-  Apache/MIT-class licensed with no user or revenue cap, and the invariant
-  it takes out of our schema must be handled per Principle IX, C-1.
+- **Self-hosted, open-source infrastructure may run as a sidecar service**
+  beside the binary, with its supporting infrastructure, where it carries a
+  burden we would otherwise write ourselves. This is the only exception to
+  one-process-per-application, and it is **enumerated rather than open** —
+  the ledger (ADR-0002), the payout details vault (ADR-0006) and
+  observability (ADR-0007). A fourth needs its own ADR and its own
+  amendment; the list is the control. Each must be Apache/MIT-class
+  licensed with no user or revenue cap, and where one takes an invariant
+  out of our schema, that invariant is handled per Principle IX, C-1.
+- **A sidecar's failure degrades only what depends on it.** The api depends
+  on each with `service_started` and never `service_healthy`, so a sidecar
+  having a bad day cannot stop the binary from starting and cannot take the
+  newspaper down alongside the wallet. Where a sidecar is not needed to
+  answer a request at all — observability is that case, and the only one so
+  far — it must **additionally never be on the request path**: it drops its
+  own work rather than blocking on it, and an outage in it is invisible to
+  every caller. A telemetry backend that can add a millisecond to a wallet
+  read is misconfigured, not merely slow.
 
 ### Products
 
@@ -492,4 +531,4 @@ This constitution supersedes all other practices in this repository.
 - Complexity must justify itself against the declared scope; when in
   doubt, the simpler structure that preserves the invariants wins.
 
-**Version**: 1.3.0 | **Ratified**: 2026-08-14 | **Last Amended**: 2026-09-03
+**Version**: 1.4.0 | **Ratified**: 2026-08-14 | **Last Amended**: 2026-09-07
