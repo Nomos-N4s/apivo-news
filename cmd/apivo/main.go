@@ -55,6 +55,7 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/platform/logging"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/scheduler"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/telemetry"
 	"github.com/Nomos-N4s/apivo-news/internal/translation"
 	"github.com/Nomos-N4s/apivo-news/internal/translation/providers/openaicompat"
 )
@@ -206,6 +207,27 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		return err
 	}
 	log := logging.New(stdout, cfg.LogLevel, cfg.Env)
+
+	// Built before the database, because a deployment that cannot see itself
+	// should know that at the top of its log rather than after the first
+	// thing that could fail. Shutting it down is deferred immediately: a
+	// flush at exit is bounded and best-effort, and a process must be able
+	// to stop whether or not a collector is answering (ADR-0007).
+	telemetryProvider, err := telemetry.New(ctx, log, telemetry.Config{
+		Endpoint:       cfg.Telemetry.Endpoint,
+		ServiceName:    cfg.Telemetry.ServiceName,
+		ServiceVersion: version,
+		Environment:    cfg.Env,
+		SampleRatio:    cfg.Telemetry.SampleRatio,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := telemetryProvider.Shutdown(context.WithoutCancel(ctx)); err != nil {
+			log.Error("flushing telemetry at exit", "error", err)
+		}
+	}()
 
 	if err := platformdb.Migrate(cfg.DatabaseURL); err != nil {
 		return err
@@ -541,7 +563,7 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 			"job", wallet.ZeroSumJobName, "interval", wallet.ZeroSumInterval, "ledger_schema", ledgerSchema)
 	}
 
-	srv := platformhttp.New(log, cfg.HTTPAddr, version, readiness(pool), routes...)
+	srv := platformhttp.New(log, cfg.HTTPAddr, version, readiness(pool), telemetryProvider, routes...)
 	// The reader endpoints need no bearer token, so they mount
 	// unconditionally - a missing JWKS_URL costs the editorial routes, never
 	// the public site.

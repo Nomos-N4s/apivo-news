@@ -65,6 +65,9 @@ type Config struct {
 	// separate POLL_ENABLED: two switches for one behaviour invite the
 	// combination that says both yes and no.
 	PollInterval time.Duration
+	// Telemetry is where this process exports traces and metrics, and how
+	// much of them (ADR-0007). Empty means off, which is supported.
+	Telemetry TelemetryConfig
 	// Translation is the machine-translation pipeline's configuration:
 	// which provider, at what prices, under which budget. See
 	// TranslationConfig for the no-defaults stance.
@@ -223,6 +226,11 @@ func FromEnv(getenv func(string) string) (Config, error) {
 			return Config{}, err
 		}
 	}
+	telemetry, err := parseTelemetry(getenv)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Telemetry = telemetry
 	level, err := parseLevel(getenv("LOG_LEVEL"))
 	if err != nil {
 		return Config{}, err
