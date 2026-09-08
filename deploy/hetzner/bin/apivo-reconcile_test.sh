@@ -499,7 +499,12 @@ check "and it says the pair will not be tried again" 1 "will NOT be tried again"
 : > "$STUB_DIR/calls"
 run qa
 check "the tick after a failed rollout refuses the same pair" 1 '"event":"rollout_refused"'
-check "and names the release it is holding instead" 1 "keeps serving v0.1.0"
+check "and names the release it is holding instead" 1 "held on v0.1.0"
+# "held on", never "serving". A rollback across a migration boundary leaves an
+# image that cannot boot, so a refusal that announced the held pair as serving
+# would send an operator looking in the wrong place - which is exactly what it
+# did on QA on 2026-09-07.
+check "and does not claim that release is answering" 1 "check whether it is actually answering"
 check_pinned "and leaves compose on the release that works" "$REGISTRY/api@$DIGEST_A"
 check_state "and the recorded state is still the good one" API_DIGEST "$DIGEST_A"
 

@@ -346,7 +346,13 @@ if [ -n "$FAILED_API" ]; then
     # served, so a container that died between ticks comes back even while
     # this environment is held.
     compose up -d --remove-orphans >/dev/null 2>&1 || true
-    die rollout_refused "$APIVO_CHANNEL points at api $API_DIGEST and web $WEB_DIGEST, whose rollout already failed; it is not being retried. $ENV_NAME keeps serving ${RUNNING_VERSION:-the digests in $CURRENT}. Read why it failed with 'docker compose logs', then fix it forward - this refusal clears itself as soon as the channel names a different pair." 1
+    # "held on", not "serving". The pair in `current` is the last one that
+    # rolled out cleanly, which is not the same claim as "it works now" - a
+    # rollback across a migration boundary leaves an image that cannot boot,
+    # and a refusal that announced it as serving would send an operator
+    # looking in the wrong place. Whether anything is answering is a question
+    # `apivoctl status` can settle and this script cannot.
+    die rollout_refused "$APIVO_CHANNEL points at api $API_DIGEST and web $WEB_DIGEST, whose rollout already failed; it is not being retried. $ENV_NAME is held on ${RUNNING_VERSION:-the digests in $CURRENT}, the last pair that rolled out cleanly - check whether it is actually answering with 'apivoctl status'. Read why the new one failed with 'docker compose logs', then fix it forward: this refusal clears itself as soon as the channel names a different pair." 1
 fi
 
 log info rollout_start "$APIVO_CHANNEL moved: api ${RUNNING_API:-none} -> $API_DIGEST, web ${RUNNING_WEB:-none} -> $WEB_DIGEST"
