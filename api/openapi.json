@@ -3816,6 +3816,38 @@
           }
         }
       }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "scrapeMetrics",
+        "summary": "Prometheus exposition for the telemetry collector",
+        "description": "The metrics scrape (ADR-0007). Metrics are PULLED rather than pushed: the collector reads this, so an unreachable telemetry backend can never make this process queue or block. That is the constitution's requirement of a sidecar which is not needed to answer a request.\n\nNot part of the product API and not JSON - the body is Prometheus text exposition. It is documented here because this repository checks the served document against the routes that actually exist, and a route absent from that check is a route nobody is holding to a contract.\n\nThe edge routes only `/api/v1/*`, `/healthz` and `/readyz` to this process, so this path is reachable from the internal network and not from the internet.\n\nA deployment that has configured no collector answers 503, which is deliberately different from an empty 200: nothing to say and switched off are not the same state.",
+        "responses": {
+          "200": {
+            "description": "Prometheus text exposition.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This deployment has configured no telemetry.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

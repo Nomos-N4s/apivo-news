@@ -64,7 +64,7 @@ func carriesMoney(name string) bool {
 // everything rather than reading a known shape.
 func rawDocument(t *testing.T) map[string]any {
 	t.Helper()
-	srv := platformhttp.New(discardLogger(), ":0", "", nil)
+	srv := platformhttp.New(discardLogger(), ":0", "", nil, nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil))
 	if rec.Code != http.StatusOK {

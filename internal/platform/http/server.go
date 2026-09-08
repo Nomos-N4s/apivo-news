@@ -29,6 +29,19 @@ type Route struct {
 	Handler http.Handler
 }
 
+// Instrumentation is what a deployment's telemetry does to this server,
+// defined here because the consumer defines the interface (ADR-0007).
+// *telemetry.Provider satisfies it; nil means a deployment that configured
+// none, which is a supported state rather than a defect.
+type Instrumentation interface {
+	// Middleware wraps one route's handler. The PATTERN is passed rather
+	// than read from the request, because a span named after a request path
+	// makes every request its own operation.
+	Middleware(pattern string, next http.Handler) http.Handler
+	// MetricsHandler serves the exposition a collector scrapes.
+	MetricsHandler() http.Handler
+}
+
 // Server wraps the standard library HTTP server with health endpoints and
 // context-driven graceful shutdown.
 type Server struct {
@@ -36,6 +49,7 @@ type Server struct {
 	version string
 	mux     *http.ServeMux
 	inner   *http.Server
+	instr   Instrumentation
 }
 
 // New builds a Server listening on addr. The ready check backs /readyz;
@@ -49,13 +63,13 @@ type Server struct {
 // deployment from the previous container still serving: every construction
 // site must answer the question. An empty version reports no version at
 // all - "unversioned" is a fact, not a value to invent.
-func New(log *slog.Logger, addr, version string, ready ReadinessCheck, routes ...Route) *Server {
-	s := &Server{log: log, version: version, mux: http.NewServeMux()}
+func New(log *slog.Logger, addr, version string, ready ReadinessCheck, instr Instrumentation, routes ...Route) *Server {
+	s := &Server{log: log, version: version, mux: http.NewServeMux(), instr: instr}
 	for pattern, handler := range s.builtin(ready) {
-		s.mux.HandleFunc(pattern, handler)
+		s.mux.Handle(pattern, s.instrument(pattern, handler))
 	}
 	for _, r := range routes {
-		s.mux.Handle(r.Pattern, r.Handler)
+		s.mux.Handle(r.Pattern, s.instrument(r.Pattern, r.Handler))
 	}
 	s.inner = &http.Server{
 		Addr:              addr,
@@ -70,7 +84,7 @@ func New(log *slog.Logger, addr, version string, ready ReadinessCheck, routes ..
 // http.Handler, cmd mounts it here. Call before Run; mounted routes inherit
 // the server-wide headers (X-Robots-Tag on every response).
 func (s *Server) Mount(pattern string, handler http.Handler) {
-	s.mux.Handle(pattern, handler)
+	s.mux.Handle(pattern, s.instrument(pattern, handler))
 }
 
 // builtin maps every route the platform serves itself - the health pair and
@@ -82,7 +96,32 @@ func (s *Server) builtin(ready ReadinessCheck) map[string]http.HandlerFunc {
 		"GET /healthz":             s.handleHealthz,
 		"GET /readyz":              s.handleReadyz(ready),
 		"GET /api/v1/openapi.json": s.handleOpenAPI,
+		// Metrics are PULLED: the collector scrapes this rather than the
+		// process pushing anywhere, so an unreachable backend cannot make
+		// this process queue. Registered unconditionally so the route table
+		// is the same on every deployment and the OpenAPI drift check has
+		// one answer; a deployment with no telemetry answers 503 here,
+		// which is a different thing from an empty page.
+		"GET /metrics": s.handleMetrics,
 	}
+}
+
+// instrument wraps one handler, or returns it untouched where the
+// deployment configured no telemetry.
+func (s *Server) instrument(pattern string, handler http.Handler) http.Handler {
+	if s.instr == nil {
+		return handler
+	}
+	return s.instr.Middleware(pattern, handler)
+}
+
+// handleMetrics serves the collector's scrape.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if s.instr == nil {
+		http.Error(w, "telemetry is not configured on this deployment", http.StatusServiceUnavailable)
+		return
+	}
+	s.instr.MetricsHandler().ServeHTTP(w, r)
 }
 
 // Patterns lists the ServeMux patterns ("METHOD /path") every Server

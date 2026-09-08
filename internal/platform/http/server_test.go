@@ -45,7 +45,7 @@ func TestHealthEndpoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			srv := platformhttp.New(discardLogger(), ":0", "", tt.ready)
+			srv := platformhttp.New(discardLogger(), ":0", "", tt.ready, nil)
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			srv.Handler().ServeHTTP(rec, req)
@@ -69,7 +69,7 @@ func TestHealthPayloadCarriesTheVersion(t *testing.T) {
 	for _, path := range []string{"/healthz", "/readyz"} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
-			srv := platformhttp.New(discardLogger(), ":0", "v9.9.9-test", nil)
+			srv := platformhttp.New(discardLogger(), ":0", "v9.9.9-test", nil, nil)
 			rec := httptest.NewRecorder()
 			srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 
@@ -96,7 +96,7 @@ func TestHealthPayloadCarriesTheVersion(t *testing.T) {
 // reading a blank field as agreement.
 func TestHealthPayloadOmitsAnAbsentVersion(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), ":0", "", nil)
+	srv := platformhttp.New(discardLogger(), ":0", "", nil, nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if body := rec.Body.String(); body != `{"status":"ok"}` {
@@ -106,7 +106,7 @@ func TestHealthPayloadOmitsAnAbsentVersion(t *testing.T) {
 
 func TestMountedRoutes(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), ":0", "", nil, platformhttp.Route{
+	srv := platformhttp.New(discardLogger(), ":0", "", nil, nil, platformhttp.Route{
 		Pattern: "/api/v1/editorial/",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusTeapot)
@@ -132,7 +132,7 @@ func TestMountedRoutes(t *testing.T) {
 
 func TestServesTheEmbeddedOpenAPIDocument(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), ":0", "", nil)
+	srv := platformhttp.New(discardLogger(), ":0", "", nil, nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil))
 
@@ -181,11 +181,17 @@ func TestPatternsAreRegistered(t *testing.T) {
 			if !ok {
 				t.Fatalf("pattern %q is not %q", pattern, "METHOD /path")
 			}
-			srv := platformhttp.New(discardLogger(), ":0", "", nil)
+			srv := platformhttp.New(discardLogger(), ":0", "", nil, nil)
 			rec := httptest.NewRecorder()
 			srv.Handler().ServeHTTP(rec, httptest.NewRequest(method, path, nil))
-			if rec.Code != http.StatusOK {
-				t.Fatalf("%s = %d, want %d", pattern, rec.Code, http.StatusOK)
+			// REGISTERED, which is what this test is named for, and not
+			// "answers 200" - those were the same thing while every builtin
+			// route answered unconditionally. /metrics does not: with no
+			// telemetry configured it refuses with 503, and that refusal is
+			// itself proof the route exists. What must never happen is the
+			// mux not knowing the pattern at all.
+			if rec.Code == http.StatusNotFound || rec.Code == http.StatusMethodNotAllowed {
+				t.Fatalf("%s = %d; the pattern is reported by Patterns() and is not registered on the mux", pattern, rec.Code)
 			}
 		})
 	}
@@ -228,7 +234,7 @@ func TestProblemOmitsEmptyDetail(t *testing.T) {
 
 func TestMountRoutesModuleHandlers(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), ":0", "", nil)
+	srv := platformhttp.New(discardLogger(), ":0", "", nil, nil)
 	srv.Mount("/api/v1/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 	}))
@@ -299,7 +305,7 @@ func (w *brokenWriter) Write([]byte) (int, error)  { return 0, errors.New("conne
 
 func TestHealthzSurvivesFailedResponseWrite(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), ":0", "", nil)
+	srv := platformhttp.New(discardLogger(), ":0", "", nil, nil)
 	w := &brokenWriter{header: make(http.Header)}
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	srv.Handler().ServeHTTP(w, req)
@@ -310,7 +316,7 @@ func TestHealthzSurvivesFailedResponseWrite(t *testing.T) {
 
 func TestRunShutsDownOnContextCancel(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), "127.0.0.1:0", "", nil)
+	srv := platformhttp.New(discardLogger(), "127.0.0.1:0", "", nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
@@ -332,7 +338,7 @@ func TestRunShutsDownOnContextCancel(t *testing.T) {
 
 func TestRunReturnsListenError(t *testing.T) {
 	t.Parallel()
-	srv := platformhttp.New(discardLogger(), "not-a-valid-listen-address", "", nil)
+	srv := platformhttp.New(discardLogger(), "not-a-valid-listen-address", "", nil, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Run(ctx); err == nil {
