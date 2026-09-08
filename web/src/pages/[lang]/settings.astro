@@ -1,0 +1,478 @@
+---
+import { API_BASE_URL, APP_ENV, BRAND_DIR, PUBLIC_APP_VERSION } from 'astro:env/server';
+
+import ConsentPanel from '../../components/ConsentPanel.astro';
+import FixtureNotice from '../../components/FixtureNotice.astro';
+import Masthead from '../../components/Masthead.astro';
+import ReaderLayout from '../../layouts/ReaderLayout.astro';
+import {
+  CONSENT_PURPOSES,
+  createAccountApi,
+  type ConsentOutcome,
+  type ConsentPurpose,
+  type ConsentRecord,
+} from '../../lib/account/consent';
+import { brandOnHand } from '../../lib/brand/load';
+import { answersFromFixtures, createCashbackApi } from '../../lib/cashback/api';
+import type { PayoutDestination } from '../../lib/cashback/types';
+import { isSameOrigin } from '../../lib/csrf';
+import { sessionOf } from '../../lib/editorial/session';
+import { signInPath } from '../../lib/member/access';
+import { needsSignIn } from '../../lib/member/gate';
+import { payoutStanding } from '../../lib/profile/standing';
+import { profileStrings } from '../../lib/profile/strings';
+import { frontPagePath, isReadingLanguage } from '../../lib/reader/axes';
+import { PREFERENCE_COOKIE, readPreference, setupPath } from '../../lib/reader/preference';
+import { uiStrings } from '../../lib/reader/strings';
+import { settingsStrings } from '../../lib/settings/strings';
+import { cashbackStrings } from '../../i18n/cashback';
+
+// Member settings (issue #617) — the last of the foundational screens the
+// canvas draws, and the one with a legal obligation behind it.
+//
+// WHAT BELONGS HERE is not a matter of taste. `SettingsSeam.dc.html` gives
+// two tests: a setting that would read identically in a banking mini-app is
+// the shell's, and a setting whose wrongness produces a wrong amount, a
+// wrong article or a wrong legal record is ours. That leaves us the reading
+// axes, the payout destination and the consent records, and leaves the shell
+// identity, theme, devices and the operating system's notification grant.
+//
+// SO THE BOARD'S FIFTH SECTION IS NOT BUILT. It is headed "these live in
+// evreos" and lists a name, a theme and a device count behind a link out.
+// There is no evreos, no theme switcher and no device registry in this
+// repository, so the section would be three invented values and a dead link
+// — the same call the profile screen made (#610).
+//
+// AND THE READING SECTION DOES NOT GROW AN EDITOR. The board draws working
+// controls; the seam board, in the same breath, says of places: "This is
+// /setup, which already exists." It does — a plain two-axis GET form that
+// posts to /go and needs no JavaScript. A second editor here would be a
+// second thing to keep correct about the one rule that matters (FR-009: the
+// axes are independent and never crossed), so this shows the current state
+// and links there.
+const langSegment = Astro.params['lang'];
+if (langSegment === undefined || !isReadingLanguage(langSegment)) {
+  return Astro.rewrite('/404');
+}
+const lang = langSegment;
+const t = settingsStrings(lang);
+const ui = uiStrings(lang);
+const p = profileStrings(lang);
+const c = cashbackStrings(lang);
+const session = sessionOf(Astro.request);
+
+const fixtures = answersFromFixtures(API_BASE_URL, {
+  appEnv: APP_ENV,
+  appVersion: PUBLIC_APP_VERSION,
+});
+const here = `${Astro.url.pathname}${Astro.url.search}`;
+// The fence, written as a value rather than as a branch. `astro check` does
+// not count a local read ONLY inside a frontmatter block that returns, so
+// the straightforward `if (...) return redirect(signInPath(...))` reports
+// its own import as unused. Testing the value keeps the read at the top
+// level, where it is counted, and the shape is no less clear.
+const fence = needsSignIn(session.authenticated, fixtures)
+  ? signInPath(lang, { next: here })
+  : null;
+if (fence !== null) {
+  return Astro.redirect(fence, 303);
+}
+
+const { brand } = brandOnHand({ brandDir: BRAND_DIR, appEnv: APP_ENV });
+const home = frontPagePath(lang, ['munich', 'greece']);
+
+// The reader's own places, language deliberately discarded: this URL's
+// language is the one in force, because the two axes travel separately.
+const preference = readPreference(Astro.cookies.get(PREFERENCE_COOKIE)?.value);
+const places = preference?.places ?? [];
+const languageName = lang === 'el' ? 'Ελληνικά' : 'Deutsch';
+
+// Consent. The api is `createAccountApi`, whose every write today answers
+// `recorded: false` with a reason — there is no consent endpoint in the Go
+// service and `lib/account/consent.ts` says so on its own face. That is
+// exactly why the outcome band below is not decoration: a member who presses
+// a switch is told, in the same request, that nothing was written. A screen
+// that appeared to record a consent it did not record would be the worst
+// thing on this page to fake, because the record is the evidence.
+const accounts = createAccountApi(API_BASE_URL);
+let outcome: ConsentOutcome | null = null;
+let wasGrant = false;
+
+if (Astro.request.method === 'POST') {
+  if (!isSameOrigin(Astro.request, Astro.url.origin)) {
+    return new Response('cross-origin request refused', { status: 403 });
+  }
+  const form = await Astro.request.formData();
+  const purpose = String(form.get('purpose') ?? '');
+  wasGrant = String(form.get('granted') ?? '') === 'true';
+  if ((CONSENT_PURPOSES as readonly string[]).includes(purpose)) {
+    try {
+      outcome = await accounts.setConsent(purpose as ConsentPurpose, wasGrant);
+    } catch (error) {
+      outcome = {
+        recorded: false,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+}
+
+let history: readonly ConsentRecord[] = [];
+let historyFailed = false;
+try {
+  history = await accounts.consentHistory();
+} catch {
+  historyFailed = true;
+}
+
+// The payout standing. Three states, and the one every member is in is
+// having no destination at all, because nothing here can add one.
+let destinations: readonly PayoutDestination[] = [];
+let payoutUnavailable = false;
+try {
+  const api = createCashbackApi(API_BASE_URL, {
+    appEnv: APP_ENV,
+    token: session.token,
+    appVersion: PUBLIC_APP_VERSION,
+  });
+  destinations = await api.destinations();
+} catch {
+  // A figure the page can do without. The consent records are the reason
+  // somebody came here and they do not depend on the cashback api.
+  payoutUnavailable = true;
+}
+
+const standing = payoutStanding(destinations);
+// The same three answers the profile gives, from the same helper, so the two
+// screens can never disagree about whether money can reach somebody.
+const payoutText =
+  standing === 'verified'
+    ? c.verifiedPayoutsOn
+    : standing === 'unverified'
+      ? p.payoutNotVerified
+      : p.payoutNone;
+---
+
+<ReaderLayout
+  lang={lang}
+  title={`${brand.name} — ${t.heading}`}
+  description={t.intro}
+  homeHref={home}
+>
+  <Masthead homeHref={home}>
+    <div class="seg" role="group">
+      {
+        lang === 'el' ? (
+          <span class="seg-opt" aria-current="true" lang="el">
+            Ελληνικά
+          </span>
+        ) : (
+          <a class="seg-opt" href="/el/settings" lang="el">
+            Ελληνικά
+          </a>
+        )
+      }
+      {
+        lang === 'de' ? (
+          <span class="seg-opt" aria-current="true" lang="de">
+            Deutsch
+          </span>
+        ) : (
+          <a class="seg-opt" href="/de/settings" lang="de">
+            Deutsch
+          </a>
+        )
+      }
+    </div>
+  </Masthead>
+
+  <main class="page">
+    {fixtures && <FixtureNotice title={t.heading} body={t.fixtureNotice} />}
+
+    <header class="head">
+      <h1>{t.heading}</h1>
+      <p>{t.intro}</p>
+    </header>
+
+    {
+      outcome !== null && (
+        <p class="band" role="status">
+          <b>{outcome.recorded ? ui.consentRecorded : ui.notRecorded}</b>{' '}
+          {
+            outcome.recorded
+              ? wasGrant
+                ? ui.consentGrantedNow
+                : ui.consentRevokedNow
+              : outcome.reason
+          }
+        </p>
+      )
+    }
+
+    <div class="cols">
+      <div class="col">
+      <section class="sec">
+        <h2>{p.readingHeading}</h2>
+        <div class="row">
+          <span class="k">{ui.readingLanguage}</span>
+          <span class="v">{languageName}</span>
+        </div>
+        <div class="row">
+          <span class="k">{ui.places}</span>
+          <span class="v">
+            {
+              places.length > 0 ? (
+                places.map((place) => (
+                  <span class="chip" lang={place.endonymLang}>
+                    {place.endonym}
+                  </span>
+                ))
+              ) : (
+                <span class="muted">{p.noPlacesYet}</span>
+              )
+            }
+          </span>
+        </div>
+        <p class="hint">{p.axesNote}</p>
+        <a class="go" href={setupPath(lang)}>{ui.editPlaces}</a>
+      </section>
+      <section class="sec">
+        <h2>{t.payoutsHeading}</h2>
+        <div class="row">
+          <span class="k">{p.payoutLabel}</span>
+          <span class="v">
+            {
+              payoutUnavailable ? (
+                <span class="muted">{p.accountUnavailable}</span>
+              ) : (
+                <span class="tag">{payoutText}</span>
+              )
+            }
+          </span>
+        </div>
+        <p class="hint">{t.payoutNote}</p>
+        {standing === 'none' && !payoutUnavailable && <p class="hint">{p.payoutNoWayYet}</p>}
+      </section>
+      </div>
+
+      <div class="col">
+      <section class="sec">
+        <h2>{ui.consentHeading}</h2>
+        <ConsentPanel
+          lang={lang}
+          history={history}
+          historyFailed={historyFailed}
+          action={here}
+        />
+      </section>
+      <section class="sec">
+        <h2>{t.notificationsHeading}</h2>
+        <div class="sketch">
+          <b>{t.sketchTitle}</b>
+          <p>{t.sketchDivision}</p>
+          <p>{t.sketchNothingYet}</p>
+        </div>
+      </section>
+      </div>
+    </div>
+  </main>
+</ReaderLayout>
+
+<style>
+  .page {
+    padding: var(--space-6) calc(var(--space-6) + var(--space-1)) var(--space-8);
+  }
+
+  .head {
+    padding-bottom: var(--space-4);
+    border-bottom: 2px solid var(--color-text);
+  }
+
+  .head h1 {
+    margin: 0 0 var(--space-2);
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 26px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+  }
+
+  .head p {
+    margin: 0;
+    max-width: 56ch;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  .band {
+    margin: var(--space-4) 0 0;
+    padding: var(--space-3) var(--space-4);
+    border-left: 2px solid var(--color-accent-700);
+    background: var(--color-accent-100);
+    max-width: 62ch;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--color-accent-800);
+    text-wrap: pretty;
+  }
+
+  /* Two columns on a desk, one on a phone.
+     There is no desktop settings board — the canvas draws this screen at
+     390px only — so the composition follows `ProfileDesktop.dc.html`, which
+     is the neighbouring screen and pairs its panes. Reading and payouts are
+     short and sit together; consent is the tall one and takes the second
+     column with the notifications sketch beneath it.
+     `align-items: start` so a short column does not stretch its blocks to
+     match the tall one. */
+  .cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 var(--space-8);
+    align-items: start;
+  }
+
+  /* One block per concern, ruled off — the board's `.sec`.
+     No max-width here: the measure belongs on the prose inside, so the rules
+     and rows reach the full column instead of leaving the right of a wide
+     screen empty. */
+  .sec {
+    padding: var(--space-6) 0;
+    border-bottom: 1px solid var(--color-divider);
+  }
+
+  .col:last-child .sec:last-child {
+    border-bottom: 0;
+  }
+
+  .sec h2 {
+    margin: 0 0 var(--space-3);
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  /* Label left, value right, wrapping only when they cannot share a line. */
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px var(--space-4);
+    align-items: baseline;
+    justify-content: space-between;
+    padding: var(--space-3) 0;
+    border-top: 1px solid var(--color-divider);
+    font-size: 14px;
+  }
+
+  .k {
+    color: var(--ink-muted);
+  }
+
+  .v {
+    margin-left: auto;
+    text-align: right;
+    color: var(--color-text);
+    overflow-wrap: anywhere;
+  }
+
+  .muted {
+    color: var(--ink-soft);
+    font-size: 13px;
+  }
+
+  .chip,
+  .tag {
+    display: inline-block;
+    margin-left: var(--space-1);
+    padding: 2px var(--space-2);
+    border: 1px solid var(--color-divider);
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+
+  .hint {
+    margin: var(--space-3) 0 0;
+    max-width: 60ch;
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    text-wrap: pretty;
+  }
+
+  .go {
+    display: inline-block;
+    margin-top: var(--space-3);
+    font-size: 13px;
+  }
+
+  /* The sketch. Ruled in the accent and set apart, so it reads as a note
+     about something absent rather than as a panel of controls. */
+  .sketch {
+    max-width: 60ch;
+    padding: var(--space-3) var(--space-4);
+    border: 1px dashed var(--color-accent-700);
+    background: var(--color-surface);
+  }
+
+  .sketch b {
+    display: block;
+    margin-bottom: var(--space-2);
+    font-size: 12.5px;
+    color: var(--color-accent-800);
+  }
+
+  .sketch p {
+    margin: 0 0 var(--space-2);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    text-wrap: pretty;
+  }
+
+  .sketch p:last-child {
+    margin-bottom: 0;
+  }
+
+  /* THE PHONE. ReaderLayout drops the frame's margin and border at 660px and
+     every member screen goes edge to edge below it, carrying its own 18px
+     inside each block rather than one gutter around everything — the wallet
+     sets that measure and the profile follows it. */
+  @media (max-width: 660px) {
+    .page {
+      padding: 0 0 var(--space-6);
+    }
+
+    .cols {
+      grid-template-columns: 1fr;
+      gap: 0;
+    }
+
+    .head,
+    .band,
+    .sec {
+      padding-left: 18px;
+      padding-right: 18px;
+    }
+
+    .head {
+      padding-top: var(--space-4);
+      padding-bottom: var(--space-4);
+    }
+
+    .band {
+      max-width: none;
+      margin: 0;
+    }
+
+    .sec {
+      padding-top: var(--space-4);
+      padding-bottom: var(--space-4);
+      border-bottom: 2px solid var(--color-divider);
+    }
+  }
+</style>
