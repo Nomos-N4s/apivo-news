@@ -113,6 +113,9 @@ func TestAnApprovedArticleAppearsOnTheFrontPageForItsPlace(t *testing.T) {
 		row := find(frontPage(t, []string{place}))
 		if row == nil {
 			t.Fatalf("the approved article is missing from the %s front page", place)
+			// Unreachable - t.Fatalf calls runtime.Goexit - and here so
+			// that staticcheck can see it (SA5011).
+			return
 		}
 		if want := []string{"greece", "munich"}; !slices.Equal(row.PlaceSlugs, want) {
 			t.Errorf("place_slugs on the %s front page = %v, want %v", place, row.PlaceSlugs, want)

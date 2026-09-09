@@ -167,6 +167,10 @@ func TestNoCreditingJobWhereTheHouseAccountIsUnnamed(t *testing.T) {
 	t.Cleanup(closeVerifier)
 	if built == nil {
 		t.Fatal("cashback is on and no jobs bundle came back")
+		// Unreachable - t.Fatal calls runtime.Goexit - and here so that
+		// staticcheck can see it. Without it SA5011 reads the nil check
+		// above as evidence that the dereference below may run on nil.
+		return
 	}
 	if built.lifecycle != nil {
 		t.Error("no house account is named and a crediting job was built anyway")
