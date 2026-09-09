@@ -55,7 +55,7 @@ const (
 // A nil consumer is not an error, for the reason a nil settlement sweep is
 // not: it means the authenticated surface was not built, or cashback is
 // off, and then there is nothing subscribed to deliver to.
-func registerSubscribers(ctx context.Context, log *slog.Logger, jobs *scheduler.Scheduler, db *pgxpool.Pool, closures *wallet.AccountClosures) (int, error) {
+func registerSubscribers(ctx context.Context, log *slog.Logger, jobs *scheduler.Scheduler, db *pgxpool.Pool, closures *wallet.AccountClosures, counted func(context.Context, events.DeadLetter)) (int, error) {
 	if closures == nil {
 		return 0, nil
 	}
@@ -63,11 +63,20 @@ func registerSubscribers(ctx context.Context, log *slog.Logger, jobs *scheduler.
 		// A parked delivery is money or consent nobody acted on, and the
 		// dead-letter table is durable but silent. This is the line that
 		// says it happened at the moment it happens, with what an operator
-		// needs to find the row.
+		// needs to find the row - and, since #618, the number an alert can
+		// watch without anybody reading the line.
+		//
+		// The log carries the identifiers and the measurement carries the
+		// labels, which is the division that keeps both useful: an event id
+		// is what an operator needs to find one row and the last thing a
+		// metric should be grouped by.
 		OnDeadLetter: func(parked events.DeadLetter) {
 			log.ErrorContext(ctx, "an event delivery is parked and its lane is blocked until an operator requeues it",
 				"subscriber", parked.Subscriber, "event", parked.Event.EventID,
 				"type", parked.Event.Type, "attempts", parked.Attempts, "last_error", parked.LastError)
+			if counted != nil {
+				counted(ctx, parked)
+			}
 		},
 	})
 	if err := closures.Subscribe(registry); err != nil {

@@ -446,7 +446,11 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 			return err
 		}
 		jobs := scheduler.New(log, locker, scheduler.Config{Observer: jobsObserver})
-		if err := wallet.NewZeroSumCheck(log, pool, ledgerSchema).Register(jobs); err != nil {
+		money, err := newMoneyInstruments(telemetryProvider)
+		if err != nil {
+			return err
+		}
+		if err := wallet.NewZeroSumCheck(log, pool, ledgerSchema).Watch(money).Register(jobs); err != nil {
 			return err
 		}
 		registered := 1
@@ -461,7 +465,7 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// confirmed and reversed (#435). Built with the routes because it
 		// posts in their ledger; nil where the house account is unnamed,
 		// which was said at ERROR where it was found.
-		subscribing, err := registerSubscribers(ctx, log, jobs, pool, closures)
+		subscribing, err := registerSubscribers(ctx, log, jobs, pool, closures, money.deadLettered)
 		if err != nil {
 			return err
 		}

@@ -46,7 +46,7 @@ func TestTheSubscriberDeliveryPassIsRegisteredAndRunnable(t *testing.T) {
 	ctx, pool := opsWiringPool(t)
 
 	jobs := scheduler.New(discardLogger(), lockerFor(t, pool), scheduler.Config{})
-	registered, err := registerSubscribers(ctx, discardLogger(), jobs, pool, aConsumer(t, pool))
+	registered, err := registerSubscribers(ctx, discardLogger(), jobs, pool, aConsumer(t, pool), nil)
 	if err != nil {
 		t.Fatalf("registerSubscribers(): %v", err)
 	}
@@ -71,10 +71,10 @@ func TestTheDeliveryPassIsRegisteredUnderOneName(t *testing.T) {
 	ctx, pool := opsWiringPool(t)
 
 	jobs := scheduler.New(discardLogger(), lockerFor(t, pool), scheduler.Config{})
-	if _, err := registerSubscribers(ctx, discardLogger(), jobs, pool, aConsumer(t, pool)); err != nil {
+	if _, err := registerSubscribers(ctx, discardLogger(), jobs, pool, aConsumer(t, pool), nil); err != nil {
 		t.Fatalf("the first registration: %v", err)
 	}
-	if _, err := registerSubscribers(ctx, discardLogger(), jobs, pool, aConsumer(t, pool)); err == nil {
+	if _, err := registerSubscribers(ctx, discardLogger(), jobs, pool, aConsumer(t, pool), nil); err == nil {
 		t.Error("a second delivery pass registered under the same name, so two would share one lock")
 	}
 }
@@ -87,7 +87,7 @@ func TestNoConsumerRegistersNoJob(t *testing.T) {
 	ctx, pool := opsWiringPool(t)
 
 	jobs := scheduler.New(discardLogger(), lockerFor(t, pool), scheduler.Config{})
-	registered, err := registerSubscribers(ctx, discardLogger(), jobs, pool, nil)
+	registered, err := registerSubscribers(ctx, discardLogger(), jobs, pool, nil, nil)
 	if err != nil {
 		t.Fatalf("registerSubscribers(nil): %v", err)
 	}
