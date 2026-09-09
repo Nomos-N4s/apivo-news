@@ -60,6 +60,10 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/translation/providers/openaicompat"
 )
 
+// preflightName is the subcommand a deployment host runs before it swaps any
+// container over: see preflight, and deploy/hetzner/bin/apivo-reconcile.
+const preflightName = "preflight"
+
 // version is the release version stamped into the binary at build time via
 //
 //	go build -ldflags "-X main.version=v0.1.0"
@@ -155,8 +159,9 @@ func main() {
 // cancelled or a termination signal arrives; "healthcheck" probes the serving
 // process once and reports the verdict as its error; "version" prints the
 // stamped release version; "schema-version" prints the schema this build
-// carries, or the one the database is at. It is separated from main so the
-// wiring is testable; main only handles the exit code.
+// carries, or the one the database is at; "preflight" wires everything serve
+// wires and stops without serving. It is separated from main so the wiring is
+// testable; main only handles the exit code.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -183,6 +188,15 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 		// lock, for the operator who has just connected a network and
 		// should not be waiting on a timer.
 		return importCatalogueCommand(ctx, args[1:], getenv, stdout)
+	case args[0] == preflightName:
+		// Everything serve does except serve, so a deployment host can ask
+		// "would this build start here?" while the answer still costs
+		// nothing. Takes no arguments: it is the environment that is being
+		// asked about, not a flag.
+		if len(args) > 1 {
+			return fmt.Errorf("%s takes no arguments, got %q", preflightName, args[1:])
+		}
+		return preflight(ctx, getenv, stdout)
 	case args[0] == schemaVersionName:
 		// Asked by the deployment host, from outside the process, to decide
 		// whether a rollback can work at all - a schema does not roll back
@@ -202,6 +216,36 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 
 // serve wires the platform together and serves HTTP until ctx is cancelled.
 func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) error {
+	return start(ctx, getenv, stdout, false)
+}
+
+// preflight wires everything serve wires, proves it, and stops without
+// serving or starting a single job.
+//
+// It exists because the alternative is discovering the answer during a
+// rollout, with the old containers already destroyed. On 2026-09-08 a merge
+// added a seventh scheduled job; QA's hand-maintained `pool_max_conns` was
+// sized for six; the api refused to start; and by then there was nothing
+// left running to fall back to. Every one of those facts was knowable a
+// moment earlier, against a stack that was still serving.
+//
+// It MIGRATES, like serve, and that is deliberate rather than overlooked.
+// Skipping the migration would run this build's queries against the previous
+// build's schema, so every deployment that carried a migration would fail a
+// check it was going to pass - a preflight that cried wolf would be turned
+// off within a week. The migration is going to happen on this rollout
+// regardless; running it a moment earlier changes nothing about the schema's
+// fate, and changes everything about whether the containers are swapped
+// before the rest is proven.
+func preflight(ctx context.Context, getenv func(string) string, stdout io.Writer) error {
+	return start(ctx, getenv, stdout, true)
+}
+
+// start is serve and preflight, which are the same program up to the last
+// line. They share a body rather than a checklist: a preflight that
+// re-derived what serve does would agree with it exactly until the day
+// somebody added a job to one of them.
+func start(ctx context.Context, getenv func(string) string, stdout io.Writer, checkOnly bool) error {
 	cfg, err := config.FromEnv(getenv)
 	if err != nil {
 		return err
@@ -543,24 +587,30 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		if err := locker.CheckCapacity(registered); err != nil {
 			return err
 		}
-		jobsCtx, stopJobs := context.WithCancel(ctx)
-		jobsDone := make(chan struct{})
-		go func() {
-			defer close(jobsDone)
-			// With capacity proven above, Run has no way back before
-			// jobsCtx ends: nil is a clean stop, and anything else - a
-			// shutdown grace that expired with a run still in flight - is
-			// a real event on the way down, worth its own line.
-			if err := jobs.Run(jobsCtx); err != nil {
-				log.ErrorContext(ctx, "the scheduled-job runner stopped", "error", err)
-			}
-		}()
-		defer func() {
-			stopJobs()
-			<-jobsDone
-		}()
-		log.InfoContext(ctx, "continuous ledger zero-sum check started",
-			"job", wallet.ZeroSumJobName, "interval", wallet.ZeroSumInterval, "ledger_schema", ledgerSchema)
+		// Wired, counted and proven - but STARTED only when this is a real
+		// serve. A preflight that ran the sweeps would poll an affiliate
+		// network and post to a ledger, which is a strange thing for a
+		// question to do.
+		if !checkOnly {
+			jobsCtx, stopJobs := context.WithCancel(ctx)
+			jobsDone := make(chan struct{})
+			go func() {
+				defer close(jobsDone)
+				// With capacity proven above, Run has no way back before
+				// jobsCtx ends: nil is a clean stop, and anything else - a
+				// shutdown grace that expired with a run still in flight - is
+				// a real event on the way down, worth its own line.
+				if err := jobs.Run(jobsCtx); err != nil {
+					log.ErrorContext(ctx, "the scheduled-job runner stopped", "error", err)
+				}
+			}()
+			defer func() {
+				stopJobs()
+				<-jobsDone
+			}()
+			log.InfoContext(ctx, "continuous ledger zero-sum check started",
+				"job", wallet.ZeroSumJobName, "interval", wallet.ZeroSumInterval, "ledger_schema", ledgerSchema)
+		}
 	}
 
 	srv := platformhttp.New(log, cfg.HTTPAddr, version, readiness(pool), telemetryProvider, routes...)
@@ -568,6 +618,13 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 	// unconditionally - a missing JWKS_URL costs the editorial routes, never
 	// the public site.
 	srv.Mount(readerPrefix, content.NewHandler(log, pool))
+	if checkOnly {
+		// Said on stdout as well as in the log, because the reconciler runs
+		// this and a person reads what it printed.
+		log.InfoContext(ctx, "preflight passed", "env", cfg.Env, "version", version)
+		_, err := fmt.Fprintf(stdout, "preflight: %s would start\n", version)
+		return err
+	}
 	log.InfoContext(ctx, "starting", "addr", cfg.HTTPAddr, "env", cfg.Env, "version", version)
 	return srv.Run(ctx)
 }

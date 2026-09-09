@@ -83,6 +83,7 @@ func TestRunRejectsBadArguments(t *testing.T) {
 		{name: "unknown command", args: []string{"frobnicate"}, want: "unknown command"},
 		{name: "healthcheck with extra arguments", args: []string{"healthcheck", "extra"}, want: "takes no arguments"},
 		{name: "version with extra arguments", args: []string{"version", "extra"}, want: "takes no arguments"},
+		{name: "preflight with extra arguments", args: []string{"preflight", "extra"}, want: "takes no arguments"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -310,6 +311,19 @@ func TestRunSchemaVersionAppliedWithoutDatabaseURL(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
 		t.Errorf("run(%s --applied) with no DATABASE_URL: want an error naming DATABASE_URL, got %v",
 			schemaVersionName, err)
+	}
+}
+
+// A preflight is a question, and a question that cannot be answered is a
+// refusal - never a shrug. The deployment host reads the exit code to decide
+// whether to swap the containers over, so a misconfigured environment must
+// come back non-zero rather than "probably fine".
+func TestRunPreflightRefusesAnUnconfiguredEnvironment(t *testing.T) {
+	t.Parallel()
+
+	err := run(context.Background(), []string{preflightName}, envFrom(nil), io.Discard)
+	if err == nil {
+		t.Fatal("run(preflight) with no configuration at all: want an error, got nil")
 	}
 }
 
