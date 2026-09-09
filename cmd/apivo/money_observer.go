@@ -74,52 +74,32 @@ type moneyInstruments struct {
 }
 
 // newMoneyInstruments builds them, or fails on a name this binary got wrong.
+//
+// Nothing usable is returned alongside an error: an instrument that could not
+// be built is nil, and a half-built set handed to a caller that ignored the
+// error would panic at the first measurement rather than at start-up.
 func newMoneyInstruments(provider *telemetry.Provider) (*moneyInstruments, error) {
-	meter := provider.Meter(moneyScope)
-	ledgerNet, err := meter.Gauge("apivo.cashback.ledger.net",
-		"How far the ledger is from netting to zero in one currency (C-1). Anything but zero is an incident.", "")
-	if err != nil {
-		return nil, err
+	b := instruments(provider, moneyScope)
+	m := &moneyInstruments{
+		ledgerNet: b.gauge("apivo.cashback.ledger.net",
+			"How far the ledger is from netting to zero in one currency (C-1). Anything but zero is an incident."),
+		ledgerCurrencies: b.gauge("apivo.cashback.ledger.currencies_checked",
+			"How many currencies the last C-1 pass summed. Zero means no ledger was visible to sum, which is not the same as clean."),
+		deadLetters: b.counter("apivo.events.dead_letters",
+			"Event deliveries parked for an operator, by subscriber and event type."),
+		credits: b.counter("apivo.cashback.credits",
+			"What each earnings lifecycle pass did, by the outcome each item reached."),
+		differences: b.counter("apivo.cashback.reconciliation.differences",
+			"Reconciliation differences newly recorded by a detection pass."),
+		canary: b.gauge("apivo.cashback.attribution.canary",
+			"The attribution canary's verdict per network: exactly one state reads 1."),
+		unattributed: b.gauge("apivo.cashback.attribution.unattributed",
+			"Distinct transactions reported by a network with no click of ours behind them."),
 	}
-	ledgerCurrencies, err := meter.Gauge("apivo.cashback.ledger.currencies_checked",
-		"How many currencies the last C-1 pass summed. Zero means no ledger was visible to sum, which is not the same as clean.", "")
-	if err != nil {
-		return nil, err
+	if b.err != nil {
+		return nil, b.err
 	}
-	deadLetters, err := meter.Counter("apivo.events.dead_letters",
-		"Event deliveries parked for an operator, by subscriber and event type.", "")
-	if err != nil {
-		return nil, err
-	}
-	credits, err := meter.Counter("apivo.cashback.credits",
-		"What each earnings lifecycle pass did, by the outcome each item reached.", "")
-	if err != nil {
-		return nil, err
-	}
-	differences, err := meter.Counter("apivo.cashback.reconciliation.differences",
-		"Reconciliation differences newly recorded by a detection pass.", "")
-	if err != nil {
-		return nil, err
-	}
-	canary, err := meter.Gauge("apivo.cashback.attribution.canary",
-		"The attribution canary's verdict per network: exactly one state reads 1.", "")
-	if err != nil {
-		return nil, err
-	}
-	unattributed, err := meter.Gauge("apivo.cashback.attribution.unattributed",
-		"Distinct transactions reported by a network with no click of ours behind them.", "")
-	if err != nil {
-		return nil, err
-	}
-	return &moneyInstruments{
-		ledgerNet:        ledgerNet,
-		ledgerCurrencies: ledgerCurrencies,
-		deadLetters:      deadLetters,
-		credits:          credits,
-		differences:      differences,
-		canary:           canary,
-		unattributed:     unattributed,
-	}, nil
+	return m, nil
 }
 
 // AttributionJudged records one canary verdict. It satisfies

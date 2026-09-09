@@ -17,6 +17,7 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings"
 	walletmemory "github.com/Nomos-N4s/apivo-news/internal/cashback/wallet/memory"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/money"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/scheduler"
 )
 
 // unreachableDB is a database every read of which fails, so a run finds
@@ -109,3 +110,72 @@ func TestARunThatCannotReadStopsAndSaysSo(t *testing.T) {
 		t.Errorf("a run that read nothing reports %+v, want nothing done", out)
 	}
 }
+
+// recordingLifecycleObserver keeps what each run reported.
+type recordingLifecycleObserver struct {
+	outcomes []earnings.Outcome
+}
+
+func (r *recordingLifecycleObserver) LifecycleRan(_ context.Context, out earnings.Outcome) {
+	r.outcomes = append(r.outcomes, out)
+}
+
+// TestTheOutcomeReachesAnObserverEvenWhenTheRunFailed.
+//
+// The scheduler registration wrote `_, err := l.Run(ctx)` until #618, so the
+// seven counts the run computed were discarded at the job boundary. They are
+// the earning funnel, and the failed case is the one worth pinning: an
+// unreadable database ends the run, and the items it managed to act on first
+// still happened. Reporting nothing there would lose them.
+func TestTheOutcomeReachesAnObserverEvenWhenTheRunFailed(t *testing.T) {
+	t.Parallel()
+	log := slog.New(slog.DiscardHandler)
+	job, err := earnings.NewLifecycle(log, unreachableDB{}, walletmemory.New(), "receivable", earnings.HoldRules{})
+	if err != nil {
+		t.Fatalf("NewLifecycle(): %v", err)
+	}
+	observer := &recordingLifecycleObserver{}
+	if got := job.Watch(observer); got != job {
+		t.Error("Watch() answered a different job, so it cannot be chained onto the constructor")
+	}
+
+	jobs := scheduler.New(log, alwaysGrantingLocker{}, scheduler.Config{})
+	if err := job.Register(jobs); err != nil {
+		t.Fatalf("Register(): %v", err)
+	}
+	if _, err := jobs.RunOnce(context.Background(), earnings.LifecycleJobName); err == nil {
+		t.Fatal("a run against an unreadable database reported success")
+	}
+	if len(observer.outcomes) != 1 {
+		t.Fatalf("the observer was told about %d runs, want 1: a failed run is still a run that happened", len(observer.outcomes))
+	}
+}
+
+// TestNoObserverIsSupported, which is how every deployment ran before #618.
+func TestNoObserverIsSupported(t *testing.T) {
+	t.Parallel()
+	log := slog.New(slog.DiscardHandler)
+	job, err := earnings.NewLifecycle(log, unreachableDB{}, walletmemory.New(), "receivable", earnings.HoldRules{})
+	if err != nil {
+		t.Fatalf("NewLifecycle(): %v", err)
+	}
+	jobs := scheduler.New(log, alwaysGrantingLocker{}, scheduler.Config{})
+	if err := job.Register(jobs); err != nil {
+		t.Fatalf("Register(): %v", err)
+	}
+	if _, err := jobs.RunOnce(context.Background(), earnings.LifecycleJobName); err == nil {
+		t.Fatal("a run against an unreadable database reported success")
+	}
+}
+
+// alwaysGrantingLocker is the scheduler's lock seam with no database behind
+// it: every attempt is granted, which is what a single-instance test wants.
+type alwaysGrantingLocker struct{}
+
+func (alwaysGrantingLocker) TryLock(context.Context, string) (scheduler.Lock, bool, error) {
+	return grantedLock{}, true, nil
+}
+
+type grantedLock struct{}
+
+func (grantedLock) Release(context.Context) error { return nil }

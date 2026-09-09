@@ -48,18 +48,17 @@ type jobObserver struct {
 // ever takes its other side in production. An error means an instrument name
 // this binary got wrong, which is a bug rather than a deployment condition.
 func newJobObserver(provider *telemetry.Provider) (*jobObserver, error) {
-	meter := provider.Meter(jobsScope)
-	attempts, err := meter.Counter("apivo.scheduler.job.attempts",
-		"Attempts to run a scheduled job, by what the attempt came to.", "")
-	if err != nil {
-		return nil, err
+	b := instruments(provider, jobsScope)
+	o := &jobObserver{
+		attempts: b.counter("apivo.scheduler.job.attempts",
+			"Attempts to run a scheduled job, by what the attempt came to."),
+		duration: b.histogram("apivo.scheduler.job.duration",
+			"How long a scheduled job's run took, for runs that happened.", "s"),
 	}
-	duration, err := meter.Histogram("apivo.scheduler.job.duration",
-		"How long a scheduled job's run took, for runs that happened.", "s")
-	if err != nil {
-		return nil, err
+	if b.err != nil {
+		return nil, b.err
 	}
-	return &jobObserver{attempts: attempts, duration: duration}, nil
+	return o, nil
 }
 
 // JobAttempted records one attempt.

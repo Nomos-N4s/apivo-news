@@ -153,3 +153,18 @@ func TestNoLabelsIsNotOneEmptyLabel(t *testing.T) {
 		t.Errorf("first attribute = %v, want a=1", got[0])
 	}
 }
+
+// TestAnInstrumentNameHasALengthLimit. 255 is OpenTelemetry's, and a name
+// built by concatenating something unbounded - a job name, a network id - is
+// how a limit like this gets found in production rather than here.
+func TestAnInstrumentNameHasALengthLimit(t *testing.T) {
+	t.Parallel()
+	m := (*Provider)(nil).Meter("test")
+	longest := "a" + strings.Repeat("b", maxNameLen-1)
+	if _, err := m.Counter(longest, "d", ""); err != nil {
+		t.Errorf("a name of exactly %d characters was refused: %v", maxNameLen, err)
+	}
+	if _, err := m.Counter(longest+"c", "d", ""); err == nil {
+		t.Errorf("a name of %d characters was accepted", maxNameLen+1)
+	}
+}
