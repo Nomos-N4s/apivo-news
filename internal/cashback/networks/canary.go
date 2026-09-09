@@ -117,6 +117,42 @@ func (v AttributionVerdict) Suspect() bool {
 	return !v.Idle() && !v.Retired() && v.Unattributed >= AttributionCanaryThreshold
 }
 
+// Attribution canary states, in the order [AttributionVerdict.State] tests
+// them. Four, because "watching" - clicked through, nothing back yet, not
+// enough of them to rule out chance - is a real state and not the absence of
+// the other three.
+const (
+	// AttributionIdle: nobody has clicked through this network yet.
+	AttributionIdle = "idle"
+	// AttributionRetired: a click reference has round-tripped, so
+	// attribution demonstrably works here and the canary is done.
+	AttributionRetired = "retired"
+	// AttributionSuspect: enough references have come back unmatched, and
+	// none matched, that chance no longer explains it.
+	AttributionSuspect = "suspect"
+	// AttributionWatching: clicked through, nothing matched yet, not enough
+	// unmatched to judge.
+	AttributionWatching = "watching"
+)
+
+// State names which of the four this verdict is.
+//
+// One definition, read by both the log line and the measurement, so the two
+// cannot come to disagree about what "watching" means - which they would, the
+// first time somebody adjusted one switch and not the other.
+func (v AttributionVerdict) State() string {
+	switch {
+	case v.Idle():
+		return AttributionIdle
+	case v.Retired():
+		return AttributionRetired
+	case v.Suspect():
+		return AttributionSuspect
+	default:
+		return AttributionWatching
+	}
+}
+
 // Check counts, and refuses with [ErrAttributionNeverSucceeded] when the
 // counts say attribution has never worked. The verdict comes back alongside
 // either way, so a caller can log what was found rather than only whether

@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/events"
@@ -61,6 +62,15 @@ type moneyInstruments struct {
 	// statement as fresh discrepancies every time. The kind breakdown is a
 	// question for the table, and belongs with the backlog gauges.
 	differences telemetry.Counter
+	// canary is the attribution canary's verdict per network, as a one-hot
+	// set: exactly one state reads 1 and the other three read 0. A state
+	// nobody set would otherwise stay at its old value forever, and the
+	// alarm would keep firing after the first credit landed.
+	canary telemetry.Gauge
+	// unattributed is how many distinct transactions have come back from a
+	// network with no click of ours behind them. During a switch-on this is
+	// the number that says whether anything is arriving at all.
+	unattributed telemetry.Gauge
 }
 
 // newMoneyInstruments builds them, or fails on a name this binary got wrong.
@@ -91,13 +101,54 @@ func newMoneyInstruments(provider *telemetry.Provider) (*moneyInstruments, error
 	if err != nil {
 		return nil, err
 	}
+	canary, err := meter.Gauge("apivo.cashback.attribution.canary",
+		"The attribution canary's verdict per network: exactly one state reads 1.", "")
+	if err != nil {
+		return nil, err
+	}
+	unattributed, err := meter.Gauge("apivo.cashback.attribution.unattributed",
+		"Distinct transactions reported by a network with no click of ours behind them.", "")
+	if err != nil {
+		return nil, err
+	}
 	return &moneyInstruments{
 		ledgerNet:        ledgerNet,
 		ledgerCurrencies: ledgerCurrencies,
 		deadLetters:      deadLetters,
 		credits:          credits,
 		differences:      differences,
+		canary:           canary,
+		unattributed:     unattributed,
 	}, nil
+}
+
+// AttributionJudged records one canary verdict. It satisfies
+// networks.AttributionObserver.
+//
+// One-hot rather than a single gauge carrying a state code: a code would need
+// a legend nobody has when the page is opened at three in the morning, and
+// arithmetic over it would be meaningless. Every state is written on every
+// pass, the three that are false included, because the gauge is the alarm and
+// a state nobody sets stays where it was - so a network that went from
+// suspect to retired would otherwise keep reading suspect until the process
+// restarted.
+func (m *moneyInstruments) AttributionJudged(ctx context.Context, verdict networks.AttributionVerdict) {
+	if m == nil {
+		return
+	}
+	network := telemetry.Label("network", verdict.Network.String())
+	state := verdict.State()
+	for _, known := range []string{
+		networks.AttributionIdle, networks.AttributionRetired,
+		networks.AttributionSuspect, networks.AttributionWatching,
+	} {
+		var on int64
+		if known == state {
+			on = 1
+		}
+		m.canary.Record(ctx, on, network, telemetry.Label("state", known))
+	}
+	m.unattributed.Record(ctx, verdict.Unattributed, network)
 }
 
 // LifecycleRan records what one earnings pass did. It satisfies

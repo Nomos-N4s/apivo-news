@@ -178,7 +178,7 @@ func TestNewNetworkSweepsBuildsThePairAndReportsTheRowsGaps(t *testing.T) {
 			if err != nil {
 				t.Fatalf("connectNetwork(): %v", err)
 			}
-			sweeps, err := newNetworkSweeps(ctx, log, adapter, connected, tx)
+			sweeps, err := newNetworkSweeps(ctx, log, adapter, connected, tx, nil)
 			if err != nil {
 				t.Fatalf("newNetworkSweeps(): %v", err)
 			}

@@ -495,7 +495,7 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		// that runs with ingestion off rather than not at all. It says so
 		// at ERROR, because "cashback is mounted and nothing is ingesting
 		// what the networks report" is a state somebody has to fix.
-		switch sweeps, err := newNetworkSweeps(ctx, log, adapter, connected, pool); {
+		switch sweeps, err := newNetworkSweeps(ctx, log, adapter, connected, pool, money); {
 		// Already reported above, where the network was resolved: saying it
 		// twice would read as two different problems.
 		case networkOff != nil:

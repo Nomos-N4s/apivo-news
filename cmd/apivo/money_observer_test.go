@@ -5,12 +5,15 @@ package main
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/networks"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/events"
@@ -268,4 +271,91 @@ func TestNilInstrumentsAreSafeAtEverySeam(t *testing.T) {
 	if _, err := counted.DetectDifferences(ctx, uuid.New()); err == nil {
 		t.Error("the failing detector reported success")
 	}
+}
+
+// TestTheCanaryVerdictIsOneHot.
+//
+// Exactly one state reads 1 and the other three read 0, written on every
+// pass. A single gauge carrying a state code would need a legend nobody has
+// at three in the morning; and writing only the current state would leave the
+// previous one at 1 forever, so a network that went from suspect to retired
+// would keep firing its alarm until the process restarted.
+func TestTheCanaryVerdictIsOneHot(t *testing.T) {
+	t.Parallel()
+	p := observedProvider(t)
+	money, err := newMoneyInstruments(p)
+	if err != nil {
+		t.Fatalf("building: %v", err)
+	}
+
+	// Suspect: clicked through, nothing matched, past the threshold.
+	money.AttributionJudged(context.Background(), networks.AttributionVerdict{
+		Network:      networks.NetworkID("linkwise"),
+		FirstClickAt: time.Now().Add(-time.Hour),
+		Unattributed: 5,
+	})
+
+	body := scrape(t, p)
+	if got := canaryStates(t, body); !reflect.DeepEqual(got, map[string]string{
+		networks.AttributionIdle:     "0",
+		networks.AttributionRetired:  "0",
+		networks.AttributionSuspect:  "1",
+		networks.AttributionWatching: "0",
+	}) {
+		t.Errorf("the canary states read %v, want only suspect set:\n%s", got, body)
+	}
+	if !strings.Contains(body, "apivo_cashback_attribution_unattributed") {
+		t.Errorf("the unattributed count is not in the scrape:\n%s", body)
+	}
+
+	var _ networks.AttributionObserver = money
+}
+
+// TestARetiredCanaryStopsAlerting. The state that mattered yesterday must not
+// still read 1 today.
+func TestARetiredCanaryStopsAlerting(t *testing.T) {
+	t.Parallel()
+	p := observedProvider(t)
+	money, err := newMoneyInstruments(p)
+	if err != nil {
+		t.Fatalf("building: %v", err)
+	}
+	network := networks.NetworkID("linkwise")
+
+	money.AttributionJudged(context.Background(), networks.AttributionVerdict{
+		Network: network, FirstClickAt: time.Now().Add(-time.Hour), Unattributed: 5,
+	})
+	// The first credit lands and the canary retires.
+	money.AttributionJudged(context.Background(), networks.AttributionVerdict{
+		Network: network, FirstClickAt: time.Now().Add(-time.Hour), Attributed: 1, Unattributed: 5,
+	})
+
+	got := canaryStates(t, scrape(t, p))
+	if got[networks.AttributionSuspect] != "0" {
+		t.Errorf("the canary still reads suspect after a credit landed: %v", got)
+	}
+	if got[networks.AttributionRetired] != "1" {
+		t.Errorf("the canary does not read retired after a credit landed: %v", got)
+	}
+}
+
+// canaryStates reads the state gauge out of a Prometheus exposition.
+func canaryStates(t *testing.T, body string) map[string]string {
+	t.Helper()
+	states := make(map[string]string)
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, "apivo_cashback_attribution_canary{") {
+			continue
+		}
+		value := line[strings.LastIndex(line, " ")+1:]
+		for _, known := range []string{
+			networks.AttributionIdle, networks.AttributionRetired,
+			networks.AttributionSuspect, networks.AttributionWatching,
+		} {
+			if strings.Contains(line, `state="`+known+`"`) {
+				states[known] = value
+			}
+		}
+	}
+	return states
 }
