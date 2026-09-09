@@ -87,7 +87,7 @@ Solid arrows inside a domain read *"contains"*; the arrows leaving `cmd/apivo` a
 
 ## 1. Modelling conventions
 
-Six rules. They exist so that two people modelling the same change produce the same objects, and so a script can check the result.
+Seven rules. They exist so that two people modelling the same change produce the same objects, and so a script can check the result.
 
 ### 1.1 An object's name is the repository's own name for the thing
 
@@ -112,11 +112,13 @@ The exception is an actor, which has no path: `Reader`, `Member`, `Editor`, `Ope
 
 Files inside a package are **not** objects. That is C4 level 4, and it is answered by behaviour rather than by structure — see [sequence-diagrams.md](sequence-diagrams.md).
 
-### 1.3 Groups are the one object type allowed a descriptive parent
+### 1.3 The name carries the nesting
 
 IcePanel's hierarchy is system → app/store → component; components do not nest. `internal/cashback/networks/linkwise` is a child of `internal/cashback/networks` in the tree and a sibling of it in the model. Rather than invent sub-components, the **name carries the nesting**: `internal/cashback/networks/linkwise` is unambiguous wherever it appears.
 
-Three groups exist, and each is a real directory: `internal/cashback`, `internal/platform`, and `Postgres` — the last being the only group whose name is not a path, because one database holding four schemas has no path. `internal/identity`, `internal/account`, `internal/arch` and the five epiloYES components hang directly off `cmd/apivo`, because they are not under a common directory and a group invented to hold them would be a fourth name nobody could check.
+This rule used to read "groups are the one object type allowed a descriptive parent", and named three: `internal/cashback`, `internal/platform` and `Postgres`. Loading the model proved that wrong — a `group` in IcePanel may own systems and nothing else (1.7). The two package groups are gone and their components hang directly off `cmd/apivo`; `Postgres` is a `store`. The grouping they carried is not lost, because rule 1.1 already puts the whole path in every name: an object called `internal/cashback/earnings` needs no container to say where it lives.
+
+`internal/identity`, `internal/account`, `internal/arch` and the five epiloYES components hang off `cmd/apivo` for the same reason they always did — they are not under a common directory, and a container invented to hold them would be a name nobody could check.
 
 ### 1.4 Every object carries its source path
 
@@ -147,9 +149,64 @@ No object in section 2 carries one yet. One provisioned host runs every environm
 - **Responses.** A request and its response are one connection. `outgoing` means "the source initiates".
 - **Test-only edges.** `internal/cashback/scenarios` and `internal/arch` appear as objects, tagged `test-only`, with no connections. A conformance test that imports every adapter is not an architectural dependency.
 
+### 1.7 What IcePanel enforces, established by loading this model
+
+These are not in IcePanel's documentation. Each was found by a request the
+API refused, and each is now checked by
+[scripts/icepanel-push.mjs](../../scripts/icepanel-push.mjs) before it writes
+anything, because finding them halfway through a load leaves a landscape
+half-populated.
+
+**The hierarchy is a strict C4 ladder.** An object may only own the types
+below it:
+
+| Parent | May own |
+|---|---|
+| root | `system`, `actor`, `group` |
+| `group` | `system` — and nothing else |
+| `system` | `app`, `store` |
+| `app` | `component` |
+| `store` | `component` |
+| `component` | nothing |
+
+A `group` is therefore a grouping of *systems*, not a general container.
+That cost this model two objects: `internal/cashback` and `internal/platform`
+were modelled as groups inside `cmd/apivo`, and "a app cannot be an owner of
+a group" is what the API says to that. Their components are now direct
+children of `cmd/apivo`, which loses nothing readable, because rule 1.1
+already puts the full package path in every name.
+
+Postgres moved the other way. It was a `group` holding four schema `store`s;
+a system cannot own a group and a group cannot own a store, so it is a
+`store` holding four `component`s — which is the more accurate reading
+anyway.
+
+**A name must be unique beyond its immediate siblings.** `blnk` the app and
+`blnk` the schema had different parents and were still refused with "blnk
+already exists at this level". The four schemas are now named
+`public schema`, `cashback schema`, `ledger schema` and `blnk schema` — which
+a diagram needed regardless, since a box labelled `public` says nothing.
+
+**A domain is structural, not an axis.** This is the one that costs something
+real. IcePanel takes a nested object's domain from its *parent* and discards
+any `domainId` sent with it — verified by a PATCH that reverted. Only the 18
+top-level objects carry the domain this document assigns them; the other 54
+inherit. So the 26 objects this model places in Cashback but nests inside
+`cmd/apivo` or `Postgres` — every `internal/cashback/*` package, both Blnk
+apps, three schemas — appear in IcePanel under Platform.
+
+Nothing is wrong in the landscape as a result: those packages *are* inside
+the platform binary, and that is what the tree says. But the reading this
+repository takes everywhere else — that a product domain is an axis
+independent of where the code sits, the same way language and place are
+independent axes in the news product — is not expressible in IcePanel below
+the top level. The domain each object belongs to stays correct in the JSON
+below and in the catalogue above; the landscape is the lossy copy, and the
+`sourcePath` label on every object is what lets a reader recover the truth.
+
 ## 2. The object catalogue
 
-74 objects: 4 actor, 13 system, 7 app, 5 store, 3 group, 42 component. Grouped by domain, ready to type in. Every source path is a link, so a broken one is visible in review.
+72 objects: 4 actor, 13 system, 7 app, 5 store, 3 group, 42 component. Grouped by domain, ready to type in. Every source path is a link, so a broken one is visible in review.
 
 ### 2.1 Domain: Platform
 
@@ -713,7 +770,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
     {
       "id": "postgres",
       "name": "Postgres",
-      "type": "group",
+      "type": "store",
       "domainId": "platform",
       "parentId": "apivo",
       "technology": "Postgres 17",
@@ -726,8 +783,8 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
     },
     {
       "id": "schema-public",
-      "name": "public",
-      "type": "store",
+      "name": "public schema",
+      "type": "component",
       "domainId": "platform",
       "parentId": "postgres",
       "technology": "Postgres schema",
@@ -740,8 +797,8 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
     },
     {
       "id": "schema-cashback",
-      "name": "cashback",
-      "type": "store",
+      "name": "cashback schema",
+      "type": "component",
       "domainId": "cashback",
       "parentId": "postgres",
       "technology": "Postgres schema",
@@ -754,8 +811,8 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
     },
     {
       "id": "schema-ledger",
-      "name": "ledger",
-      "type": "store",
+      "name": "ledger schema",
+      "type": "component",
       "domainId": "cashback",
       "parentId": "postgres",
       "technology": "Postgres schema",
@@ -768,8 +825,8 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
     },
     {
       "id": "schema-blnk",
-      "name": "blnk",
-      "type": "store",
+      "name": "blnk schema",
+      "type": "component",
       "domainId": "cashback",
       "parentId": "postgres",
       "technology": "Postgres schema, owned by Blnk",
@@ -797,34 +854,6 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "sourcePath": "docker-compose.yml"
     },
     {
-      "id": "grp-cashback",
-      "name": "internal/cashback",
-      "type": "group",
-      "domainId": "cashback",
-      "parentId": "cmd-apivo",
-      "technology": "Go packages",
-      "description": "The cashback domain. Every sub-package owns its own queries/ and sqlc-generated store/, and exports Patterns() so the served routes can be compared with api/openapi.json in both directions.",
-      "tags": [
-        "built",
-        "src:internal/cashback"
-      ],
-      "sourcePath": "internal/cashback"
-    },
-    {
-      "id": "grp-platform",
-      "name": "internal/platform",
-      "type": "group",
-      "domainId": "platform",
-      "parentId": "cmd-apivo",
-      "technology": "Go packages",
-      "description": "The bottom layer. Importable by anyone, importing no sibling domain — rule 1 of the module boundaries.",
-      "tags": [
-        "built",
-        "src:internal/platform"
-      ],
-      "sourcePath": "internal/platform"
-    },
-    {
       "id": "cmd-apivo-main",
       "name": "cmd/apivo/main.go",
       "type": "component",
@@ -843,7 +872,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/catalogue",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, sqlc, pgx",
       "description": "Imports a network's catalogue, publishes rate bands, and answers the merchant detail page. A retailer absent from a complete iteration is reconciled to 'left_network'. Browser.Browse is implemented and has NO route.",
       "tags": [
@@ -857,7 +886,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/clickout",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, sqlc, pgx",
       "description": "Issues a click: rate limit, live-offer check, mint, build the deeplink, then write the immutable click row and its outbox row in one transaction. The deeplink is built BEFORE the row, so a broken template leaves no orphan click.",
       "tags": [
@@ -871,7 +900,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/networks",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, sqlc, pgx",
       "description": "The affiliate-network port and everything around it: two durable cursors per publisher account, evidence capture with a database-computed digest, supersession, the attribution canary, the token bucket and the retry backoff.",
       "tags": [
@@ -885,7 +914,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/networks/fixture",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, recorded JSON",
       "description": "A complete adapter over recorded payloads: click, pending, approved, reversed. A shipped driver and the local default. Its deeplink host is under .invalid so a test suite can never send real traffic.",
       "tags": [
@@ -899,7 +928,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/networks/linkwise",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, net/http, HTTP Basic",
       "description": "Implements every method of the port and runs the shared conformance suite. A shipped driver.",
       "tags": [
@@ -913,7 +942,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/networks/awin",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, net/http, bearer",
       "description": "Client, catalogue and deeplink only. No FetchTransactions and no Limits, so it does not satisfy the port — proved at the compiler — and is deliberately absent from shippedNetworks (deferred by founder decision, 2026-09-04).",
       "tags": [
@@ -927,7 +956,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/earnings",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, sqlc, pgx",
       "description": "Attribution, the member share, the four hold rules, the six-state machine, confirmation behind two gates, reversal as a new entry, and the operator review. Every move posts first and records second.",
       "tags": [
@@ -941,7 +970,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/wallet",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, sqlc, pgx",
       "description": "Declares the Ledger port, the member wallet projection, participation, the export, the house accounts and the continuous C-1 zero-sum check. Four of the five wallet figures are summed from postings; none is stored.",
       "tags": [
@@ -955,7 +984,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/wallet/memory",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, one mutex",
       "description": "The reference implementation of the port. Balance literally sums postings. The local default and the only driver that runs with Docker unavailable; nothing survives the process.",
       "tags": [
@@ -969,7 +998,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/wallet/blnk",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, blnk-go v1.3.0",
       "description": "The production driver. The ONLY package in the tree allowed to import a ledger vendor's SDK — enforced by internal/arch, and the reason the money substrate is swappable at all.",
       "tags": [
@@ -983,7 +1012,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/wallet/postgres",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, pgx",
       "description": "The exit route, kept working. Its schema test proves the triggers refuse illegal raw SQL, not merely illegal port calls.",
       "tags": [
@@ -997,7 +1026,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/payout",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, sqlc, pgx",
       "description": "Withdrawal, reservation, two-phase approval, rejection, retry, abandonment and settlement. The idempotency key is read back from the generated column rather than recomputed in Go.",
       "tags": [
@@ -1011,7 +1040,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/payout/manual",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go",
       "description": "The only rail wired in production, hard-coded in the composition root. Submit returns a 'manual:' reference; Status ALWAYS answers submitted, because a person must say the money landed.",
       "tags": [
@@ -1025,7 +1054,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/payout/stub",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go",
       "description": "A test double for the rail: timeouts, permanent failure, settle and fail on demand.",
       "tags": [
@@ -1039,7 +1068,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/ops",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go, sqlc, pgx",
       "description": "The four operator queues behind one requireOperator gate that wraps the MUX, not the routes — so a route added later cannot be left open by omission. Every decision takes the operator from the token, never from the body.",
       "tags": [
@@ -1053,7 +1082,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/cashback/scenarios",
       "type": "component",
       "domainId": "cashback",
-      "parentId": "grp-cashback",
+      "parentId": "cmd-apivo",
       "technology": "Go tests",
       "description": "Six end-to-end scenarios over a real Postgres: earn-confirm, evidence-immutable, reversal, unattributed-and-held, reconciliation, withdrawal-exactly-once. Ships no production code.",
       "tags": [
@@ -1067,7 +1096,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/platform/config",
       "type": "component",
       "domainId": "platform",
-      "parentId": "grp-platform",
+      "parentId": "cmd-apivo",
       "technology": "Go",
       "description": "One place that reads the environment. Under APP_ENV=prod every money key is required: cashback moves members' money, so it starts fully configured or not at all. The retired flat NETWORK_* keys are refused, not ignored.",
       "tags": [
@@ -1081,7 +1110,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/platform/db",
       "type": "component",
       "domainId": "platform",
-      "parentId": "grp-platform",
+      "parentId": "cmd-apivo",
       "technology": "Go, golang-migrate v4, pgx v5",
       "description": "Embedded migrations and the pool. The migrations are the single source of truth for the schema, and both generators read them.",
       "tags": [
@@ -1095,7 +1124,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/platform/events",
       "type": "component",
       "domainId": "platform",
-      "parentId": "grp-platform",
+      "parentId": "cmd-apivo",
       "technology": "Go, pgx",
       "description": "The outbox writer and envelope, the dispatcher, checkpoints and the dead-letter lane. The WRITER is wired; NOTHING registers a dispatcher, so eighteen distinct event types are appended and none consumed — nineteen constants declare them, because cashback.transaction.unattributed is spelled in both networks and earnings.",
       "tags": [
@@ -1109,7 +1138,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/platform/http",
       "type": "component",
       "domainId": "platform",
-      "parentId": "grp-platform",
+      "parentId": "cmd-apivo",
       "technology": "Go, net/http",
       "description": "The server, the problem+json convention and the 405 allow-table every module derives from its own route map.",
       "tags": [
@@ -1123,7 +1152,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/platform/logging",
       "type": "component",
       "domainId": "platform",
-      "parentId": "grp-platform",
+      "parentId": "cmd-apivo",
       "technology": "Go, log/slog",
       "description": "Structured logging; JSON under APP_ENV=prod.",
       "tags": [
@@ -1137,7 +1166,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/platform/money",
       "type": "component",
       "domainId": "platform",
-      "parentId": "grp-platform",
+      "parentId": "cmd-apivo",
       "technology": "Go",
       "description": "money.Amount: integer minor units beside an explicit ISO-4217 code, explicit rounding modes, and JSON as {minor, currency}. No float path anywhere (C-6).",
       "tags": [
@@ -1151,7 +1180,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/platform/scheduler",
       "type": "component",
       "domainId": "platform",
-      "parentId": "grp-platform",
+      "parentId": "cmd-apivo",
       "technology": "Go, Postgres advisory locks",
       "description": "Runs a named job on an interval, once across a fleet. Refuses to start when the pool cannot carry two connections per job plus two reserved.",
       "tags": [
@@ -1165,7 +1194,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/platform/brand",
       "type": "component",
       "domainId": "platform",
-      "parentId": "grp-platform",
+      "parentId": "cmd-apivo",
       "technology": "Go, JSON",
       "description": "Reads the deployment's brand definition from BRAND_DIR and generates its TypeScript counterpart. No brand ships in this repository — there is none it could ship that would not be a lie about a real company.",
       "tags": [
@@ -1179,7 +1208,7 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "name": "internal/platform/text",
       "type": "component",
       "domainId": "platform",
-      "parentId": "grp-platform",
+      "parentId": "cmd-apivo",
       "technology": "Go",
       "description": "Prose helpers shared by the modules that render copy.",
       "tags": [
@@ -1965,6 +1994,218 @@ One object with `domains`, `objects` and `connections`. Ids are stable kebab-cas
       "direction": "outgoing",
       "description": "Brings a per-pull-request preview stack up beneath the preview domain, and tears it down again.",
       "technology": "docker compose"
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-click-to-credit",
+      "name": "A click becomes a credit",
+      "diagramOf": "cmd-apivo",
+      "steps": [
+        {
+          "type": "introduction",
+          "description": "A member opens a merchant page and clicks through to the retailer.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        },
+        {
+          "type": "outgoing",
+          "description": "Reads the published rate band and snapshots the member's share onto the click, so a later change never reaches back.",
+          "originId": "cashback-clickout",
+          "targetId": "cashback-catalogue",
+          "viaId": "clickout-to-catalogue"
+        },
+        {
+          "type": "outgoing",
+          "description": "Builds the network's deeplink and mints the click reference the network will report back.",
+          "originId": "cashback-clickout",
+          "targetId": "cashback-networks",
+          "viaId": "clickout-to-networks"
+        },
+        {
+          "type": "information",
+          "description": "Days or weeks pass. The poller reads each network inside its window, minus that network's reporting lag, and stores the evidence verbatim.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        },
+        {
+          "type": "outgoing",
+          "description": "Takes the reported commission and the evidence row the sweep stored.",
+          "originId": "cashback-earnings",
+          "targetId": "cashback-networks",
+          "viaId": "earnings-to-networks"
+        },
+        {
+          "type": "outgoing",
+          "description": "Matches the report's click reference to exactly one click. No match means the unattributed queue, never a credit.",
+          "originId": "cashback-earnings",
+          "targetId": "cashback-clickout",
+          "viaId": "earnings-to-clickout"
+        },
+        {
+          "type": "outgoing",
+          "description": "Divides the commission at the snapshotted rate and posts the transfer: the member's share to their held account, the remainder to the house.",
+          "originId": "cashback-earnings",
+          "targetId": "cashback-wallet",
+          "viaId": "earnings-to-wallet"
+        },
+        {
+          "type": "conclusion",
+          "description": "The member's balance moved because a network said so and a click proved whose it was. No other path reaches the ledger.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        }
+      ]
+    },
+    {
+      "id": "flow-withdrawal",
+      "name": "A withdrawal leaves the business",
+      "diagramOf": "cmd-apivo",
+      "steps": [
+        {
+          "type": "introduction",
+          "description": "A member asks to be paid, at or above the twenty-euro threshold.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        },
+        {
+          "type": "outgoing",
+          "description": "Selects the confirmed entries that cover the request and moves them to reserved, so the same money cannot be claimed twice.",
+          "originId": "cashback-payout",
+          "targetId": "cashback-earnings",
+          "viaId": "payout-to-earnings"
+        },
+        {
+          "type": "outgoing",
+          "description": "Posts the reservation against the member's stage accounts.",
+          "originId": "cashback-payout",
+          "targetId": "cashback-wallet",
+          "viaId": "payout-to-wallet"
+        },
+        {
+          "type": "outgoing",
+          "description": "A named operator approves it. The approval row IS the approval — there is no path that pays without one (C-4).",
+          "originId": "cashback-ops",
+          "targetId": "cashback-payout",
+          "viaId": "ops-to-payout"
+        },
+        {
+          "type": "outgoing",
+          "description": "The manual SEPA rail makes the transfer under an idempotency key derived from the request, so a retry cannot pay twice (C-5).",
+          "originId": "cashback-payout",
+          "targetId": "payout-manual",
+          "viaId": "payout-to-manual"
+        },
+        {
+          "type": "conclusion",
+          "description": "Money left the business exactly once, against a named human, traceable back to the click that earned it.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        }
+      ]
+    },
+    {
+      "id": "flow-operator-queues",
+      "name": "An operator answers a queue",
+      "diagramOf": "cmd-apivo",
+      "steps": [
+        {
+          "type": "introduction",
+          "description": "Four queues, four questions, and every answer records who gave it.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        },
+        {
+          "type": "outgoing",
+          "description": "Whose click was this report, if anyone's? Resolving it attributes the transaction; dismissing it records why.",
+          "originId": "cashback-ops",
+          "targetId": "cashback-networks",
+          "viaId": "ops-to-networks"
+        },
+        {
+          "type": "outgoing",
+          "description": "Should this held entry be released to the member or rejected? A rejection is a second entry born reversed, never an edit (C-9).",
+          "originId": "cashback-ops",
+          "targetId": "cashback-earnings",
+          "viaId": "ops-to-earnings"
+        },
+        {
+          "type": "outgoing",
+          "description": "Is this payout approved, and has it settled?",
+          "originId": "cashback-ops",
+          "targetId": "cashback-payout",
+          "viaId": "ops-to-payout"
+        },
+        {
+          "type": "conclusion",
+          "description": "No decision that moves or withholds money is anonymous, and none of them can be rewritten afterwards.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        }
+      ]
+    },
+    {
+      "id": "flow-outbox",
+      "name": "Every decision is announced",
+      "diagramOf": "cmd-apivo",
+      "steps": [
+        {
+          "type": "introduction",
+          "description": "Modules never call each other. They write to the append-only event stream in the same transaction as the change itself.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        },
+        {
+          "type": "outgoing",
+          "description": "A click was minted.",
+          "originId": "cashback-clickout",
+          "targetId": "platform-events",
+          "viaId": "clickout-events"
+        },
+        {
+          "type": "outgoing",
+          "description": "A network reported, superseded or reversed a transaction.",
+          "originId": "cashback-networks",
+          "targetId": "platform-events",
+          "viaId": "networks-events"
+        },
+        {
+          "type": "outgoing",
+          "description": "An entry opened, moved stage or was reversed.",
+          "originId": "cashback-earnings",
+          "targetId": "platform-events",
+          "viaId": "earnings-events"
+        },
+        {
+          "type": "outgoing",
+          "description": "A ledger transfer was posted.",
+          "originId": "cashback-wallet",
+          "targetId": "platform-events",
+          "viaId": "wallet-events"
+        },
+        {
+          "type": "outgoing",
+          "description": "A withdrawal was requested, approved, rejected or settled.",
+          "originId": "cashback-payout",
+          "targetId": "platform-events",
+          "viaId": "payout-events"
+        },
+        {
+          "type": "conclusion",
+          "description": "The outbox is the only channel between products, which is what lets a second product be added without modifying the first.",
+          "originId": null,
+          "targetId": null,
+          "viaId": null
+        }
+      ]
     }
   ]
 }
