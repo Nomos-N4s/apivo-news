@@ -41,7 +41,7 @@ func withdrawalRoutes(t *testing.T, cashback config.CashbackConfig) ([]platformh
 	}
 	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, Cashback: cashback},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestTheWithdrawalSurfaceIsUnmountedWithoutTheFlag(t *testing.T) {
 
 	jwks := newJWKSServer(t, newSigningKey(t))
 	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
-		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
+		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestTheSettlementSweepIsBuiltAndRegisterable(t *testing.T) {
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestNoSettlementSweepWhereThereIsNothingToSettle(t *testing.T) {
 	jwks := newJWKSServer(t, key)
 
 	_, built, closeVerifier, err := newAuthenticatedRoutes(ctx,
-		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
+		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}

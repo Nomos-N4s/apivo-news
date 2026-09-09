@@ -4,11 +4,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/earnings"
+	"github.com/Nomos-N4s/apivo-news/internal/cashback/ops"
 	"github.com/Nomos-N4s/apivo-news/internal/cashback/wallet"
 	"github.com/Nomos-N4s/apivo-news/internal/platform/events"
 )
@@ -132,4 +135,137 @@ func TestTheMoneyInstrumentsWorkWithTelemetryOff(t *testing.T) {
 	money.deadLettered(context.Background(), events.DeadLetter{
 		Subscriber: "s", Event: events.Event{Type: "t"},
 	})
+}
+
+// TestTheLifecycleFunnelReachesTheScrape. The Outcome struct was computed and
+// thrown away at the job boundary, and it is the earning funnel: opened
+// pending, held by a rule, or queued because the report matched no click.
+func TestTheLifecycleFunnelReachesTheScrape(t *testing.T) {
+	t.Parallel()
+	p := observedProvider(t)
+	money, err := newMoneyInstruments(p)
+	if err != nil {
+		t.Fatalf("building: %v", err)
+	}
+
+	money.LifecycleRan(context.Background(), earnings.Outcome{
+		Credited: 3, Held: 1, Queued: 2, Confirmed: 4, Reversed: 1, Failed: 1,
+	})
+
+	body := scrape(t, p)
+	if !strings.Contains(body, "apivo_cashback_credits") {
+		t.Fatalf("the lifecycle outcome is not in the scrape:\n%s", body)
+	}
+	for _, want := range []string{"credited", "held", "queued", "confirmed", "reversed", "failed"} {
+		if !strings.Contains(body, `outcome="`+want+`"`) {
+			t.Errorf("the scrape does not carry outcome=%q:\n%s", want, body)
+		}
+	}
+	// Awaiting was zero on this pass and a counter is a rate: adding nothing
+	// and adding zero are the same fact, and a series nobody has ever
+	// incremented has nothing to say.
+	if strings.Contains(body, `outcome="awaiting"`) {
+		t.Errorf("a zero was recorded as if something had happened:\n%s", body)
+	}
+
+	var _ earnings.LifecycleObserver = money
+}
+
+// TestOnlyNewlyRecordedDifferencesAreCounted.
+//
+// Found is every difference the pass DERIVED, and a re-import of the same
+// statement derives all of them again while writing none. Counting Found would
+// turn a retried import into a fresh discrepancy every time - and a retried
+// import is exactly what an operator does when the first one failed.
+func TestOnlyNewlyRecordedDifferencesAreCounted(t *testing.T) {
+	t.Parallel()
+	p := observedProvider(t)
+	money, err := newMoneyInstruments(p)
+	if err != nil {
+		t.Fatalf("building: %v", err)
+	}
+
+	// A pass that derived three and wrote none: the same statement, imported
+	// a second time.
+	money.differencesFound(context.Background(), ops.Detection{
+		Found: []ops.Difference{
+			{Kind: ops.ReportedNotPaid}, {Kind: ops.PaidNotReported}, {Kind: ops.AmountMismatch},
+		},
+		Recorded: 0,
+	})
+	if body := scrape(t, p); strings.Contains(body, "apivo_cashback_reconciliation_differences") {
+		t.Fatalf("a re-import that wrote nothing was counted as a discrepancy:\n%s", body)
+	}
+
+	// And a pass that did write something is counted.
+	money.differencesFound(context.Background(), ops.Detection{
+		Found:    []ops.Difference{{Kind: ops.ReportedNotPaid}, {Kind: ops.AmountMismatch}},
+		Recorded: 2,
+	})
+	body := scrape(t, p)
+	if !strings.Contains(body, "apivo_cashback_reconciliation_differences") {
+		t.Fatalf("a recorded difference was not counted:\n%s", body)
+	}
+	if !strings.Contains(body, "} 2") {
+		t.Errorf("the count is not the 2 that were recorded:\n%s", body)
+	}
+}
+
+// TestADetectionThatFailedCountsNothing. The decorator is where that is
+// decided, and a number that moved on a pass which did not complete would say
+// a discrepancy was found where none was read.
+func TestADetectionThatFailedCountsNothing(t *testing.T) {
+	t.Parallel()
+	p := observedProvider(t)
+	money, err := newMoneyInstruments(p)
+	if err != nil {
+		t.Fatalf("building: %v", err)
+	}
+	counted := countedReconciliation{ReconciliationStore: failingDetector{}, money: money}
+
+	if _, err := counted.DetectDifferences(context.Background(), uuid.New()); err == nil {
+		t.Fatal("the failing detector reported success")
+	}
+	if body := scrape(t, p); strings.Contains(body, "apivo_cashback_reconciliation_differences") {
+		t.Errorf("a failed detection was counted:\n%s", body)
+	}
+}
+
+// failingDetector is a reconciliation store whose detection never completes.
+// Only DetectDifferences is reachable through the decorator under test; the
+// embedded nil interface makes any other call a deliberate panic rather than
+// a silent zero.
+//
+// It returns a POPULATED detection alongside its error, which *PGStore does
+// not - PGStore answers a zero Detection on every failure path. The fake is
+// deliberately less careful, because the decorator must not be relying on its
+// dependency's tidiness: a store that wrote two rows and then failed to commit
+// has recorded nothing, whatever its return value says.
+type failingDetector struct {
+	ops.ReconciliationStore
+}
+
+func (failingDetector) DetectDifferences(context.Context, uuid.UUID) (ops.Detection, error) {
+	return ops.Detection{
+		Found:    []ops.Difference{{Kind: ops.ReportedNotPaid}, {Kind: ops.AmountMismatch}},
+		Recorded: 2,
+	}, errors.New("the detection could not run")
+}
+
+// TestNilInstrumentsAreSafeAtEverySeam. The wiring tests pass none, so a nil
+// receiver reaching any of the four reports is not hypothetical.
+func TestNilInstrumentsAreSafeAtEverySeam(t *testing.T) {
+	t.Parallel()
+	var money *moneyInstruments
+	ctx := context.Background()
+	money.LedgerSummed(ctx, wallet.LedgerSum{Currencies: 1, Net: map[string]int64{"EUR": 0}})
+	money.deadLettered(ctx, events.DeadLetter{Subscriber: "s", Event: events.Event{Type: "t"}})
+	money.LifecycleRan(ctx, earnings.Outcome{Credited: 1})
+	money.differencesFound(ctx, ops.Detection{Recorded: 1})
+
+	// And through the decorator, which is how a wiring test reaches one.
+	counted := countedReconciliation{ReconciliationStore: failingDetector{}, money: money}
+	if _, err := counted.DetectDifferences(ctx, uuid.New()); err == nil {
+		t.Error("the failing detector reported success")
+	}
 }

@@ -36,7 +36,7 @@ func walletRoutes(ctx context.Context, t *testing.T, pool *pgxpool.Pool, jwksURL
 			LedgerDriver:    config.LedgerDriverMemory,
 			PayoutThreshold: threshold,
 		}},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestTheWalletSurfaceIsUnmountedWithoutTheFlag(t *testing.T) {
 
 	jwks := newJWKSServer(t, newSigningKey(t))
 	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
-		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
+		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestTheWalletPathIsMountedWithItsSubtree(t *testing.T) {
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestTheParticipationPathIsMountedWithItsSubtree(t *testing.T) {
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestTheParticipationSurfaceIsUnmountedWithoutTheFlag(t *testing.T) {
 
 	jwks := newJWKSServer(t, newSigningKey(t))
 	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
-		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
+		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestNoBrandDirStillMountsTheOptIn(t *testing.T) {
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("a deployment with no BRAND_DIR was refused: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestABrandDirThatHoldsNoBrandRefusesToStart(t *testing.T) {
 		config.Config{JWKSURL: jwks.URL, BrandDir: t.TempDir(), Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if closeVerifier != nil {
 		t.Cleanup(closeVerifier)
 	}
@@ -346,7 +346,7 @@ func TestTheWiredOptInRecordsWhatTheBrandSays(t *testing.T) {
 		config.Config{JWKSURL: jwks.URL, BrandDir: brandDir(t), Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestTheExportPathIsMountedWithItsSubtree(t *testing.T) {
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestTheWiredExportAnswersItsOwnMember(t *testing.T) {
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}

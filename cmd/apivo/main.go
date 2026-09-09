@@ -229,6 +229,17 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		}
 	}()
 
+	// The money invariants' instruments, built once here rather than at each
+	// seam that reports through them: an instrument is registered against a
+	// name, and two built under one name is how a metric silently stops
+	// adding up. Built whether or not telemetry is configured, because then
+	// they are no-ops and the alternative is a branch whose other side only
+	// runs in production. An error is a name this binary got wrong.
+	money, err := newMoneyInstruments(telemetryProvider)
+	if err != nil {
+		return err
+	}
+
 	if err := platformdb.Migrate(cfg.DatabaseURL); err != nil {
 		return err
 	}
@@ -306,7 +317,7 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		}
 		log.ErrorContext(ctx, "JWKS_URL is not set: "+surfaces+" is UNMOUNTED and will answer 404; reader endpoints are unaffected. Set JWKS_URL to the auth provider JWKS endpoint to enable them")
 	} else {
-		authenticated, built, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, log, pool, adapter)
+		authenticated, built, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, log, pool, adapter, money)
 		if err != nil {
 			return err
 		}
@@ -446,10 +457,6 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 			return err
 		}
 		jobs := scheduler.New(log, locker, scheduler.Config{Observer: jobsObserver})
-		money, err := newMoneyInstruments(telemetryProvider)
-		if err != nil {
-			return err
-		}
 		if err := wallet.NewZeroSumCheck(log, pool, ledgerSchema).Watch(money).Register(jobs); err != nil {
 			return err
 		}
@@ -471,6 +478,11 @@ func serve(ctx context.Context, getenv func(string) string, stdout io.Writer) er
 		}
 		registered += subscribing
 
+		// Watched before registration, so the first run this process makes
+		// is counted. The Outcome the job returns was discarded until #618.
+		if lifecycle != nil {
+			lifecycle.Watch(money)
+		}
 		crediting, err := registerLifecycle(ctx, log, jobs, lifecycle)
 		if err != nil {
 			return err
@@ -635,7 +647,7 @@ func registerSettlement(ctx context.Context, log *slog.Logger, jobs *scheduler.S
 	return 1, nil
 }
 
-func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool, adapter networks.Network) ([]platformhttp.Route, *cashbackJobs, func(), error) {
+func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool, adapter networks.Network, money *moneyInstruments) ([]platformhttp.Route, *cashbackJobs, func(), error) {
 	verifier, err := identity.NewVerifier(ctx, identity.VerifierConfig{
 		JWKSURL:  cfg.JWKSURL,
 		Audience: cfg.JWTAudience,
@@ -845,7 +857,7 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	return append(routes,
 		platformhttp.Route{
 			Pattern: opsPrefix,
-			Handler: ops.NewHandler(log, opsStore, approvals, refusals, settlements, opsStore, reviews, opsStore, opsStore, networkInspector{cfg: cfg.Cashback, store: opsStore}, newOperatorAuth(ids, roles)),
+			Handler: ops.NewHandler(log, opsStore, approvals, refusals, settlements, countedReconciliation{ReconciliationStore: opsStore, money: money}, reviews, opsStore, opsStore, networkInspector{cfg: cfg.Cashback, store: opsStore}, newOperatorAuth(ids, roles)),
 		},
 		// Mounted at the path AND at its subtree, so a stray sub-path is
 		// answered in problem+json by the module rather than redirected by
