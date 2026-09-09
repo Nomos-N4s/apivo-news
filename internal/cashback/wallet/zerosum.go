@@ -121,6 +121,40 @@ type TxBeginner interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
+// LedgerSum is what one pass of the C-1 check found.
+//
+// It carries EVERY currency the pass summed, not only the ones that are
+// wrong, and the reason is that the measurement below it is a gauge: a gauge
+// nobody sets stays where it was. A currency that was out of balance and has
+// since been corrected would otherwise keep reporting the old delta until the
+// process restarted, and an alert on it would never clear - which is the
+// failure that teaches an operator to distrust the alert rather than the
+// ledger.
+type LedgerSum struct {
+	// Currencies is how many the pass summed. Zero means no co-located
+	// ledger was visible: vacuously clean, which is a different fact from
+	// verified clean and must not be readable as the same number.
+	Currencies int
+	// Net is the signed minor-unit delta by currency code, zeroes included.
+	// Nil where the pass could not read at all - a failed check reports no
+	// balances rather than reporting balanced.
+	Net map[string]int64
+}
+
+// LedgerObserver is told what each pass of the C-1 check found.
+//
+// Declared here rather than imported, so that the wallet package stays
+// ignorant of how anybody watches it - the rule internal/platform/http follows
+// with Instrumentation and internal/platform/scheduler with Observer.
+//
+// A pass that FAILED reports nothing through this seam. The error goes to the
+// scheduler, which already counts a failed run; reporting a zero here instead
+// would be the check telling somebody the ledger is fine because it could not
+// look at it, which is the exact failure 0016 and 0020 exist to prevent.
+type LedgerObserver interface {
+	LedgerSummed(ctx context.Context, sum LedgerSum)
+}
+
 // ZeroSumCheck is the continuous C-1 check. Construct it with
 // NewZeroSumCheck, hand it to the process's scheduler with Register, and
 // the scheduler drives Run on the package's own cadence under a
@@ -130,6 +164,24 @@ type ZeroSumCheck struct {
 	log          *slog.Logger
 	db           TxBeginner
 	ledgerSchema string
+	observer     LedgerObserver
+}
+
+// Watch tells the check to report every pass to observer, and answers the
+// check so a caller can wire it in one expression. A nil observer, and never
+// calling this at all, are both supported: the check is a constitutional
+// invariant and does not depend on anybody watching it.
+func (c *ZeroSumCheck) Watch(observer LedgerObserver) *ZeroSumCheck {
+	c.observer = observer
+	return c
+}
+
+// report tells the observer, if there is one.
+func (c *ZeroSumCheck) report(ctx context.Context, sum LedgerSum) {
+	if c.observer == nil {
+		return
+	}
+	c.observer.LedgerSummed(ctx, sum)
 }
 
 // NewZeroSumCheck builds the check on the process's connection pool - the
@@ -209,12 +261,17 @@ func (c *ZeroSumCheck) Run(ctx context.Context) error {
 	}
 	var currencies int
 	var broken []delta
+	// Every currency, not only the broken ones: see LedgerSum. Built even
+	// with no observer wired, because the alternative is a branch whose
+	// other side never runs in a test.
+	net := make(map[string]int64)
 	for rows.Next() {
 		var d delta
 		if err := rows.Scan(&d.currency, &d.netMinor); err != nil {
 			return fmt.Errorf("wallet: the C-1 zero-sum check could not read its own result: %w", err)
 		}
 		currencies++
+		net[d.currency] = d.netMinor
 		if d.netMinor != 0 {
 			broken = append(broken, d)
 		}
@@ -225,6 +282,9 @@ func (c *ZeroSumCheck) Run(ctx context.Context) error {
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("wallet: the C-1 zero-sum check could not run, which is a failure of the check and never a clean ledger: %w", err)
 	}
+	// Only now, past every way this pass could have failed to see what it
+	// exists to see.
+	c.report(ctx, LedgerSum{Currencies: currencies, Net: net})
 
 	if len(broken) == 0 {
 		// Debug, not Info, in both clean shapes: with the check on a
