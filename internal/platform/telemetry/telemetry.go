@@ -39,6 +39,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -98,6 +99,7 @@ const DefaultSampleRatio = 1.0
 type Provider struct {
 	enabled  bool
 	tracer   trace.TracerProvider
+	meter    metric.MeterProvider
 	registry *prometheus.Registry
 	shutdown []func(context.Context) error
 }
@@ -194,6 +196,7 @@ func (p *Provider) startMetrics(res *resource.Resource) error {
 		return fmt.Errorf("telemetry: building the metrics reader: %w", err)
 	}
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader), sdkmetric.WithResource(res))
+	p.meter = provider
 	p.registry = registry
 	p.shutdown = append(p.shutdown, provider.Shutdown)
 	return nil

@@ -111,7 +111,7 @@ func TestTheCreditingJobIsBuiltWithTheRoutesAndRegisterable(t *testing.T) {
 
 	cfg := creditingConfigured()
 	cfg.JWKSURL = jwks.URL
-	_, built, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, discardLogger(), pool, nil)
+	_, built, closeVerifier, err := newAuthenticatedRoutes(ctx, cfg, discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestNoCreditingJobWhereTheHouseAccountIsUnnamed(t *testing.T) {
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{
 			Enabled: true, LedgerDriver: config.LedgerDriverMemory,
 		}},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}

@@ -471,3 +471,86 @@ func TestZeroSumCheckRunsAsAScheduledJob(t *testing.T) {
 		t.Fatalf("the scheduler never recorded a failed %q run; output: %s", wallet.ZeroSumJobName, out.String())
 	}
 }
+
+// recordingLedgerObserver keeps what each pass reported.
+type recordingLedgerObserver struct {
+	sums []wallet.LedgerSum
+}
+
+func (r *recordingLedgerObserver) LedgerSummed(_ context.Context, sum wallet.LedgerSum) {
+	r.sums = append(r.sums, sum)
+}
+
+// TestZeroSumCheckReportsEveryCurrencyAndNotOnlyTheBrokenOnes.
+//
+// The measurement behind this seam is a gauge, and a gauge nobody sets stays
+// where it was. If a pass reported only the currencies that are wrong, a
+// currency corrected after an incident would keep reporting the old delta
+// until the process restarted - the alert would never clear, and the next
+// person would learn to distrust the alert rather than the ledger.
+func TestZeroSumCheckReportsEveryCurrencyAndNotOnlyTheBrokenOnes(t *testing.T) {
+	t.Parallel()
+	tx := zeroSumTx(t)
+	schema := pinZeroSumSchema(t, tx)
+	standInLedger(t, tx, schema, `(500, 'EUR'), (-500, 'EUR'), (250, 'GBP')`)
+
+	observer := &recordingLedgerObserver{}
+	check, _ := zeroSumCheck(tx)
+	check.Watch(observer)
+
+	// GBP is out of balance, so the run reports the violation.
+	if err := check.Run(context.Background()); !errors.Is(err, wallet.ErrOutOfBalance) {
+		t.Fatalf("Run() error = %v, want ErrOutOfBalance", err)
+	}
+	if len(observer.sums) != 1 {
+		t.Fatalf("the observer was told about %d passes, want 1", len(observer.sums))
+	}
+	got := observer.sums[0]
+	if got.Currencies != 2 {
+		t.Errorf("Currencies = %d, want 2", got.Currencies)
+	}
+	if net, ok := got.Net["EUR"]; !ok || net != 0 {
+		t.Errorf("Net[EUR] = %d (present %v), want a reported zero: a balanced currency is a fact, not an absence", net, ok)
+	}
+	if got.Net["GBP"] != 250 {
+		t.Errorf("Net[GBP] = %d, want 250", got.Net["GBP"])
+	}
+}
+
+// TestZeroSumCheckReportsNothingWhenItCouldNotLook. A check that cannot see
+// the postings it exists to sum must not report a balance - reporting zero
+// currencies and no deltas would be indistinguishable from a clean vacuous
+// run, which is the blinding 0016 and 0020 exist to prevent.
+func TestZeroSumCheckReportsNothingWhenItCouldNotLook(t *testing.T) {
+	t.Parallel()
+	tx := zeroSumTx(t)
+	// A schema that was pinned and never built: the view RAISEs.
+	pinZeroSumSchema(t, tx)
+	observer := &recordingLedgerObserver{}
+	check, _ := zeroSumCheck(tx)
+	check.Watch(observer)
+
+	if err := check.Run(context.Background()); err == nil {
+		t.Fatal("Run() over an absent ledger succeeded")
+	} else if errors.Is(err, wallet.ErrOutOfBalance) {
+		t.Fatalf("a blinded check reported an imbalance rather than a failure: %v", err)
+	}
+	if len(observer.sums) != 0 {
+		t.Errorf("a failed pass reported %+v; it must report nothing at all", observer.sums)
+	}
+}
+
+// TestZeroSumCheckNeedsNoObserver. Every deployment today runs without one,
+// and the check is a constitutional invariant that does not depend on anybody
+// watching it.
+func TestZeroSumCheckNeedsNoObserver(t *testing.T) {
+	t.Parallel()
+	tx := zeroSumTx(t)
+	schema := pinZeroSumSchema(t, tx)
+	standInLedger(t, tx, schema, `(500, 'EUR'), (-500, 'EUR')`)
+
+	check, _ := zeroSumCheck(tx)
+	if err := check.Run(context.Background()); err != nil {
+		t.Fatalf("Run() with no observer: %v", err)
+	}
+}

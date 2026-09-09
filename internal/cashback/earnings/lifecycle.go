@@ -87,6 +87,21 @@ type Beginner interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
+// LifecycleObserver is told what each run did.
+//
+// Declared here rather than imported, so this package stays ignorant of how
+// anybody watches it - the rule internal/platform/http follows with
+// Instrumentation and internal/platform/scheduler with Observer.
+//
+// It is told about EVERY run, clean ones included, because the counts are the
+// funnel: credits opened, credits held, reports that matched no click. A run
+// that did nothing is the fact that answers "the first transaction has not
+// shown up yet", and reporting only the interesting runs would leave that
+// question unanswerable.
+type LifecycleObserver interface {
+	LifecycleRan(ctx context.Context, out Outcome)
+}
+
 // Lifecycle runs the three passes on a schedule.
 type Lifecycle struct {
 	log        *slog.Logger
@@ -95,6 +110,15 @@ type Lifecycle struct {
 	receivable string
 	rules      HoldRules
 	now        func() time.Time
+	observer   LifecycleObserver
+}
+
+// Watch tells the job to report every run to observer, and answers the job so
+// a caller can wire it in one expression. Nil, and never calling this, are
+// both supported.
+func (l *Lifecycle) Watch(observer LifecycleObserver) *Lifecycle {
+	l.observer = observer
+	return l
 }
 
 // NewLifecycle assembles the job, refusing one that could not run.
@@ -133,7 +157,13 @@ func (l *Lifecycle) Register(jobs *scheduler.Scheduler) error {
 		Interval: LifecycleInterval,
 		Timeout:  lifecycleTimeout,
 		Run: func(ctx context.Context) error {
-			_, err := l.Run(ctx)
+			// The Outcome was discarded here until #618, which is why
+			// "how many credits did the last pass open" could not be
+			// answered without reading a log line by hand.
+			out, err := l.Run(ctx)
+			if l.observer != nil {
+				l.observer.LifecycleRan(ctx, out)
+			}
 			return err
 		},
 	})

@@ -111,7 +111,7 @@ func connectNetwork(ctx context.Context, cfg config.NetworkConfig, db pollerDB) 
 //
 // The adapter and the account row come from [connectNetwork], so what is
 // left here is only the poller and the two jobs over it.
-func newNetworkSweeps(ctx context.Context, log *slog.Logger, adapter networks.Network, connected networks.ConnectedAccount, db pollerDB) (*networks.Sweeps, error) {
+func newNetworkSweeps(ctx context.Context, log *slog.Logger, adapter networks.Network, connected networks.ConnectedAccount, db pollerDB, money *moneyInstruments) (*networks.Sweeps, error) {
 	poller, err := networks.NewPoller(db)
 	if err != nil {
 		return nil, err
@@ -124,7 +124,12 @@ func newNetworkSweeps(ctx context.Context, log *slog.Logger, adapter networks.Ne
 	if err != nil {
 		return nil, err
 	}
-	sweeps, err := networks.NewSweeps(log, poller, adapter, networks.WithAttributionCanary(canary))
+	// The verdict is measured as well as enforced (#618). During a network
+	// switch-on "has anything come back matched yet" is the whole question,
+	// and until now its answer was a Debug line nobody reads.
+	sweeps, err := networks.NewSweeps(log, poller, adapter,
+		networks.WithAttributionCanary(canary),
+		networks.WithAttributionObserver(money))
 	if err != nil {
 		return nil, err
 	}

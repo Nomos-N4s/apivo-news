@@ -31,7 +31,7 @@ func clickOutRoutes(ctx context.Context, t *testing.T, pool *pgxpool.Pool, jwksU
 	t.Helper()
 	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwksURL, Cashback: config.CashbackConfig{Enabled: true, LedgerDriver: config.LedgerDriverMemory}},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestTheClickOutSurfaceIsUnmountedWithoutTheFlag(t *testing.T) {
 
 	jwks := newJWKSServer(t, newSigningKey(t))
 	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
-		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil)
+		config.Config{JWKSURL: jwks.URL}, discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestTheClickOutPathIsMountedWithItsSubtree(t *testing.T) {
 	jwks := newJWKSServer(t, newSigningKey(t))
 	routes, _, closeVerifier, err := newAuthenticatedRoutes(ctx,
 		config.Config{JWKSURL: jwks.URL, Cashback: config.CashbackConfig{Enabled: true, LedgerDriver: config.LedgerDriverMemory}},
-		discardLogger(), pool, nil)
+		discardLogger(), pool, nil, nil)
 	if err != nil {
 		t.Fatalf("newAuthenticatedRoutes: %v", err)
 	}

@@ -417,6 +417,34 @@ func TestTheAttributionCanaryAgainstTheRealSchema(t *testing.T) {
 		}
 	})
 
+	eachPoll(ctx, t, tx, "the suspect verdict reaches an observer, although it arrives as an error", func(t *testing.T, tx pgx.Tx) {
+		// The verdict that matters most is the one the sweep RETURNS rather
+		// than logs: Check answers the suspect verdict alongside
+		// ErrAttributionNeverSucceeded, so a report placed after the error
+		// check would record every state except the alarm. That is the
+		// failure this case exists to catch (#618).
+		account := pollerSchemaAccount(ctx, t, tx)
+		canaryClick(ctx, t, tx, account, canaryClickAt)
+		adapter := pollerTestNetwork(account, pollerTestReports(canaryReports(t)...))
+
+		watcher := &recordingAttributionObserver{}
+		sweeps, err := networks.NewSweeps((&sweepTestLog{}).logger(), pollerSchemaPoller(t, tx), adapter,
+			networks.WithAttributionCanary(canary(t, tx)),
+			networks.WithAttributionObserver(watcher))
+		if err != nil {
+			t.Fatalf("NewSweeps(): %v", err)
+		}
+		if err := sweeps.RunForward(ctx); !errors.Is(err, networks.ErrAttributionNeverSucceeded) {
+			t.Fatalf("RunForward() = %v, want ErrAttributionNeverSucceeded", err)
+		}
+		if len(watcher.verdicts) != 1 {
+			t.Fatalf("the observer was told about %d verdicts, want 1: the alarm state must be measured, not only returned", len(watcher.verdicts))
+		}
+		if got := watcher.verdicts[0].State(); got != networks.AttributionSuspect {
+			t.Errorf("the observer was told state %q, want %q", got, networks.AttributionSuspect)
+		}
+	})
+
 	eachPoll(ctx, t, tx, "the retired and idle states are a debug line each, never a refusal", func(t *testing.T, tx pgx.Tx) {
 		account := pollerSchemaAccount(ctx, t, tx)
 		adapter := pollerTestNetwork(account, pollerTestReports(canaryReports(t)...))
@@ -488,4 +516,13 @@ func TestAttributionVerdictPredicates(t *testing.T) {
 			}
 		})
 	}
+}
+
+// recordingAttributionObserver keeps every verdict it was told about.
+type recordingAttributionObserver struct {
+	verdicts []networks.AttributionVerdict
+}
+
+func (r *recordingAttributionObserver) AttributionJudged(_ context.Context, v networks.AttributionVerdict) {
+	r.verdicts = append(r.verdicts, v)
 }

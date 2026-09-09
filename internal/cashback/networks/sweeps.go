@@ -92,6 +92,22 @@ type Sweeps struct {
 	// chose not to - and the sweep behaves exactly as it did before the
 	// canary existed.
 	canary *AttributionCanary
+	// watcher, when set, is told each verdict the canary reached.
+	watcher AttributionObserver
+}
+
+// AttributionObserver is told the canary's verdict after every forward poll
+// that got far enough to reach one.
+//
+// Declared here rather than imported, so this package stays ignorant of how
+// anybody watches it - the rule internal/platform/http follows with
+// Instrumentation and internal/platform/scheduler with Observer.
+//
+// It is told about every verdict, the dull ones included. "Nothing has come
+// back matched yet" is the whole question during a network switch-on, and a
+// seam that only reported the alarming verdict could not answer it.
+type AttributionObserver interface {
+	AttributionJudged(ctx context.Context, verdict AttributionVerdict)
 }
 
 // SweepOption configures a [Sweeps].
@@ -104,6 +120,15 @@ type SweepOption func(*Sweeps)
 // of its own.
 func WithAttributionCanary(canary *AttributionCanary) SweepOption {
 	return func(s *Sweeps) { s.canary = canary }
+}
+
+// WithAttributionObserver reports every verdict the canary reaches, so the
+// state of a network switch-on is answerable without reading Debug lines.
+// Separate from WithAttributionCanary because the canary is a refusal and
+// this is a measurement: a deployment may want the first without the second,
+// and a test wanting the second must not have to accept the first.
+func WithAttributionObserver(watcher AttributionObserver) SweepOption {
+	return func(s *Sweeps) { s.watcher = watcher }
 }
 
 // NewSweeps builds the pair over one adapter and the poller that drives it.
@@ -231,13 +256,29 @@ func (s *Sweeps) checkAttribution(ctx context.Context) error {
 		return nil
 	}
 	verdict, err := s.canary.Check(ctx, s.adapter.ID())
-	switch {
-	case err != nil:
+	// Reported BEFORE the switch, because the verdict that matters most
+	// arrives as an error: Check answers the suspect verdict alongside
+	// ErrAttributionNeverSucceeded, and the switch below returns on it
+	// without ever reaching a log line. A canary whose alarm is the one
+	// state nothing records would be worse than no canary.
+	//
+	// Any OTHER error means the canary could not count, and then the
+	// verdict is a zero value that would read as idle - the network has
+	// nothing to judge - which is the opposite of what is known. Nothing
+	// is reported in that case; the scheduler counts the failed run.
+	if err == nil || errors.Is(err, ErrAttributionNeverSucceeded) {
+		s.judged(ctx, verdict)
+	}
+	if err != nil {
 		return err
-	case verdict.Idle():
+	}
+	// Switched on the same State the measurement carries, so the two cannot
+	// come to disagree about which verdict this is.
+	switch verdict.State() {
+	case AttributionIdle:
 		s.log.DebugContext(ctx, "the attribution canary has nothing to judge: no member has clicked through this network yet",
 			"network", verdict.Network.String())
-	case verdict.Retired():
+	case AttributionRetired:
 		s.log.DebugContext(ctx, "the attribution canary is retired: a click reference has round-tripped at this network",
 			"network", verdict.Network.String(), "attributed", verdict.Attributed, "unattributed", verdict.Unattributed)
 	default:
@@ -246,4 +287,12 @@ func (s *Sweeps) checkAttribution(ctx context.Context) error {
 			"threshold", AttributionCanaryThreshold, "first_click_at", verdict.FirstClickAt)
 	}
 	return nil
+}
+
+// judged tells the watcher, if there is one.
+func (s *Sweeps) judged(ctx context.Context, verdict AttributionVerdict) {
+	if s.watcher == nil {
+		return
+	}
+	s.watcher.AttributionJudged(ctx, verdict)
 }
