@@ -709,9 +709,6 @@ func TestAlphaDefinitionOfDoneJourney(t *testing.T) {
 	frontA := journeyFindFront(t, readerHTTP, "de", []string{"munich"}, articleA)
 	if frontA == nil {
 		t.Fatal("article A is missing from the de/munich front page")
-		// Unreachable - t.Fatal calls runtime.Goexit - and here so that
-		// staticcheck can see it (SA5011).
-		return
 	}
 	if frontA.Headline != fake.results[journeyTramTitle].Headline {
 		t.Errorf("front headline = %q, want the translation's %q", frontA.Headline, fake.results[journeyTramTitle].Headline)

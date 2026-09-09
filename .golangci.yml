@@ -41,6 +41,31 @@ linters:
         linters:
           - gosec
           - noctx
+      # SA5011 in a test is the `t.Fatal` pattern, and staticcheck cannot see
+      # through it here:
+      #
+      #     if row == nil {
+      #         t.Fatalf("...")   // calls runtime.Goexit; nothing below runs
+      #     }
+      #     use(row.Field)        // "possible nil pointer dereference"
+      #
+      # The dereference is unreachable and the code is correct. Excluded for
+      # TESTS ONLY - SA5011 keeps its teeth everywhere it can actually find
+      # something, which is the production code where a nil deref is a panic
+      # in front of a reader rather than a failed assertion.
+      #
+      # Recorded because the shape of the evidence matters to whoever revisits
+      # this: it does not reproduce locally. golangci-lint v2.12.2 - the
+      # version ci.yml pins - with this file, on the exact commit CI builds,
+      # reports zero issues on Windows, under GOOS=linux, and with a cleared
+      # cache. Only the Linux runner sees it, and only since the OpenTelemetry
+      # dependency tree landed. Fixing the sites one at a time was tried first
+      # and is what proved the class: three were silenced and two more
+      # appeared, one of them in a spike unrelated to anything being changed.
+      - path: _test\.go
+        text: SA5011
+        linters:
+          - staticcheck
 
 formatters:
   enable:
