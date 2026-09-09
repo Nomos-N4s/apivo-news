@@ -308,9 +308,22 @@ write_preview_env() {
     mkdir -p "$PREVIEW_STATE/$_wp"
     # sslmode=require, like QA: the server is a container one hop away with a
     # self-signed certificate, so encrypt without claiming to verify.
+    #
+    # pool_max_conns is STATED rather than left to pgx's max(4, NumCPU). A
+    # preview registers almost nothing today - cashback is off and
+    # POLL_INTERVAL=0 stops the sweeps - so the default happens to be enough,
+    # and that is luck rather than a decision. The day a preview registers
+    # four jobs it would refuse to start, and it would look like the preview
+    # system being broken rather than a pool being too small.
+    #
+    # Sized below the named environments on purpose: previews share ONE
+    # Postgres (docker-compose.preview-db.yml sets max_connections=200), and
+    # APIVO_PREVIEW_MAX of them run at once, so a generous per-preview pool is
+    # multiplied by the cap. Twelve leaves room for five previews and the
+    # maintenance connections this script makes.
     umask 077
     cat > "$PREVIEW_STATE/$_wp/api.env" <<EOF
-DATABASE_URL=postgres://$PG_USER:$APIVO_PREVIEW_PG_PASSWORD@apivo-preview-postgres:5432/$_wdb?sslmode=require
+DATABASE_URL=postgres://$PG_USER:$APIVO_PREVIEW_PG_PASSWORD@apivo-preview-postgres:5432/$_wdb?sslmode=require&pool_max_conns=${APIVO_PREVIEW_POOL_MAX:-12}
 EOF
 
     # Auth, borrowed from QA's nonprod project.
