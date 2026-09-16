@@ -1,4 +1,4 @@
 {
-  "checkpoint_version": "branch-v1",
-  "checkpoint_min_version": "branch-v1"
+  "checkpoint_version": "refs-v1",
+  "checkpoint_min_version": "refs-v1"
 }
