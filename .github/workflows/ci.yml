@@ -239,7 +239,7 @@ jobs:
           fetch-depth: 0
       - name: Install Entire CLI
         run: |
-          curl -fsSL https://get.entire.io | sh
+          curl -fsSL https://github.com/entireio/cli/releases/download/v0.10.6/entire_0.10.6_linux_amd64.tar.gz | tar -xz -C /usr/local/bin
           echo "$HOME/.entire/bin" >> $GITHUB_PATH
       - name: Verify checkpoint health
         run: entire doctor
