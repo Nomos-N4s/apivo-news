@@ -37,3 +37,6 @@ Thumbs.db
 
 # Entire.io local state
 .entire/
+!.entire/settings.json
+!.entire/.gitignore
+
