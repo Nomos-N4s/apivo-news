@@ -4,11 +4,6 @@
   "commit_linking": "always",
   "sign_checkpoint_commits": true,
   "checkpoints": {
-    "primary": { "type": "git-refs" },
-    "checkpoint_remote": {
-      "provider": "github",
-      "repo": "Nomos-N4s/apivo-news-checkpoints"
-    },
-    "checkpoint_push_remote": "origin"
+    "primary": { "type": "git-refs" }
   }
 }
