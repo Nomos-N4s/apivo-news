@@ -185,7 +185,15 @@ jobs:
         # Runs here rather than in a workflow of its own for the same reason
         # the author lint does: this job is the one that judges history, and
         # publish.yml calls this workflow on every merge.
-        run: sh scripts/pre-push-hook_test.sh
+        # Debug: trace hook execution environment
+        env:
+          GIT_TRACE: "1"
+        run: |
+          echo "--- pre-push hook test debug ---"
+          echo "git version: $(git --version)"
+          echo "hooksPath: $(git config --local core.hooksPath 2>/dev/null || echo 'not set')"
+          echo "--- running test ---"
+          sh scripts/pre-push-hook_test.sh
       - name: Reject a ref name that names an assistant or vendor
         # `github.ref` rather than `github.ref_name`, because the short name
         # of a tag is `v1.2.3` and the convention rule would refuse it; the
@@ -237,8 +245,14 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Install Entire CLI
+        run: |
+          curl -fsSL https://get.entire.io | sh
+          echo "$HOME/.entire/bin" >> $GITHUB_PATH
       - name: Verify checkpoint health
         run: entire doctor
+      - name: Verify checkpoint sync status
+        run: entire status --json
 
   lint:
     runs-on: ubuntu-latest
