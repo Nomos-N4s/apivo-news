@@ -255,7 +255,10 @@ jobs:
           fetch-depth: 0
       - name: Install Entire CLI
         run: |
-          curl -fsSL https://get.entire.io | sh
+          ENTIRE_URL=$(curl -sL "https://api.github.com/repos/entireio/cli/releases/latest" | python3 -c "import sys,json; data=json.load(sys.stdin); print(next((a['name'] for a in data['assets'] if 'linux' in a['name'].lower() and 'tar.gz' in a['name'].lower()), ''))")
+          if [ -n "$ENTIRE_URL" ]; then
+            curl -fsSL "https://github.com/entireio/cli/releases/latest/download/$ENTIRE_URL" | tar -xz -C /usr/local/bin
+          fi
           echo "$HOME/.entire/bin" >> $GITHUB_PATH
       - name: Verify checkpoint health
         run: entire doctor

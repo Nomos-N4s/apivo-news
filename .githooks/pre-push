@@ -5,6 +5,16 @@
 if command -v entire >/dev/null 2>&1; then entire hooks git pre-push "$1"; else :; fi
 # Chain: run pre-existing hook
 _entire_hook_dir="$(dirname "$0")"
-if [ -x "$_entire_hook_dir/pre-push.pre-entire" ]; then
-    "$_entire_hook_dir/pre-push.pre-entire" "$@"
+if [ -f "$_entire_hook_dir/pre-push.pre-entire" ]; then
+    if [ -x "$_entire_hook_dir/pre-push.pre-entire" ]; then
+        "$_entire_hook_dir/pre-push.pre-entire" "$@"
+    else
+        echo "pre-push: pre-push.pre-entire exists but is not executable." >&2
+        echo "pre-push: run: chmod +x $_entire_hook_dir/pre-push.pre-entire" >&2
+        exit 1
+    fi
+else
+    echo "pre-push: pre-push.pre-entire is missing, so ref names cannot be judged." >&2
+    echo "pre-push: restore it or push with --no-verify, but do not assume the name is clean." >&2
+    exit 1
 fi
