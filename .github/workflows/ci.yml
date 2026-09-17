@@ -185,6 +185,14 @@ jobs:
         # Runs here rather than in a workflow of its own for the same reason
         # the author lint does: this job is the one that judges history, and
         # publish.yml calls this workflow on every merge.
+        # Ensure hook is executable so Git invokes it during push
+        run: chmod +x .githooks/pre-push
+      - name: Prove the pre-push hook (with trace)
+        # Driven through real `git push` against a bare repository, because
+        # what the hook has to get right is the protocol git speaks to it.
+        # Runs here rather than in a workflow of its own for the same reason
+        # the author lint does: this job is the one that judges history, and
+        # publish.yml calls this workflow on every merge.
         # Debug: trace hook execution environment
         env:
           GIT_TRACE: "1"
