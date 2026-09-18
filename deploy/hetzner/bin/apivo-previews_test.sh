@@ -290,6 +290,18 @@ else
     FAILS=1
 fi
 
+# The pool is STATED, not inherited from pgx's max(4, NumCPU). A preview
+# registers almost nothing today, so the default happens to be enough - which
+# is luck, and luck stops the day a preview registers four jobs. It would
+# refuse to start, and it would read as the preview system being broken
+# rather than as a pool being too small.
+if grep -q 'pool_max_conns=' "$APIVO_STATE/previews/pr-1/api.env"; then
+    echo "ok: and its pool size is stated rather than left to a default"
+else
+    echo "FAIL: pr-1's DATABASE_URL carries no pool_max_conns, so its pool is whatever pgx defaults to"
+    FAILS=1
+fi
+
 # ===========================================================================
 # ===========================================================================
 # A preview must be able to sign an editor in.
