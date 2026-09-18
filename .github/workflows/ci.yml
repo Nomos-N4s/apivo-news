@@ -185,7 +185,23 @@ jobs:
         # Runs here rather than in a workflow of its own for the same reason
         # the author lint does: this job is the one that judges history, and
         # publish.yml calls this workflow on every merge.
-        run: sh scripts/pre-push-hook_test.sh
+        # Ensure hook is executable so Git invokes it during push
+        run: chmod +x .githooks/pre-push
+      - name: Prove the pre-push hook (with trace)
+        # Driven through real `git push` against a bare repository, because
+        # what the hook has to get right is the protocol git speaks to it.
+        # Runs here rather than in a workflow of its own for the same reason
+        # the author lint does: this job is the one that judges history, and
+        # publish.yml calls this workflow on every merge.
+        # Debug: trace hook execution environment
+        env:
+          GIT_TRACE: "1"
+        run: |
+          echo "--- pre-push hook test debug ---"
+          echo "git version: $(git --version)"
+          echo "hooksPath: $(git config --local core.hooksPath 2>/dev/null || echo 'not set')"
+          echo "--- running test ---"
+          sh scripts/pre-push-hook_test.sh
       - name: Reject a ref name that names an assistant or vendor
         # `github.ref` rather than `github.ref_name`, because the short name
         # of a tag is `v1.2.3` and the convention rule would refuse it; the
@@ -227,6 +243,27 @@ jobs:
             fi
           done < /tmp/subjects.txt
           exit "$BAD"
+
+  entire-doctor:
+    name: Entire.io checkpoint health
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install Entire CLI
+        run: |
+          ENTIRE_URL=$(curl -sL "https://api.github.com/repos/entireio/cli/releases/latest" | python3 -c "import sys,json; data=json.load(sys.stdin); print(next((a['name'] for a in data['assets'] if 'linux' in a['name'].lower() and 'tar.gz' in a['name'].lower()), ''))")
+          if [ -n "$ENTIRE_URL" ]; then
+            curl -fsSL "https://github.com/entireio/cli/releases/latest/download/$ENTIRE_URL" | tar -xz -C /usr/local/bin
+          fi
+          echo "$HOME/.entire/bin" >> $GITHUB_PATH
+      - name: Verify checkpoint health
+        run: entire doctor
+      - name: Verify checkpoint sync status
+        run: entire status --json
 
   lint:
     runs-on: ubuntu-latest
@@ -717,3 +754,10 @@ jobs:
       - uses: actions/checkout@v7
       - name: Build the frontend image (no push)
         run: docker build -t apivo-web:ci web/
+
+
+
+
+
+
+

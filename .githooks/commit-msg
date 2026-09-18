@@ -1,7 +1,9 @@
 #!/bin/sh
-# Strip any AI attribution trailers. Portable across Git Bash, WSL, Linux and macOS.
-# Case-insensitive: blocklists must over-match, not under-match. The mv is not
-# gated on grep's status - grep exits 1 when nothing survives, and git itself
-# rejects an empty message with a clear error.
-grep -iv -E '^(co-authored-by:.*(noreply@anthropic\.com|claude)|.*generated with \[?claude|claude-session:)' "$1" > "$1.tmp"
-mv "$1.tmp" "$1"
+# Entire CLI hooks
+# Commit-msg hook: strip trailer if no user content (allows aborting empty commits)
+if command -v entire >/dev/null 2>&1; then entire hooks git commit-msg "$1" || true; else printf '%s\n' '[entire] Entire CLI is enabled but not installed or not on PATH. Skipping Entire Git hook; continuing. Installation guide: https://docs.entire.io/cli/installation#installation-methods' >&2 || :; fi
+# Chain: run pre-existing hook
+_entire_hook_dir="$(dirname "$0")"
+if [ -x "$_entire_hook_dir/commit-msg.pre-entire" ]; then
+    "$_entire_hook_dir/commit-msg.pre-entire" "$@"
+fi

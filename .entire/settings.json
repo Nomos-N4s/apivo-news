@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "telemetry": true,
+  "commit_linking": "always",
+  "sign_checkpoint_commits": true,
+  "checkpoints": {
+    "primary": { "type": "git-refs" }
+  }
+}
