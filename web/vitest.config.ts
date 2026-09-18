@@ -59,6 +59,11 @@ export default getViteConfig({
         // the design boards do not — no destination at all, which is every
         // member today — and an unmeasured branch for the common case is
         // the one that would rot.
+        // The settings copy (issue #617). Measured because its job is to
+        // state what does NOT exist — the notifications sketch — and a
+        // catalogue nobody measures cannot prove it says so in both
+        // languages.
+        'src/lib/settings/strings.ts',
         'src/lib/profile/standing.ts',
         'src/lib/profile/strings.ts',
         'src/lib/account/consent.ts',
