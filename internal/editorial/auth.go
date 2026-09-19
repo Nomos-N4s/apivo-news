@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	platformhttp "github.com/Nomos-N4s/apivo-news/internal/platform/http"
+	api "github.com/Nomos-N4s/apivo-news/internal/platform/api"
 )
 
 // Editor is the authenticated editorial caller: the named human whose
@@ -56,21 +56,21 @@ func (h *Handler) requireEditor(next http.Handler) http.Handler {
 		token, ok := bearerToken(r)
 		if !ok {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="editorial"`)
-			platformhttp.Problem(w, http.StatusUnauthorized, "a bearer token is required")
+			api.writeAPIError(w, http.StatusUnauthorized, api.APIError{Code: http.StatusUnauthorized, Message: "a bearer token is required"})
 			return
 		}
 		ed, err := h.auth.AuthenticateEditor(r.Context(), token)
 		switch {
 		case errors.Is(err, ErrUnauthenticated):
 			w.Header().Set("WWW-Authenticate", `Bearer realm="editorial", error="invalid_token"`)
-			platformhttp.Problem(w, http.StatusUnauthorized, "the bearer token is invalid or belongs to no account")
+			api.writeAPIError(w, http.StatusUnauthorized, api.APIError{Code: http.StatusUnauthorized, Message: "the bearer token is invalid or belongs to no account"})
 			return
 		case errors.Is(err, ErrNotEditor):
-			platformhttp.Problem(w, http.StatusForbidden, "the editor role is required")
+			api.writeAPIError(w, http.StatusForbidden, api.APIError{Code: http.StatusForbidden, Message: "the editor role is required"})
 			return
 		case err != nil:
 			h.log.ErrorContext(r.Context(), "authenticating editorial request", "error", err)
-			platformhttp.Problem(w, http.StatusInternalServerError, "")
+			api.writeAPIError(w, http.StatusInternalServerError, api.APIError{Code: http.StatusInternalServerError, Message: "internal server error"})
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, ed)))

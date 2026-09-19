@@ -1,0 +1,9 @@
+basePath: /
+host: localhost:8080
+info:
+  contact: {}
+  description: API documentation for Apivo News service.
+  title: Apivo News API
+  version: "1.0"
+paths: {}
+swagger: "2.0"

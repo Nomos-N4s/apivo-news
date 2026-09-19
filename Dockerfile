@@ -20,10 +20,11 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X main.version=$(cat VERSION 2>/dev/null || echo dev)" \
     -o /out/apivo ./cmd/apivo
 
-# Final stage: distroless static, non-root. No shell, no package manager;
-# the schema migrations are embedded in the binary itself.
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build --chown=nonroot:nonroot /out/apivo /usr/local/bin/apivo
+# the schema migrations are embedded in the binary itself.
+
+
 
 EXPOSE 8080
 

@@ -11,6 +11,15 @@
 // zero on success - it backs the container HEALTHCHECK, where the distroless
 // image offers no shell or curl; "apivo version" prints the stamped release
 // version and exits.
+// @title Apivo News API
+// @version {{.Version}}
+// @description API documentation for Apivo News service.
+// @host localhost:8080
+// @BasePath /
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Type "Bearer <token>" to authenticate.
 package main
 
 import (
@@ -58,6 +67,10 @@ import (
 	"github.com/Nomos-N4s/apivo-news/internal/platform/telemetry"
 	"github.com/Nomos-N4s/apivo-news/internal/translation"
 	"github.com/Nomos-N4s/apivo-news/internal/translation/providers/openaicompat"
+
+	// Swagger UI imports
+	_ "github.com/Nomos-N4s/apivo-news/internal/platform/docs"
+	httpSwagger "github.com/swaggo/http-swagger"
 )
 
 // preflightName is the subcommand a deployment host runs before it swaps any
@@ -639,6 +652,10 @@ func start(ctx context.Context, getenv func(string) string, stdout io.Writer, ch
 	}
 
 	srv := platformhttp.New(log, cfg.HTTPAddr, version, readiness(pool), telemetryProvider, routes...)
+	// Serve Swagger UI in development mode
+	if cfg.Env == config.EnvDev {
+		srv.Mount("/swagger/", httpSwagger.Handler())
+	}
 	// The reader endpoints need no bearer token, so they mount
 	// unconditionally - a missing JWKS_URL costs the editorial routes, never
 	// the public site.
