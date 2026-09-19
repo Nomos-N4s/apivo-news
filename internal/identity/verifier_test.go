@@ -469,6 +469,37 @@ func TestNewVerifierFailsFastOnUnreachableJWKS(t *testing.T) {
 	}
 }
 
+// TestNewVerifierFailsOpenOnUnreachableJWKS verifies that when FailOpen is
+// true, NewVerifier returns a Verifier even when the initial JWKS fetch
+// fails. The Verifier rejects all tokens until the background refresh
+// succeeds, but the service stays up.
+func TestNewVerifierFailsOpenOnUnreachableJWKS(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	client := srv.Client()
+	srv.Close()
+	v, err := identity.NewVerifier(t.Context(), identity.VerifierConfig{
+		JWKSURL:    srv.URL,
+		HTTPClient: client,
+		FailOpen:   true,
+	})
+	if err != nil {
+		t.Fatalf("NewVerifier with FailOpen=true should succeed against an unreachable JWKS endpoint: %v", err)
+	}
+	t.Cleanup(func() { _ = v.Close(context.Background()) })
+
+	// The verifier should reject all tokens while not ready.
+	// We test through the Service.Verify method since verify is unexported.
+	svc := identity.New(v, fakeDB{err: pgx.ErrNoRows})
+	ctx := t.Context()
+	_, err = svc.Verify(ctx, "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IlRlc3QiLCJpYXQiOjE1MTYyMzkwMjJ9.invalid")
+	if !errors.Is(err, identity.ErrInvalidToken) {
+		t.Errorf("Verify should return ErrInvalidToken in fail-open mode before keys are fetched: %v", err)
+	}
+}
+
 // TestVerifyNeedsNoAccount pins the one difference between Verify and
 // Authenticate: a valid token whose subject has no row is refused by the
 // second and answered by the first, which is what lets self-registration

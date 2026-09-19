@@ -708,6 +708,7 @@ func newAuthenticatedRoutes(ctx context.Context, cfg config.Config, log *slog.Lo
 	verifier, err := identity.NewVerifier(ctx, identity.VerifierConfig{
 		JWKSURL:  cfg.JWKSURL,
 		Audience: cfg.JWTAudience,
+		FailOpen: cfg.JWKSFailOpen, // Fail open when JWKS_FAIL_OPEN=true; default false fails fast
 	})
 	if err != nil {
 		return nil, nil, nil, err
