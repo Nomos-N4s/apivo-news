@@ -4,9 +4,17 @@
         "description": "API documentation for Apivo News service.",
         "title": "Apivo News API",
         "contact": {},
-        "version": "1.0"
+        "version": "{{.Version}}"
     },
     "host": "localhost:8080",
     "basePath": "/",
-    "paths": {}
+    "paths": {},
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Type \"Bearer \u003ctoken\u003e\" to authenticate.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
 }

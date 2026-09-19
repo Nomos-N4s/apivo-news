@@ -4,6 +4,12 @@ info:
   contact: {}
   description: API documentation for Apivo News service.
   title: Apivo News API
-  version: "1.0"
+  version: '{{.Version}}'
 paths: {}
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer <token>" to authenticate.
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"

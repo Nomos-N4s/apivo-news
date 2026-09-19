@@ -1,6 +1,6 @@
 module github.com/Nomos-N4s/apivo-news
 
-go 1.26.5
+go 1.19
 
 require (
 	github.com/blnkfinance/blnk-go v1.3.0

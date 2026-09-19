@@ -3,10 +3,6 @@ package docs
 
 import "github.com/swaggo/swag"
 
-// Version is the API version injected at build time via -ldflags.
-// Default is "dev" for local builds.
-var Version = "dev"
-
 const docTemplate = `{
     "schemes": {{ marshal .Schemes }},
     "swagger": "2.0",
@@ -18,12 +14,20 @@ const docTemplate = `{
     },
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
-    "paths": {}
+    "paths": {},
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Type \"Bearer \u003ctoken\u003e\" to authenticate.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
 }`
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-    Version:          Version,
+	Version:          "{{.Version}}",
 	Host:             "localhost:8080",
 	BasePath:         "/",
 	Schemes:          []string{},
