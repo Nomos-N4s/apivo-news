@@ -43,7 +43,7 @@ NETWORK_LINKWISE_SOURCE_LANGUAGE=el
 | Each entry must be a **shipped** driver | A name absent from the registry is refused at startup, listing the drivers that do ship |
 | Duplicate entries are refused | Two adapters for one driver is two publisher accounts, which is a different feature (`network_account` already models it; `NETWORKS` does not) |
 | A network with a missing key is **named** | ERROR naming the network and the key: `NETWORK_LINKWISE_API_KEY is unset` (FR-091) |
-| One incomplete network does not stop the others | It does not start; the deployment does, and the others poll (FR-091) |
+| One incomplete network disables cashback | Cashback product is disabled (no polling, no routes), deployment serves everything else (FR-091) |
 | **Zero** usable networks is not a startup failure | Clicks on an existing catalogue, the wallet and the money loop all still run. One ERROR line says no network is polling. This is the stance the sweeps already take on a missing publisher account |
 | The old flat keys are **refused**, not aliased | `NETWORK_DRIVER is no longer read; use NETWORKS and NETWORK_<DRIVER>_*`. A silent alias lets a deployment believe it has two networks and run one |
 
