@@ -3,19 +3,12 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"github.com/Nomos-N4s/apivo-news/internal/platform/api/dto"
 )
 
-// ProblemDetails is the RFC 9457 problem+json error body every endpoint in
-// the HTTP contract answers with. Type stays "about:blank", which per the
-// RFC makes Title the plain rendering of the status code; Detail carries
-// the human explanation of this particular occurrence. Modules use this for
-// every error body; ad-hoc error shapes are a contract violation.
-type ProblemDetails struct {
-	Type   string `json:"type"`
-	Title  string `json:"title"`
-	Status int    `json:"status"`
-	Detail string `json:"detail,omitempty"`
-}
+// ProblemDetails is kept as an alias for compatibility with existing
+// callers and tests. New code should use dto.APIError directly.
+type ProblemDetails = dto.APIError
 
 // Problem writes an RFC 9457 problem+json response with the given status
 // code and detail. The body is marshalled before anything is written, so a
