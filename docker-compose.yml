@@ -227,6 +227,7 @@ services:
       # meaningful alongside JWKS_URL.
       JWKS_URL: ${JWKS_URL:-}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-}
+      JWKS_FAIL_OPEN: ${JWKS_FAIL_OPEN:-true}
       # Feed poll loop cadence, taken from the host environment (or .env)
       # like JWKS_URL above. Empty means the binary's documented 15m
       # default; "0" disables the loop - the only disable switch.
@@ -312,6 +313,8 @@ services:
       HOLD_SALE_CAP_CURRENCY: ${HOLD_SALE_CAP_CURRENCY:-}
       HOLD_MEMBER_VELOCITY: ${HOLD_MEMBER_VELOCITY:-}
       HOLD_MEMBER_VELOCITY_WINDOW: ${HOLD_MEMBER_VELOCITY_WINDOW:-}
+    ports:
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
