@@ -298,8 +298,11 @@ them quietly:
   network at once, each with its own driver, publisher account, credential
   and source language.
 - **FR-091**: A network whose configuration is incomplete MUST NOT prevent
-  the deployment from starting or stop another network polling; it MUST be
-  reported **by name**, at ERROR, saying which key is missing.
+  the deployment from starting; it MUST be reported **by name**, at ERROR,
+  saying which key is missing. If any configured network is incomplete, the
+  entire cashback product MUST be disabled (no polling, no routes) while the
+  rest of the deployment continues serving. This prevents members from
+  clicking through to merchants when their transactions cannot be tracked.
 - **FR-092**: The binary MUST have exactly one registry of the adapters it
   ships — a driver's public facts and its constructor together — so a driver
   that can be seeded can also be served. (Today two switches disagree.)

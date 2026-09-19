@@ -148,8 +148,12 @@ So there are three states, not two, and the spec only had two:
 | `NETWORKS` empty | serves | mounted | none, said at ERROR |
 | no `network_account` row | serves | mounted | none, said at ERROR |
 
-Recorded rather than resolved: the founder amends the spec separately, and
-this note exists so the divergence does not go silent. Issue: #513.
+**Resolved by issue #513 (2026-09-19)**: FR-091 and contracts/config.md have
+been amended to reflect the implemented behavior: an incomplete network
+disables the entire cashback product (no polling, no routes) while the
+deployment continues serving everything else. This prevents members from
+clicking through when transactions cannot be tracked.
+
 - [ ] T220 [US1] `cmd/apivo/cashback.go`: connect every configured network, resolving each adapter's credential through `network_account.credential_ref` (FR-093), and wire one set of sweeps per publisher account
 - [ ] T221 [US1] `internal/cashback/catalogue/schedule.go`: `ImportJobName` becomes a per-account derivation, exactly as `networks.ForwardJobName` and `TrailingJobName` already are (`sweeps.go:57-76`)
 - [x] T222 [US1] Update the capacity arithmetic and its comment in `cmd/apivo/main.go:440-446`: three jobs per network, floor 14 → 20 → 26, asserted by `locker.CheckCapacity` against the jobs actually registered (FR-095). **The floors are 16, 22 and 28, not 14, 20 and 26** — T126 added a fourth global job, the subscribers' delivery pass, after this task was written. The comment carries the arithmetic and the count passed to `CheckCapacity` is the one actually registered, so a job added later is counted whether or not anybody updates the prose
