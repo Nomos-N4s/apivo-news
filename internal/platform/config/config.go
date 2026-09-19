@@ -54,6 +54,10 @@ type Config struct {
 	// served, so a deployment without auth configured exposes nothing that
 	// would need it.
 	JWKSURL string
+	// JWKSFailOpen, when true, allows the service to start even if the JWKS
+	// endpoint is unreachable. Authenticated routes will reject all requests
+	// until the JWKS becomes available. Default is false (fail fast).
+	JWKSFailOpen bool
 	// JWTAudience, when non-empty, additionally requires every verified
 	// token's aud claim to contain this value. Only meaningful alongside
 	// JWKSURL; setting it alone is a configuration error.
@@ -205,6 +209,13 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		JWKSURL:     getenv("JWKS_URL"),
 		JWTAudience: getenv("JWT_AUDIENCE"),
 		BrandDir:    strings.TrimSpace(getenv("BRAND_DIR")),
+	}
+	if raw := getenv("JWKS_FAIL_OPEN"); raw != "" {
+		var err error
+		cfg.JWKSFailOpen, err = strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: JWKS_FAIL_OPEN %q is not a boolean: %w", raw, err)
+		}
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("config: DATABASE_URL is required")

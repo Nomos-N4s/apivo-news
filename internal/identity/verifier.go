@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/lestrrat-go/httprc/v3"
@@ -54,6 +55,16 @@ type VerifierConfig struct {
 	// legitimate tokens. Zero means DefaultAcceptableSkew; negative
 	// values and values above MaxAcceptableSkew fail construction.
 	AcceptableSkew time.Duration
+
+	// FailOpen, when true, causes NewVerifier to return a non-functional
+	// Verifier (with Verify always returning ErrInvalidToken) instead of
+	// an error when the initial JWKS fetch fails. The background refresh
+	// continues retrying, and the Verifier becomes functional once a fetch
+	// succeeds. This allows deployments where authenticated routes are
+	// optional to stay up even when the auth provider is temporarily down.
+	// When false (the default), NewVerifier fails fast on initial fetch
+	// errors as before.
+	FailOpen bool
 }
 
 // Verifier checks compact JWTs against a cached, auto-refreshing JWKS
@@ -66,6 +77,8 @@ type Verifier struct {
 	audience string
 	skew     time.Duration
 	cache    *jwk.Cache
+	failOpen bool
+	ready    atomic.Bool // set true after first successful fetch
 }
 
 // NewVerifier builds a Verifier and performs the initial JWKS fetch; an
@@ -73,6 +86,14 @@ type Verifier struct {
 // wiring time, not on the first request). The context governs the
 // background refresh goroutines: it must stay alive for the lifetime of
 // the Verifier, and cancelling it (or calling Close) stops the refreshing.
+//
+// When cfg.FailOpen is true, an initial fetch error does NOT fail
+// construction. Instead, the Verifier is returned in a non-ready state
+// where all verify operations return ErrInvalidToken. The background
+// refresh continues retrying, and the Verifier automatically becomes
+// ready once a fetch succeeds. This allows deployments to stay up when
+// the auth provider is temporarily unavailable, at the cost of rejecting
+// all authenticated requests until recovery.
 func NewVerifier(ctx context.Context, cfg VerifierConfig) (*Verifier, error) {
 	if cfg.JWKSURL == "" {
 		return nil, errors.New("identity: JWKS URL is required")
@@ -101,10 +122,26 @@ func NewVerifier(ctx context.Context, cfg VerifierConfig) (*Verifier, error) {
 		return nil, fmt.Errorf("identity: register JWKS %q: %w", cfg.JWKSURL, err)
 	}
 	if _, err := cache.Refresh(ctx, cfg.JWKSURL); err != nil {
-		_ = cache.Shutdown(ctx)
-		return nil, fmt.Errorf("identity: initial JWKS fetch from %q: %w", cfg.JWKSURL, err)
+		if !cfg.FailOpen {
+			_ = cache.Shutdown(ctx)
+			return nil, fmt.Errorf("identity: initial JWKS fetch from %q: %w", cfg.JWKSURL, err)
+		}
+		// Fail-open mode: log the error but continue. The verifier will
+		// reject all tokens until the background refresh succeeds.
+		// The cache keeps retrying in the background.
 	}
-	return &Verifier{jwksURL: cfg.JWKSURL, audience: cfg.Audience, skew: skew, cache: cache}, nil
+	v := &Verifier{jwksURL: cfg.JWKSURL, audience: cfg.Audience, skew: skew, cache: cache, failOpen: cfg.FailOpen}
+	// Mark as ready only if initial fetch succeeded (or if we're not in fail-open mode)
+	if cfg.FailOpen {
+		// In fail-open mode, check if we have keys already from the failed refresh
+		// If the refresh partially succeeded, we might have some keys
+		if set, err := cache.Lookup(ctx, cfg.JWKSURL); err == nil && set.Len() > 0 {
+			v.ready.Store(true)
+		}
+	} else {
+		v.ready.Store(true)
+	}
+	return v, nil
 }
 
 // Close stops the background JWKS refreshing. The Verifier must not be
@@ -117,14 +154,41 @@ func (v *Verifier) Close(ctx context.Context) error {
 // validated claims. Signature verification uses the cached key set; claim
 // validation covers exp, iat and nbf within the configured clock-skew
 // tolerance (and aud when configured).
+//
+// When the Verifier is in fail-open mode and has not yet successfully
+// fetched the JWKS (v.ready is false), verify immediately returns
+// ErrInvalidToken without attempting verification. This ensures that
+// authenticated routes reject all requests until the auth provider
+// becomes available, while keeping the service running.
 func (v *Verifier) verify(ctx context.Context, raw string) (jwt.Token, error) {
+	// In fail-open mode, reject all tokens until we have successfully fetched keys
+	if v.failOpen && !v.ready.Load() {
+		return nil, ErrInvalidToken
+	}
 	data := []byte(raw)
 	if err := checkAlgorithms(data); err != nil {
 		return nil, err
 	}
 	set, err := v.cache.Lookup(ctx, v.jwksURL)
 	if err != nil {
+		if v.failOpen {
+			v.ready.Store(false)
+			return nil, ErrInvalidToken
+		}
 		return nil, fmt.Errorf("identity: JWKS lookup: %w", err)
+	}
+	// In fail-open mode, if we still can't look up keys, mark as not ready
+	// and reject. The background refresh will keep trying.
+	if set.Len() == 0 {
+		if v.failOpen {
+			v.ready.Store(false)
+			return nil, ErrInvalidToken
+		}
+		return nil, fmt.Errorf("identity: JWKS lookup: empty key set")
+	}
+	// Mark as ready once we successfully have keys
+	if v.failOpen {
+		v.ready.Store(true)
 	}
 	opts := []jwt.ParseOption{
 		// Keys are matched by kid/alg; inference lets a JWKS that omits

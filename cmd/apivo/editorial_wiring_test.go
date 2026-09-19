@@ -417,8 +417,9 @@ func TestRunWithoutJWKSStillServesLoudly(t *testing.T) {
 }
 
 // TestRunFailsFastOnUnreachableJWKS proves a configured-but-broken JWKS
-// endpoint fails startup instead of serving editorial routes that could
-// never authenticate anyone.
+// endpoint fails startup by default (fail-closed). When FailOpen is true,
+// the service starts but rejects all authenticated requests until JWKS
+// recovers. This test verifies the default fail-closed behavior.
 func TestRunFailsFastOnUnreachableJWKS(t *testing.T) {
 	t.Parallel()
 	dbURL := os.Getenv("DATABASE_URL")
@@ -435,6 +436,8 @@ func TestRunFailsFastOnUnreachableJWKS(t *testing.T) {
 		// turning this into a flake. Same reasoning as the healthcheck
 		// test's "nothing listening" case in main_test.go.
 		"JWKS_URL": "http://127.0.0.1:0/.well-known/jwks.json",
+		// Explicitly disable fail-open to test fail-closed behavior
+		"JWKS_FAIL_OPEN": "false",
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
