@@ -187,6 +187,44 @@ func TestAFailedLookupIsNotAVerdict(t *testing.T) {
 	}
 }
 
+func TestRequireOperatorPropagatesOperatorToContext(t *testing.T) {
+	t.Parallel()
+
+	expectedOp := ops.Operator{
+		ID:          uuid.New(),
+		Email:       "operator@example.com",
+		DisplayName: "Test Operator",
+	}
+
+	var capturedOp ops.Operator
+	var handlerCalled bool
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		capturedOp = ops.OperatorFromForTest(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+
+	h := ops.NewTestHandler(discardLogger(), stubAuth{op: expectedOp})
+	wrappedHandler := h.RequireOperatorForTest(next)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer valid-token")
+	rec := httptest.NewRecorder()
+
+	wrappedHandler.ServeHTTP(rec, req)
+
+	if !handlerCalled {
+		t.Fatal("expected next handler to be called")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if capturedOp != expectedOp {
+		t.Errorf("captured operator = %+v, want %+v", capturedOp, expectedOp)
+	}
+}
+
 // TestAnAuthenticatedProbeOfAnUnservedPathIs404 is what proves the gate
 // runs first: the same path answered 401 above without a token, and only a
 // caller who got through learns the path does not exist.
