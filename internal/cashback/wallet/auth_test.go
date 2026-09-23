@@ -72,7 +72,7 @@ func TestRequireMemberMiddleware(t *testing.T) {
 		{
 			name:       "unauthenticated token returning ErrUnauthenticated",
 			authHeader: "Bearer invalid_token",
-			authFn: func(_ context.Context, token string) (wallet.Member, error) {
+			authFn: func(_ context.Context, _ string) (wallet.Member, error) {
 				return wallet.Member{}, wallet.ErrUnauthenticated
 			},
 			wantStatus:       http.StatusUnauthorized,
@@ -82,7 +82,7 @@ func TestRequireMemberMiddleware(t *testing.T) {
 		{
 			name:       "authenticator returns unexpected error",
 			authHeader: "Bearer token_cause_error",
-			authFn: func(_ context.Context, token string) (wallet.Member, error) {
+			authFn: func(_ context.Context, _ string) (wallet.Member, error) {
 				return wallet.Member{}, errors.New("database connection failed")
 			},
 			wantStatus:  http.StatusInternalServerError,
