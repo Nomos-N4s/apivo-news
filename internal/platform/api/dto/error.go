@@ -19,6 +19,7 @@ type APIError struct {
 }
 
 // MarshalJSON implements json.Marshaler for APIError to handle arbitrary extensions.
+// MarshalJSON implements json.Marshaler for APIError to handle arbitrary extensions.
 func (e APIError) MarshalJSON() ([]byte, error) {
 	type Alias APIError
 	if len(e.Extensions) == 0 {
