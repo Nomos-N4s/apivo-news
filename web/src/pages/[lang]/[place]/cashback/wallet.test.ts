@@ -1,8 +1,7 @@
-import { experimental_AstroContainer as AstroContainer } from 'astro/container';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import Wallet from './wallet.astro';
 import { cashbackStrings, languageName } from '../../../../i18n/cashback';
+
 
 const t = cashbackStrings('el');
 
@@ -18,15 +17,22 @@ const t = cashbackStrings('el');
  * With no API_BASE_URL the page answers from fixtures, which carry the pair
  * on purpose.
  */
+const FIXTURE_ENV = { APP_ENV: 'dev', API_BASE_URL: undefined, PUBLIC_APP_VERSION: undefined };
+
 async function render(path: string): Promise<string> {
-  const container = await AstroContainer.create();
+  vi.resetModules();
+  vi.doMock('astro:env/server', () => FIXTURE_ENV);
+  const { experimental_AstroContainer } = await import('astro/container');
+  const container = await experimental_AstroContainer.create();
+  const WalletComponent = (await import('./wallet.astro')).default;
   const url = new URL(path, 'http://localhost');
   const [, lang, place] = url.pathname.split('/');
-  return container.renderToString(Wallet, {
+  return container.renderToString(WalletComponent, {
     request: new Request(url),
     params: { lang: lang ?? '', place: place ?? '' },
   });
 }
+
 
 describe('the wallet page', () => {
   it('renders the credit and its reversal, both of them', async () => {

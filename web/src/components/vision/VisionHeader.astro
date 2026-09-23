@@ -1,0 +1,250 @@
+---
+// VisionHeader: Executive header, KPI ribbon, and primary module switcher
+---
+
+<header>
+  <div class="header-meta">
+    <div class="brand-pill">
+      <span class="pulse-dot"></span>
+      Apivo Executive Status
+    </div>
+    <div class="env-badge">QA Channel: ra1ze.com • Monolith v1.0.0-alpha</div>
+  </div>
+
+  <div class="header-title-row">
+    <div>
+      <h1>The Co-Founder Vision Board</h1>
+      <p class="subtitle">
+        Unified digital platform for European diaspora communities. Independent language and place axes for local journalism, tied to a localized cashback shopping economy.
+      </p>
+    </div>
+  </div>
+
+  <!-- KPI Ribbon -->
+  <section class="metrics-grid">
+    <div class="metric-card">
+      <div class="metric-label">Core Architecture</div>
+      <div class="metric-value">Go + Astro</div>
+      <div class="metric-note">Modular monolith with strict interface decoupling</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Quality Gates (CI)</div>
+      <div class="metric-value metric-green">20 / 20 Green</div>
+      <div class="metric-note">100% passing tests, race detector, &amp; 90% coverage gate</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Legal Invariants</div>
+      <div class="metric-value metric-cyan">I-1 to I-5</div>
+      <div class="metric-note">Hard-enforced by Postgres triggers &amp; schema constraints</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Cashback Rail State</div>
+      <div class="metric-value metric-amber">Manual Payout</div>
+      <div class="metric-note">C-4 &amp; C-5 invariants enforced; operator bank transfers</div>
+    </div>
+  </section>
+
+  <!-- Primary Executive Module Switcher -->
+  <nav class="module-nav-bar" role="tablist" aria-label="Executive Modules">
+    <button class="module-nav-btn active" data-module="executive" role="tab" id="mod-tab-executive">
+      <span>🌐</span> Executive Vision &amp; Domains
+    </button>
+    <button class="module-nav-btn" data-module="engineering" role="tab" id="mod-tab-engineering">
+      <span>⚡</span> Engineering &amp; GitHub Velocity
+    </button>
+    <button class="module-nav-btn" data-module="architecture" role="tab" id="mod-tab-architecture">
+      <span>🛡️</span> Architecture &amp; Sprint Status
+    </button>
+    <button class="module-nav-btn" data-module="commercial" role="tab" id="mod-tab-commercial">
+      <span>💼</span> Commercial Model &amp; Flywheel
+    </button>
+    <button class="module-nav-btn" data-module="playbook" role="tab" id="mod-tab-playbook">
+      <span>🕹️</span> Operations Playbook
+    </button>
+  </nav>
+</header>
+
+<style>
+  :root {
+    --bg-main: rgb(6, 9, 19);
+    --bg-surface: rgb(12, 18, 34);
+    --bg-card: rgb(19, 28, 49);
+    --bg-card-hover: rgb(25, 37, 64);
+    --border-subtle: rgb(30, 45, 77);
+    --border-bright: rgb(45, 65, 109);
+    --text-primary: rgb(248, 250, 252);
+    --text-secondary: rgb(148, 163, 184);
+    --text-muted: rgb(100, 116, 139);
+    --accent-news: rgb(0, 210, 180);
+    --accent-news-glow: rgba(0, 210, 180, 0.15);
+    --accent-cashback: rgb(245, 158, 11);
+    --accent-cashback-glow: rgba(245, 158, 11, 0.15);
+    --accent-platform: rgb(139, 92, 246);
+    --status-live: rgb(16, 185, 129);
+    --status-warn: rgb(245, 158, 11);
+    --status-info: rgb(56, 189, 248);
+  }
+
+  header {
+    margin-bottom: 2.5rem;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 2rem;
+  }
+
+  .header-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .brand-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(14, 165, 233, 0.1);
+    border: 1px solid rgba(14, 165, 233, 0.3);
+    padding: 0.35rem 0.85rem;
+    border-radius: 9999px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--status-info);
+    letter-spacing: 0.05em;
+  }
+
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    background-color: var(--status-live);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--status-live);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.85); }
+  }
+
+  .env-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .header-title-row {
+    margin-bottom: 2rem;
+  }
+
+  h1 {
+    font-size: 2.75rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.15;
+    background: linear-gradient(135deg, rgb(255, 255, 255) 0%, rgb(203, 213, 225) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.75rem;
+  }
+
+  .subtitle {
+    font-size: 1.125rem;
+    color: var(--text-secondary);
+    max-width: 840px;
+    line-height: 1.6;
+  }
+
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.25rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .metric-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 1.25rem;
+    transition: transform 0.2s, border-color 0.2s;
+  }
+
+  .metric-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--border-bright);
+  }
+
+  .metric-label {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+  }
+
+  .metric-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    margin-bottom: 0.25rem;
+  }
+
+  .metric-green { color: var(--status-live); }
+  .metric-cyan { color: rgb(0, 210, 180); }
+  .metric-amber { color: var(--status-warn); }
+
+  .metric-note {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+  }
+
+  /* Executive Module Switcher Bar */
+  .module-nav-bar {
+    display: flex;
+    gap: 0.5rem;
+    background: rgba(0, 0, 0, 0.35);
+    padding: 0.4rem;
+    border-radius: 12px;
+    border: 1px solid var(--border-subtle);
+    overflow-x: auto;
+  }
+
+  .module-nav-btn {
+    flex: 1;
+    min-width: 180px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+
+  .module-nav-btn:hover {
+    color: rgb(255, 255, 255);
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .module-nav-btn.active {
+    background: var(--bg-card);
+    color: rgb(255, 255, 255);
+    border-color: var(--status-info);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 12px rgba(56, 189, 248, 0.2);
+  }
+</style>

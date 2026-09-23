@@ -1,0 +1,676 @@
+---
+// OperationsPlaybook: Interactive Instructions Manual & Operations Playbook (Feed Intake & Cashback Simulators)
+---
+
+<section class="playbook-container" id="how-to-playbook">
+  <div class="domain-header" style="margin-bottom: 1.5rem;">
+    <div>
+      <span class="domain-tag" style="background: rgba(139, 92, 246, 0.15); color: rgb(167, 139, 250);">Operational Handbook</span>
+      <h2 class="domain-title" style="margin-top: 0.5rem;">
+        <span>🕹️</span> Interactive Instructions Manual &amp; Operations Playbook
+      </h2>
+    </div>
+    <div class="env-badge">Operator Console &amp; Simulators</div>
+  </div>
+
+  <p class="section-desc">
+    Comprehensive practical guides for co-founders and platform operators. Test live simulations of source feed intake, cashback member economics, and operator withdrawal workflows.
+  </p>
+
+  <!-- Playbook Navigation Tabs -->
+  <nav class="playbook-nav" role="tablist">
+    <button class="playbook-nav-btn active" data-tab="guide-news" id="tab-guide-news">
+      <span>📰</span> 1. How to Add News Sources
+    </button>
+    <button class="playbook-nav-btn" data-tab="guide-cashback" id="tab-guide-cashback">
+      <span>💳</span> 2. How to Use Cashback &amp; Simulator
+    </button>
+    <button class="playbook-nav-btn" data-tab="guide-ops" id="tab-guide-ops">
+      <span>🛡️</span> 3. Operator SEPA Payout Playbook
+    </button>
+  </nav>
+
+  <!-- Tab 1: How to Add News Sources -->
+  <div class="playbook-tab-panel active" id="guide-news">
+    <div class="guide-grid">
+      <div class="guide-steps">
+        <div class="guide-step-card">
+          <div class="guide-step-title">
+            <span>1.</span> Feed Discovery &amp; Licensing Clearance
+          </div>
+          <p class="guide-step-body">
+            Confirm the publisher provides an open RSS/Atom feed and formalize the bounded excerpt agreement (under German/Greek press law). Articles will display brief extracts with linkbacks.
+          </p>
+        </div>
+
+        <div class="guide-step-card">
+          <div class="guide-step-title">
+            <span>2.</span> Register Feed in Configuration
+          </div>
+          <p class="guide-step-body">
+            Add the feed definition to the registry with target place axis (<span class="spec-code">munich</span>, <span class="spec-code">greece</span>) and source language (<span class="spec-code">el</span> or <span class="spec-code">de</span>). The background daemon ingests it automatically every 15 minutes.
+          </p>
+        </div>
+
+        <div class="guide-step-card">
+          <div class="guide-step-title">
+            <span>3.</span> Automated AI Translation &amp; Evidence Snapshot
+          </div>
+          <p class="guide-step-body">
+            The system captures an immutable HTML/XML snapshot in <span class="spec-code">source_item</span> (I-2), triggers LLM translation, and logs the prompt version and model ID (I-5).
+          </p>
+        </div>
+
+        <div class="guide-step-card">
+          <div class="guide-step-title">
+            <span>4.</span> Human Editorial Approval Gate (I-1)
+          </div>
+          <p class="guide-step-body">
+            The article enters the editorial queue at <span class="spec-code">/el/editor/signin</span>. A named human editor reviews the headline, excerpt, and attribution before clicking "Approve". No article can be published without this human gate.
+          </p>
+        </div>
+      </div>
+
+      <!-- Interactive Feed Intake Simulator -->
+      <div class="interactive-widget">
+        <div class="widget-title">
+          <span>⚡</span> Live Feed Intake Simulator
+        </div>
+        <div class="widget-subtitle">
+          Select a publisher feed or test a custom RSS endpoint to simulate the automated ingestion and legal snapshot checks.
+        </div>
+
+        <div class="input-select-row">
+          <label class="input-label" for="feed-preset-select">Preset Feed Source</label>
+          <select class="custom-select" id="feed-preset-select">
+            <option value="ert">ERT News (Hellenic Broadcasting Corp • el)</option>
+            <option value="az">Abendzeitung München (Munich Local • de)</option>
+            <option value="in">in.gr (Athens National News • el)</option>
+            <option value="kathimerini">Kathimerini (Greece National &amp; Politics • el)</option>
+            <option value="tz">tz München (Bavaria Regional • de)</option>
+          </select>
+        </div>
+
+        <button class="sim-button" id="btn-run-intake-sim">Run Feed Intake Validation</button>
+
+        <div class="sim-output-log" id="intake-log-output">
+          <div>[Ready] Select source and click 'Run Feed Intake Validation'.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab 2: How to Use Cashback & Simulator -->
+  <div class="playbook-tab-panel" id="guide-cashback">
+    <div class="guide-grid">
+      <div class="guide-steps">
+        <div class="guide-step-card">
+          <div class="guide-step-title">
+            <span>1.</span> Member Directory Browsing
+          </div>
+          <p class="guide-step-body">
+            Members visit <span class="spec-code">/el/munich/cashback</span> to browse retail, dining, electronics, and travel merchants offering verified cashback rewards.
+          </p>
+        </div>
+
+        <div class="guide-step-card">
+          <div class="guide-step-title">
+            <span>2.</span> Signed HMAC Clickout Link
+          </div>
+          <p class="guide-step-body">
+            Clicking "Shop Now" generates a cryptographically signed clickout URL (<span class="spec-code">/go/:merchant</span>). This ties the user account to the affiliate network sub-ID while preventing URL tampering.
+          </p>
+        </div>
+
+        <div class="guide-step-card">
+          <div class="guide-step-title">
+            <span>3.</span> Purchase &amp; Pending Ledger Hold
+          </div>
+          <p class="guide-step-body">
+            After checkout, the network webhook notifies Apivo. Funds are recorded in the Blnk ledger as <strong>Pending</strong> to safeguard against return window cancellations (30–60 days).
+          </p>
+        </div>
+
+        <div class="guide-step-card">
+          <div class="guide-step-title">
+            <span>4.</span> Confirmation &amp; SEPA Payout
+          </div>
+          <p class="guide-step-body">
+            Once confirmed, the member requests withdrawal to their SEPA IBAN. Bank details are stored encrypted in Vault, completely segregated from application databases.
+          </p>
+        </div>
+      </div>
+
+      <!-- Interactive Cashback & Economics Calculator -->
+      <div class="interactive-widget">
+        <div class="widget-title">
+          <span>🧮</span> Interactive Cashback Calculator
+        </div>
+        <div class="widget-subtitle">
+          Simulate purchase rewards, member earnings, and Apivo platform revenue splits.
+        </div>
+
+        <div class="slider-control">
+          <div class="slider-label-row">
+            <span>Purchase Amount (€)</span>
+            <span class="slider-val" id="val-purchase-amount">€150</span>
+          </div>
+          <input type="range" class="range-input" id="range-purchase" min="20" max="1000" step="10" value="150" />
+        </div>
+
+        <div class="slider-control">
+          <div class="slider-label-row">
+            <span>Merchant Commission Rate (%)</span>
+            <span class="slider-val" id="val-commission-rate">6.0%</span>
+          </div>
+          <input type="range" class="range-input" id="range-rate" min="1" max="15" step="0.5" value="6.0" />
+        </div>
+
+        <div class="calc-breakdown">
+          <div class="calc-row">
+            <span>Total Merchant Commission:</span>
+            <strong id="calc-total-commission">€9.00</strong>
+          </div>
+          <div class="calc-row">
+            <span>Member Cashback (70%):</span>
+            <strong id="calc-member-cashback" style="color: rgb(52, 211, 153);">€6.30</strong>
+          </div>
+          <div class="calc-row">
+            <span>Apivo Platform Gross Margin (30%):</span>
+            <strong id="calc-platform-margin" style="color: rgb(56, 189, 248);">€2.70</strong>
+          </div>
+          <div class="calc-row">
+            <span>Return Buffer Holding:</span>
+            <span>45 Days (Pending)</span>
+          </div>
+          <div class="calc-row highlight">
+            <span>Disbursement Status:</span>
+            <span id="calc-payout-readiness">Eligible for SEPA Payout</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab 3: Operator SEPA Payout Playbook -->
+  <div class="playbook-tab-panel" id="guide-ops">
+    <div class="guide-grid">
+      <div class="guide-steps">
+        <div class="guide-step-card">
+          <div class="guide-step-title">
+            <span>1.</span> Access Operator Console
+          </div>
+          <p class="guide-step-body">
+            Authorized operators log into <span class="spec-code">/ops/withdrawals</span> to view pending member payout requests with confirmed ledger balance verification.
+          </p>
+        </div>
+
+        <div class="guide-step-card">
+          <div class="guide-step-title">
+            <span>2.</span> Ephemeral Vault IBAN Retrieval
+          </div>
+          <p class="guide-step-body">
+            The operator initiates bank transfer by requesting an ephemeral one-time token from OpenBao Vault. The plaintext IBAN is never stored on disk or logged in plain text.
+          </p>
+        </div>
+
+        <div class="guide-step-card">
+          <div class="guide-step-title">
+            <span>3.</span> Manual SEPA Wire Execution (Corporate Bank)
+          </div>
+          <p class="guide-step-body">
+            The operator executes the SEPA transfer through corporate online banking (Commerzbank / Deutsche Bank). Dual-operator approval (C-4) enforces that initiator and authorizer cannot be the same person.
+          </p>
+        </div>
+
+        <div class="guide-step-card">
+          <div class="guide-step-title">
+            <span>4.</span> Bank Reference &amp; Final Settlement (C-5)
+          </div>
+          <p class="guide-step-body">
+            The operator records the bank's wire transfer reference and transaction ID. The ledger balance transitions from "Requested" to "Disbursed", maintaining zero-sum ledger audit integrity.
+          </p>
+        </div>
+      </div>
+
+      <!-- Operational Security Invariants Callout -->
+      <div class="interactive-widget">
+        <div class="widget-title">
+          <span>🛡️</span> Security &amp; Compliance Guarantees
+        </div>
+        <div class="widget-subtitle">
+          Why the Manual Payout Rail protects early startup capital.
+        </div>
+
+        <div class="hardening-list">
+          <div class="hardening-item">
+            <span class="hardening-check">🔒</span>
+            <span><strong>Zero API Drain Vulnerability:</strong> No automated banking webhook can drain corporate capital during alpha phase.</span>
+          </div>
+          <div class="hardening-item">
+            <span class="hardening-check">🔒</span>
+            <span><strong>Chargeback &amp; Fraud Cushion:</strong> 30–60 day ledger hold guarantees cashback is never paid on returned merchandise.</span>
+          </div>
+          <div class="hardening-item">
+            <span class="hardening-check">🔒</span>
+            <span><strong>BaFin / Regulatory Compliance:</strong> Operating as closed-loop referral avoids money transmission license requirements.</span>
+          </div>
+          <div class="hardening-item">
+            <span class="hardening-check">🔒</span>
+            <span><strong>Complete Audit Lineage:</strong> Every operator action, timestamp, and bank ref is recorded in Postgres.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  :root {
+    --bg-main: rgb(6, 9, 19);
+    --bg-surface: rgb(12, 18, 34);
+    --bg-card: rgb(19, 28, 49);
+    --bg-card-hover: rgb(25, 37, 64);
+    --border-subtle: rgb(30, 45, 77);
+    --border-bright: rgb(45, 65, 109);
+    --text-primary: rgb(248, 250, 252);
+    --text-secondary: rgb(148, 163, 184);
+    --text-muted: rgb(100, 116, 139);
+    --accent-news: rgb(0, 210, 180);
+    --accent-news-glow: rgba(0, 210, 180, 0.15);
+    --accent-cashback: rgb(245, 158, 11);
+    --accent-cashback-glow: rgba(245, 158, 11, 0.15);
+    --accent-platform: rgb(139, 92, 246);
+    --status-live: rgb(16, 185, 129);
+    --status-warn: rgb(245, 158, 11);
+    --status-info: rgb(56, 189, 248);
+  }
+
+  .playbook-container {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 16px;
+    padding: 2rem;
+    margin-bottom: 3rem;
+  }
+
+  .domain-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .domain-tag {
+    font-size: 0.725rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.25rem 0.65rem;
+    border-radius: 9999px;
+  }
+
+  .domain-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .env-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .section-desc {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    line-height: 1.6;
+    margin-bottom: 1.5rem;
+  }
+
+  .playbook-nav {
+    display: flex;
+    gap: 0.5rem;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 1rem;
+    margin-bottom: 1.5rem;
+    overflow-x: auto;
+  }
+
+  .playbook-nav-btn {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+    padding: 0.65rem 1.25rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .playbook-nav-btn:hover {
+    color: rgb(255, 255, 255);
+    border-color: var(--border-bright);
+  }
+
+  .playbook-nav-btn.active {
+    background: var(--bg-card);
+    color: rgb(255, 255, 255);
+    border-color: var(--status-info);
+  }
+
+  .playbook-tab-panel {
+    display: none;
+  }
+
+  .playbook-tab-panel.active {
+    display: block;
+  }
+
+  .guide-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 2rem;
+  }
+
+  @media (max-width: 900px) {
+    .guide-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .guide-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .guide-step-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    padding: 1.25rem;
+  }
+
+  .guide-step-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    margin-bottom: 0.35rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .guide-step-body {
+    font-size: 0.825rem;
+    color: var(--text-secondary);
+    line-height: 1.45;
+  }
+
+  .interactive-widget {
+    background: var(--bg-card);
+    border: 1px solid var(--border-bright);
+    border-radius: 12px;
+    padding: 1.5rem;
+  }
+
+  .widget-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    margin-bottom: 0.35rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .widget-subtitle {
+    font-size: 0.775rem;
+    color: var(--text-muted);
+    margin-bottom: 1.25rem;
+  }
+
+  .input-select-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .input-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+  }
+
+  .custom-select {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    color: rgb(255, 255, 255);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.825rem;
+  }
+
+  .slider-control {
+    margin-bottom: 1.25rem;
+  }
+
+  .slider-label-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.4rem;
+  }
+
+  .slider-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+  }
+
+  .range-input {
+    width: 100%;
+    accent-color: var(--accent-cashback);
+    cursor: pointer;
+  }
+
+  .calc-breakdown {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    margin-top: 1rem;
+  }
+
+  .calc-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.825rem;
+    color: var(--text-secondary);
+  }
+
+  .calc-row.highlight {
+    font-weight: 700;
+    color: rgb(52, 211, 153);
+    font-size: 0.95rem;
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 0.5rem;
+  }
+
+  .sim-button {
+    background: var(--status-info);
+    color: rgb(6, 9, 19);
+    border: none;
+    border-radius: 8px;
+    padding: 0.65rem 1.25rem;
+    font-weight: 700;
+    font-size: 0.875rem;
+    cursor: pointer;
+    width: 100%;
+    transition: opacity 0.2s;
+    margin-top: 1rem;
+  }
+
+  .sim-button:hover {
+    opacity: 0.9;
+  }
+
+  .sim-output-log {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 0.85rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.725rem;
+    color: rgb(203, 213, 225);
+    margin-top: 1rem;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+
+  .hardening-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    margin-top: 1rem;
+  }
+
+  .hardening-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.65rem 0.85rem;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    font-size: 0.825rem;
+    color: rgb(226, 232, 240);
+  }
+
+  .hardening-check {
+    color: rgb(52, 211, 153);
+    font-weight: 700;
+  }
+
+  .spec-code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 0.15rem 0.35rem;
+    border-radius: 4px;
+    color: var(--status-info);
+  }
+</style>
+
+<script>
+  // Playbook Tabs Switcher
+  const playbookBtns = document.querySelectorAll<HTMLButtonElement>('.playbook-nav-btn');
+  const playbookPanels = document.querySelectorAll<HTMLElement>('.playbook-tab-panel');
+
+  playbookBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      playbookBtns.forEach((b) => b.classList.remove('active'));
+      playbookPanels.forEach((p) => p.classList.remove('active'));
+
+      btn.classList.add('active');
+      const tabId = btn.getAttribute('data-tab');
+      if (tabId) {
+        const targetPanel = document.getElementById(tabId);
+        if (targetPanel) targetPanel.classList.add('active');
+      }
+    });
+  });
+
+  // Live Feed Intake Simulator
+  const btnRunIntake = document.getElementById('btn-run-intake-sim');
+  const intakeLog = document.getElementById('intake-log-output');
+  const feedSelect = document.getElementById('feed-preset-select') as HTMLSelectElement | null;
+
+  btnRunIntake?.addEventListener('click', () => {
+    if (!intakeLog) return;
+    const sourceName = feedSelect?.options[feedSelect.selectedIndex]?.text || 'Selected Feed';
+    intakeLog.innerHTML = '<div style="color: rgb(56, 189, 248);">[Initiating intake cycle for: ' + sourceName + '...]</div>';
+
+    setTimeout(() => {
+      intakeLog.innerHTML += '<div>[1] Fetching robots.txt &amp; headers... OK (crawl-delay: 2s respected)</div>';
+    }, 300);
+
+    setTimeout(() => {
+      intakeLog.innerHTML += '<div>[2] Parsing XML feed payload... Found 18 articles (valid schema)</div>';
+    }, 700);
+
+    setTimeout(() => {
+      intakeLog.innerHTML += '<div>[3] Validating bounded extract (&lt; 280 chars) &amp; license... Verified</div>';
+    }, 1100);
+
+    setTimeout(() => {
+      intakeLog.innerHTML += '<div style="color: rgb(52, 211, 153);">[4] Legal snapshot captured in source_item (I-2 / I-3 immutable)</div>';
+    }, 1500);
+
+    setTimeout(() => {
+      intakeLog.innerHTML += '<div>[5] AI translation queued with prompt hash sha256:7f4a9b...</div>';
+      intakeLog.innerHTML += '<div style="color: rgb(251, 191, 36); font-weight: 700;">[6] Pushed to /el/editor/signin queue &mdash; Awaiting named human signoff (I-1)</div>';
+    }, 1900);
+  });
+
+  // Interactive Cashback Calculator
+  const rangePurchase = document.getElementById('range-purchase') as HTMLInputElement | null;
+  const rangeRate = document.getElementById('range-rate') as HTMLInputElement | null;
+  const valPurchaseAmount = document.getElementById('val-purchase-amount');
+  const valCommissionRate = document.getElementById('val-commission-rate');
+  const calcTotalCommission = document.getElementById('calc-total-commission');
+  const calcMemberCashback = document.getElementById('calc-member-cashback');
+  const calcPlatformMargin = document.getElementById('calc-platform-margin');
+  const calcPayoutReadiness = document.getElementById('calc-payout-readiness');
+
+  function updateCashbackCalc() {
+    if (!rangePurchase || !rangeRate) return;
+    const spend = parseFloat(rangePurchase.value);
+    const rate = parseFloat(rangeRate.value);
+
+    if (valPurchaseAmount) valPurchaseAmount.textContent = '€' + spend;
+    if (valCommissionRate) valCommissionRate.textContent = rate.toFixed(1) + '%';
+
+    const grossCommission = (spend * rate) / 100;
+    const memberShare = grossCommission * 0.70;
+    const platformShare = grossCommission * 0.30;
+
+    if (calcTotalCommission) calcTotalCommission.textContent = '€' + grossCommission.toFixed(2);
+    if (calcMemberCashback) calcMemberCashback.textContent = '€' + memberShare.toFixed(2);
+    if (calcPlatformMargin) calcPlatformMargin.textContent = '€' + platformShare.toFixed(2);
+
+    if (calcPayoutReadiness) {
+      if (memberShare >= 5.0) {
+        calcPayoutReadiness.textContent = 'Eligible for SEPA Payout (Above €5 threshold)';
+        calcPayoutReadiness.style.color = 'rgb(52, 211, 153)';
+      } else {
+        calcPayoutReadiness.textContent = 'Accumulating towards €5 minimum threshold';
+        calcPayoutReadiness.style.color = 'rgb(245, 158, 11)';
+      }
+    }
+  }
+
+  rangePurchase?.addEventListener('input', updateCashbackCalc);
+  rangeRate?.addEventListener('input', updateCashbackCalc);
+  updateCashbackCalc();
+</script>

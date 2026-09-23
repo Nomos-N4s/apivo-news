@@ -1,0 +1,336 @@
+---
+// SprintStatus: Platform Test Hardening and Merchant Network Rollout Pipeline
+---
+
+<section class="status-banner-grid" id="sprint-status">
+  <!-- Card 1: Platform Engine Test Hardening -->
+  <article class="status-card hardening">
+    <div class="status-card-header">
+      <h3 class="status-card-title">
+        <span>🛡️</span>
+        Platform Test Hardening
+      </h3>
+      <span class="status-badge badge-pulse">Active Focus</span>
+    </div>
+    <p class="guide-step-body">
+      Engineering is aggressively hardening the core platform to guarantee financial accuracy and zero data leaks before widening alpha rollout.
+    </p>
+    <div class="hardening-list">
+      <div class="hardening-item">
+        <span class="hardening-check">✓</span>
+        <span><strong>Continuous Zero-Sum Invariant (C-1):</strong> Proves every currency in the ledger sums to zero with no orphaned balance drift.</span>
+      </div>
+      <div class="hardening-item">
+        <span class="hardening-check">✓</span>
+        <span><strong>Race Detector (-race):</strong> Go concurrency stress testing on simultaneous wallet balance reservations and credit holds.</span>
+      </div>
+      <div class="hardening-item">
+        <span class="hardening-check">✓</span>
+        <span><strong>Strict 90% Code Coverage Gate:</strong> CI blocks any PR failing minimum test threshold (<span class="spec-code">coverage_gate.sh 90</span>).</span>
+      </div>
+      <div class="hardening-item">
+        <span class="hardening-check">✓</span>
+        <span><strong>Dual Driver Architecture:</strong> Fast in-memory ledger simulation for rapid local testing + full PostgreSQL Blnk stack in CI.</span>
+      </div>
+    </div>
+  </article>
+
+  <!-- Card 2: Merchant DEV / Review Pipeline -->
+  <article class="status-card pipeline">
+    <div class="status-card-header">
+      <h3 class="status-card-title">
+        <span>🛒</span>
+        Merchant Pipeline Status
+      </h3>
+      <span class="status-badge badge-review">Targeting QA: ra1ze.com</span>
+    </div>
+    <p class="guide-step-body">
+      Active merchants are in DEV and Code Review branches, scheduled for rollout to the QA environment (<span class="spec-code">ra1ze.com</span>) for co-founder live testing.
+    </p>
+
+    <div class="merchant-filter-row">
+      <button class="m-filter-btn active" data-filter="all">All (5)</button>
+      <button class="m-filter-btn" data-filter="qa">Live on QA (1)</button>
+      <button class="m-filter-btn" data-filter="dev">In DEV/Review (4)</button>
+    </div>
+
+    <div class="merchant-list" id="merchant-list">
+      <div class="merchant-row" data-merchant-status="qa" data-info="Fixture retailer active in QA for immediate clickout and ledger hold testing.">
+        <div>
+          <div class="merchant-name">
+            <span>🏪</span> Fixture Merchant Alpha
+          </div>
+          <div class="merchant-cat">Munich &amp; Athens Retail • 5.0% Commission</div>
+        </div>
+        <span class="merchant-tag tag-live">Live in QA</span>
+      </div>
+
+      <div class="merchant-row" data-merchant-status="dev" data-info="Electronics affiliate integration under PR review. Webhook payload verification in progress.">
+        <div>
+          <div class="merchant-name">
+            <span>📱</span> MediaMarkt / Saturn (affiliate)
+          </div>
+          <div class="merchant-cat">Electronics &amp; Tech • 3.5% Commission</div>
+        </div>
+        <span class="merchant-tag tag-dev">In Review (DEV)</span>
+      </div>
+
+      <div class="merchant-row" data-merchant-status="dev" data-info="Fashion program integration branch ready. Return window hold set to 45 days.">
+        <div>
+          <div class="merchant-name">
+            <span>👗</span> Zalando / ASOS EU
+          </div>
+          <div class="merchant-cat">Fashion &amp; Apparel • 7.0% Commission</div>
+        </div>
+        <span class="merchant-tag tag-dev">In Review (DEV)</span>
+      </div>
+
+      <div class="merchant-row" data-merchant-status="dev" data-info="Specialty European grocery delivery. Awin publisher approval pending.">
+        <div>
+          <div class="merchant-name">
+            <span>🍷</span> Rewe &amp; Hellenic Deli Online
+          </div>
+          <div class="merchant-cat">Food &amp; Groceries • 4.5% Commission</div>
+        </div>
+        <span class="merchant-tag tag-dev">In Review (DEV)</span>
+      </div>
+
+      <div class="merchant-row" data-merchant-status="dev" data-info="Flight booking affiliate deeplink generator under contract review.">
+        <div>
+          <div class="merchant-name">
+            <span>✈️</span> Aegean Airlines / Lufthansa
+          </div>
+          <div class="merchant-cat">Travel &amp; Transport • 2.0% Commission</div>
+        </div>
+        <span class="merchant-tag tag-dev">In Review (DEV)</span>
+      </div>
+    </div>
+  </article>
+</section>
+
+<style>
+  :root {
+    --bg-main: rgb(6, 9, 19);
+    --bg-surface: rgb(12, 18, 34);
+    --bg-card: rgb(19, 28, 49);
+    --bg-card-hover: rgb(25, 37, 64);
+    --border-subtle: rgb(30, 45, 77);
+    --border-bright: rgb(45, 65, 109);
+    --text-primary: rgb(248, 250, 252);
+    --text-secondary: rgb(148, 163, 184);
+    --text-muted: rgb(100, 116, 139);
+    --accent-news: rgb(0, 210, 180);
+    --accent-news-glow: rgba(0, 210, 180, 0.15);
+    --accent-cashback: rgb(245, 158, 11);
+    --accent-cashback-glow: rgba(245, 158, 11, 0.15);
+    --accent-platform: rgb(139, 92, 246);
+    --status-live: rgb(16, 185, 129);
+    --status-warn: rgb(245, 158, 11);
+    --status-info: rgb(56, 189, 248);
+  }
+
+  .status-banner-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 3rem;
+  }
+
+  @media (max-width: 900px) {
+    .status-banner-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .status-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 16px;
+    padding: 1.75rem;
+  }
+
+  .status-card.hardening {
+    border-left: 4px solid var(--status-live);
+  }
+
+  .status-card.pipeline {
+    border-left: 4px solid var(--accent-cashback);
+  }
+
+  .status-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+
+  .status-card-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .status-badge {
+    font-size: 0.725rem;
+    font-weight: 700;
+    padding: 0.25rem 0.65rem;
+    border-radius: 9999px;
+    text-transform: uppercase;
+  }
+
+  .badge-pulse {
+    background: rgba(16, 185, 129, 0.15);
+    color: rgb(52, 211, 153);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+  }
+
+  .badge-review {
+    background: rgba(245, 158, 11, 0.15);
+    color: rgb(251, 191, 36);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }
+
+  .guide-step-body {
+    font-size: 0.825rem;
+    color: var(--text-secondary);
+    line-height: 1.45;
+  }
+
+  .hardening-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    margin-top: 1rem;
+  }
+
+  .hardening-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.65rem 0.85rem;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    font-size: 0.825rem;
+    color: rgb(226, 232, 240);
+  }
+
+  .hardening-check {
+    color: rgb(52, 211, 153);
+    font-weight: 700;
+  }
+
+  .spec-code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 0.15rem 0.35rem;
+    border-radius: 4px;
+    color: var(--status-info);
+  }
+
+  .merchant-filter-row {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .m-filter-btn {
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: 0.725rem;
+    font-weight: 600;
+    padding: 0.25rem 0.6rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .m-filter-btn.active {
+    background: var(--bg-card);
+    color: rgb(255, 255, 255);
+    border-color: var(--accent-cashback);
+  }
+
+  .merchant-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+
+  .merchant-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+
+  .merchant-row:hover {
+    border-color: var(--border-bright);
+    background: var(--bg-card-hover);
+  }
+
+  .merchant-name {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: rgb(255, 255, 255);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .merchant-cat {
+    font-size: 0.725rem;
+    color: var(--text-muted);
+  }
+
+  .merchant-tag {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+
+  .tag-live {
+    background: rgba(16, 185, 129, 0.2);
+    color: rgb(52, 211, 153);
+  }
+
+  .tag-dev {
+    background: rgba(245, 158, 11, 0.2);
+    color: rgb(251, 191, 36);
+  }
+</style>
+
+<script>
+  // Merchant Filter Script
+  const mFilterBtns = document.querySelectorAll<HTMLButtonElement>('.m-filter-btn');
+  const merchantRows = document.querySelectorAll<HTMLElement>('.merchant-row');
+
+  mFilterBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      mFilterBtns.forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      const filter = btn.getAttribute('data-filter');
+      merchantRows.forEach((row) => {
+        const status = row.getAttribute('data-merchant-status');
+        if (filter === 'all' || filter === status) {
+          row.style.display = 'flex';
+        } else {
+          row.style.display = 'none';
+        }
+      });
+    });
+  });
+</script>
