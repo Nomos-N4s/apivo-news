@@ -1,0 +1,580 @@
+---
+// ArchitectureFlow: Interactive architectural conformance maps and data flow invariant inspection
+---
+
+<section class="diagram-section" id="architecture-diagrams">
+  <div class="domain-header">
+    <div>
+      <span class="domain-tag" style="background: rgba(139, 92, 246, 0.15); color: rgb(167, 139, 250);">System Topology &amp; Invariants</span>
+      <h2 class="domain-title" style="margin-top: 0.5rem;">
+        <span>🗺️</span> Interactive Architectural Conformance Maps
+      </h2>
+    </div>
+    <div class="env-badge">Boundary Enforcement • DB Triggers</div>
+  </div>
+
+  <p class="section-desc">
+    Explore the end-to-end data pipelines and safety gates across both domains. Click on any processing node below to inspect its runtime implementation, data contracts, and database legal/financial invariants enforced at that boundary.
+  </p>
+
+  <div class="diagram-controls">
+    <button class="diagram-tab-btn active" data-diagram="news-diagram" id="diagram-tab-news">
+      📰 News Ingestion &amp; Invariant Flow
+    </button>
+    <button class="diagram-tab-btn" data-diagram="cashback-diagram" id="diagram-tab-cashback">
+      💳 Cashback Money Movement &amp; Ledger Flow
+    </button>
+  </div>
+
+  <!-- News Diagram Flow -->
+  <div class="flow-diagram" id="news-diagram">
+    <div class="flow-node news-node selected" data-node="news-feed">
+      <div>
+        <div class="node-step-tag">Step 1 • Intake</div>
+        <div class="node-name">Licensed RSS/Atom Feeds</div>
+        <div class="node-tech">Feed Poller (15m interval)</div>
+      </div>
+      <div>
+        <span class="node-invariant">Robots.txt + Crawl Delay</span>
+      </div>
+    </div>
+
+    <div class="flow-node news-node" data-node="news-snapshot">
+      <div>
+        <div class="node-step-tag">Step 2 • Evidence</div>
+        <div class="node-name">Raw License &amp; Snapshot</div>
+        <div class="node-tech">Postgres source_item table</div>
+      </div>
+      <div>
+        <span class="node-invariant green">I-2 &amp; I-3 Immutable Law</span>
+      </div>
+    </div>
+
+    <div class="flow-node news-node" data-node="news-llm">
+      <div>
+        <div class="node-step-tag">Step 3 • Translation</div>
+        <div class="node-name">Model-Agnostic LLM</div>
+        <div class="node-tech">Cloudflare AI / Workers / Ollama</div>
+      </div>
+      <div>
+        <span class="node-invariant">I-5 Prompt &amp; Model Hash</span>
+      </div>
+    </div>
+
+    <div class="flow-node news-node" data-node="news-editorial">
+      <div>
+        <div class="node-step-tag">Step 4 • Quality Gate</div>
+        <div class="node-name">Human Editorial Gate</div>
+        <div class="node-tech">Go /api/v1/editorial</div>
+      </div>
+      <div>
+        <span class="node-invariant green">I-1 Named Human Approver</span>
+      </div>
+    </div>
+
+    <div class="flow-node news-node" data-node="news-ssr">
+      <div>
+        <div class="node-step-tag">Step 5 • Delivery</div>
+        <div class="node-name">Dual-Axis Reader SSR</div>
+        <div class="node-tech">Astro Node Standalone</div>
+      </div>
+      <div>
+        <span class="node-invariant green">Zero-Client Telemetry</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cashback Diagram Flow -->
+  <div class="flow-diagram" id="cashback-diagram" style="display: none;">
+    <div class="flow-node cashback-node selected" data-node="cashback-browse">
+      <div>
+        <div class="node-step-tag">Stage 1 • Discovery</div>
+        <div class="node-name">Local Merchant Directory</div>
+        <div class="node-tech">Astro /cashback SSR</div>
+      </div>
+      <div>
+        <span class="node-invariant">Locale-aware rates</span>
+      </div>
+    </div>
+
+    <div class="flow-node cashback-node" data-node="cashback-clickout">
+      <div>
+        <div class="node-step-tag">Stage 2 • Security</div>
+        <div class="node-name">Signed Clickout Engine</div>
+        <div class="node-tech">Go /go/:merchant redirect</div>
+      </div>
+      <div>
+        <span class="node-invariant green">HMAC anti-tamper token</span>
+      </div>
+    </div>
+
+    <div class="flow-node cashback-node" data-node="cashback-network">
+      <div>
+        <div class="node-step-tag">Stage 3 • Attribution</div>
+        <div class="node-name">Affiliate Ingest Poller</div>
+        <div class="node-tech">Awin API &amp; Webhooks</div>
+      </div>
+      <div>
+        <span class="node-invariant">Idempotent Deduplication</span>
+      </div>
+    </div>
+
+    <div class="flow-node cashback-node" data-node="cashback-ledger">
+      <div>
+        <div class="node-step-tag">Stage 4 • Financials</div>
+        <div class="node-name">Double-Entry Ledger</div>
+        <div class="node-tech">Blnk + Redis + Postgres</div>
+      </div>
+      <div>
+        <span class="node-invariant green">C-1 Zero-Sum Invariant</span>
+      </div>
+    </div>
+
+    <div class="flow-node cashback-node" data-node="cashback-hold">
+      <div>
+        <div class="node-step-tag">Stage 5 • Protection</div>
+        <div class="node-name">Hold &amp; Return Buffer</div>
+        <div class="node-tech">30-60 day state machine</div>
+      </div>
+      <div>
+        <span class="node-invariant amber">C-2 Cancellation Shield</span>
+      </div>
+    </div>
+
+    <div class="flow-node cashback-node" data-node="cashback-payout">
+      <div>
+        <div class="node-step-tag">Stage 6 • Payout</div>
+        <div class="node-name">SEPA Manual Bank Rail</div>
+        <div class="node-tech">OpenBao Vault + /ops/withdrawals</div>
+      </div>
+      <div>
+        <span class="node-invariant green">C-4 &amp; C-5 Dual-Signoff</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Node Details Dynamic Display Panel -->
+  <div class="node-detail-panel" id="diagram-node-details">
+    <div class="panel-header">
+      <div class="panel-title" id="panel-title">
+        <span>🔍</span>
+        <span id="panel-title-text">Licensed RSS/Atom Feeds</span>
+      </div>
+      <span class="node-invariant green" id="panel-invariant-badge">Robots.txt + Crawl Delay</span>
+    </div>
+    <p class="panel-field-val" id="panel-summary-text">
+      Scheduled poller inspects licensed publisher feeds every 15 minutes. Complies strictly with publisher crawl-delay directives and robots.txt.
+    </p>
+    <div class="panel-grid">
+      <div>
+        <div class="panel-field-label">Runtime Technology</div>
+        <div class="panel-field-val" id="panel-tech-text">Go background worker goroutine</div>
+      </div>
+      <div>
+        <div class="panel-field-label">Database &amp; Storage</div>
+        <div class="panel-field-val" id="panel-db-text">Postgres source_feed &amp; feed_cursor</div>
+      </div>
+      <div>
+        <div class="panel-field-label">Invariant Enforced</div>
+        <div class="panel-field-val" id="panel-guard-text">Feed cadence ceiling &amp; etag caching</div>
+      </div>
+      <div>
+        <div class="panel-field-label">Failure Containment</div>
+        <div class="panel-field-val" id="panel-safety-text">Network backoff with exponential retry</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .diagram-section {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 16px;
+    padding: 2rem;
+  }
+
+  .domain-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border-subtle);
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .domain-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .domain-tag {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.25rem 0.65rem;
+    border-radius: 6px;
+  }
+
+  .env-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .section-desc {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin-top: 0.5rem;
+    margin-bottom: 1.5rem;
+    line-height: 1.5;
+  }
+
+  .diagram-controls {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .diagram-tab-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    padding: 0.6rem 1.2rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .diagram-tab-btn:hover {
+    color: rgb(255, 255, 255);
+    border-color: var(--border-bright);
+  }
+
+  .diagram-tab-btn.active {
+    background: var(--bg-surface);
+    color: rgb(255, 255, 255);
+    border-color: var(--status-info);
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
+  }
+
+  .flow-diagram {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .flow-node {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 1.25rem 1rem;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 140px;
+    transition: all 0.2s;
+    position: relative;
+  }
+
+  .flow-node:hover {
+    transform: translateY(-2px);
+    border-color: var(--border-bright);
+  }
+
+  .flow-node.selected {
+    border-color: var(--status-info);
+    background: rgba(56, 189, 248, 0.05);
+    box-shadow: 0 0 16px rgba(56, 189, 248, 0.15);
+  }
+
+  .node-step-tag {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: 0.05em;
+    margin-bottom: 0.35rem;
+  }
+
+  .node-name {
+    font-size: 0.925rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    margin-bottom: 0.25rem;
+  }
+
+  .node-tech {
+    font-size: 0.725rem;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .node-invariant {
+    font-size: 0.675rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    background: rgba(56, 189, 248, 0.15);
+    color: rgb(56, 189, 248);
+    display: inline-block;
+    margin-top: 0.5rem;
+  }
+
+  .node-invariant.green {
+    background: rgba(16, 185, 129, 0.15);
+    color: rgb(52, 211, 153);
+  }
+
+  .node-invariant.amber {
+    background: rgba(245, 158, 11, 0.15);
+    color: rgb(251, 191, 36);
+  }
+
+  /* Node Details Inspection Panel */
+  .node-detail-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border-bright);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-top: 1rem;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+  }
+
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+  }
+
+  .panel-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .panel-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1.25rem;
+    margin-top: 1.25rem;
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 1.25rem;
+  }
+
+  .panel-field-label {
+    font-size: 0.725rem;
+    text-transform: uppercase;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+  }
+
+  .panel-field-val {
+    font-size: 0.825rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    font-family: 'JetBrains Mono', monospace;
+  }
+</style>
+
+<script>
+  interface NodeDetail {
+    title: string;
+    badge: string;
+    badgeClass: string;
+    summary: string;
+    tech: string;
+    db: string;
+    guard: string;
+    safety: string;
+  }
+
+  const nodeData: Record<string, NodeDetail> = {
+    'news-feed': {
+      title: 'Licensed RSS/Atom Feeds',
+      badge: 'Robots.txt + Crawl Delay',
+      badgeClass: '',
+      summary: 'Scheduled poller inspects licensed publisher feeds every 15 minutes. Complies strictly with publisher crawl-delay directives and robots.txt.',
+      tech: 'Go background worker goroutine',
+      db: 'Postgres source_feed & feed_cursor',
+      guard: 'Feed cadence ceiling & etag caching',
+      safety: 'Network backoff with exponential retry'
+    },
+    'news-snapshot': {
+      title: 'Raw License & Evidence Snapshot',
+      badge: 'I-2 & I-3 Immutable Law',
+      badgeClass: 'green',
+      summary: 'Retrieved feed items snapshot exact license terms and HTML body at time of retrieval into an immutable audit table. Cannot be deleted or modified.',
+      tech: 'Postgres Append-Only Table',
+      db: 'Postgres source_item (content_hash, retrieved_at)',
+      guard: 'Database trigger blocks UPDATE and DELETE',
+      safety: 'Zero data overwrite; evidence preserved forever'
+    },
+    'news-llm': {
+      title: 'Model-Agnostic LLM Translation',
+      badge: 'I-5 Prompt & Model Hash',
+      badgeClass: '',
+      summary: 'Adapters translate headline and excerpt between Greek and German while recording model ID, temperature, prompt template hash, and token usage.',
+      tech: 'Cloudflare Workers AI / Mistral 24B / Ollama',
+      db: 'Postgres article_translation (model_id, prompt_version)',
+      guard: 'Hard spending ceiling ($0.02/article, $25/mo cap)',
+      safety: 'Fallbacks to manual draft if AI service fails'
+    },
+    'news-editorial': {
+      title: 'Human Editorial Approval Gate',
+      badge: 'I-1 Named Human Approver',
+      badgeClass: 'green',
+      summary: 'Compulsory human gate: No article can ever be published without a foreign key linking to a named staff member in the accounts table.',
+      tech: 'Go /api/v1/editorial + Supabase Auth JWT',
+      db: 'Postgres article (approved_by NOT NULL REFERENCES account)',
+      guard: 'Schema foreign key + CHECK constraint',
+      safety: 'Prevents automated LLM hallucinations reaching readers'
+    },
+    'news-ssr': {
+      title: 'Dual-Axis Reader Server-Side Rendering',
+      badge: 'Zero-Client Telemetry',
+      badgeClass: 'green',
+      summary: 'SSR renders localized edition in microseconds. Independent language (/el or /de) and place (/munich or /greece) axes without reader tracking.',
+      tech: 'Astro Standalone Node Engine + Cloudflare Cache',
+      db: 'Postgres view article_published_v',
+      guard: 'Read-only replica connection',
+      safety: 'Zero tracking cookies; privacy by design'
+    },
+    'cashback-browse': {
+      title: 'Local Merchant Directory',
+      badge: 'Locale-aware rates',
+      badgeClass: '',
+      summary: 'Displays participating retailers and commission percentages tailored to Greek diaspora in Munich and Athens.',
+      tech: 'Astro SSR with cached merchant feed',
+      db: 'Postgres cashback_merchant & rate_band',
+      guard: 'Active rate validation',
+      safety: 'Cached catalog guarantees high availability'
+    },
+    'cashback-clickout': {
+      title: 'Signed Clickout Engine',
+      badge: 'HMAC anti-tamper token',
+      badgeClass: 'green',
+      summary: 'Generates secure cryptographic redirect URLs (/go/:merchant) embedding signed session identifiers to prevent referral hijacking.',
+      tech: 'Go crypto/hmac SHA-256 signer',
+      db: 'Postgres clickout_session (ttl: 24h)',
+      guard: 'Cryptographic signature verification',
+      safety: 'Rejects forged or expired clickout links'
+    },
+    'cashback-network': {
+      title: 'Affiliate Network Tracking',
+      badge: 'Idempotent Deduplication',
+      badgeClass: '',
+      summary: 'Ingests conversions reported by Awin or local merchant networks. Deduplicates by network transaction ID.',
+      tech: 'Go Webhook Receiver & Scheduled API Poller',
+      db: 'Postgres network_conversion',
+      guard: 'Unique network transaction constraint',
+      safety: 'Idempotent event processing avoids duplicate earnings'
+    },
+    'cashback-ledger': {
+      title: 'Double-Entry Financial Ledger',
+      badge: 'C-1 Zero-Sum Invariant',
+      badgeClass: 'green',
+      summary: 'Records transactions using debit/credit pairs in Blnk ledger. Zero balance ambiguity; sum of all accounts equals zero.',
+      tech: 'Blnk Ledger + Redis Cache + Postgres schema',
+      db: 'Postgres blnk.transactions & blnk.ledgers',
+      guard: 'Zero-sum mathematical invariant',
+      safety: 'Cryptographic transaction IDs & audit log'
+    },
+    'cashback-hold': {
+      title: 'Hold & Return Window Buffer',
+      badge: 'C-2 Cancellation Shield',
+      badgeClass: 'amber',
+      summary: 'Earnings stay in Pending hold for 30–60 days to match merchant return policies before clearing to Confirmed.',
+      tech: 'Blnk Hold Release Cron Daemon',
+      db: 'Postgres cashback_entry (status: pending -> confirmed)',
+      guard: 'Return window timeline check',
+      safety: 'Protects platform against member cash-out on returned goods'
+    },
+    'cashback-payout': {
+      title: 'SEPA Manual Bank Rail',
+      badge: 'C-4 & C-5 Dual-Signoff',
+      badgeClass: 'green',
+      summary: 'Operators execute SEPA wires via corporate banking. Bank reference entered to settle ledger. Dual-operator check prevents insider fraud.',
+      tech: 'OpenBao Vault (IBAN token) + /ops console',
+      db: 'Postgres payout_request & audit_log',
+      guard: 'Dual-operator approval check (C-4)',
+      safety: 'Manual rail prevents automated API drain attacks'
+    }
+  };
+
+  const diagramTabs = document.querySelectorAll<HTMLButtonElement>('.diagram-tab-btn');
+  const newsDiagram = document.getElementById('news-diagram');
+  const cashbackDiagram = document.getElementById('cashback-diagram');
+
+  diagramTabs.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      diagramTabs.forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const targetDiagram = btn.getAttribute('data-diagram');
+      if (targetDiagram === 'news-diagram') {
+        if (newsDiagram) newsDiagram.style.display = 'grid';
+        if (cashbackDiagram) cashbackDiagram.style.display = 'none';
+        const first = document.querySelector<HTMLElement>('#news-diagram .flow-node');
+        first?.click();
+      } else {
+        if (newsDiagram) newsDiagram.style.display = 'none';
+        if (cashbackDiagram) cashbackDiagram.style.display = 'grid';
+        const first = document.querySelector<HTMLElement>('#cashback-diagram .flow-node');
+        first?.click();
+      }
+    });
+  });
+
+  const flowNodes = document.querySelectorAll<HTMLElement>('.flow-node');
+  const panelTitleText = document.getElementById('panel-title-text');
+  const panelInvariantBadge = document.getElementById('panel-invariant-badge');
+  const panelSummaryText = document.getElementById('panel-summary-text');
+  const panelTechText = document.getElementById('panel-tech-text');
+  const panelDbText = document.getElementById('panel-db-text');
+  const panelGuardText = document.getElementById('panel-guard-text');
+  const panelSafetyText = document.getElementById('panel-safety-text');
+
+  flowNodes.forEach((node) => {
+    node.addEventListener('click', () => {
+      flowNodes.forEach((n) => n.classList.remove('selected'));
+      node.classList.add('selected');
+
+      const nodeId = node.getAttribute('data-node');
+      if (!nodeId || !nodeData[nodeId]) return;
+
+      const data = nodeData[nodeId];
+      if (panelTitleText) panelTitleText.textContent = data.title;
+      if (panelInvariantBadge) {
+        panelInvariantBadge.textContent = data.badge;
+        panelInvariantBadge.className = 'node-invariant ' + data.badgeClass;
+      }
+      if (panelSummaryText) panelSummaryText.textContent = data.summary;
+      if (panelTechText) panelTechText.textContent = data.tech;
+      if (panelDbText) panelDbText.textContent = data.db;
+      if (panelGuardText) panelGuardText.textContent = data.guard;
+      if (panelSafetyText) panelSafetyText.textContent = data.safety;
+    });
+  });
+</script>
