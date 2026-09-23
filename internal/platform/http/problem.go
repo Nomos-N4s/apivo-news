@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+
 	"github.com/Nomos-N4s/apivo-news/internal/platform/api/dto"
 )
 
@@ -17,7 +18,6 @@ type ProblemDetails = dto.APIError
 func Problem(w http.ResponseWriter, status int, detail string) {
 	ProblemWith(w, status, detail, nil)
 }
-
 
 // ProblemWith writes the same document carrying extension members - the
 // machine-readable half of RFC 9457 §3.2, alongside the human-readable
@@ -50,4 +50,3 @@ func ProblemWith(w http.ResponseWriter, status int, detail string, extensions ma
 	// line, and there is nothing further to do.
 	_, _ = w.Write(body)
 }
-

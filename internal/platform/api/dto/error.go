@@ -11,13 +11,14 @@ import "encoding/json"
 // HTTP status text, Status is the HTTP status code, and Detail contains the
 // human-readable explanation when one is available.
 type APIError struct {
-	Type   string `json:"type"`
-	Title  string `json:"title"`
-	Status int    `json:"status"`
-	Detail string `json:"detail,omitempty"`
+	Type       string         `json:"type"`
+	Title      string         `json:"title"`
+	Status     int            `json:"status"`
+	Detail     string         `json:"detail,omitempty"`
 	Extensions map[string]any `json:"-"`
 }
 
+// MarshalJSON implements json.Marshaler for APIError to handle arbitrary extensions.
 func (e APIError) MarshalJSON() ([]byte, error) {
 	type Alias APIError
 	if len(e.Extensions) == 0 {
