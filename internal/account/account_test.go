@@ -22,7 +22,7 @@ type stubAuthenticator struct {
 	err     error
 }
 
-func (a stubAuthenticator) Authenticate(ctx context.Context, token string) (Account, error) {
+func (a stubAuthenticator) Authenticate(_ context.Context, _ string) (Account, error) {
 	if a.err != nil {
 		return Account{}, a.err
 	}
@@ -35,16 +35,16 @@ func TestRequireAccount(t *testing.T) {
 	expectedAccountID := uuid.New()
 
 	tests := []struct {
-		name               string
-		authHeader         string
-		hasHeader          bool
-		authenticatorErr   error
-		authenticatorAcct  Account
-		wantStatus         int
-		wantWWWAuth        string
-		wantNextCalled     bool
-		wantAccountInCtx   Account
-		wantBodySubstring  string
+		name              string
+		authHeader        string
+		hasHeader         bool
+		authenticatorErr  error
+		authenticatorAcct Account
+		wantStatus        int
+		wantWWWAuth       string
+		wantNextCalled    bool
+		wantAccountInCtx  Account
+		wantBodySubstring string
 	}{
 		{
 			name:              "missing authorization header",
@@ -93,20 +93,19 @@ func TestRequireAccount(t *testing.T) {
 			wantBodySubstring: "",
 		},
 		{
-			name:               "valid token passes through to next handler with account in context",
-			authHeader:         "Bearer valid-token",
-			hasHeader:          true,
-			authenticatorAcct:  Account{ID: expectedAccountID},
-			wantStatus:         http.StatusOK,
-			wantWWWAuth:        "",
-			wantNextCalled:     true,
-			wantAccountInCtx:   Account{ID: expectedAccountID},
-			wantBodySubstring:  "",
+			name:              "valid token passes through to next handler with account in context",
+			authHeader:        "Bearer valid-token",
+			hasHeader:         true,
+			authenticatorAcct: Account{ID: expectedAccountID},
+			wantStatus:        http.StatusOK,
+			wantWWWAuth:       "",
+			wantNextCalled:    true,
+			wantAccountInCtx:  Account{ID: expectedAccountID},
+			wantBodySubstring: "",
 		},
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -243,7 +242,6 @@ func TestBearerToken(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
