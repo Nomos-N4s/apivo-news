@@ -35,10 +35,10 @@ func TestBearerToken(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
+		name       string
 		authHeader string
-		wantToken string
-		wantOK    bool
+		wantToken  string
+		wantOK     bool
 	}{
 		{
 			name:       "missing header",
@@ -151,14 +151,14 @@ func TestRequireEditorMiddleware(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name               string
-		authHeader         string
-		authFunc           func(ctx context.Context, token string) (Editor, error)
-		wantStatus         int
-		wantWWWAuth        string
-		wantProblemDetail  string
-		wantNextCalled     bool
-		wantEditorInCtx    Editor
+		name              string
+		authHeader        string
+		authFunc          func(ctx context.Context, token string) (Editor, error)
+		wantStatus        int
+		wantWWWAuth       string
+		wantProblemDetail string
+		wantNextCalled    bool
+		wantEditorInCtx   Editor
 	}{
 		{
 			name:              "missing bearer token header",
@@ -187,7 +187,7 @@ func TestRequireEditorMiddleware(t *testing.T) {
 		{
 			name:       "unauthenticated token (ErrUnauthenticated)",
 			authHeader: "Bearer invalid-token",
-			authFunc: func(ctx context.Context, token string) (Editor, error) {
+			authFunc: func(_ context.Context, _ string) (Editor, error) {
 				return Editor{}, ErrUnauthenticated
 			},
 			wantStatus:        http.StatusUnauthorized,
@@ -198,7 +198,7 @@ func TestRequireEditorMiddleware(t *testing.T) {
 		{
 			name:       "non-editor caller (ErrNotEditor)",
 			authHeader: "Bearer reader-token",
-			authFunc: func(ctx context.Context, token string) (Editor, error) {
+			authFunc: func(_ context.Context, _ string) (Editor, error) {
 				return Editor{}, ErrNotEditor
 			},
 			wantStatus:        http.StatusForbidden,
@@ -209,7 +209,7 @@ func TestRequireEditorMiddleware(t *testing.T) {
 		{
 			name:       "authenticator unexpected internal error",
 			authHeader: "Bearer any-token",
-			authFunc: func(ctx context.Context, token string) (Editor, error) {
+			authFunc: func(_ context.Context, _ string) (Editor, error) {
 				return Editor{}, errors.New("database connection failed")
 			},
 			wantStatus:        http.StatusInternalServerError,
@@ -220,7 +220,7 @@ func TestRequireEditorMiddleware(t *testing.T) {
 		{
 			name:       "successful authentication as editor",
 			authHeader: "Bearer valid-editor-token",
-			authFunc: func(ctx context.Context, token string) (Editor, error) {
+			authFunc: func(_ context.Context, token string) (Editor, error) {
 				if token == "valid-editor-token" {
 					return validEditor, nil
 				}
