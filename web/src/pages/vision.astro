@@ -1,0 +1,986 @@
+---
+// Executive Vision Board & Project Status Dashboard for Co-Founders
+// Sliced into News and Cashback domains, plus Platform & Infrastructure.
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Apivo — Executive Vision & State Dashboard</title>
+    <meta name="description" content="Interactive founder vision board detailing current architecture, operational readiness, and roadmap for News and Cashback domains." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg-main: rgb(6, 9, 19);
+        --bg-surface: rgb(12, 18, 34);
+        --bg-card: rgb(19, 28, 49);
+        --bg-card-hover: rgb(25, 37, 64);
+        --border-subtle: rgb(30, 45, 77);
+        --border-bright: rgb(45, 65, 109);
+        --text-primary: rgb(248, 250, 252);
+        --text-secondary: rgb(148, 163, 184);
+        --text-muted: rgb(100, 116, 139);
+        --accent-news: rgb(0, 210, 180);
+        --accent-news-glow: rgba(0, 210, 180, 0.15);
+        --accent-cashback: rgb(245, 158, 11);
+        --accent-cashback-glow: rgba(245, 158, 11, 0.15);
+        --accent-platform: rgb(139, 92, 246);
+        --status-live: rgb(16, 185, 129);
+        --status-warn: rgb(245, 158, 11);
+        --status-info: rgb(56, 189, 248);
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background-color: var(--bg-main);
+        color: var(--text-primary);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        line-height: 1.5;
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+
+      /* Background visual effect */
+      .bg-glow {
+        position: fixed;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 1000px;
+        height: 400px;
+        background: radial-gradient(circle, rgba(0, 163, 255, 0.08) 0%, rgba(16, 185, 129, 0.04) 50%, transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      .container {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 2.5rem 1.5rem 5rem;
+        position: relative;
+        z-index: 1;
+      }
+
+      /* Top Header */
+      header {
+        margin-bottom: 2.5rem;
+        border-bottom: 1px solid var(--border-subtle);
+        padding-bottom: 2rem;
+      }
+
+      .header-meta {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+      }
+
+      .brand-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: rgba(14, 165, 233, 0.1);
+        border: 1px solid rgba(14, 165, 233, 0.3);
+        padding: 0.35rem 0.85rem;
+        border-radius: 9999px;
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: var(--status-info);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .pulse-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: var(--status-live);
+        box-shadow: 0 0 10px var(--status-live);
+        animation: pulse 2s infinite;
+      }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(0.85); }
+      }
+
+      .env-badge {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        background: var(--bg-surface);
+        padding: 0.35rem 0.75rem;
+        border-radius: 6px;
+        border: 1px solid var(--border-subtle);
+      }
+
+      .header-title-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        flex-wrap: wrap;
+        gap: 1.5rem;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 3.5vw, 2.75rem);
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        color: rgb(255, 255, 255);
+      }
+
+      .subtitle {
+        color: var(--text-secondary);
+        font-size: 1.125rem;
+        margin-top: 0.4rem;
+        max-width: 680px;
+      }
+
+      /* Domain Filter Tabs */
+      .tabs-bar {
+        display: flex;
+        gap: 0.5rem;
+        background: var(--bg-surface);
+        padding: 0.35rem;
+        border-radius: 12px;
+        border: 1px solid var(--border-subtle);
+        margin: 2rem 0;
+        overflow-x: auto;
+      }
+
+      .tab-btn {
+        background: transparent;
+        color: var(--text-secondary);
+        border: none;
+        padding: 0.65rem 1.25rem;
+        border-radius: 8px;
+        font-size: 0.875rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        white-space: nowrap;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .tab-btn:hover {
+        color: rgb(255, 255, 255);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .tab-btn.active {
+        background: var(--bg-card);
+        color: rgb(255, 255, 255);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--border-bright);
+      }
+
+      .tab-btn[data-target="news"].active {
+        border-color: rgba(0, 210, 180, 0.4);
+        color: var(--accent-news);
+      }
+
+      .tab-btn[data-target="cashback"].active {
+        border-color: rgba(245, 158, 11, 0.4);
+        color: var(--accent-cashback);
+      }
+
+      /* KPI / Metric Tiles */
+      .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2.5rem;
+      }
+
+      .metric-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 1.25rem;
+        transition: transform 0.2s, border-color 0.2s;
+      }
+
+      .metric-card:hover {
+        border-color: var(--border-bright);
+        transform: translateY(-2px);
+      }
+
+      .metric-label {
+        font-size: 0.8125rem;
+        font-weight: 500;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.35rem;
+      }
+
+      .metric-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: rgb(255, 255, 255);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .metric-note {
+        font-size: 0.8125rem;
+        color: var(--text-secondary);
+        margin-top: 0.35rem;
+      }
+
+      /* Main Domain Grid */
+      .domain-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2rem;
+        margin-bottom: 3rem;
+      }
+
+      @media (max-width: 960px) {
+        .domain-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .domain-column {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+
+      .domain-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-bottom: 0.75rem;
+        border-bottom: 2px solid;
+      }
+
+      .domain-header.news {
+        border-color: var(--accent-news);
+      }
+
+      .domain-header.cashback {
+        border-color: var(--accent-cashback);
+      }
+
+      .domain-title {
+        font-size: 1.35rem;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+      }
+
+      .domain-tag {
+        font-size: 0.75rem;
+        font-weight: 600;
+        padding: 0.25rem 0.65rem;
+        border-radius: 9999px;
+        text-transform: uppercase;
+      }
+
+      .domain-tag.news {
+        background: var(--accent-news-glow);
+        color: var(--accent-news);
+      }
+
+      .domain-tag.cashback {
+        background: var(--accent-cashback-glow);
+        color: var(--accent-cashback);
+      }
+
+      /* Feature & Architecture Cards */
+      .card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 14px;
+        padding: 1.5rem;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: transparent;
+        transition: background 0.2s;
+      }
+
+      .card.news-card:hover::before {
+        background: var(--accent-news);
+      }
+
+      .card.cashback-card:hover::before {
+        background: var(--accent-cashback);
+      }
+
+      .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 0.85rem;
+      }
+
+      .card-title {
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: rgb(255, 255, 255);
+      }
+
+      .card-badge {
+        font-size: 0.7rem;
+        font-weight: 600;
+        padding: 0.2rem 0.55rem;
+        border-radius: 6px;
+        text-transform: uppercase;
+      }
+
+      .badge-green {
+        background: rgba(16, 185, 129, 0.15);
+        color: rgb(52, 211, 153);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+      }
+
+      .badge-amber {
+        background: rgba(245, 158, 11, 0.15);
+        color: rgb(251, 191, 36);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+      }
+
+      .badge-blue {
+        background: rgba(56, 189, 248, 0.15);
+        color: rgb(56, 189, 248);
+        border: 1px solid rgba(56, 189, 248, 0.3);
+      }
+
+      .card-desc {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        margin-bottom: 1.25rem;
+      }
+
+      .spec-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
+      .spec-item {
+        display: flex;
+        align-items: baseline;
+        gap: 0.65rem;
+        font-size: 0.8125rem;
+        color: var(--text-secondary);
+      }
+
+      .spec-icon {
+        font-size: 0.875rem;
+        flex-shrink: 0;
+      }
+
+      .spec-code {
+        font-family: 'JetBrains Mono', monospace;
+        color: rgb(226, 232, 240);
+        background: var(--bg-card);
+        padding: 0.1rem 0.35rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+      }
+
+      /* Interactive Flow Simulator */
+      .simulator-box {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin-top: 1rem;
+      }
+
+      .simulator-header {
+        font-size: 0.8125rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-muted);
+        margin-bottom: 1rem;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .stepper {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+
+      .step {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.65rem 0.85rem;
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 8px;
+        border: 1px solid transparent;
+        transition: all 0.2s;
+        cursor: pointer;
+      }
+
+      .step:hover {
+        background: rgba(255, 255, 255, 0.06);
+        border-color: var(--border-subtle);
+      }
+
+      .step.active {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: var(--border-bright);
+      }
+
+      .step-num {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-bright);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: var(--text-secondary);
+      }
+
+      .step.active .step-num {
+        background: var(--status-info);
+        color: var(--bg-main);
+        border-color: var(--status-info);
+      }
+
+      .step-content {
+        flex: 1;
+        font-size: 0.8125rem;
+        color: rgb(226, 232, 240);
+      }
+
+      .step-subtext {
+        font-size: 0.725rem;
+        color: var(--text-muted);
+      }
+
+      /* Co-Founder Decision Callout */
+      .decision-section {
+        background: linear-gradient(145deg, rgb(14, 23, 42) 0%, rgb(30, 27, 75) 100%);
+        border: 1px solid rgba(139, 92, 246, 0.3);
+        border-radius: 16px;
+        padding: 2rem;
+        margin-top: 3rem;
+      }
+
+      .decision-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 1.25rem;
+      }
+
+      .decision-icon {
+        font-size: 1.5rem;
+      }
+
+      .decision-title {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: rgb(255, 255, 255);
+      }
+
+      .decision-subtitle {
+        color: rgb(203, 213, 225);
+        font-size: 0.875rem;
+      }
+
+      .decision-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1.25rem;
+        margin-top: 1.25rem;
+      }
+
+      .decision-card {
+        background: rgba(15, 23, 42, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        padding: 1.25rem;
+      }
+
+      .decision-card h4 {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: rgb(226, 232, 240);
+        margin-bottom: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .decision-card p {
+        font-size: 0.825rem;
+        color: var(--text-secondary);
+        line-height: 1.45;
+      }
+
+      .decision-pill {
+        display: inline-block;
+        margin-top: 0.75rem;
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: rgb(167, 139, 250);
+      }
+
+      /* Metric Colors */
+      .metric-green {
+        color: rgb(52, 211, 153);
+      }
+
+      .metric-cyan {
+        color: rgb(56, 189, 248);
+      }
+
+      .metric-amber {
+        color: rgb(251, 191, 36);
+      }
+
+      .news-accent-icon {
+        color: var(--accent-news);
+      }
+
+      .cashback-accent-icon {
+        color: var(--accent-cashback);
+      }
+
+      /* Quick Links Footer */
+      .links-section {
+        margin-top: 3rem;
+        padding-top: 2rem;
+        border-top: 1px solid var(--border-subtle);
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        font-size: 0.8125rem;
+        color: var(--text-muted);
+      }
+
+      .route-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+
+      .route-link {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        background: var(--bg-surface);
+        padding: 0.35rem 0.65rem;
+        border-radius: 6px;
+        border: 1px solid var(--border-subtle);
+        text-decoration: none;
+        transition: all 0.2s;
+      }
+
+      .route-link:hover {
+        color: rgb(255, 255, 255);
+        border-color: var(--border-bright);
+        background: var(--bg-card);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bg-glow"></div>
+
+    <main class="container">
+      <!-- Header -->
+      <header>
+        <div class="header-meta">
+          <div class="brand-pill">
+            <span class="pulse-dot"></span>
+            Apivo Executive Status
+          </div>
+          <div class="env-badge">QA Channel: ra1ze.com • Monolith v1.0.0-alpha</div>
+        </div>
+
+        <div class="header-title-row">
+          <div>
+            <h1>The Co-Founder Vision Board</h1>
+            <p class="subtitle">
+              Unified digital platform for European diaspora communities. Independent language and place axes for local journalism, tied to a localized cashback shopping economy.
+            </p>
+          </div>
+        </div>
+      </header>
+
+      <!-- KPI Ribbon -->
+      <section class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-label">Core Architecture</div>
+          <div class="metric-value">Go + Astro</div>
+          <div class="metric-note">Modular monolith with strict interface decoupling</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Quality Gates (CI)</div>
+          <div class="metric-value metric-green">20 / 20 Green</div>
+          <div class="metric-note">100% passing tests, race detector, & 90% coverage gate</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Legal Invariants</div>
+          <div class="metric-value metric-cyan">I-1 to I-5</div>
+          <div class="metric-note">Hard-enforced by Postgres triggers & schema constraints</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Cashback Rail State</div>
+          <div class="metric-value metric-amber">Manual Payout</div>
+          <div class="metric-note">C-4 & C-5 invariants enforced; operator bank transfers</div>
+        </div>
+      </section>
+
+      <!-- Domain Navigation Filter -->
+      <nav class="tabs-bar" role="tablist">
+        <button class="tab-btn active" data-target="all" role="tab" id="tab-all">
+          <span>🌐</span> Unified Ecosystem
+        </button>
+        <button class="tab-btn" data-target="news" role="tab" id="tab-news">
+          <span>📰</span> Domain 1: News Platform
+        </button>
+        <button class="tab-btn" data-target="cashback" role="tab" id="tab-cashback">
+          <span>💳</span> Domain 2: Cashback & Commerce
+        </button>
+      </nav>
+
+      <!-- 2-Column Domain Grid -->
+      <div class="domain-grid">
+        <!-- DOMAIN 1: NEWS -->
+        <section class="domain-column" data-domain="news">
+          <div class="domain-header news">
+            <h2 class="domain-title">
+              <span class="news-accent-icon">📰</span>
+              News & Editorial Engine
+            </h2>
+            <span class="domain-tag news">News</span>
+          </div>
+
+          <!-- Card 1: Reader Dual-Axis -->
+          <article class="card news-card">
+            <div class="card-header">
+              <h3 class="card-title">Dual-Axis Reader Experience</h3>
+              <span class="card-badge badge-green">Production Ready</span>
+            </div>
+            <p class="card-desc">
+              "Language and place are independent axes." A Greek speaker in Munich reads Munich local news in Greek without being forced into Greek national news.
+            </p>
+            <div class="spec-list">
+              <div class="spec-item">
+                <span class="spec-icon">⚡</span>
+                <span>Flagship matrix: <span class="spec-code">/el/munich+greece</span> and <span class="spec-code">/de/munich+greece</span></span>
+              </div>
+              <div class="spec-item">
+                <span class="spec-icon">🔒</span>
+                <span>Instant SSR rendering with zero client-side tracking or telemetry overhead.</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- Card 2: Legal Invariants (I-1 to I-5) -->
+          <article class="card news-card">
+            <div class="card-header">
+              <h3 class="card-title">Database Legal Invariants</h3>
+              <span class="card-badge badge-green">Postgres Enforced</span>
+            </div>
+            <p class="card-desc">
+              Licensing carries real copyright liability. Legal protections are guaranteed by database schema triggers, not application code.
+            </p>
+            <div class="spec-list">
+              <div class="spec-item">
+                <span class="spec-icon">🛡️</span>
+                <span><strong>I-1:</strong> No article exists without named human approver (<span class="spec-code">approved_by NOT NULL</span>).</span>
+              </div>
+              <div class="spec-item">
+                <span class="spec-icon">🛡️</span>
+                <span><strong>I-2 & I-3:</strong> Ingested content is immutable legal evidence; snapshot at retrieval.</span>
+              </div>
+              <div class="spec-item">
+                <span class="spec-icon">🛡️</span>
+                <span><strong>I-5:</strong> Sentence-level audit trail (source URL, license, LLM model, prompt version).</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- Card 3: Interactive News Pipeline -->
+          <article class="card news-card">
+            <div class="card-header">
+              <h3 class="card-title">Ingestion & Translation Pipeline</h3>
+              <span class="card-badge badge-blue">Automated</span>
+            </div>
+            <p class="card-desc">
+              Background poller continuously ingests licensed RSS/Atom feeds (ERT, in.gr, Abendzeitung München, tz München) into LLM translation.
+            </p>
+
+            <div class="simulator-box">
+              <div class="simulator-header">
+                <span>Interactive Processing Cycle</span>
+                <span>4 Steps</span>
+              </div>
+              <div class="stepper" id="news-stepper">
+                <div class="step active" data-desc="Feed poller retrieves item, checks robots.txt, snapshots license terms, and stores in immutable source_item table.">
+                  <div class="step-num">1</div>
+                  <div class="step-content">
+                    <div>Feed Retrieval & License Snapshot</div>
+                    <div class="step-subtext">RSS/Atom poller runs on schedule</div>
+                  </div>
+                </div>
+                <div class="step" data-desc="Model-agnostic LLM adapter generates translation with prompt version hash and exact temperature tracked.">
+                  <div class="step-num">2</div>
+                  <div class="step-content">
+                    <div>AI Translation with Full Lineage</div>
+                    <div class="step-subtext">Captures model ID and prompt version</div>
+                  </div>
+                </div>
+                <div class="step" data-desc="Editor logs into /editor/signin, reviews draft in editorial queue, and explicitly approves or withdraws.">
+                  <div class="step-num">3</div>
+                  <div class="step-content">
+                    <div>Human Editorial Gate</div>
+                    <div class="step-subtext">Compulsory named human approval</div>
+                  </div>
+                </div>
+                <div class="step" data-desc="Article appears instantly on reader front page with linkback and bounded extract attribution.">
+                  <div class="step-num">4</div>
+                  <div class="step-content">
+                    <div>Instant Dual-Axis Publication</div>
+                    <div class="step-subtext">Published to Munich & Greece streams</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <!-- DOMAIN 2: CASHBACK -->
+        <section class="domain-column" data-domain="cashback">
+          <div class="domain-header cashback">
+            <h2 class="domain-title">
+              <span class="cashback-accent-icon">💳</span>
+              Cashback & Commerce Engine
+            </h2>
+            <span class="domain-tag cashback">Commercial Engine</span>
+          </div>
+
+          <!-- Card 1: Member Wallet & Ledger -->
+          <article class="card cashback-card">
+            <div class="card-header">
+              <h3 class="card-title">Double-Entry Financial Ledger</h3>
+              <span class="card-badge badge-green">Hardened</span>
+            </div>
+            <p class="card-desc">
+              Zero balance ambiguity. Every single clickout commission, pending hold, and withdrawal is recorded in an immutable financial ledger.
+            </p>
+            <div class="spec-list">
+              <div class="spec-item">
+                <span class="spec-icon">💰</span>
+                <span><strong>Pending Balance:</strong> Network-reported conversions during return/cancellation windows.</span>
+              </div>
+              <div class="spec-item">
+                <span class="spec-icon">✅</span>
+                <span><strong>Confirmed Balance:</strong> Cleared cash ready for member withdrawal.</span>
+              </div>
+              <div class="spec-item">
+                <span class="spec-icon">🔐</span>
+                <span><strong>Bank Data Isolation:</strong> OpenBao / Vault reference tokens; no plaintext IBANs in main DB.</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- Card 2: Honest Operational Reality -->
+          <article class="card cashback-card">
+            <div class="card-header">
+              <h3 class="card-title">Live Commercial Readiness</h3>
+              <span class="card-badge badge-amber">Manual Payout Rail</span>
+            </div>
+            <p class="card-desc">
+              The software engine is 100% built. Live money movement is currently operated via the <strong>Manual Rail</strong> by design for safe alpha rollout.
+            </p>
+            <div class="spec-list">
+              <div class="spec-item">
+                <span class="spec-icon">⚙️</span>
+                <span><strong>Payout Execution:</strong> Operator views withdrawal in <span class="spec-code">/ops/withdrawals</span>, executes SEPA wire via bank, records bank ref.</span>
+              </div>
+              <div class="spec-item">
+                <span class="spec-icon">🤝</span>
+                <span><strong>Awin Network:</strong> Client transport & deeplink generator built; requires live approved Awin Publisher account.</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- Card 3: Interactive Cashback Flow -->
+          <article class="card cashback-card">
+            <div class="card-header">
+              <h3 class="card-title">End-to-End Member Commerce Flow</h3>
+              <span class="card-badge badge-blue">Interactive</span>
+            </div>
+            <p class="card-desc">
+              From discovering a localized merchant to receiving cash back in a European bank account.
+            </p>
+
+            <div class="simulator-box">
+              <div class="simulator-header">
+                <span>Member Journey</span>
+                <span>4 Steps</span>
+              </div>
+              <div class="stepper" id="cashback-stepper">
+                <div class="step active" data-desc="User browses merchant directory at /cashback, views commission rate (e.g. 5%), and clicks 'Shop Now'.">
+                  <div class="step-num">1</div>
+                  <div class="step-content">
+                    <div>Attributed Clickout (/go)</div>
+                    <div class="step-subtext">Signed token prevents forgery</div>
+                  </div>
+                </div>
+                <div class="step" data-desc="Member shops on merchant site. Awin network logs purchase and passes commission to our poller.">
+                  <div class="step-num">2</div>
+                  <div class="step-content">
+                    <div>Network Attribution (Awin)</div>
+                    <div class="step-subtext">Automated transaction ingestion</div>
+                  </div>
+                </div>
+                <div class="step" data-desc="Earnings post to member wallet as 'Pending'. After merchant return window (30-60 days), funds clear to 'Confirmed'.">
+                  <div class="step-num">3</div>
+                  <div class="step-content">
+                    <div>Ledger Balance Clearing</div>
+                    <div class="step-subtext">Prevents fraud on return/refund</div>
+                  </div>
+                </div>
+                <div class="step" data-desc="Member requests payout at /withdraw. Operator verifies in /ops and executes SEPA wire.">
+                  <div class="step-num">4</div>
+                  <div class="step-content">
+                    <div>Operator SEPA Wire Disbursement</div>
+                    <div class="step-subtext">C-4 approver audit recorded</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+        </section>
+      </div>
+
+      <!-- Co-Founder Alignment & Decision Section -->
+      <section class="decision-section">
+        <div class="decision-header">
+          <span class="decision-icon">🎯</span>
+          <div>
+            <h3 class="decision-title">Co-Founder Action Items & Next Milestones</h3>
+            <p class="decision-subtitle">Key business & operational prerequisites to transition from Alpha/QA to Public Beta.</p>
+          </div>
+        </div>
+
+        <div class="decision-grid">
+          <div class="decision-card">
+            <h4>1. Awin Publisher Approval</h4>
+            <p>
+              Submit Apivo publisher application to Awin Germany/Greece to obtain live credentials and merchant programme approvals.
+            </p>
+            <span class="decision-pill">Commercial / Business</span>
+          </div>
+
+          <div class="decision-card">
+            <h4>2. Publisher Feed Licensing</h4>
+            <p>
+              Formalize commercial reuse agreements with Greek national publishers and Munich regional news outlets for bounded extracts.
+            </p>
+            <span class="decision-pill">Legal / Editorial</span>
+          </div>
+
+          <div class="decision-card">
+            <h4>3. Corporate Bank Account</h4>
+            <p>
+              Designate operating business bank account for manual SEPA payout disbursements to early beta members.
+            </p>
+            <span class="decision-pill">Finance & Ops</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Route Navigation Footer -->
+      <footer class="links-section">
+        <div>Deployed on Hetzner VPS (Helsinki, EU) behind Cloudflare WAF</div>
+        <div class="route-pills">
+          <a class="route-link" href="/el/munich+greece" target="_blank">Front Page (el)</a>
+          <a class="route-link" href="/de/munich+greece" target="_blank">Front Page (de)</a>
+          <a class="route-link" href="/el/munich/cashback" target="_blank">Cashback</a>
+          <a class="route-link" href="/el/editor/signin" target="_blank">Editorial</a>
+          <a class="route-link" href="/ops/withdrawals" target="_blank">Ops Payouts</a>
+        </div>
+      </footer>
+    </main>
+
+    <!-- Client-side Interactive Tab & Stepper Logic -->
+    <script>
+      // Tab Filtering
+      const tabs = document.querySelectorAll<HTMLButtonElement>('.tab-btn');
+      const domainSections = document.querySelectorAll<HTMLElement>('.domain-column');
+
+      tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+          tabs.forEach((t) => t.classList.remove('active'));
+          tab.classList.add('active');
+
+          const target = tab.getAttribute('data-target');
+
+          domainSections.forEach((sec) => {
+            const domain = sec.getAttribute('data-domain');
+            if (target === 'all' || target === domain) {
+              sec.style.display = 'flex';
+            } else {
+              sec.style.display = 'none';
+            }
+          });
+        });
+      });
+
+      // Interactive Steppers
+      function setupStepper(stepperId: string) {
+        const stepper = document.getElementById(stepperId);
+        if (!stepper) return;
+        const steps = stepper.querySelectorAll<HTMLElement>('.step');
+
+        steps.forEach((step) => {
+          step.addEventListener('click', () => {
+            steps.forEach((s) => s.classList.remove('active'));
+            step.classList.add('active');
+          });
+        });
+      }
+
+      setupStepper('news-stepper');
+      setupStepper('cashback-stepper');
+    </script>
+  </body>
+</html>
