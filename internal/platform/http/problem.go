@@ -28,32 +28,14 @@ func Problem(w http.ResponseWriter, status int, detail string) {
 // document's own fields.
 func ProblemWith(w http.ResponseWriter, status int, detail string, extensions map[string]any) {
 	problem := dto.APIError{
-		Type:   "about:blank",
-		Title:  http.StatusText(status),
-		Status: status,
-		Detail: detail,
+		Type:       "about:blank",
+		Title:      http.StatusText(status),
+		Status:     status,
+		Detail:     detail,
+		Extensions: extensions,
 	}
 
-	document := map[string]any{
-		"type":   problem.Type,
-		"title":  problem.Title,
-		"status": problem.Status,
-	}
-
-	if problem.Detail != "" {
-		document["detail"] = problem.Detail
-	}
-
-	for name, value := range extensions {
-		switch name {
-		case "type", "title", "status", "detail":
-			continue
-		default:
-			document[name] = value
-		}
-	}
-
-	body, err := json.Marshal(document)
+	body, err := json.Marshal(problem)
 	if err != nil {
 		// Reachable only through an extension value that cannot be
 		// marshalled; the status still has to reach the client.

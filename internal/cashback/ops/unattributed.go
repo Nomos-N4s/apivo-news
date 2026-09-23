@@ -108,6 +108,11 @@ type unattributedPage struct {
 }
 
 // listUnattributed implements GET /api/v1/cashback/ops/unattributed.
+// @Summary listUnattributed
+// @Description Endpoint for listUnattributed
+// @Success 200
+// @Router /listUnattributed [get]
+// @Security BearerAuth
 func (h *Handler) listUnattributed(w http.ResponseWriter, r *http.Request) {
 	after, limit, detail, ok := parseQueuePage(r.URL.Query())
 	if !ok {

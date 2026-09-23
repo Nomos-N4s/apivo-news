@@ -11,6 +11,14 @@
 // zero on success - it backs the container HEALTHCHECK, where the distroless
 // image offers no shell or curl; "apivo version" prints the stamped release
 // version and exits.
+// @title Internal HTTP API
+// @version 1.0.0-alpha
+// @description Machine-readable description of what the Go binary actually serves.
+//
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description A JWT from the auth provider, verified against the configured JWKS.
 package main
 
 import (

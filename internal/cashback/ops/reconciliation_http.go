@@ -90,6 +90,11 @@ type importResponse struct {
 // it is the counterparty's statement and there is nothing wrong with it -
 // and a retry of the same request finds the run already imported and runs
 // detection again, which records only what the first pass did not.
+// @Summary importStatement
+// @Description Endpoint for importStatement
+// @Success 200
+// @Router /importStatement [get]
+// @Security BearerAuth
 func (h *Handler) importStatement(w http.ResponseWriter, r *http.Request) {
 	var req importRequest
 	if !decodeJSONUpTo(w, r, &req, maxStatementBytes) {
@@ -202,6 +207,11 @@ type differencePage struct {
 
 // listDifferences implements
 // GET /api/v1/cashback/ops/reconciliation/runs/{id}/differences.
+// @Summary listDifferences
+// @Description Endpoint for listDifferences
+// @Success 200
+// @Router /listDifferences [get]
+// @Security BearerAuth
 func (h *Handler) listDifferences(w http.ResponseWriter, r *http.Request) {
 	run, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -282,6 +292,11 @@ type resolveResponse struct {
 
 // resolveDifference implements
 // POST /api/v1/cashback/ops/reconciliation/differences/{id}/resolve.
+// @Summary resolveDifference
+// @Description Endpoint for resolveDifference
+// @Success 200
+// @Router /resolveDifference [get]
+// @Security BearerAuth
 func (h *Handler) resolveDifference(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {

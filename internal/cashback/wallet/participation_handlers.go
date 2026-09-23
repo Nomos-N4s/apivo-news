@@ -66,6 +66,11 @@ type optInRequest struct {
 //
 // 404 when they have never opted in, which is not an error condition: it is
 // how the frontend knows to render the opt-in rather than a wallet.
+// @Summary getParticipation
+// @Description Endpoint for getParticipation
+// @Success 200
+// @Router /getParticipation [get]
+// @Security BearerAuth
 func (h *Handler) getParticipation(w http.ResponseWriter, r *http.Request) {
 	member := memberFrom(r.Context())
 
@@ -84,6 +89,11 @@ func (h *Handler) getParticipation(w http.ResponseWriter, r *http.Request) {
 }
 
 // postParticipation implements POST /api/v1/cashback/participation (FR-002).
+// @Summary postParticipation
+// @Description Endpoint for postParticipation
+// @Success 200
+// @Router /postParticipation [get]
+// @Security BearerAuth
 func (h *Handler) postParticipation(w http.ResponseWriter, r *http.Request) {
 	member := memberFrom(r.Context())
 
@@ -132,6 +142,11 @@ func (h *Handler) postParticipation(w http.ResponseWriter, r *http.Request) {
 //
 // Idempotent. A second DELETE answers the same 200 with the same date, and
 // publishes nothing further.
+// @Summary deleteParticipation
+// @Description Endpoint for deleteParticipation
+// @Success 200
+// @Router /deleteParticipation [get]
+// @Security BearerAuth
 func (h *Handler) deleteParticipation(w http.ResponseWriter, r *http.Request) {
 	member := memberFrom(r.Context())
 

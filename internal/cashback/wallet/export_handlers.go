@@ -80,6 +80,11 @@ type exportEnvelope struct {
 }
 
 // getExport implements GET /api/v1/cashback/export.
+// @Summary getExport
+// @Description Endpoint for getExport
+// @Success 200
+// @Router /getExport [get]
+// @Security BearerAuth
 func (h *Handler) getExport(w http.ResponseWriter, r *http.Request) {
 	member := memberFrom(r.Context())
 	format, language, detail, ok := parseExport(r.URL.Query())

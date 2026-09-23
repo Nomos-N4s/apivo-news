@@ -132,6 +132,11 @@ type networksPage struct {
 }
 
 // listNetworks implements GET /api/v1/cashback/ops/networks.
+// @Summary listNetworks
+// @Description Endpoint for listNetworks
+// @Success 200
+// @Router /listNetworks [get]
+// @Security BearerAuth
 func (h *Handler) listNetworks(w http.ResponseWriter, r *http.Request) {
 	if len(r.URL.Query()) > 0 {
 		platformhttp.Problem(w, http.StatusBadRequest,

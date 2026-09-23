@@ -129,6 +129,11 @@ func isReaderPath(path string) bool {
 }
 
 // handleFront serves GET /api/v1/front: the locale-scoped front page feed.
+// @Summary handleFront
+// @Description Endpoint for handleFront
+// @Success 200
+// @Router /handleFront [get]
+// @Security BearerAuth
 func (h *Handler) handleFront(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	query := r.URL.Query()
@@ -198,6 +203,11 @@ func (h *Handler) handleFront(w http.ResponseWriter, r *http.Request) {
 // handleArticle serves GET /api/v1/articles/{id}: the article page payload.
 // Unknown, unpublished and withdrawn articles are one indistinguishable 404
 // - the existence of unpublished work is not public.
+// @Summary handleArticle
+// @Description Endpoint for handleArticle
+// @Success 200
+// @Router /handleArticle [get]
+// @Security BearerAuth
 func (h *Handler) handleArticle(w http.ResponseWriter, r *http.Request) {
 	parsed, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {

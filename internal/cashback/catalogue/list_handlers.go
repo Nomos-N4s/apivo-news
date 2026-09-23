@@ -41,6 +41,11 @@ type cataloguePageResponse struct {
 }
 
 // listCatalogue implements GET /api/v1/cashback/catalogue.
+// @Summary listCatalogue
+// @Description Endpoint for listCatalogue
+// @Success 200
+// @Router /listCatalogue [get]
+// @Security BearerAuth
 func (h *Handler) listCatalogue(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	if query.Has(categoryParam) {

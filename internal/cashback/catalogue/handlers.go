@@ -221,6 +221,11 @@ type merchantResponse struct {
 }
 
 // getMerchant implements GET /api/v1/cashback/merchants/{slug}.
+// @Summary getMerchant
+// @Description Endpoint for getMerchant
+// @Success 200
+// @Router /getMerchant [get]
+// @Security BearerAuth
 func (h *Handler) getMerchant(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	language := r.URL.Query().Get(languageParam)
