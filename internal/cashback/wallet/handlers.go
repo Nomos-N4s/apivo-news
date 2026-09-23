@@ -157,6 +157,11 @@ type walletResponse struct {
 // The member comes from the token and from nowhere else: there is no path
 // segment and no query parameter naming one, so reading somebody else's
 // wallet is not a request this endpoint can express.
+// @Summary getWallet
+// @Description Endpoint for getWallet
+// @Success 200
+// @Router /getWallet [get]
+// @Security BearerAuth
 func (h *Handler) getWallet(w http.ResponseWriter, r *http.Request) {
 	member := memberFrom(r.Context())
 
@@ -246,6 +251,11 @@ type entriesPage struct {
 }
 
 // getEntries implements GET /api/v1/cashback/wallet/entries.
+// @Summary getEntries
+// @Description Endpoint for getEntries
+// @Success 200
+// @Router /getEntries [get]
+// @Security BearerAuth
 func (h *Handler) getEntries(w http.ResponseWriter, r *http.Request) {
 	member := memberFrom(r.Context())
 	req, detail, ok := parseEntriesPage(r.URL.Query())

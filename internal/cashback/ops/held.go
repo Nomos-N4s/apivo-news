@@ -73,6 +73,11 @@ type heldPage struct {
 }
 
 // listHeld implements GET /api/v1/cashback/ops/held.
+// @Summary listHeld
+// @Description Endpoint for listHeld
+// @Success 200
+// @Router /listHeld [get]
+// @Security BearerAuth
 func (h *Handler) listHeld(w http.ResponseWriter, r *http.Request) {
 	at, id, limit, detail, ok := parsePage(r.URL.Query(), heldCursors)
 	if !ok {
@@ -158,6 +163,11 @@ type heldRejectResponse struct {
 }
 
 // releaseHeld implements POST /api/v1/cashback/ops/held/{id}/release.
+// @Summary releaseHeld
+// @Description Endpoint for releaseHeld
+// @Success 200
+// @Router /releaseHeld [get]
+// @Security BearerAuth
 func (h *Handler) releaseHeld(w http.ResponseWriter, r *http.Request) {
 	review, ok := heldReview(w, r, "a release")
 	if !ok {
@@ -181,6 +191,11 @@ func (h *Handler) releaseHeld(w http.ResponseWriter, r *http.Request) {
 }
 
 // rejectHeld implements POST /api/v1/cashback/ops/held/{id}/reject.
+// @Summary rejectHeld
+// @Description Endpoint for rejectHeld
+// @Success 200
+// @Router /rejectHeld [get]
+// @Security BearerAuth
 func (h *Handler) rejectHeld(w http.ResponseWriter, r *http.Request) {
 	review, ok := heldReview(w, r, "a rejection")
 	if !ok {

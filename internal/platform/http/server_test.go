@@ -218,7 +218,7 @@ func TestProblem(t *testing.T) {
 		Status: http.StatusConflict,
 		Detail: "a source with this feed URL already exists",
 	}
-	if got != want {
+	if got.Type != want.Type || got.Title != want.Title || got.Status != want.Status || got.Detail != want.Detail {
 		t.Fatalf("problem body = %+v, want %+v", got, want)
 	}
 }

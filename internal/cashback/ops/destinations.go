@@ -137,6 +137,11 @@ type verifiedResponse struct {
 
 // listUnverifiedDestinations implements
 // GET /api/v1/cashback/ops/payout-destinations.
+// @Summary listUnverifiedDestinations
+// @Description Endpoint for listUnverifiedDestinations
+// @Success 200
+// @Router /listUnverifiedDestinations [get]
+// @Security BearerAuth
 func (h *Handler) listUnverifiedDestinations(w http.ResponseWriter, r *http.Request) {
 	at, rowID, limit, detail, ok := parsePage(r.URL.Query(), destinationCursors)
 	if !ok {
@@ -174,6 +179,11 @@ func (h *Handler) listUnverifiedDestinations(w http.ResponseWriter, r *http.Requ
 
 // verifyDestination implements
 // POST /api/v1/cashback/ops/payout-destinations/{id}/verify.
+// @Summary verifyDestination
+// @Description Endpoint for verifyDestination
+// @Success 200
+// @Router /verifyDestination [get]
+// @Security BearerAuth
 func (h *Handler) verifyDestination(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {

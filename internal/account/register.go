@@ -59,6 +59,11 @@ type Store interface {
 // requireAccount — see NewHandler — and does its own token check with the
 // Verifier, because the gate's whole job is to refuse the person this
 // route exists to serve.
+// @Summary register
+// @Description Endpoint for register
+// @Success 200
+// @Router /register [get]
+// @Security BearerAuth
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	token, ok := bearerToken(r)
 	if !ok {
@@ -103,6 +108,11 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 // readProfile implements GET /api/v1/account: the caller's own row, role
 // included, which is the one answer to "what may I do here" a client can
 // trust.
+// @Summary readProfile
+// @Description Endpoint for readProfile
+// @Success 200
+// @Router /readProfile [get]
+// @Security BearerAuth
 func (h *Handler) readProfile(w http.ResponseWriter, r *http.Request) {
 	profile, err := h.store.Profile(r.Context(), accountFrom(r.Context()).ID)
 	switch {

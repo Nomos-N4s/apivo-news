@@ -116,6 +116,11 @@ func (s *Server) instrument(pattern string, handler http.Handler) http.Handler {
 }
 
 // handleMetrics serves the collector's scrape.
+// @Summary handleMetrics
+// @Description Endpoint for handleMetrics
+// @Success 200
+// @Router /handleMetrics [get]
+// @Security BearerAuth
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if s.instr == nil {
 		http.Error(w, "telemetry is not configured on this deployment", http.StatusServiceUnavailable)

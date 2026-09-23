@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+
 	"github.com/Nomos-N4s/apivo-news/internal/platform/api/dto"
 )
 
@@ -18,7 +19,6 @@ func Problem(w http.ResponseWriter, status int, detail string) {
 	ProblemWith(w, status, detail, nil)
 }
 
-
 // ProblemWith writes the same document carrying extension members - the
 // machine-readable half of RFC 9457 §3.2, alongside the human-readable
 // Detail.
@@ -28,32 +28,14 @@ func Problem(w http.ResponseWriter, status int, detail string) {
 // document's own fields.
 func ProblemWith(w http.ResponseWriter, status int, detail string, extensions map[string]any) {
 	problem := dto.APIError{
-		Type:   "about:blank",
-		Title:  http.StatusText(status),
-		Status: status,
-		Detail: detail,
+		Type:       "about:blank",
+		Title:      http.StatusText(status),
+		Status:     status,
+		Detail:     detail,
+		Extensions: extensions,
 	}
 
-	document := map[string]any{
-		"type":   problem.Type,
-		"title":  problem.Title,
-		"status": problem.Status,
-	}
-
-	if problem.Detail != "" {
-		document["detail"] = problem.Detail
-	}
-
-	for name, value := range extensions {
-		switch name {
-		case "type", "title", "status", "detail":
-			continue
-		default:
-			document[name] = value
-		}
-	}
-
-	body, err := json.Marshal(document)
+	body, err := json.Marshal(problem)
 	if err != nil {
 		// Reachable only through an extension value that cannot be
 		// marshalled; the status still has to reach the client.
@@ -68,4 +50,3 @@ func ProblemWith(w http.ResponseWriter, status int, detail string, extensions ma
 	// line, and there is nothing further to do.
 	_, _ = w.Write(body)
 }
-

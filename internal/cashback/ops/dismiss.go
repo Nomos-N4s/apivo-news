@@ -128,6 +128,11 @@ type dismissResponse struct {
 
 // dismissUnattributed implements
 // POST /api/v1/cashback/ops/unattributed/{id}/dismiss.
+// @Summary dismissUnattributed
+// @Description Endpoint for dismissUnattributed
+// @Success 200
+// @Router /dismissUnattributed [get]
+// @Security BearerAuth
 func (h *Handler) dismissUnattributed(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {

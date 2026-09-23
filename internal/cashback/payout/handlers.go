@@ -19,9 +19,12 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Nomos-N4s/apivo-news/internal/platform/api/dto"
 
 	"github.com/google/uuid"
 
@@ -152,39 +155,25 @@ func (h *Handler) handleUnrouted(w http.ResponseWriter, r *http.Request) {
 
 // amountJSON is one figure as the contract spells it: minor units and an
 // explicit currency, the shape C-6 mandates everywhere (contracts/http-api.md).
-type amountJSON struct {
-	Minor    int64  `json:"minor"`
-	Currency string `json:"currency"`
-}
 
-func figure(a money.Amount) amountJSON {
-	return amountJSON{Minor: a.Minor, Currency: string(a.Currency)}
+func figure(a money.Amount) dto.AmountJSON {
+	return dto.AmountJSON{Minor: a.Minor, Currency: string(a.Currency)}
 }
 
 // withdrawalRequestBody is what a member sends.
-type withdrawalRequestBody struct {
-	DestinationID string     `json:"destination_id"`
-	Amount        amountJSON `json:"amount"`
-}
 
 // withdrawalResponse is the 201 body.
-type withdrawalResponse struct {
-	RequestID string `json:"request_id"`
-	State     string `json:"state"`
-	// ReservedAmount is what was actually taken out of confirmed, which is
-	// at least what was asked for. Entries are reserved whole - each cites
-	// the network report evidencing it (C-2), so there is no half of one -
-	// and a member who asked for slightly less than an entry gets slightly
-	// more reserved. Reporting the request's own amount here instead would
-	// tell them a figure that is not what will be paid.
-	ReservedAmount amountJSON `json:"reserved_amount"`
-}
 
 // postWithdrawal implements POST /api/v1/cashback/withdrawals.
+// @Summary postWithdrawal
+// @Description Endpoint for postWithdrawal
+// @Success 200
+// @Router /postWithdrawal [get]
+// @Security BearerAuth
 func (h *Handler) postWithdrawal(w http.ResponseWriter, r *http.Request) {
 	member := memberFrom(r.Context())
 
-	var body withdrawalRequestBody
+	var body dto.WithdrawalRequestBody
 	if !decodeJSON(w, r, &body) {
 		return
 	}
@@ -209,7 +198,7 @@ func (h *Handler) postWithdrawal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeJSON(w, r, http.StatusCreated, withdrawalResponse{
+	h.writeJSON(w, r, http.StatusCreated, dto.WithdrawalResponse{
 		RequestID:      made.ID.String(),
 		State:          made.State.String(),
 		ReservedAmount: figure(made.Amount),
@@ -351,25 +340,13 @@ func stamp(at time.Time) *string {
 }
 
 // withdrawalItem is one request as a member reads it back.
-type withdrawalItem struct {
-	RequestID     string     `json:"request_id"`
-	DestinationID string     `json:"destination_id"`
-	Amount        amountJSON `json:"amount"`
-	State         string     `json:"state"`
-	RequestedAt   string     `json:"requested_at"`
-	// DecidedAt and DecisionReason are the operator's decision, null until
-	// one is made. The reason is what a refused member is owed (FR-061), so
-	// it is on the member's own view of their request rather than only on
-	// the operator's.
-	DecidedAt      *string `json:"decided_at"`
-	DecisionReason *string `json:"decision_reason"`
-	// PayoutReference is what the rail called the payment, null until a
-	// payout exists and the rail has answered. It is the string a member
-	// quotes to their bank, which is why it reaches them at all.
-	PayoutReference *string `json:"payout_reference"`
-}
 
 // listWithdrawals implements GET /api/v1/cashback/withdrawals.
+// @Summary listWithdrawals
+// @Description Endpoint for listWithdrawals
+// @Success 200
+// @Router /listWithdrawals [get]
+// @Security BearerAuth
 func (h *Handler) listWithdrawals(w http.ResponseWriter, r *http.Request) {
 	member := memberFrom(r.Context())
 	made, err := h.withdrawals.List(r.Context(), member.ID)
@@ -378,16 +355,19 @@ func (h *Handler) listWithdrawals(w http.ResponseWriter, r *http.Request) {
 		platformhttp.Problem(w, http.StatusInternalServerError, "")
 		return
 	}
-	items := make([]withdrawalItem, 0, len(made))
+	items := make([]dto.WithdrawalItem, 0, len(made))
 	for _, one := range made {
 		items = append(items, withdrawalItemOf(one))
 	}
-	h.writeJSON(w, r, http.StatusOK, struct {
-		Items []withdrawalItem `json:"items"`
-	}{Items: items})
+	h.writeJSON(w, r, http.StatusOK, dto.WithdrawalListResponse{Items: items})
 }
 
 // getWithdrawal implements GET /api/v1/cashback/withdrawals/{id}.
+// @Summary getWithdrawal
+// @Description Endpoint for getWithdrawal
+// @Success 200
+// @Router /getWithdrawal [get]
+// @Security BearerAuth
 func (h *Handler) getWithdrawal(w http.ResponseWriter, r *http.Request) {
 	member := memberFrom(r.Context())
 	id, err := uuid.Parse(r.PathValue("id"))
@@ -411,8 +391,8 @@ func (h *Handler) getWithdrawal(w http.ResponseWriter, r *http.Request) {
 }
 
 // withdrawalItemOf renders one request.
-func withdrawalItemOf(one Withdrawal) withdrawalItem {
-	item := withdrawalItem{
+func withdrawalItemOf(one Withdrawal) dto.WithdrawalItem {
+	item := dto.WithdrawalItem{
 		RequestID:     one.ID.String(),
 		DestinationID: one.Destination.String(),
 		Amount:        figure(one.Amount),
@@ -434,19 +414,9 @@ func withdrawalItemOf(one Withdrawal) withdrawalItem {
 // are somewhere this service cannot read them from (ADR-0003), and an
 // endpoint that echoed them would be the leak the whole arrangement exists
 // to prevent.
-type destinationItem struct {
-	DestinationID string `json:"destination_id"`
-	Kind          string `json:"kind"`
-	// VerifiedAt is null until the member has proved this destination is
-	// theirs (FR-051), and VerifiedMethod says how. A withdrawal to one
-	// that is null is refused, so a client can tell before asking.
-	VerifiedAt     *string `json:"verified_at"`
-	VerifiedMethod *string `json:"verified_method"`
-	CreatedAt      string  `json:"created_at"`
-}
 
-func destinationItemOf(d Destination) destinationItem {
-	item := destinationItem{
+func destinationItemOf(d Destination) dto.DestinationItem {
+	item := dto.DestinationItem{
 		DestinationID: d.ID.String(),
 		Kind:          d.Kind.String(),
 		VerifiedAt:    stamp(d.VerifiedAt),
@@ -460,6 +430,11 @@ func destinationItemOf(d Destination) destinationItem {
 }
 
 // listDestinations implements GET /api/v1/cashback/payout-destinations.
+// @Summary listDestinations
+// @Description Endpoint for listDestinations
+// @Success 200
+// @Router /listDestinations [get]
+// @Security BearerAuth
 func (h *Handler) listDestinations(w http.ResponseWriter, r *http.Request) {
 	member := memberFrom(r.Context())
 	held, err := h.destinations.List(r.Context(), member.ID)
@@ -468,13 +443,11 @@ func (h *Handler) listDestinations(w http.ResponseWriter, r *http.Request) {
 		platformhttp.Problem(w, http.StatusInternalServerError, "")
 		return
 	}
-	items := make([]destinationItem, 0, len(held))
+	items := make([]dto.DestinationItem, 0, len(held))
 	for _, one := range held {
 		items = append(items, destinationItemOf(one))
 	}
-	h.writeJSON(w, r, http.StatusOK, struct {
-		Items []destinationItem `json:"items"`
-	}{Items: items})
+	h.writeJSON(w, r, http.StatusOK, dto.DestinationListResponse{Items: items})
 }
 
 // destinationRequestBody is what a member sends.
@@ -484,10 +457,6 @@ func (h *Handler) listDestinations(w http.ResponseWriter, r *http.Request) {
 // positioned to judge. This package does not look inside, does not store the
 // value, and does not put it in an error - it passes straight through to
 // [DetailsVault.Store] and what comes back is a reference.
-type destinationRequestBody struct {
-	Kind    string          `json:"kind"`
-	Details json.RawMessage `json:"details"`
-}
 
 // postDestination implements POST /api/v1/cashback/payout-destinations.
 //
@@ -495,10 +464,15 @@ type destinationRequestBody struct {
 // flow (FR-051) and a destination that arrived verified would be one nobody
 // proved belongs to the member, which is the whole thing the check exists to
 // stop.
+// @Summary postDestination
+// @Description Endpoint for postDestination
+// @Success 200
+// @Router /postDestination [get]
+// @Security BearerAuth
 func (h *Handler) postDestination(w http.ResponseWriter, r *http.Request) {
 	member := memberFrom(r.Context())
 
-	var body destinationRequestBody
+	var body dto.DestinationRequestBody
 	if !decodeJSON(w, r, &body) {
 		return
 	}

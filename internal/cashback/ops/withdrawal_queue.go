@@ -133,6 +133,11 @@ type awaitingPage struct {
 
 // listWithdrawalsAwaitingApproval implements
 // GET /api/v1/cashback/ops/withdrawals.
+// @Summary listWithdrawalsAwaitingApproval
+// @Description Endpoint for listWithdrawalsAwaitingApproval
+// @Success 200
+// @Router /listWithdrawalsAwaitingApproval [get]
+// @Security BearerAuth
 func (h *Handler) listWithdrawalsAwaitingApproval(w http.ResponseWriter, r *http.Request) {
 	values, detail, ok := takeState(r.URL.Query())
 	if !ok {
