@@ -1,0 +1,749 @@
+---
+// CommercialStrategy: Commercial Model, Diaspora Flywheel, Unit Economics & Partner Revenue Simulator
+---
+
+<div class="commercial-module-container" id="commercial-strategy">
+  <!-- Header meta banner -->
+  <div class="domain-header" style="margin-bottom: 1.5rem;">
+    <div>
+      <span class="domain-tag" style="background: rgba(245, 158, 11, 0.15); color: rgb(245, 158, 11);">Business &amp; Monetization Model</span>
+      <h2 class="domain-title" style="margin-top: 0.5rem;">
+        <span>💼</span> Commercial Strategy &amp; Partner Unit Economics
+      </h2>
+    </div>
+    <div class="env-badge">Munich ⇄ Greece Beachhead • 70/30 Margin Model</div>
+  </div>
+
+  <p class="section-desc">
+    Strategic commercial blueprint for co-founders and commercial partners. Demonstrates our zero-CAC customer acquisition flywheel, affiliate commission splits, category take-rates, and interactive revenue model.
+  </p>
+
+  <!-- High-Level Strategic Pillars (3 Cards) -->
+  <div class="pillar-grid">
+    <div class="pillar-card">
+      <div class="pillar-icon">🔄</div>
+      <div class="pillar-title">Zero-CAC Diaspora Flywheel</div>
+      <p class="pillar-desc">
+        Generic cashback apps spend €30–€50 on Meta ads per user with 80% churn. Apivo's daily localized news engine builds continuous organic habit and community trust, converting readers into high-intent shoppers with zero paid marketing.
+      </p>
+      <div class="pillar-stat">Organic Daily Engagement ➔ High-Intent Commerce</div>
+    </div>
+
+    <div class="pillar-card">
+      <div class="pillar-icon">💰</div>
+      <div class="pillar-title">70 / 30 Monetization Model</div>
+      <p class="pillar-desc">
+        When an affiliate merchant pays commission on purchases, 70% is distributed to the member's wallet as real cash savings (driving retention), and 30% is retained as Apivo's pure platform gross margin with zero inventory risk.
+      </p>
+      <div class="pillar-stat">70% Member Retention • 30% Platform Gross Margin</div>
+    </div>
+
+    <div class="pillar-card">
+      <div class="pillar-icon">🏰</div>
+      <div class="pillar-title">Unfair Cross-Border Moat</div>
+      <p class="pillar-desc">
+        German cashback apps lack Greek language and Hellenic merchant relationships; Greek apps lack German retailer integrations. Apivo bridges Munich and Greece with dual-currency, dual-language, and cross-border merchant catalogs.
+      </p>
+      <div class="pillar-stat">Munich ⇄ Greece Corridor • Deep Community Affinity</div>
+    </div>
+  </div>
+
+  <!-- Interactive Partner Revenue & ROI Simulator -->
+  <div class="simulator-card">
+    <div class="sim-header">
+      <div>
+        <div class="sim-badge">Executive Forecasting Tool</div>
+        <h3 class="sim-title">
+          <span>🧮</span> Interactive Partner Commercial &amp; Revenue Simulator
+        </h3>
+        <p class="sim-subtitle">
+          Model monthly gross merchandise value (GMV), member reward payouts, and platform gross revenue based on audience scale and commerce conversion.
+        </p>
+      </div>
+    </div>
+
+    <div class="sim-layout">
+      <!-- Sliders Side -->
+      <div class="sim-controls">
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-label">Monthly Active Readers (MAU)</span>
+            <span class="slider-value" id="disp-sim-readers">15,000</span>
+          </div>
+          <input type="range" class="sim-range" id="sim-readers" min="2000" max="100000" step="1000" value="15000" />
+          <div class="slider-hint">Munich Greek diaspora (~35,000) + returning travelers</div>
+        </div>
+
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-label">Reader-to-Shopper Conversion</span>
+            <span class="slider-value" id="disp-sim-conversion">7.5%</span>
+          </div>
+          <input type="range" class="sim-range" id="sim-conversion" min="2.0" max="15.0" step="0.5" value="7.5" />
+          <div class="slider-hint">Benchmark: Editorial context converts 3x higher than cold ads</div>
+        </div>
+
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-label">Average Monthly Basket Spend</span>
+            <span class="slider-value" id="disp-sim-spend">€180</span>
+          </div>
+          <input type="range" class="sim-range" id="sim-spend" min="50" max="500" step="10" value="180" />
+          <div class="slider-hint">Blended average across flights, fashion, tech, and groceries</div>
+        </div>
+
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-label">Average Merchant Commission</span>
+            <span class="slider-value" id="disp-sim-commission">5.5%</span>
+          </div>
+          <input type="range" class="sim-range" id="sim-commission" min="2.0" max="10.0" step="0.5" value="5.5" />
+          <div class="slider-hint">Weighted take-rate from Awin Germany &amp; Greek direct retail</div>
+        </div>
+      </div>
+
+      <!-- Financial Outputs Side -->
+      <div class="sim-results">
+        <div class="kpi-output-grid">
+          <div class="kpi-box">
+            <div class="kpi-box-label">Monthly Active Shoppers</div>
+            <div class="kpi-box-val" id="res-active-shoppers">1,125</div>
+            <div class="kpi-box-sub">Transacting members / month</div>
+          </div>
+
+          <div class="kpi-box">
+            <div class="kpi-box-label">Monthly Transacted GMV</div>
+            <div class="kpi-box-val" id="res-monthly-gmv">€202,500</div>
+            <div class="kpi-box-sub">Total commerce volume generated</div>
+          </div>
+
+          <div class="kpi-box">
+            <div class="kpi-box-label">Total Affiliate Commission</div>
+            <div class="kpi-box-val" id="res-total-commission">€11,138</div>
+            <div class="kpi-box-sub">Earned from retailer networks</div>
+          </div>
+
+          <div class="kpi-box highlight-green">
+            <div class="kpi-box-label">Member Cashback Distributed (70%)</div>
+            <div class="kpi-box-val" id="res-member-payout">€7,796</div>
+            <div class="kpi-box-sub">Community savings driving retention</div>
+          </div>
+
+          <div class="kpi-box highlight-cyan">
+            <div class="kpi-box-label">Apivo Net Platform Revenue (30%)</div>
+            <div class="kpi-box-val" id="res-platform-revenue">€3,341</div>
+            <div class="kpi-box-sub">High gross margin software revenue</div>
+          </div>
+
+          <div class="kpi-box highlight-purple">
+            <div class="kpi-box-label">Annualized Run-Rate (ARR)</div>
+            <div class="kpi-box-val" id="res-annual-runrate">€40,095</div>
+            <div class="kpi-box-sub">From Munich beachhead alone</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Category Unit Economics Table -->
+  <div class="economics-table-card">
+    <div class="table-header">
+      <h3 class="table-title">
+        <span>🛒</span> Merchant Category Unit Economics &amp; Margin Matrix
+      </h3>
+      <span class="table-sub">Representative sample based on active affiliate contracts in Germany &amp; Greece</span>
+    </div>
+
+    <div class="table-responsive">
+      <table class="eco-table">
+        <thead>
+          <tr>
+            <th>Merchant Category</th>
+            <th>Pilot Partners</th>
+            <th>Average Order Value</th>
+            <th>Network Commission</th>
+            <th>Total Commission</th>
+            <th>Member Share (70%)</th>
+            <th>Apivo Revenue (30%)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <div class="cat-cell"><span>👗</span> Fashion &amp; Apparel</div>
+            </td>
+            <td>Zalando, ASOS EU</td>
+            <td>€110.00</td>
+            <td><span class="rate-badge">7.5%</span></td>
+            <td>€8.25</td>
+            <td class="text-green">€5.78</td>
+            <td class="text-cyan">€2.47</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="cat-cell"><span>✈️</span> Travel &amp; Flights</div>
+            </td>
+            <td>Aegean Airlines, Lufthansa</td>
+            <td>€320.00</td>
+            <td><span class="rate-badge">2.5%</span></td>
+            <td>€8.00</td>
+            <td class="text-green">€5.60</td>
+            <td class="text-cyan">€2.40</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="cat-cell"><span>📱</span> Consumer Electronics</div>
+            </td>
+            <td>MediaMarkt, Saturn</td>
+            <td>€240.00</td>
+            <td><span class="rate-badge">3.5%</span></td>
+            <td>€8.40</td>
+            <td class="text-green">€5.88</td>
+            <td class="text-cyan">€2.52</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="cat-cell"><span>🍷</span> Specialty Food &amp; Delis</div>
+            </td>
+            <td>Rewe, Hellenic Deli Online</td>
+            <td>€65.00</td>
+            <td><span class="rate-badge">5.5%</span></td>
+            <td>€3.58</td>
+            <td class="text-green">€2.51</td>
+            <td class="text-cyan">€1.07</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Go-To-Market Execution & Milestone Roadmap -->
+  <div class="gtm-roadmap-grid">
+    <div class="gtm-card">
+      <div class="gtm-phase">Phase 1 • Current Focus</div>
+      <div class="gtm-title">Munich Alpha &amp; Test Hardening</div>
+      <ul class="gtm-list">
+        <li><span>✓</span> QA staging active on ra1ze.com with fixture merchants</li>
+        <li><span>✓</span> Double-entry ledger zero-sum audit mathematical proof</li>
+        <li><span>✓</span> Closed testing with Greek community anchors in Munich</li>
+        <li><span>✓</span> Zero-risk manual SEPA bank payout rails</li>
+      </ul>
+      <div class="gtm-target">Target: 250 Active Testers • Stable Ledger</div>
+    </div>
+
+    <div class="gtm-card">
+      <div class="gtm-phase">Phase 2 • Q4 2026 Target</div>
+      <div class="gtm-title">Commercial Beta &amp; Awin Rollout</div>
+      <ul class="gtm-list">
+        <li><span>⏳</span> Submit Awin Germany / Greece publisher application</li>
+        <li><span>⏳</span> Onboard 25 top-tier German &amp; Greek affiliate merchants</li>
+        <li><span>⏳</span> Partnership with Munich Greek student &amp; cultural societies</li>
+        <li><span>⏳</span> Designate corporate operating bank account for SEPA rails</li>
+      </ul>
+      <div class="gtm-target">Target: 2,500 Members • €150k Monthly GMV</div>
+    </div>
+
+    <div class="gtm-card">
+      <div class="gtm-phase">Phase 3 • 2027 Scale</div>
+      <div class="gtm-title">European Corridor Expansion</div>
+      <ul class="gtm-list">
+        <li><span>🚀</span> Public beta launch across Munich, Nuremberg, &amp; Athens</li>
+        <li><span>🚀</span> Expansion to Stuttgart &amp; Frankfurt diaspora hubs</li>
+        <li><span>🚀</span> BaFin closed-loop regulatory validation for instant payouts</li>
+        <li><span>🚀</span> Replication into Italian &amp; Spanish diaspora corridors in Germany</li>
+      </ul>
+      <div class="gtm-target">Target: 25,000+ MAU • €1.5M Monthly GMV</div>
+    </div>
+  </div>
+</div>
+
+<style>
+  :root {
+    --bg-main: rgb(6, 9, 19);
+    --bg-surface: rgb(12, 18, 34);
+    --bg-card: rgb(19, 28, 49);
+    --bg-card-hover: rgb(25, 37, 64);
+    --border-subtle: rgb(30, 45, 77);
+    --border-bright: rgb(45, 65, 109);
+    --text-primary: rgb(248, 250, 252);
+    --text-secondary: rgb(148, 163, 184);
+    --text-muted: rgb(100, 116, 139);
+    --accent-news: rgb(0, 210, 180);
+    --accent-news-glow: rgba(0, 210, 180, 0.15);
+    --accent-cashback: rgb(245, 158, 11);
+    --accent-cashback-glow: rgba(245, 158, 11, 0.15);
+    --accent-platform: rgb(139, 92, 246);
+    --status-live: rgb(16, 185, 129);
+    --status-warn: rgb(245, 158, 11);
+    --status-info: rgb(56, 189, 248);
+  }
+
+  .commercial-module-container {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+  }
+
+  .domain-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .domain-tag {
+    font-size: 0.725rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.25rem 0.65rem;
+    border-radius: 9999px;
+  }
+
+  .domain-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .env-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .section-desc {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    line-height: 1.6;
+  }
+
+  /* Pillar Grid */
+  .pillar-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .pillar-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    padding: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: transform 0.2s, border-color 0.2s;
+  }
+
+  .pillar-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--border-bright);
+  }
+
+  .pillar-icon {
+    font-size: 1.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .pillar-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    margin-bottom: 0.5rem;
+  }
+
+  .pillar-desc {
+    font-size: 0.825rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 1.25rem;
+  }
+
+  .pillar-stat {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--status-info);
+    background: rgba(56, 189, 248, 0.1);
+    padding: 0.35rem 0.65rem;
+    border-radius: 6px;
+    border: 1px solid rgba(56, 189, 248, 0.25);
+  }
+
+  /* Interactive Simulator Card */
+  .simulator-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-bright);
+    border-radius: 16px;
+    padding: 2rem;
+  }
+
+  .sim-header {
+    margin-bottom: 1.75rem;
+  }
+
+  .sim-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    background: rgba(16, 185, 129, 0.15);
+    color: rgb(52, 211, 153);
+    margin-bottom: 0.5rem;
+  }
+
+  .sim-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .sim-subtitle {
+    font-size: 0.825rem;
+    color: var(--text-secondary);
+  }
+
+  .sim-layout {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 2rem;
+  }
+
+  @media (max-width: 900px) {
+    .sim-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .sim-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 1.5rem;
+  }
+
+  .slider-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .slider-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.825rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .slider-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    color: var(--accent-cashback);
+  }
+
+  .sim-range {
+    width: 100%;
+    accent-color: var(--accent-cashback);
+    cursor: pointer;
+  }
+
+  .slider-hint {
+    font-size: 0.725rem;
+    color: var(--text-muted);
+  }
+
+  .sim-results {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .kpi-output-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+
+  .kpi-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    padding: 1.15rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .kpi-box.highlight-green {
+    border-color: rgba(52, 211, 153, 0.4);
+    background: rgba(16, 185, 129, 0.08);
+  }
+
+  .kpi-box.highlight-cyan {
+    border-color: rgba(56, 189, 248, 0.4);
+    background: rgba(56, 189, 248, 0.08);
+  }
+
+  .kpi-box.highlight-purple {
+    border-color: rgba(167, 139, 250, 0.4);
+    background: rgba(139, 92, 246, 0.08);
+  }
+
+  .kpi-box-label {
+    font-size: 0.725rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: 0.05em;
+    margin-bottom: 0.25rem;
+  }
+
+  .kpi-box-val {
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: rgb(255, 255, 255);
+    font-family: 'JetBrains Mono', monospace;
+    line-height: 1.2;
+    margin-bottom: 0.25rem;
+  }
+
+  .highlight-green .kpi-box-val {
+    color: rgb(52, 211, 153);
+  }
+
+  .highlight-cyan .kpi-box-val {
+    color: rgb(56, 189, 248);
+  }
+
+  .highlight-purple .kpi-box-val {
+    color: rgb(167, 139, 250);
+  }
+
+  .kpi-box-sub {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+  }
+
+  /* Category Economics Table */
+  .economics-table-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 16px;
+    padding: 2rem;
+  }
+
+  .table-header {
+    margin-bottom: 1.25rem;
+  }
+
+  .table-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .table-sub {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+
+  .table-responsive {
+    overflow-x: auto;
+  }
+
+  .eco-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.825rem;
+  }
+
+  .eco-table th {
+    text-align: left;
+    padding: 0.75rem 1rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-size: 0.725rem;
+    border-bottom: 1px solid var(--border-subtle);
+    background: rgba(0, 0, 0, 0.2);
+  }
+
+  .eco-table td {
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+  }
+
+  .cat-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+  }
+
+  .rate-badge {
+    background: rgba(245, 158, 11, 0.15);
+    color: rgb(251, 191, 36);
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 0.75rem;
+  }
+
+  .text-green {
+    color: rgb(52, 211, 153);
+    font-weight: 700;
+  }
+
+  .text-cyan {
+    color: rgb(56, 189, 248);
+    font-weight: 700;
+  }
+
+  /* GTM Roadmap Grid */
+  .gtm-roadmap-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .gtm-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    padding: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .gtm-phase {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--status-info);
+    margin-bottom: 0.35rem;
+  }
+
+  .gtm-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    margin-bottom: 1rem;
+  }
+
+  .gtm-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    font-size: 0.825rem;
+    color: var(--text-secondary);
+  }
+
+  .gtm-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    line-height: 1.4;
+  }
+
+  .gtm-list span {
+    font-weight: 700;
+    color: var(--status-live);
+  }
+
+  .gtm-target {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Interactive Partner Financial Simulator
+  const sReaders = document.getElementById('sim-readers') as HTMLInputElement | null;
+  const sConversion = document.getElementById('sim-conversion') as HTMLInputElement | null;
+  const sSpend = document.getElementById('sim-spend') as HTMLInputElement | null;
+  const sCommission = document.getElementById('sim-commission') as HTMLInputElement | null;
+
+  const dReaders = document.getElementById('disp-sim-readers');
+  const dConversion = document.getElementById('disp-sim-conversion');
+  const dSpend = document.getElementById('disp-sim-spend');
+  const dCommission = document.getElementById('disp-sim-commission');
+
+  const rActiveShoppers = document.getElementById('res-active-shoppers');
+  const rMonthlyGmv = document.getElementById('res-monthly-gmv');
+  const rTotalCommission = document.getElementById('res-total-commission');
+  const rMemberPayout = document.getElementById('res-member-payout');
+  const rPlatformRevenue = document.getElementById('res-platform-revenue');
+  const rAnnualRunrate = document.getElementById('res-annual-runrate');
+
+  function calculatePartnerModel() {
+    if (!sReaders || !sConversion || !sSpend || !sCommission) return;
+
+    const readers = parseInt(sReaders.value, 10);
+    const convRate = parseFloat(sConversion.value);
+    const spend = parseFloat(sSpend.value);
+    const commRate = parseFloat(sCommission.value);
+
+    // Update displays
+    if (dReaders) dReaders.textContent = readers.toLocaleString();
+    if (dConversion) dConversion.textContent = convRate.toFixed(1) + '%';
+    if (dSpend) dSpend.textContent = '€' + spend.toLocaleString();
+    if (dCommission) dCommission.textContent = commRate.toFixed(1) + '%';
+
+    // Model Calculations
+    const shoppers = Math.round(readers * (convRate / 100));
+    const gmv = shoppers * spend;
+    const totalCommission = gmv * (commRate / 100);
+    const memberPayout = totalCommission * 0.70;
+    const platformRev = totalCommission * 0.30;
+    const arr = platformRev * 12;
+
+    // Render outputs
+    if (rActiveShoppers) rActiveShoppers.textContent = shoppers.toLocaleString();
+    if (rMonthlyGmv) rMonthlyGmv.textContent = '€' + Math.round(gmv).toLocaleString();
+    if (rTotalCommission) rTotalCommission.textContent = '€' + Math.round(totalCommission).toLocaleString();
+    if (rMemberPayout) rMemberPayout.textContent = '€' + Math.round(memberPayout).toLocaleString();
+    if (rPlatformRevenue) rPlatformRevenue.textContent = '€' + Math.round(platformRev).toLocaleString();
+    if (rAnnualRunrate) rAnnualRunrate.textContent = '€' + Math.round(arr).toLocaleString();
+  }
+
+  sReaders?.addEventListener('input', calculatePartnerModel);
+  sConversion?.addEventListener('input', calculatePartnerModel);
+  sSpend?.addEventListener('input', calculatePartnerModel);
+  sCommission?.addEventListener('input', calculatePartnerModel);
+  calculatePartnerModel();
+</script>

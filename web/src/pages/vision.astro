@@ -11,6 +11,7 @@ import ExecutiveDomains from '../components/vision/ExecutiveDomains.astro';
 import VelocityRadar from '../components/vision/VelocityRadar.astro';
 import ArchitectureFlow from '../components/vision/ArchitectureFlow.astro';
 import SprintStatus from '../components/vision/SprintStatus.astro';
+import CommercialStrategy from '../components/vision/CommercialStrategy.astro';
 import OperationsPlaybook from '../components/vision/OperationsPlaybook.astro';
 import VisionFooter from '../components/vision/VisionFooter.astro';
 ---
@@ -118,7 +119,12 @@ import VisionFooter from '../components/vision/VisionFooter.astro';
         <SprintStatus />
       </section>
 
-      <!-- Module 4: Operations Playbook & Simulators -->
+      <!-- Module 4: Commercial Strategy, Unit Economics & Partner Simulator -->
+      <section class="executive-module-panel" id="module-commercial" role="tabpanel" aria-labelledby="mod-tab-commercial">
+        <CommercialStrategy />
+      </section>
+
+      <!-- Module 5: Operations Playbook & Simulators -->
       <section class="executive-module-panel" id="module-playbook" role="tabpanel" aria-labelledby="mod-tab-playbook">
         <OperationsPlaybook />
       </section>
@@ -163,12 +169,14 @@ import VisionFooter from '../components/vision/VisionFooter.astro';
       // Deep linking support on load & on hash change
       function checkHashRoute() {
         const hash = window.location.hash.replace('#', '');
-        if (['executive', 'engineering', 'architecture', 'playbook'].includes(hash)) {
+        if (['executive', 'engineering', 'architecture', 'commercial', 'playbook'].includes(hash)) {
           switchModule(hash);
         } else if (hash === 'engineering-velocity') {
           switchModule('engineering');
         } else if (hash === 'sprint-status' || hash === 'architecture-diagrams') {
           switchModule('architecture');
+        } else if (hash === 'commercial-strategy') {
+          switchModule('commercial');
         } else if (hash === 'how-to-playbook') {
           switchModule('playbook');
         }

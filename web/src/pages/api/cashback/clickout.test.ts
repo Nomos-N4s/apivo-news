@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
 
 /**
  * The click-out endpoint (issue #596).
@@ -59,6 +60,11 @@ async function post(
 }
 
 describe('the click-out endpoint', () => {
+  afterEach(() => {
+    vi.doUnmock('astro:env/server');
+    vi.resetModules();
+  });
+
   it('refuses a cross-origin post', async () => {
     // A click is a row with money behind it, and `isSameOrigin` compares
     // hosts rather than whole origins for the reason csrf.ts sets out.
