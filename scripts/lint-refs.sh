@@ -48,7 +48,7 @@
 #
 #   1. No name carries an assistant's or a vendor's name. This is Principle I
 #      and it applies to every ref, branch or tag.
-#   2. Every branch is `xcoder/<slug>`, with `main` and the refs GitHub and
+#   2. Every branch is `jules/<slug>`, with `main` and the refs GitHub and
 #      the dependency bots generate as the only exceptions. This is the
 #      repository's own convention, followed 85 times before it was ever
 #      written down - which is exactly how a tool's default prefix leaked in
@@ -66,8 +66,8 @@
 # Usage: lint-refs.sh <ref-name>...
 #        lint-refs.sh --from-messages <git-log-argument>...
 #
-# Names may be given bare (`xcoder/cb-money`, which is what
-# `github.head_ref` holds) or fully qualified (`refs/heads/xcoder/cb-money`,
+# Names may be given bare (`jules/cb-money`, which is what
+# `github.head_ref` holds) or fully qualified (`refs/heads/jules/cb-money`,
 # which is what a pre-push hook is handed). Both are read the same way.
 #
 # --from-messages takes the arguments `git log` takes, so both shapes the
@@ -99,7 +99,7 @@ set -eu
 # The one prefix this repository's branches use. A constant rather than a
 # pattern because there is exactly one, and a list of prefixes invites a
 # second.
-BRANCH_PREFIX='xcoder/'
+BRANCH_PREFIX='jules/'
 
 # The tokens that must never appear in a ref name.
 #
@@ -111,8 +111,8 @@ BRANCH_PREFIX='xcoder/'
 # risk to it.
 #
 # Each entry is matched case-insensitively and delimited by non-letters, so
-# `claude` catches `claude/x`, `xcoder/claude-fix`, `CLAUDE_2` and
-# `xcoder/cb-claude` while leaving `claudette` and `claudia` alone. Digits
+# `claude` catches `claude/x`, `jules/claude-fix`, `CLAUDE_2` and
+# `jules/cb-claude` while leaving `claudette` and `claudia` alone. Digits
 # count as a delimiter: a versioned name is the same name.
 blocklist() {
     cat <<'EOF'
@@ -155,8 +155,8 @@ EOF
 #             Human names before they are agents.
 #
 # A branch that genuinely integrates a vendor's API is named for the
-# capability rather than the vendor - `xcoder/machine-translation`, not
-# `xcoder/openai-translation`. That costs one rename and keeps the vendor's
+# capability rather than the vendor - `jules/machine-translation`, not
+# `jules/openai-translation`. That costs one rename and keeps the vendor's
 # name out of a merge commit, which is the whole point.
 
 if [ "$#" -eq 0 ]; then
@@ -234,7 +234,7 @@ judge_name() {
         '') ;;
         # The trunk.
         main) ;;
-        # The convention. `?*` requires a slug: `xcoder/` alone names nothing.
+        # The convention. `?*` requires a slug: `jules/` alone names nothing.
         "$BRANCH_PREFIX"?*) ;;
         # Refs whose names nobody here chooses. GitHub's revert button builds
         # `revert-<pr>-<branch>`, and the dependency bots build their own
@@ -365,14 +365,14 @@ if [ "$status" -ne 0 ]; then
 Rename the branch before it is merged - afterwards the name is in `main`'s
 history and only a rewrite removes it:
 
-  git branch -m xcoder/<slug>
-  git push -u origin xcoder/<slug>
+  git branch -m jules/<slug>
+  git push -u origin jules/<slug>
   git push origin --delete <old-name>
 
 If a pull request is already open for the old branch, close it and open one
 from the renamed branch. Neither rule has an exception worth taking: naming a
 vendor because the work integrates its API is answered by naming the branch
-for the capability instead, and a prefix that is not `xcoder/` is answered by
+for the capability instead, and a prefix that is not `jules/` is answered by
 the rename above.
 
 A name reported against a commit is already in history and cannot be renamed.
