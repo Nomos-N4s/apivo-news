@@ -578,6 +578,595 @@
         color: var(--accent-cashback);
       }
 
+      /* Interactive Architecture Diagrams */
+      .diagram-section {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 16px;
+        padding: 2rem;
+        margin-bottom: 3rem;
+      }
+
+      .section-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        margin-bottom: 0.75rem;
+      }
+
+      .badge-purple {
+        background: rgba(139, 92, 246, 0.15);
+        color: rgb(167, 139, 250);
+        border: 1px solid rgba(139, 92, 246, 0.3);
+      }
+
+      .section-title {
+        font-size: 1.5rem;
+        font-weight: 800;
+        color: rgb(255, 255, 255);
+        letter-spacing: -0.02em;
+        margin-bottom: 0.5rem;
+      }
+
+      .section-desc {
+        color: var(--text-secondary);
+        font-size: 0.925rem;
+        margin-bottom: 1.5rem;
+        max-width: 850px;
+        line-height: 1.5;
+      }
+
+      .diagram-controls {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+        border-bottom: 1px solid var(--border-subtle);
+        padding-bottom: 0.75rem;
+        overflow-x: auto;
+      }
+
+      .diagram-tab-btn {
+        background: transparent;
+        color: var(--text-secondary);
+        border: 1px solid var(--border-subtle);
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        font-size: 0.8125rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        white-space: nowrap;
+      }
+
+      .diagram-tab-btn:hover {
+        color: rgb(255, 255, 255);
+        border-color: var(--border-bright);
+      }
+
+      .diagram-tab-btn.active {
+        background: var(--bg-card);
+        color: rgb(255, 255, 255);
+        border-color: var(--status-info);
+      }
+
+      .flow-diagram {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin: 1.5rem 0;
+      }
+
+      .flow-node {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 1.25rem 1rem;
+        cursor: pointer;
+        transition: all 0.25s ease;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        user-select: none;
+      }
+
+      .flow-node:hover, .flow-node.selected {
+        border-color: var(--status-info);
+        background: var(--bg-card-hover);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+      }
+
+      .flow-node.news-node.selected {
+        border-color: var(--accent-news);
+      }
+
+      .flow-node.cashback-node.selected {
+        border-color: var(--accent-cashback);
+      }
+
+      .node-step-tag {
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        margin-bottom: 0.5rem;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .node-name {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: rgb(255, 255, 255);
+        margin-bottom: 0.35rem;
+      }
+
+      .node-tech {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.725rem;
+        color: var(--text-secondary);
+      }
+
+      .node-invariant {
+        margin-top: 0.75rem;
+        display: inline-block;
+        font-size: 0.7rem;
+        font-weight: 600;
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+        background: rgba(56, 189, 248, 0.1);
+        color: var(--status-info);
+      }
+
+      .node-invariant.green {
+        background: rgba(16, 185, 129, 0.1);
+        color: rgb(52, 211, 153);
+      }
+
+      .node-invariant.amber {
+        background: rgba(245, 158, 11, 0.1);
+        color: rgb(251, 191, 36);
+      }
+
+      .node-detail-panel {
+        background: rgb(15, 23, 42);
+        border: 1px solid var(--border-bright);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-top: 1.5rem;
+      }
+
+      .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.75rem;
+      }
+
+      .panel-title {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: rgb(255, 255, 255);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .panel-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+      }
+
+      .panel-field-label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        margin-bottom: 0.25rem;
+        font-weight: 600;
+      }
+
+      .panel-field-val {
+        font-size: 0.85rem;
+        color: rgb(226, 232, 240);
+        line-height: 1.45;
+      }
+
+      /* Sprint Focus & Status Banner Grid */
+      .status-banner-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+        margin-bottom: 3rem;
+      }
+
+      @media (max-width: 900px) {
+        .status-banner-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .status-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 16px;
+        padding: 1.75rem;
+      }
+
+      .status-card.hardening {
+        border-left: 4px solid var(--status-live);
+      }
+
+      .status-card.pipeline {
+        border-left: 4px solid var(--accent-cashback);
+      }
+
+      .status-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+      }
+
+      .status-card-title {
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: rgb(255, 255, 255);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .status-badge {
+        font-size: 0.725rem;
+        font-weight: 700;
+        padding: 0.25rem 0.65rem;
+        border-radius: 9999px;
+        text-transform: uppercase;
+      }
+
+      .badge-pulse {
+        background: rgba(16, 185, 129, 0.15);
+        color: rgb(52, 211, 153);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+      }
+
+      .badge-review {
+        background: rgba(245, 158, 11, 0.15);
+        color: rgb(251, 191, 36);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+      }
+
+      .hardening-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+        margin-top: 1rem;
+      }
+
+      .hardening-item {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.65rem 0.85rem;
+        background: var(--bg-card);
+        border-radius: 8px;
+        border: 1px solid var(--border-subtle);
+        font-size: 0.825rem;
+        color: rgb(226, 232, 240);
+      }
+
+      .hardening-check {
+        color: rgb(52, 211, 153);
+        font-weight: 700;
+      }
+
+      .merchant-filter-row {
+        display: flex;
+        gap: 0.4rem;
+        margin-top: 0.75rem;
+        margin-bottom: 1rem;
+      }
+
+      .m-filter-btn {
+        background: transparent;
+        border: 1px solid var(--border-subtle);
+        color: var(--text-secondary);
+        font-size: 0.725rem;
+        font-weight: 600;
+        padding: 0.25rem 0.6rem;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .m-filter-btn.active {
+        background: var(--bg-card);
+        color: rgb(255, 255, 255);
+        border-color: var(--accent-cashback);
+      }
+
+      .merchant-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+      }
+
+      .merchant-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        background: var(--bg-card);
+        border-radius: 8px;
+        border: 1px solid var(--border-subtle);
+        transition: all 0.2s;
+        cursor: pointer;
+      }
+
+      .merchant-row:hover {
+        border-color: var(--border-bright);
+        background: var(--bg-card-hover);
+      }
+
+      .merchant-name {
+        font-weight: 600;
+        font-size: 0.85rem;
+        color: rgb(255, 255, 255);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .merchant-cat {
+        font-size: 0.725rem;
+        color: var(--text-muted);
+      }
+
+      .merchant-tag {
+        font-size: 0.7rem;
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+        font-weight: 600;
+      }
+
+      .tag-live {
+        background: rgba(16, 185, 129, 0.2);
+        color: rgb(52, 211, 153);
+      }
+
+      .tag-dev {
+        background: rgba(245, 158, 11, 0.2);
+        color: rgb(251, 191, 36);
+      }
+
+      /* Interactive How-To Playbook */
+      .playbook-container {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 16px;
+        padding: 2rem;
+        margin-bottom: 3rem;
+      }
+
+      .playbook-nav {
+        display: flex;
+        gap: 0.5rem;
+        border-bottom: 1px solid var(--border-subtle);
+        padding-bottom: 1rem;
+        margin-bottom: 1.5rem;
+        overflow-x: auto;
+      }
+
+      .playbook-nav-btn {
+        background: transparent;
+        color: var(--text-secondary);
+        border: 1px solid var(--border-subtle);
+        padding: 0.65rem 1.25rem;
+        border-radius: 8px;
+        font-size: 0.875rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        white-space: nowrap;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .playbook-nav-btn:hover {
+        color: rgb(255, 255, 255);
+        border-color: var(--border-bright);
+      }
+
+      .playbook-nav-btn.active {
+        background: var(--bg-card);
+        color: rgb(255, 255, 255);
+        border-color: var(--status-info);
+      }
+
+      .playbook-tab-panel {
+        display: none;
+      }
+
+      .playbook-tab-panel.active {
+        display: block;
+      }
+
+      .guide-grid {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr;
+        gap: 2rem;
+      }
+
+      @media (max-width: 900px) {
+        .guide-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .guide-steps {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .guide-step-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: 10px;
+        padding: 1.25rem;
+      }
+
+      .guide-step-title {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: rgb(255, 255, 255);
+        margin-bottom: 0.35rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .guide-step-body {
+        font-size: 0.825rem;
+        color: var(--text-secondary);
+        line-height: 1.45;
+      }
+
+      .interactive-widget {
+        background: var(--bg-card);
+        border: 1px solid var(--border-bright);
+        border-radius: 12px;
+        padding: 1.5rem;
+      }
+
+      .widget-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: rgb(255, 255, 255);
+        margin-bottom: 0.35rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .widget-subtitle {
+        font-size: 0.775rem;
+        color: var(--text-muted);
+        margin-bottom: 1.25rem;
+      }
+
+      .input-select-row {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+      }
+
+      .input-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+      }
+
+      .custom-select {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        color: rgb(255, 255, 255);
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        font-size: 0.825rem;
+      }
+
+      .slider-control {
+        margin-bottom: 1.25rem;
+      }
+
+      .slider-label-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.8125rem;
+        color: var(--text-secondary);
+        margin-bottom: 0.4rem;
+      }
+
+      .slider-val {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 700;
+        color: rgb(255, 255, 255);
+      }
+
+      .range-input {
+        width: 100%;
+        accent-color: var(--accent-cashback);
+        cursor: pointer;
+      }
+
+      .calc-breakdown {
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 8px;
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+        margin-top: 1rem;
+      }
+
+      .calc-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.825rem;
+        color: var(--text-secondary);
+      }
+
+      .calc-row.highlight {
+        font-weight: 700;
+        color: rgb(52, 211, 153);
+        font-size: 0.95rem;
+        border-top: 1px solid var(--border-subtle);
+        padding-top: 0.5rem;
+      }
+
+      .sim-button {
+        background: var(--status-info);
+        color: rgb(6, 9, 19);
+        border: none;
+        border-radius: 8px;
+        padding: 0.65rem 1.25rem;
+        font-weight: 700;
+        font-size: 0.875rem;
+        cursor: pointer;
+        width: 100%;
+        transition: opacity 0.2s;
+        margin-top: 1rem;
+      }
+
+      .sim-button:hover {
+        opacity: 0.9;
+      }
+
+      .sim-output-log {
+        background: rgba(0, 0, 0, 0.4);
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        padding: 0.85rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.725rem;
+        color: rgb(203, 213, 225);
+        margin-top: 1rem;
+        max-height: 180px;
+        overflow-y: auto;
+      }
+
       /* Quick Links Footer */
       .links-section {
         margin-top: 3rem;
@@ -891,6 +1480,546 @@
         </section>
       </div>
 
+      <!-- SECTION: Interactive Architecture Diagrams -->
+      <section class="diagram-section" id="architecture-diagrams">
+        <span class="section-badge badge-purple">System Topology & Data Flow</span>
+        <h2 class="section-title">Interactive Architectural Conformance Maps</h2>
+        <p class="section-desc">
+          Explore the end-to-end data pipelines and safety gates across both domains. Click on any processing node below to inspect its runtime implementation, data contracts, and database legal/financial invariants enforced at that boundary.
+        </p>
+
+        <div class="diagram-controls">
+          <button class="diagram-tab-btn active" data-diagram="news-diagram" id="diagram-tab-news">
+            📰 News Ingestion & Invariant Flow
+          </button>
+          <button class="diagram-tab-btn" data-diagram="cashback-diagram" id="diagram-tab-cashback">
+            💳 Cashback Money Movement & Ledger Flow
+          </button>
+        </div>
+
+        <!-- News Diagram Flow -->
+        <div class="flow-diagram" id="news-diagram">
+          <div class="flow-node news-node selected" data-node="news-feed">
+            <div>
+              <div class="node-step-tag">Step 1 • Intake</div>
+              <div class="node-name">Licensed RSS/Atom Feeds</div>
+              <div class="node-tech">Feed Poller (15m interval)</div>
+            </div>
+            <div>
+              <span class="node-invariant">Robots.txt + Crawl Delay</span>
+            </div>
+          </div>
+
+          <div class="flow-node news-node" data-node="news-snapshot">
+            <div>
+              <div class="node-step-tag">Step 2 • Evidence</div>
+              <div class="node-name">Raw License & Snapshot</div>
+              <div class="node-tech">Postgres source_item table</div>
+            </div>
+            <div>
+              <span class="node-invariant green">I-2 & I-3 Immutable Law</span>
+            </div>
+          </div>
+
+          <div class="flow-node news-node" data-node="news-llm">
+            <div>
+              <div class="node-step-tag">Step 3 • Translation</div>
+              <div class="node-name">Model-Agnostic LLM</div>
+              <div class="node-tech">Cloudflare AI / Workers / Ollama</div>
+            </div>
+            <div>
+              <span class="node-invariant">I-5 Prompt & Model Hash</span>
+            </div>
+          </div>
+
+          <div class="flow-node news-node" data-node="news-editorial">
+            <div>
+              <div class="node-step-tag">Step 4 • Quality Gate</div>
+              <div class="node-name">Human Editorial Gate</div>
+              <div class="node-tech">Go /api/v1/editorial</div>
+            </div>
+            <div>
+              <span class="node-invariant green">I-1 Named Human Approver</span>
+            </div>
+          </div>
+
+          <div class="flow-node news-node" data-node="news-ssr">
+            <div>
+              <div class="node-step-tag">Step 5 • Delivery</div>
+              <div class="node-name">Dual-Axis Reader SSR</div>
+              <div class="node-tech">Astro Node Standalone</div>
+            </div>
+            <div>
+              <span class="node-invariant green">Zero-Client Telemetry</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cashback Diagram Flow -->
+        <div class="flow-diagram" id="cashback-diagram" style="display: none;">
+          <div class="flow-node cashback-node selected" data-node="cashback-browse">
+            <div>
+              <div class="node-step-tag">Stage 1 • Discovery</div>
+              <div class="node-name">Local Merchant Directory</div>
+              <div class="node-tech">Astro /cashback SSR</div>
+            </div>
+            <div>
+              <span class="node-invariant">Locale-aware rates</span>
+            </div>
+          </div>
+
+          <div class="flow-node cashback-node" data-node="cashback-clickout">
+            <div>
+              <div class="node-step-tag">Stage 2 • Security</div>
+              <div class="node-name">Signed Clickout Engine</div>
+              <div class="node-tech">Go /go/:merchant redirect</div>
+            </div>
+            <div>
+              <span class="node-invariant green">HMAC anti-tamper token</span>
+            </div>
+          </div>
+
+          <div class="flow-node cashback-node" data-node="cashback-network">
+            <div>
+              <div class="node-step-tag">Stage 3 • Attribution</div>
+              <div class="node-name">Affiliate Ingest Poller</div>
+              <div class="node-tech">Awin API & Webhooks</div>
+            </div>
+            <div>
+              <span class="node-invariant">Idempotent Deduplication</span>
+            </div>
+          </div>
+
+          <div class="flow-node cashback-node" data-node="cashback-ledger">
+            <div>
+              <div class="node-step-tag">Stage 4 • Financials</div>
+              <div class="node-name">Double-Entry Ledger</div>
+              <div class="node-tech">Blnk + Redis + Postgres</div>
+            </div>
+            <div>
+              <span class="node-invariant green">C-1 Zero-Sum Invariant</span>
+            </div>
+          </div>
+
+          <div class="flow-node cashback-node" data-node="cashback-hold">
+            <div>
+              <div class="node-step-tag">Stage 5 • Protection</div>
+              <div class="node-name">Hold & Return Buffer</div>
+              <div class="node-tech">30-60 day state machine</div>
+            </div>
+            <div>
+              <span class="node-invariant amber">C-2 Cancellation Shield</span>
+            </div>
+          </div>
+
+          <div class="flow-node cashback-node" data-node="cashback-payout">
+            <div>
+              <div class="node-step-tag">Stage 6 • Payout</div>
+              <div class="node-name">SEPA Manual Bank Rail</div>
+              <div class="node-tech">OpenBao Vault + /ops/withdrawals</div>
+            </div>
+            <div>
+              <span class="node-invariant green">C-4 & C-5 Dual-Signoff</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Node Details Dynamic Display Panel -->
+        <div class="node-detail-panel" id="diagram-node-details">
+          <div class="panel-header">
+            <div class="panel-title" id="panel-title">
+              <span>🔍</span>
+              <span id="panel-title-text">Licensed RSS/Atom Feeds</span>
+            </div>
+            <span class="node-invariant green" id="panel-invariant-badge">Robots.txt + Crawl Delay</span>
+          </div>
+          <p class="panel-field-val" id="panel-summary-text">
+            Scheduled poller inspects licensed publisher feeds every 15 minutes. Complies strictly with publisher crawl-delay directives and robots.txt.
+          </p>
+          <div class="panel-grid">
+            <div>
+              <div class="panel-field-label">Runtime Technology</div>
+              <div class="panel-field-val" id="panel-tech-text">Go background worker goroutine</div>
+            </div>
+            <div>
+              <div class="panel-field-label">Database & Storage</div>
+              <div class="panel-field-val" id="panel-db-text">Postgres `source_feed` & `feed_cursor`</div>
+            </div>
+            <div>
+              <div class="panel-field-label">Invariant Enforced</div>
+              <div class="panel-field-val" id="panel-guard-text">Feed cadence ceiling & etag caching</div>
+            </div>
+            <div>
+              <div class="panel-field-label">Failure Containment</div>
+              <div class="panel-field-val" id="panel-safety-text">Network backoff with exponential retry</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION: Sprint Focus - Test Hardening & Merchant Pipeline Status -->
+      <section class="status-banner-grid" id="sprint-status">
+        <!-- Card 1: Platform Engine Test Hardening -->
+        <article class="status-card hardening">
+          <div class="status-card-header">
+            <h3 class="status-card-title">
+              <span>🛡️</span>
+              Platform Test Hardening
+            </h3>
+            <span class="status-badge badge-pulse">Active Focus</span>
+          </div>
+          <p class="guide-step-body">
+            Engineering is aggressively hardening the core platform to guarantee financial accuracy and zero data leaks before widening alpha rollout.
+          </p>
+          <div class="hardening-list">
+            <div class="hardening-item">
+              <span class="hardening-check">✓</span>
+              <span><strong>Continuous Zero-Sum Invariant (C-1):</strong> Proves every currency in the ledger sums to zero with no orphaned balance drift.</span>
+            </div>
+            <div class="hardening-item">
+              <span class="hardening-check">✓</span>
+              <span><strong>Race Detector (-race):</strong> Go concurrency stress testing on simultaneous wallet balance reservations and credit holds.</span>
+            </div>
+            <div class="hardening-item">
+              <span class="hardening-check">✓</span>
+              <span><strong>Strict 90% Code Coverage Gate:</strong> CI blocks any PR failing minimum test threshold (<span class="spec-code">coverage_gate.sh 90</span>).</span>
+            </div>
+            <div class="hardening-item">
+              <span class="hardening-check">✓</span>
+              <span><strong>Dual Driver Architecture:</strong> Fast in-memory ledger simulation for rapid local testing + full PostgreSQL Blnk stack in CI.</span>
+            </div>
+          </div>
+        </article>
+
+        <!-- Card 2: Merchant DEV / Review Pipeline -->
+        <article class="status-card pipeline">
+          <div class="status-card-header">
+            <h3 class="status-card-title">
+              <span>🛒</span>
+              Merchant Pipeline Status
+            </h3>
+            <span class="status-badge badge-review">Targeting QA: ra1ze.com</span>
+          </div>
+          <p class="guide-step-body">
+            Active merchants are in DEV and Code Review branches, scheduled for rollout to the QA environment (<span class="spec-code">ra1ze.com</span>) for co-founder live testing.
+          </p>
+
+          <div class="merchant-filter-row">
+            <button class="m-filter-btn active" data-filter="all">All (5)</button>
+            <button class="m-filter-btn" data-filter="qa">Live on QA (1)</button>
+            <button class="m-filter-btn" data-filter="dev">In DEV/Review (4)</button>
+          </div>
+
+          <div class="merchant-list" id="merchant-list">
+            <div class="merchant-row" data-merchant-status="qa" data-info="Fixture retailer active in QA for immediate clickout and ledger hold testing.">
+              <div>
+                <div class="merchant-name">
+                  <span>🏪</span> Fixture Merchant Alpha
+                </div>
+                <div class="merchant-cat">Munich & Athens Retail • 5.0% Commission</div>
+              </div>
+              <span class="merchant-tag tag-live">Live in QA</span>
+            </div>
+
+            <div class="merchant-row" data-merchant-status="dev" data-info="Electronics affiliate integration under PR review. Webhook payload verification in progress.">
+              <div>
+                <div class="merchant-name">
+                  <span>📱</span> MediaMarkt / Saturn (affiliate)
+                </div>
+                <div class="merchant-cat">Electronics & Tech • 3.5% Commission</div>
+              </div>
+              <span class="merchant-tag tag-dev">In Review (DEV)</span>
+            </div>
+
+            <div class="merchant-row" data-merchant-status="dev" data-info="Fashion program integration branch ready. Return window hold set to 45 days.">
+              <div>
+                <div class="merchant-name">
+                  <span>👗</span> Zalando / ASOS EU
+                </div>
+                <div class="merchant-cat">Fashion & Apparel • 7.0% Commission</div>
+              </div>
+              <span class="merchant-tag tag-dev">In Review (DEV)</span>
+            </div>
+
+            <div class="merchant-row" data-merchant-status="dev" data-info="Specialty European grocery delivery. Awin publisher approval pending.">
+              <div>
+                <div class="merchant-name">
+                  <span>🍷</span> Rewe & Hellenic Deli Online
+                </div>
+                <div class="merchant-cat">Food & Groceries • 4.5% Commission</div>
+              </div>
+              <span class="merchant-tag tag-dev">In Review (DEV)</span>
+            </div>
+
+            <div class="merchant-row" data-merchant-status="dev" data-info="Flight booking affiliate deeplink generator under contract review.">
+              <div>
+                <div class="merchant-name">
+                  <span>✈️</span> Aegean Airlines / Lufthansa
+                </div>
+                <div class="merchant-cat">Travel & Transport • 2.0% Commission</div>
+              </div>
+              <span class="merchant-tag tag-dev">In Review (DEV)</span>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <!-- SECTION: Interactive Instructions Manual & Operations Playbook -->
+      <section class="playbook-container" id="how-to-playbook">
+        <span class="section-badge badge-purple">Operational Handbook</span>
+        <h2 class="section-title">Interactive Instructions Manual & Operations Playbook</h2>
+        <p class="section-desc">
+          Comprehensive practical guides for co-founders and platform operators. Test live simulations of source feed intake, cashback member economics, and operator withdrawal workflows.
+        </p>
+
+        <!-- Playbook Navigation Tabs -->
+        <nav class="playbook-nav" role="tablist">
+          <button class="playbook-nav-btn active" data-tab="guide-news" id="tab-guide-news">
+            <span>📰</span> 1. How to Add News Sources
+          </button>
+          <button class="playbook-nav-btn" data-tab="guide-cashback" id="tab-guide-cashback">
+            <span>💳</span> 2. How to Use Cashback & Simulator
+          </button>
+          <button class="playbook-nav-btn" data-tab="guide-ops" id="tab-guide-ops">
+            <span>🛡️</span> 3. Operator SEPA Payout Playbook
+          </button>
+        </nav>
+
+        <!-- Tab 1: How to Add News Sources -->
+        <div class="playbook-tab-panel active" id="guide-news">
+          <div class="guide-grid">
+            <div class="guide-steps">
+              <div class="guide-step-card">
+                <div class="guide-step-title">
+                  <span>1.</span> Feed Discovery & Licensing Clearance
+                </div>
+                <p class="guide-step-body">
+                  Confirm the publisher provides an open RSS/Atom feed and formalize the bounded excerpt agreement (under German/Greek press law). Articles will display brief extracts with linkbacks.
+                </p>
+              </div>
+
+              <div class="guide-step-card">
+                <div class="guide-step-title">
+                  <span>2.</span> Register Feed in Configuration
+                </div>
+                <p class="guide-step-body">
+                  Add the feed definition to the registry with target place axis (<span class="spec-code">munich</span>, <span class="spec-code">greece</span>) and source language (<span class="spec-code">el</span> or <span class="spec-code">de</span>). The background daemon ingests it automatically every 15 minutes.
+                </p>
+              </div>
+
+              <div class="guide-step-card">
+                <div class="guide-step-title">
+                  <span>3.</span> Automated AI Translation & Evidence Snapshot
+                </div>
+                <p class="guide-step-body">
+                  The system captures an immutable HTML/XML snapshot in <span class="spec-code">source_item</span> (I-2), triggers LLM translation, and logs the prompt version and model ID (I-5).
+                </p>
+              </div>
+
+              <div class="guide-step-card">
+                <div class="guide-step-title">
+                  <span>4.</span> Human Editorial Approval Gate (I-1)
+                </div>
+                <p class="guide-step-body">
+                  The article enters the editorial queue at <span class="spec-code">/el/editor/signin</span>. A named human editor reviews the headline, excerpt, and attribution before clicking "Approve". No article can be published without this human gate.
+                </p>
+              </div>
+            </div>
+
+            <!-- Interactive Feed Intake Simulator -->
+            <div class="interactive-widget">
+              <div class="widget-title">
+                <span>⚡</span> Live Feed Intake Simulator
+              </div>
+              <div class="widget-subtitle">
+                Select a publisher feed or test a custom RSS endpoint to simulate the automated ingestion and legal snapshot checks.
+              </div>
+
+              <div class="input-select-row">
+                <label class="input-label" for="feed-preset-select">Preset Feed Source</label>
+                <select class="custom-select" id="feed-preset-select">
+                  <option value="ert">ERT News (Hellenic Broadcasting Corp • el)</option>
+                  <option value="az">Abendzeitung München (Munich Local • de)</option>
+                  <option value="in">in.gr (Athens National News • el)</option>
+                  <option value="kathimerini">Kathimerini (Greece National & Politics • el)</option>
+                  <option value="tz">tz München (Bavaria Regional • de)</option>
+                </select>
+              </div>
+
+              <button class="sim-button" id="btn-run-intake-sim">Run Feed Intake Validation</button>
+
+              <div class="sim-output-log" id="intake-log-output">
+                <div>[Ready] Select source and click 'Run Feed Intake Validation'.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: How to Use Cashback & Simulator -->
+        <div class="playbook-tab-panel" id="guide-cashback">
+          <div class="guide-grid">
+            <div class="guide-steps">
+              <div class="guide-step-card">
+                <div class="guide-step-title">
+                  <span>1.</span> Member Directory Browsing
+                </div>
+                <p class="guide-step-body">
+                  Members visit <span class="spec-code">/el/munich/cashback</span> to browse retail, dining, electronics, and travel merchants offering verified cashback rewards.
+                </p>
+              </div>
+
+              <div class="guide-step-card">
+                <div class="guide-step-title">
+                  <span>2.</span> Signed HMAC Clickout Link
+                </div>
+                <p class="guide-step-body">
+                  Clicking "Shop Now" generates a cryptographically signed clickout URL (<span class="spec-code">/go/:merchant</span>). This ties the user account to the affiliate network sub-ID while preventing URL tampering.
+                </p>
+              </div>
+
+              <div class="guide-step-card">
+                <div class="guide-step-title">
+                  <span>3.</span> Purchase & Pending Ledger Hold
+                </div>
+                <p class="guide-step-body">
+                  After checkout, the network webhook notifies Apivo. Funds are recorded in the Blnk ledger as <strong>Pending</strong> to safeguard against return window cancellations (30–60 days).
+                </p>
+              </div>
+
+              <div class="guide-step-card">
+                <div class="guide-step-title">
+                  <span>4.</span> Confirmation & SEPA Payout
+                </div>
+                <p class="guide-step-body">
+                  Once confirmed, the member requests withdrawal to their SEPA IBAN. Bank details are stored encrypted in Vault, completely segregated from application databases.
+                </p>
+              </div>
+            </div>
+
+            <!-- Interactive Cashback & Economics Calculator -->
+            <div class="interactive-widget">
+              <div class="widget-title">
+                <span>🧮</span> Interactive Cashback Calculator
+              </div>
+              <div class="widget-subtitle">
+                Simulate purchase rewards, member earnings, and Apivo platform revenue splits.
+              </div>
+
+              <div class="slider-control">
+                <div class="slider-label-row">
+                  <span>Purchase Amount (€)</span>
+                  <span class="slider-val" id="val-purchase-amount">€150</span>
+                </div>
+                <input type="range" class="range-input" id="range-purchase" min="20" max="1000" step="10" value="150" />
+              </div>
+
+              <div class="slider-control">
+                <div class="slider-label-row">
+                  <span>Merchant Commission Rate (%)</span>
+                  <span class="slider-val" id="val-commission-rate">6.0%</span>
+                </div>
+                <input type="range" class="range-input" id="range-rate" min="1" max="15" step="0.5" value="6.0" />
+              </div>
+
+              <div class="calc-breakdown">
+                <div class="calc-row">
+                  <span>Total Merchant Commission:</span>
+                  <strong id="calc-total-commission">€9.00</strong>
+                </div>
+                <div class="calc-row">
+                  <span>Member Cashback (70%):</span>
+                  <strong id="calc-member-cashback" style="color: rgb(52, 211, 153);">€6.30</strong>
+                </div>
+                <div class="calc-row">
+                  <span>Apivo Platform Gross Margin (30%):</span>
+                  <strong id="calc-platform-margin" style="color: rgb(56, 189, 248);">€2.70</strong>
+                </div>
+                <div class="calc-row">
+                  <span>Return Buffer Holding:</span>
+                  <span>45 Days (Pending)</span>
+                </div>
+                <div class="calc-row highlight">
+                  <span>Disbursement Status:</span>
+                  <span id="calc-payout-readiness">Eligible for SEPA Payout</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: Operator SEPA Payout Playbook -->
+        <div class="playbook-tab-panel" id="guide-ops">
+          <div class="guide-grid">
+            <div class="guide-steps">
+              <div class="guide-step-card">
+                <div class="guide-step-title">
+                  <span>1.</span> Access Operator Console
+                </div>
+                <p class="guide-step-body">
+                  Authorized operators log into <span class="spec-code">/ops/withdrawals</span> to view pending member payout requests with confirmed ledger balance verification.
+                </p>
+              </div>
+
+              <div class="guide-step-card">
+                <div class="guide-step-title">
+                  <span>2.</span> Ephemeral Vault IBAN Retrieval
+                </div>
+                <p class="guide-step-body">
+                  The operator initiates bank transfer by requesting an ephemeral one-time token from OpenBao Vault. The plaintext IBAN is never stored on disk or logged in plain text.
+                </p>
+              </div>
+
+              <div class="guide-step-card">
+                <div class="guide-step-title">
+                  <span>3.</span> Manual SEPA Wire Execution (Corporate Bank)
+                </div>
+                <p class="guide-step-body">
+                  The operator executes the SEPA transfer through corporate online banking (Commerzbank / Deutsche Bank). Dual-operator approval (C-4) enforces that initiator and authorizer cannot be the same person.
+                </p>
+              </div>
+
+              <div class="guide-step-card">
+                <div class="guide-step-title">
+                  <span>4.</span> Bank Reference & Final Settlement (C-5)
+                </div>
+                <p class="guide-step-body">
+                  The operator records the bank's wire transfer reference and transaction ID. The ledger balance transitions from "Requested" to "Disbursed", maintaining zero-sum ledger audit integrity.
+                </p>
+              </div>
+            </div>
+
+            <!-- Operational Security Invariants Callout -->
+            <div class="interactive-widget">
+              <div class="widget-title">
+                <span>🛡️</span> Security & Compliance Guarantees
+              </div>
+              <div class="widget-subtitle">
+                Why the Manual Payout Rail protects early startup capital.
+              </div>
+
+              <div class="hardening-list">
+                <div class="hardening-item">
+                  <span class="hardening-check">🔒</span>
+                  <span><strong>Zero API Drain Vulnerability:</strong> No automated banking webhook can drain corporate capital during alpha phase.</span>
+                </div>
+                <div class="hardening-item">
+                  <span class="hardening-check">🔒</span>
+                  <span><strong>Chargeback & Fraud Cushion:</strong> 30–60 day ledger hold guarantees cashback is never paid on returned merchandise.</span>
+                </div>
+                <div class="hardening-item">
+                  <span class="hardening-check">🔒</span>
+                  <span><strong>BaFin / Regulatory Compliance:</strong> Operating as closed-loop referral avoids money transmission license requirements.</span>
+                </div>
+                <div class="hardening-item">
+                  <span class="hardening-check">🔒</span>
+                  <span><strong>Complete Audit Lineage:</strong> Every operator action, timestamp, and bank ref is recorded in Postgres.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Co-Founder Alignment & Decision Section -->
       <section class="decision-section">
         <div class="decision-header">
@@ -981,6 +2110,299 @@
 
       setupStepper('news-stepper');
       setupStepper('cashback-stepper');
+
+      // Diagram Tabs Switching
+      const diagramTabs = document.querySelectorAll<HTMLButtonElement>('.diagram-tab-btn');
+      const newsDiagram = document.getElementById('news-diagram');
+      const cashbackDiagram = document.getElementById('cashback-diagram');
+
+      diagramTabs.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          diagramTabs.forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          const targetDiagram = btn.getAttribute('data-diagram');
+          if (targetDiagram === 'news-diagram') {
+            if (newsDiagram) newsDiagram.style.display = 'grid';
+            if (cashbackDiagram) cashbackDiagram.style.display = 'none';
+            const first = document.querySelector<HTMLElement>('#news-diagram .flow-node');
+            first?.click();
+          } else {
+            if (newsDiagram) newsDiagram.style.display = 'none';
+            if (cashbackDiagram) cashbackDiagram.style.display = 'grid';
+            const first = document.querySelector<HTMLElement>('#cashback-diagram .flow-node');
+            first?.click();
+          }
+        });
+      });
+
+      // Flow Node Details Dictionary
+      interface NodeDetail {
+        title: string;
+        badge: string;
+        badgeClass: string;
+        summary: string;
+        tech: string;
+        db: string;
+        guard: string;
+        safety: string;
+      }
+
+      const nodeData: Record<string, NodeDetail> = {
+        'news-feed': {
+          title: 'Licensed RSS/Atom Feeds',
+          badge: 'Robots.txt + Crawl Delay',
+          badgeClass: '',
+          summary: 'Scheduled poller inspects licensed publisher feeds every 15 minutes. Complies strictly with publisher crawl-delay directives and robots.txt.',
+          tech: 'Go background worker goroutine',
+          db: 'Postgres source_feed & feed_cursor',
+          guard: 'Feed cadence ceiling & etag caching',
+          safety: 'Network backoff with exponential retry'
+        },
+        'news-snapshot': {
+          title: 'Raw License & Evidence Snapshot',
+          badge: 'I-2 & I-3 Immutable Law',
+          badgeClass: 'green',
+          summary: 'Retrieved feed items snapshot exact license terms and HTML body at time of retrieval into an immutable audit table. Cannot be deleted or modified.',
+          tech: 'Postgres Append-Only Table',
+          db: 'Postgres source_item (content_hash, retrieved_at)',
+          guard: 'Database trigger blocks UPDATE and DELETE',
+          safety: 'Zero data overwrite; evidence preserved forever'
+        },
+        'news-llm': {
+          title: 'Model-Agnostic LLM Translation',
+          badge: 'I-5 Prompt & Model Hash',
+          badgeClass: '',
+          summary: 'Adapters translate headline and excerpt between Greek and German while recording model ID, temperature, prompt template hash, and token usage.',
+          tech: 'Cloudflare Workers AI / Mistral 24B / Ollama',
+          db: 'Postgres article_translation (model_id, prompt_version)',
+          guard: 'Hard spending ceiling ($0.02/article, $25/mo cap)',
+          safety: 'Fallbacks to manual draft if AI service fails'
+        },
+        'news-editorial': {
+          title: 'Human Editorial Approval Gate',
+          badge: 'I-1 Named Human Approver',
+          badgeClass: 'green',
+          summary: 'Compulsory human gate: No article can ever be published without a foreign key linking to a named staff member in the accounts table.',
+          tech: 'Go /api/v1/editorial + Supabase Auth JWT',
+          db: 'Postgres article (approved_by NOT NULL REFERENCES account)',
+          guard: 'Schema foreign key + CHECK constraint',
+          safety: 'Prevents automated LLM hallucinations reaching readers'
+        },
+        'news-ssr': {
+          title: 'Dual-Axis Reader Server-Side Rendering',
+          badge: 'Zero-Client Telemetry',
+          badgeClass: 'green',
+          summary: 'SSR renders localized edition in microseconds. Independent language (/el or /de) and place (/munich or /greece) axes without reader tracking.',
+          tech: 'Astro Standalone Node Engine + Cloudflare Cache',
+          db: 'Postgres view article_published_v',
+          guard: 'Read-only replica connection',
+          safety: 'Zero tracking cookies; privacy by design'
+        },
+        'cashback-browse': {
+          title: 'Local Merchant Directory',
+          badge: 'Locale-aware rates',
+          badgeClass: '',
+          summary: 'Displays participating retailers and commission percentages tailored to Greek diaspora in Munich and Athens.',
+          tech: 'Astro SSR with cached merchant feed',
+          db: 'Postgres cashback_merchant & rate_band',
+          guard: 'Active rate validation',
+          safety: 'Cached catalog guarantees high availability'
+        },
+        'cashback-clickout': {
+          title: 'Signed Clickout Engine',
+          badge: 'HMAC anti-tamper token',
+          badgeClass: 'green',
+          summary: 'Generates secure cryptographic redirect URLs (/go/{merchant}) embedding signed session identifiers to prevent referral hijacking.',
+          tech: 'Go crypto/hmac SHA-256 signer',
+          db: 'Postgres clickout_session (ttl: 24h)',
+          guard: 'Cryptographic signature verification',
+          safety: 'Rejects forged or expired clickout links'
+        },
+        'cashback-network': {
+          title: 'Affiliate Network Tracking',
+          badge: 'Idempotent Deduplication',
+          badgeClass: '',
+          summary: 'Ingests conversions reported by Awin or local merchant networks. Deduplicates by network transaction ID.',
+          tech: 'Go Webhook Receiver & Scheduled API Poller',
+          db: 'Postgres network_conversion',
+          guard: 'Unique network transaction constraint',
+          safety: 'Idempotent event processing avoids duplicate earnings'
+        },
+        'cashback-ledger': {
+          title: 'Double-Entry Financial Ledger',
+          badge: 'C-1 Zero-Sum Invariant',
+          badgeClass: 'green',
+          summary: 'Records transactions using debit/credit pairs in Blnk ledger. Zero balance ambiguity; sum of all accounts equals zero.',
+          tech: 'Blnk Ledger + Redis Cache + Postgres schema',
+          db: 'Postgres blnk.transactions & blnk.ledgers',
+          guard: 'Zero-sum mathematical invariant',
+          safety: 'Cryptographic transaction IDs & audit log'
+        },
+        'cashback-hold': {
+          title: 'Hold & Return Window Buffer',
+          badge: 'C-2 Cancellation Shield',
+          badgeClass: 'amber',
+          summary: 'Earnings stay in Pending hold for 30–60 days to match merchant return policies before clearing to Confirmed.',
+          tech: 'Blnk Hold Release Cron Daemon',
+          db: 'Postgres cashback_entry (status: pending -> confirmed)',
+          guard: 'Return window timeline check',
+          safety: 'Protects platform against member cash-out on returned goods'
+        },
+        'cashback-payout': {
+          title: 'SEPA Manual Bank Rail',
+          badge: 'C-4 & C-5 Dual-Signoff',
+          badgeClass: 'green',
+          summary: 'Operators execute SEPA wires via corporate banking. Bank reference entered to settle ledger. Dual-operator check prevents insider fraud.',
+          tech: 'OpenBao Vault (IBAN token) + /ops console',
+          db: 'Postgres payout_request & audit_log',
+          guard: 'Dual-operator approval check (C-4)',
+          safety: 'Manual rail prevents automated API drain attacks'
+        }
+      };
+
+      // Flow Node Click Handler
+      const flowNodes = document.querySelectorAll<HTMLElement>('.flow-node');
+      const panelTitleText = document.getElementById('panel-title-text');
+      const panelInvariantBadge = document.getElementById('panel-invariant-badge');
+      const panelSummaryText = document.getElementById('panel-summary-text');
+      const panelTechText = document.getElementById('panel-tech-text');
+      const panelDbText = document.getElementById('panel-db-text');
+      const panelGuardText = document.getElementById('panel-guard-text');
+      const panelSafetyText = document.getElementById('panel-safety-text');
+
+      flowNodes.forEach((node) => {
+        node.addEventListener('click', () => {
+          flowNodes.forEach((n) => n.classList.remove('selected'));
+          node.classList.add('selected');
+
+          const nodeId = node.getAttribute('data-node');
+          if (!nodeId || !nodeData[nodeId]) return;
+
+          const data = nodeData[nodeId];
+          if (panelTitleText) panelTitleText.textContent = data.title;
+          if (panelInvariantBadge) {
+            panelInvariantBadge.textContent = data.badge;
+            panelInvariantBadge.className = 'node-invariant ' + data.badgeClass;
+          }
+          if (panelSummaryText) panelSummaryText.textContent = data.summary;
+          if (panelTechText) panelTechText.textContent = data.tech;
+          if (panelDbText) panelDbText.textContent = data.db;
+          if (panelGuardText) panelGuardText.textContent = data.guard;
+          if (panelSafetyText) panelSafetyText.textContent = data.safety;
+        });
+      });
+
+      // Merchant Filter
+      const mFilterBtns = document.querySelectorAll<HTMLButtonElement>('.m-filter-btn');
+      const merchantRows = document.querySelectorAll<HTMLElement>('.merchant-row');
+
+      mFilterBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          mFilterBtns.forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+
+          const filter = btn.getAttribute('data-filter');
+          merchantRows.forEach((row) => {
+            const status = row.getAttribute('data-merchant-status');
+            if (filter === 'all' || filter === status) {
+              row.style.display = 'flex';
+            } else {
+              row.style.display = 'none';
+            }
+          });
+        });
+      });
+
+      // Playbook Tabs
+      const playbookBtns = document.querySelectorAll<HTMLButtonElement>('.playbook-nav-btn');
+      const playbookPanels = document.querySelectorAll<HTMLElement>('.playbook-tab-panel');
+
+      playbookBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          playbookBtns.forEach((b) => b.classList.remove('active'));
+          playbookPanels.forEach((p) => p.classList.remove('active'));
+
+          btn.classList.add('active');
+          const tabId = btn.getAttribute('data-tab');
+          if (tabId) {
+            const targetPanel = document.getElementById(tabId);
+            if (targetPanel) targetPanel.classList.add('active');
+          }
+        });
+      });
+
+      // Live Feed Intake Simulator
+      const btnRunIntake = document.getElementById('btn-run-intake-sim');
+      const intakeLog = document.getElementById('intake-log-output');
+      const feedSelect = document.getElementById('feed-preset-select') as HTMLSelectElement | null;
+
+      btnRunIntake?.addEventListener('click', () => {
+        if (!intakeLog) return;
+        const sourceName = feedSelect?.options[feedSelect.selectedIndex]?.text || 'Selected Feed';
+        intakeLog.innerHTML = '<div style="color: rgb(56, 189, 248);">[Initiating intake cycle for: ' + sourceName + '...]</div>';
+
+        setTimeout(() => {
+          intakeLog.innerHTML += '<div>[1] Fetching robots.txt & headers... OK (crawl-delay: 2s respected)</div>';
+        }, 300);
+
+        setTimeout(() => {
+          intakeLog.innerHTML += '<div>[2] Parsing XML feed payload... Found 18 articles (valid schema)</div>';
+        }, 700);
+
+        setTimeout(() => {
+          intakeLog.innerHTML += '<div>[3] Validating bounded extract (&lt; 280 chars) & license... Verified</div>';
+        }, 1100);
+
+        setTimeout(() => {
+          intakeLog.innerHTML += '<div style="color: rgb(52, 211, 153);">[4] Legal snapshot captured in source_item (I-2 / I-3 immutable)</div>';
+        }, 1500);
+
+        setTimeout(() => {
+          intakeLog.innerHTML += '<div>[5] AI translation queued with prompt hash sha256:7f4a9b...</div>';
+          intakeLog.innerHTML += '<div style="color: rgb(251, 191, 36); font-weight: 700;">[6] Pushed to /el/editor/signin queue &mdash; Awaiting named human signoff (I-1)</div>';
+        }, 1900);
+      });
+
+      // Cashback Calculator
+      const rangePurchase = document.getElementById('range-purchase') as HTMLInputElement | null;
+      const rangeRate = document.getElementById('range-rate') as HTMLInputElement | null;
+      const valPurchaseAmount = document.getElementById('val-purchase-amount');
+      const valCommissionRate = document.getElementById('val-commission-rate');
+      const calcTotalCommission = document.getElementById('calc-total-commission');
+      const calcMemberCashback = document.getElementById('calc-member-cashback');
+      const calcPlatformMargin = document.getElementById('calc-platform-margin');
+      const calcPayoutReadiness = document.getElementById('calc-payout-readiness');
+
+      function updateCashbackCalc() {
+        if (!rangePurchase || !rangeRate) return;
+        const spend = parseFloat(rangePurchase.value);
+        const rate = parseFloat(rangeRate.value);
+
+        if (valPurchaseAmount) valPurchaseAmount.textContent = '€' + spend;
+        if (valCommissionRate) valCommissionRate.textContent = rate.toFixed(1) + '%';
+
+        const grossCommission = (spend * rate) / 100;
+        const memberShare = grossCommission * 0.70;
+        const platformShare = grossCommission * 0.30;
+
+        if (calcTotalCommission) calcTotalCommission.textContent = '€' + grossCommission.toFixed(2);
+        if (calcMemberCashback) calcMemberCashback.textContent = '€' + memberShare.toFixed(2);
+        if (calcPlatformMargin) calcPlatformMargin.textContent = '€' + platformShare.toFixed(2);
+
+        if (calcPayoutReadiness) {
+          if (memberShare >= 5.0) {
+            calcPayoutReadiness.textContent = 'Eligible for SEPA Payout (Above €5 threshold)';
+            calcPayoutReadiness.style.color = 'rgb(52, 211, 153)';
+          } else {
+            calcPayoutReadiness.textContent = 'Accumulating towards €5 minimum threshold';
+            calcPayoutReadiness.style.color = 'rgb(245, 158, 11)';
+          }
+        }
+      }
+
+      rangePurchase?.addEventListener('input', updateCashbackCalc);
+      rangeRate?.addEventListener('input', updateCashbackCalc);
+      updateCashbackCalc();
     </script>
   </body>
 </html>
