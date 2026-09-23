@@ -88,6 +88,11 @@ var reconciliationColumns = []string{
 }
 
 // exportLedger implements GET /api/v1/cashback/ops/exports/ledger.
+// @Summary exportLedger
+// @Description Endpoint for exportLedger
+// @Success 200
+// @Router /exportLedger [get]
+// @Security BearerAuth
 func (h *Handler) exportLedger(w http.ResponseWriter, r *http.Request) {
 	window, format, detail, ok := parseExportQuery(r.URL.Query())
 	if !ok {
@@ -115,6 +120,11 @@ func (h *Handler) exportLedger(w http.ResponseWriter, r *http.Request) {
 
 // exportReconciliation implements
 // GET /api/v1/cashback/ops/exports/reconciliation.
+// @Summary exportReconciliation
+// @Description Endpoint for exportReconciliation
+// @Success 200
+// @Router /exportReconciliation [get]
+// @Security BearerAuth
 func (h *Handler) exportReconciliation(w http.ResponseWriter, r *http.Request) {
 	window, format, detail, ok := parseExportQuery(r.URL.Query())
 	if !ok {

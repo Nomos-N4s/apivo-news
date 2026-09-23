@@ -139,6 +139,11 @@ type publicationResponse struct {
 }
 
 // createApproval implements POST /api/v1/editorial/approvals.
+// @Summary createApproval
+// @Description Endpoint for createApproval
+// @Success 200
+// @Router /createApproval [get]
+// @Security BearerAuth
 func (h *Handler) createApproval(w http.ResponseWriter, r *http.Request) {
 	var req approvalRequest
 	if !decodeJSON(w, r, &req) {
@@ -198,6 +203,11 @@ func (h *Handler) createApproval(w http.ResponseWriter, r *http.Request) {
 }
 
 // publishArticle implements POST /api/v1/editorial/articles/{id}/publication.
+// @Summary publishArticle
+// @Description Endpoint for publishArticle
+// @Success 200
+// @Router /publishArticle [get]
+// @Security BearerAuth
 func (h *Handler) publishArticle(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathArticleID(w, r)
 	if !ok {
@@ -248,6 +258,11 @@ type withdrawalResult struct {
 }
 
 // withdrawArticle implements POST /api/v1/editorial/articles/{id}/withdrawal.
+// @Summary withdrawArticle
+// @Description Endpoint for withdrawArticle
+// @Success 200
+// @Router /withdrawArticle [get]
+// @Security BearerAuth
 func (h *Handler) withdrawArticle(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathArticleID(w, r)
 	if !ok {
@@ -427,6 +442,11 @@ type provenanceEventResponse struct {
 }
 
 // articleProvenance implements GET /api/v1/editorial/articles/{id}/provenance.
+// @Summary articleProvenance
+// @Description Endpoint for articleProvenance
+// @Success 200
+// @Router /articleProvenance [get]
+// @Security BearerAuth
 func (h *Handler) articleProvenance(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathArticleID(w, r)
 	if !ok {
@@ -604,6 +624,11 @@ type withdrawalResponse struct {
 }
 
 // reviewQueue implements GET /api/v1/editorial/queue.
+// @Summary reviewQueue
+// @Description Endpoint for reviewQueue
+// @Success 200
+// @Router /reviewQueue [get]
+// @Security BearerAuth
 func (h *Handler) reviewQueue(w http.ResponseWriter, r *http.Request) {
 	query, detail, ok := parseQueueQuery(r.URL.Query())
 	if !ok {
@@ -754,6 +779,11 @@ type sourceResponse struct {
 }
 
 // createSource implements POST /api/v1/editorial/sources.
+// @Summary createSource
+// @Description Endpoint for createSource
+// @Success 200
+// @Router /createSource [get]
+// @Security BearerAuth
 func (h *Handler) createSource(w http.ResponseWriter, r *http.Request) {
 	var req sourceRequest
 	if !decodeJSON(w, r, &req) {
@@ -845,6 +875,11 @@ type sourcesListResponse struct {
 }
 
 // listSources implements GET /api/v1/editorial/sources.
+// @Summary listSources
+// @Description Endpoint for listSources
+// @Success 200
+// @Router /listSources [get]
+// @Security BearerAuth
 func (h *Handler) listSources(w http.ResponseWriter, r *http.Request) {
 	query, detail, ok := parseSourcesQuery(r.URL.Query())
 	if !ok {
@@ -916,6 +951,11 @@ type sourcePatchRequest struct {
 }
 
 // patchSource implements PATCH /api/v1/editorial/sources/{id}.
+// @Summary patchSource
+// @Description Endpoint for patchSource
+// @Success 200
+// @Router /patchSource [get]
+// @Security BearerAuth
 func (h *Handler) patchSource(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathSourceID(w, r)
 	if !ok {
@@ -986,6 +1026,11 @@ func (h *Handler) patchSource(w http.ResponseWriter, r *http.Request) {
 // refuses the delete and this handler reports the refusal as a 409 naming
 // the evidence count - never as a silent deactivation, which is a
 // different decision that belongs to the editor.
+// @Summary deleteSource
+// @Description Endpoint for deleteSource
+// @Success 200
+// @Router /deleteSource [get]
+// @Security BearerAuth
 func (h *Handler) deleteSource(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathSourceID(w, r)
 	if !ok {

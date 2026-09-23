@@ -75,6 +75,11 @@ type amountJSON struct {
 }
 
 // approveWithdrawal implements POST /ops/withdrawals/{id}/approve.
+// @Summary approveWithdrawal
+// @Description Endpoint for approveWithdrawal
+// @Success 200
+// @Router /approveWithdrawal [get]
+// @Security BearerAuth
 func (h *Handler) approveWithdrawal(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -176,6 +181,11 @@ type rejectResponse struct {
 }
 
 // rejectWithdrawal implements POST /ops/withdrawals/{id}/reject.
+// @Summary rejectWithdrawal
+// @Description Endpoint for rejectWithdrawal
+// @Success 200
+// @Router /rejectWithdrawal [get]
+// @Security BearerAuth
 func (h *Handler) rejectWithdrawal(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -307,6 +317,11 @@ const maxReferenceRunes = 200
 // the manual rail always answers "submitted" because a rail that guessed
 // otherwise would report money as delivered on the strength of a clock. A
 // person went to a bank; a person says so.
+// @Summary settleWithdrawal
+// @Description Endpoint for settleWithdrawal
+// @Success 200
+// @Router /settleWithdrawal [get]
+// @Security BearerAuth
 func (h *Handler) settleWithdrawal(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {

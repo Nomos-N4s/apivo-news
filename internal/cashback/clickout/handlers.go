@@ -134,6 +134,11 @@ type clickOutResponse struct {
 }
 
 // createClickOut implements POST /api/v1/cashback/clickouts.
+// @Summary createClickOut
+// @Description Endpoint for createClickOut
+// @Success 200
+// @Router /createClickOut [get]
+// @Security BearerAuth
 func (h *Handler) createClickOut(w http.ResponseWriter, r *http.Request) {
 	var req clickOutRequest
 	if !decodeJSON(w, r, &req) {

@@ -143,6 +143,11 @@ type toursResponse struct {
 	Tours map[string]string `json:"tours"`
 }
 
+// @Summary readTours
+// @Description Endpoint for readTours
+// @Success 200
+// @Router /readTours [get]
+// @Security BearerAuth
 func (h *Handler) readTours(w http.ResponseWriter, r *http.Request) {
 	tours, err := h.store.Tours(r.Context(), accountFrom(r.Context()).ID)
 	switch {
@@ -164,6 +169,11 @@ type tourWrite struct {
 	Cursor string `json:"cursor"`
 }
 
+// @Summary writeTour
+// @Description Endpoint for writeTour
+// @Success 200
+// @Router /writeTour [get]
+// @Security BearerAuth
 func (h *Handler) writeTour(w http.ResponseWriter, r *http.Request) {
 	tourID := r.PathValue("tour")
 	if !tourIDPattern.MatchString(tourID) {
