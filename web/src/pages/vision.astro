@@ -1167,6 +1167,276 @@
         overflow-y: auto;
       }
 
+      /* Engineering Execution & GitHub Velocity Radar */
+      .velocity-section {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 16px;
+        padding: 2rem;
+        margin-bottom: 3rem;
+      }
+
+      .velocity-stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 1rem;
+        margin: 1.5rem 0 2rem;
+      }
+
+      .velocity-kpi-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 1.25rem 1rem;
+        transition: transform 0.2s, border-color 0.2s;
+      }
+
+      .velocity-kpi-card:hover {
+        transform: translateY(-2px);
+        border-color: var(--border-bright);
+      }
+
+      .kpi-title {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        letter-spacing: 0.05em;
+        margin-bottom: 0.35rem;
+      }
+
+      .kpi-big {
+        font-size: 1.75rem;
+        font-weight: 800;
+        color: rgb(255, 255, 255);
+        letter-spacing: -0.02em;
+        line-height: 1.2;
+      }
+
+      .kpi-sub {
+        font-size: 0.725rem;
+        color: var(--text-secondary);
+        margin-top: 0.25rem;
+      }
+
+      /* LoC Composition Multi-bar */
+      .loc-visual-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+      }
+
+      .loc-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+      }
+
+      .loc-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: rgb(255, 255, 255);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .loc-bar {
+        display: flex;
+        height: 12px;
+        border-radius: 6px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.05);
+        margin-bottom: 1.25rem;
+      }
+
+      .loc-seg {
+        height: 100%;
+        transition: width 0.3s ease;
+      }
+
+      .loc-seg.go { background: rgb(0, 210, 180); }
+      .loc-seg.ts { background: rgb(56, 189, 248); }
+      .loc-seg.astro { background: rgb(245, 158, 11); }
+      .loc-seg.sql { background: rgb(139, 92, 246); }
+      .loc-seg.sh { background: rgb(16, 185, 129); }
+
+      .loc-legend-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.85rem;
+      }
+
+      .loc-legend-card {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        padding: 0.5rem 0.75rem;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+        border: 1px solid var(--border-subtle);
+      }
+
+      .legend-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .legend-dot.go { background: rgb(0, 210, 180); }
+      .legend-dot.ts { background: rgb(56, 189, 248); }
+      .legend-dot.astro { background: rgb(245, 158, 11); }
+      .legend-dot.sql { background: rgb(139, 92, 246); }
+      .legend-dot.sh { background: rgb(16, 185, 129); }
+
+      .legend-info {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .legend-lang {
+        font-size: 0.775rem;
+        font-weight: 700;
+        color: rgb(255, 255, 255);
+      }
+
+      .legend-detail {
+        font-size: 0.7rem;
+        color: var(--text-muted);
+      }
+
+      /* Commit Stream & Delivered Work */
+      .activity-stream-box {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 1.5rem;
+      }
+
+      .stream-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+      }
+
+      .stream-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: rgb(255, 255, 255);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .stream-filter-row {
+        display: flex;
+        gap: 0.35rem;
+        flex-wrap: wrap;
+      }
+
+      .stream-filter-btn {
+        background: transparent;
+        border: 1px solid var(--border-subtle);
+        color: var(--text-secondary);
+        font-size: 0.725rem;
+        font-weight: 600;
+        padding: 0.25rem 0.65rem;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .stream-filter-btn.active {
+        background: var(--bg-surface);
+        color: rgb(255, 255, 255);
+        border-color: var(--status-info);
+      }
+
+      .stream-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        max-height: 480px;
+        overflow-y: auto;
+        padding-right: 0.5rem;
+      }
+
+      .stream-item {
+        background: rgba(0, 0, 0, 0.25);
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        padding: 0.85rem 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        transition: border-color 0.2s;
+      }
+
+      .stream-item:hover {
+        border-color: var(--border-bright);
+      }
+
+      .stream-item-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .stream-item-badge {
+        font-size: 0.675rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      .badge-feat {
+        background: rgba(0, 210, 180, 0.15);
+        color: rgb(0, 210, 180);
+      }
+
+      .badge-test {
+        background: rgba(16, 185, 129, 0.15);
+        color: rgb(52, 211, 153);
+      }
+
+      .badge-fix {
+        background: rgba(245, 158, 11, 0.15);
+        color: rgb(251, 191, 36);
+      }
+
+      .badge-arch {
+        background: rgba(139, 92, 246, 0.15);
+        color: rgb(167, 139, 250);
+      }
+
+      .stream-hash {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.725rem;
+        color: var(--text-muted);
+      }
+
+      .stream-subject {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: rgb(255, 255, 255);
+      }
+
+      .stream-desc {
+        font-size: 0.775rem;
+        color: var(--text-secondary);
+        line-height: 1.4;
+      }
+
       /* Quick Links Footer */
       .links-section {
         margin-top: 3rem;
@@ -1657,6 +1927,229 @@
         </div>
       </section>
 
+      <!-- SECTION: Engineering Execution & GitHub Velocity Radar -->
+      <section class="velocity-section" id="engineering-velocity">
+        <div class="domain-header">
+          <div>
+            <span class="domain-tag" style="background: rgba(0, 210, 180, 0.15); color: rgb(0, 210, 180);">GitHub &amp; Engine Velocity</span>
+            <h2 class="domain-title" style="margin-top: 0.5rem;">
+              <span>⚡</span> Engineering Execution &amp; Code Metrics Radar
+            </h2>
+          </div>
+          <div class="env-badge">Trunk PR Workflow • PR 647 Active • 20/20 CI Passed</div>
+        </div>
+
+        <p class="section-desc" style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.5rem; margin-bottom: 1.5rem; line-height: 1.5;">
+          Real-time visibility into codebase growth, architectural rigor, and velocity across Go backend services, Astro frontend SSR, and immutable SQL databases.
+        </p>
+
+        <!-- KPI Grid: 6 Cards -->
+        <div class="velocity-stats-grid">
+          <div class="velocity-kpi-card">
+            <div class="kpi-title">Total Commits</div>
+            <div class="kpi-big">1,575+</div>
+            <div class="kpi-sub">Continuous trunk iterations</div>
+          </div>
+          <div class="velocity-kpi-card">
+            <div class="kpi-title">Pull Requests</div>
+            <div class="kpi-big">647</div>
+            <div class="kpi-sub">Strict branch review &amp; squash</div>
+          </div>
+          <div class="velocity-kpi-card">
+            <div class="kpi-title">Total Codebase</div>
+            <div class="kpi-big">245,062</div>
+            <div class="kpi-sub">Lines of code (1,120 files)</div>
+          </div>
+          <div class="velocity-kpi-card">
+            <div class="kpi-title">Test Suites</div>
+            <div class="kpi-big">364</div>
+            <div class="kpi-sub">Unit, integration &amp; property tests</div>
+          </div>
+          <div class="velocity-kpi-card">
+            <div class="kpi-title">Strict Coverage Gate</div>
+            <div class="kpi-big" style="color: rgb(52, 211, 153);">90.0%</div>
+            <div class="kpi-sub">Enforced on all Go modules</div>
+          </div>
+          <div class="velocity-kpi-card">
+            <div class="kpi-title">Quality Gates (CI)</div>
+            <div class="kpi-big" style="color: rgb(56, 189, 248);">20 / 20</div>
+            <div class="kpi-sub">All GitHub checks 100% green</div>
+          </div>
+        </div>
+
+        <!-- LoC Composition Multi-bar Card -->
+        <div class="loc-visual-card">
+          <div class="loc-header">
+            <div class="loc-title">
+              <span>📊</span> Codebase Composition &amp; Technology Breakdown
+            </div>
+            <span style="font-size: 0.75rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;">1,120 Tracked Source Files</span>
+          </div>
+          <div class="loc-bar">
+            <div class="loc-seg go" style="width: 74.5%;" title="Go: 182,624 lines (74.5%)"></div>
+            <div class="loc-seg ts" style="width: 9.3%;" title="TypeScript: 22,726 lines (9.3%)"></div>
+            <div class="loc-seg astro" style="width: 7.0%;" title="Astro Components: 17,105 lines (7.0%)"></div>
+            <div class="loc-seg sh" style="width: 5.2%;" title="Shell &amp; CI Automation: 12,800 lines (5.2%)"></div>
+            <div class="loc-seg sql" style="width: 4.0%;" title="Postgres SQL Migrations: 9,807 lines (4.0%)"></div>
+          </div>
+          <div class="loc-legend-grid">
+            <div class="loc-legend-card">
+              <span class="legend-dot go"></span>
+              <div class="legend-info">
+                <span class="legend-lang">Go (Backend Core)</span>
+                <span class="legend-detail">182,624 LoC • 74.5%</span>
+              </div>
+            </div>
+            <div class="loc-legend-card">
+              <span class="legend-dot ts"></span>
+              <div class="legend-info">
+                <span class="legend-lang">TypeScript</span>
+                <span class="legend-detail">22,726 LoC • 9.3%</span>
+              </div>
+            </div>
+            <div class="loc-legend-card">
+              <span class="legend-dot astro"></span>
+              <div class="legend-info">
+                <span class="legend-lang">Astro (SSR Frontend)</span>
+                <span class="legend-detail">17,105 LoC • 7.0%</span>
+              </div>
+            </div>
+            <div class="loc-legend-card">
+              <span class="legend-dot sh"></span>
+              <div class="legend-info">
+                <span class="legend-lang">Shell &amp; DevSecOps</span>
+                <span class="legend-detail">12,800 LoC • 5.2%</span>
+              </div>
+            </div>
+            <div class="loc-legend-card">
+              <span class="legend-dot sql"></span>
+              <div class="legend-info">
+                <span class="legend-lang">SQL Schemas &amp; Invariants</span>
+                <span class="legend-detail">9,807 LoC • 4.0%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Activity Stream Box with Interactive Filter -->
+        <div class="activity-stream-box">
+          <div class="stream-header">
+            <div class="stream-title">
+              <span>🚀</span> Delivered Features, Hardening &amp; Activity Stream
+            </div>
+            <div class="stream-filter-row">
+              <button class="stream-filter-btn active" data-filter="all">All Activity</button>
+              <button class="stream-filter-btn" data-filter="feat">Features</button>
+              <button class="stream-filter-btn" data-filter="test">Tests &amp; Hardening</button>
+              <button class="stream-filter-btn" data-filter="fix">Bug Fixes</button>
+              <button class="stream-filter-btn" data-filter="arch">Architecture</button>
+            </div>
+          </div>
+
+          <div class="stream-list" id="activity-stream-list">
+            <!-- Stream Item 1 -->
+            <div class="stream-item" data-stream-type="feat">
+              <div class="stream-item-top">
+                <span class="stream-item-badge badge-feat">Feature</span>
+                <span class="stream-hash">eca3f991 • PR 647</span>
+              </div>
+              <div class="stream-subject">Interactive Architecture Diagrams, Merchant Pipeline &amp; Operations Playbook</div>
+              <div class="stream-desc">Visual executive flow nodes with database triggers, commercial pipeline tracking for 6 diaspora retailers, live feed simulator, and cashback commission calculator.</div>
+            </div>
+
+            <!-- Stream Item 2 -->
+            <div class="stream-item" data-stream-type="feat">
+              <div class="stream-item-top">
+                <span class="stream-item-badge badge-feat">Feature</span>
+                <span class="stream-hash">8339e0f8 • PR 647</span>
+              </div>
+              <div class="stream-subject">Executive Co-Founder Vision Board at /vision</div>
+              <div class="stream-desc">Comprehensive executive view bridging News and Cashback domains, KPI ribbon, legal invariant verification, and dual-axis delivery roadmap.</div>
+            </div>
+
+            <!-- Stream Item 3 -->
+            <div class="stream-item" data-stream-type="test">
+              <div class="stream-item-top">
+                <span class="stream-item-badge badge-test">Testing</span>
+                <span class="stream-hash">23111ce0 • PR 646</span>
+              </div>
+              <div class="stream-subject">Unit test suite for accountFrom request context extraction</div>
+              <div class="stream-desc">Hardened authenticated context propagation for editorial endpoints; resolved mock race condition and validated nil-safety across concurrent handlers.</div>
+            </div>
+
+            <!-- Stream Item 4 -->
+            <div class="stream-item" data-stream-type="arch">
+              <div class="stream-item-top">
+                <span class="stream-item-badge badge-arch">Architecture</span>
+                <span class="stream-hash">259d8f0f • PR 645</span>
+              </div>
+              <div class="stream-subject">RFC 7807 ProblemDetails canonical error response abstraction</div>
+              <div class="stream-desc">Unified machine-readable error protocol across all REST endpoints; typed error codes, documentation URIs, and structured diagnostic payloads.</div>
+            </div>
+
+            <!-- Stream Item 5 -->
+            <div class="stream-item" data-stream-type="test">
+              <div class="stream-item-top">
+                <span class="stream-item-badge badge-test">Testing</span>
+                <span class="stream-hash">6b03d188 • PR 544</span>
+              </div>
+              <div class="stream-subject">Strict isolation tests for requireAccount authentication middleware</div>
+              <div class="stream-desc">Protected editorial and financial administrative routes with deterministic token validation, header extraction, and fail-safe unauthorized rejections.</div>
+            </div>
+
+            <!-- Stream Item 6 -->
+            <div class="stream-item" data-stream-type="test">
+              <div class="stream-item-top">
+                <span class="stream-item-badge badge-test">Testing</span>
+                <span class="stream-hash">0c74f2d9 • PR 639</span>
+              </div>
+              <div class="stream-subject">Table-driven unit tests for wallet cursor encoding and decoding</div>
+              <div class="stream-desc">Covered pagination boundaries, base64url padding corruption tests, and deterministic timestamp sorting for member transaction ledger queries.</div>
+            </div>
+
+            <!-- Stream Item 7 -->
+            <div class="stream-item" data-stream-type="fix">
+              <div class="stream-item-top">
+                <span class="stream-item-badge badge-fix">Bug Fix</span>
+                <span class="stream-hash">7e12c44c • PR 620</span>
+              </div>
+              <div class="stream-subject">Preflight verification before container swap deployment</div>
+              <div class="stream-desc">Eliminated deployment race condition by verifying HTTP health checks and Postgres migration readiness prior to live traffic cutover on Hetzner VPS.</div>
+            </div>
+
+            <!-- Stream Item 8 -->
+            <div class="stream-item" data-stream-type="feat">
+              <div class="stream-item-top">
+                <span class="stream-item-badge badge-feat">Feature</span>
+                <span class="stream-hash">ab291169 • PR 620</span>
+              </div>
+              <div class="stream-subject">CLI Preflight command: serve dry-run and configuration linting</div>
+              <div class="stream-desc">Introduced 'apivo preflight' to validate environment variables, Vault IBAN credentials, and database connection pools before process spawn.</div>
+            </div>
+
+            <!-- Stream Item 9 -->
+            <div class="stream-item" data-stream-type="arch">
+              <div class="stream-item-top">
+                <span class="stream-item-badge badge-arch">Architecture</span>
+                <span class="stream-hash">2c78d098 • PR 622</span>
+              </div>
+              <div class="stream-subject">Fail-open resilience mode for JWKS token verifier in development</div>
+              <div class="stream-desc">Local offline fallback for identity provider JWKS discovery, enabling air-gapped test execution and zero-dependency local Docker compose runs.</div>
+            </div>
+
+            <!-- Stream Item 10 -->
+            <div class="stream-item" data-stream-type="fix">
+              <div class="stream-item-top">
+                <span class="stream-item-badge badge-fix">CI Fix</span>
+                <span class="stream-hash">1baf5a9c • PR 628</span>
+              </div>
+              <div class="stream-subject">Automated pre-push hook execution and security checkpoint validation</div>
+              <div class="stream-desc">Enforced executable permissions (chmod 100755) and deterministic git-hook integrity checks across all engineering workstations and GitHub runner instances.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- SECTION: Sprint Focus - Test Hardening & Merchant Pipeline Status -->
       <section class="status-banner-grid" id="sprint-status">
         <!-- Card 1: Platform Engine Test Hardening -->
@@ -2061,6 +2554,8 @@
       <footer class="links-section">
         <div>Deployed on Hetzner VPS (Helsinki, EU) behind Cloudflare WAF</div>
         <div class="route-pills">
+          <a class="route-link" href="#engineering-velocity">⚡ Velocity Radar</a>
+          <a class="route-link" href="#sprint-status">🛡️ Sprint Status</a>
           <a class="route-link" href="/el/munich+greece" target="_blank">Front Page (el)</a>
           <a class="route-link" href="/de/munich+greece" target="_blank">Front Page (de)</a>
           <a class="route-link" href="/el/munich/cashback" target="_blank">Cashback</a>
@@ -2403,6 +2898,27 @@
       rangePurchase?.addEventListener('input', updateCashbackCalc);
       rangeRate?.addEventListener('input', updateCashbackCalc);
       updateCashbackCalc();
+
+      // Activity Stream Filtering
+      const streamFilterBtns = document.querySelectorAll<HTMLButtonElement>('.stream-filter-btn');
+      const streamItems = document.querySelectorAll<HTMLElement>('.stream-item');
+
+      streamFilterBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          streamFilterBtns.forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+
+          const filter = btn.getAttribute('data-filter');
+          streamItems.forEach((item) => {
+            const itemType = item.getAttribute('data-stream-type');
+            if (filter === 'all' || filter === itemType) {
+              item.style.display = 'flex';
+            } else {
+              item.style.display = 'none';
+            }
+          });
+        });
+      });
     </script>
   </body>
 </html>
