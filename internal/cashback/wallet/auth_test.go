@@ -34,12 +34,12 @@ func TestRequireMemberMiddleware(t *testing.T) {
 	validMemberID := uuid.New()
 
 	tests := []struct {
-		name               string
-		authHeader         string
-		authFn             func(ctx context.Context, token string) (wallet.Member, error)
-		wantStatus         int
-		wantWWWAuth        string
-		wantBodyContains   string
+		name             string
+		authHeader       string
+		authFn           func(ctx context.Context, token string) (wallet.Member, error)
+		wantStatus       int
+		wantWWWAuth      string
+		wantBodyContains string
 	}{
 		{
 			name:             "missing authorization header",
@@ -72,7 +72,7 @@ func TestRequireMemberMiddleware(t *testing.T) {
 		{
 			name:       "unauthenticated token returning ErrUnauthenticated",
 			authHeader: "Bearer invalid_token",
-			authFn: func(ctx context.Context, token string) (wallet.Member, error) {
+			authFn: func(_ context.Context, token string) (wallet.Member, error) {
 				return wallet.Member{}, wallet.ErrUnauthenticated
 			},
 			wantStatus:       http.StatusUnauthorized,
@@ -82,7 +82,7 @@ func TestRequireMemberMiddleware(t *testing.T) {
 		{
 			name:       "authenticator returns unexpected error",
 			authHeader: "Bearer token_cause_error",
-			authFn: func(ctx context.Context, token string) (wallet.Member, error) {
+			authFn: func(_ context.Context, token string) (wallet.Member, error) {
 				return wallet.Member{}, errors.New("database connection failed")
 			},
 			wantStatus:  http.StatusInternalServerError,
@@ -91,7 +91,7 @@ func TestRequireMemberMiddleware(t *testing.T) {
 		{
 			name:       "valid token standard Bearer scheme",
 			authHeader: "Bearer valid_token",
-			authFn: func(ctx context.Context, token string) (wallet.Member, error) {
+			authFn: func(_ context.Context, token string) (wallet.Member, error) {
 				if token == "valid_token" {
 					return wallet.Member{ID: validMemberID}, nil
 				}
@@ -102,7 +102,7 @@ func TestRequireMemberMiddleware(t *testing.T) {
 		{
 			name:       "valid token lowercase bearer scheme",
 			authHeader: "bearer valid_token",
-			authFn: func(ctx context.Context, token string) (wallet.Member, error) {
+			authFn: func(_ context.Context, token string) (wallet.Member, error) {
 				if token == "valid_token" {
 					return wallet.Member{ID: validMemberID}, nil
 				}
@@ -113,7 +113,7 @@ func TestRequireMemberMiddleware(t *testing.T) {
 		{
 			name:       "valid token uppercase BEARER scheme",
 			authHeader: "BEARER valid_token",
-			authFn: func(ctx context.Context, token string) (wallet.Member, error) {
+			authFn: func(_ context.Context, token string) (wallet.Member, error) {
 				if token == "valid_token" {
 					return wallet.Member{ID: validMemberID}, nil
 				}
@@ -124,7 +124,6 @@ func TestRequireMemberMiddleware(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
